@@ -1,0 +1,52 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.dist-info/
+
+# Python packages accidentally installed directly inside backend/
+backend/annotated_types/
+backend/anthropic/
+backend/anyio/
+backend/bin/
+backend/certifi/
+backend/distro/
+backend/docstring_parser/
+backend/h11/
+backend/httpcore/
+backend/httpx/
+backend/idna/
+backend/jiter/
+backend/pydantic/
+backend/pydantic_core/
+backend/sniffio/
+backend/typing_extensions.py
+backend/typing_inspection/
+
+# Environment — never commit secrets
+backend/.env
+backend/venv/
+frontend/.env
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Build output (generated during Render build step)
+backend/static/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Large sample data files (optional — remove lines below to include them)
+*.xlsx
+*.xls
+backend/pre_reset_backup/

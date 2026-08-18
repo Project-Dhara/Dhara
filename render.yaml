@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: table-extractor
+    env: python
+    region: singapore   # change to your preferred region
+    plan: free
+    buildCommand: |
+      pip install -r backend/requirements.txt &&
+      cd frontend &&
+      npm install &&
+      npm run build
+    startCommand: cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false       # you will paste the value in the Render dashboard
+      - key: PYTHON_VERSION
+        value: 3.11.0

@@ -1,0 +1,15 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e3]: Catalog Explorer
+    - generic [ref=e5]:
+      - generic [ref=e6]: Database
+      - combobox [ref=e7] [cursor=pointer]:
+        - option "DES — Delhi Vital Statistics" [selected]
+    - button "MCP Endpoint" [ref=e9] [cursor=pointer]
+  - main [ref=e10]:
+    - generic [ref=e11]:
+      - paragraph [ref=e12]: Search Datasets
+      - generic [ref=e13]:
+        - searchbox "Search by table id, title, district, cause, occupation..." [ref=e15]
+        - button "Clear" [ref=e16] [cursor=pointer]
+      - paragraph [ref=e17]: Showing all datasets
