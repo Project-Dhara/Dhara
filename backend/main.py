@@ -16,7 +16,7 @@ load_dotenv()
 from extractor import TableExtractor
 import catalogue as _cat
 from metadata_excel import parse_catalogue_summary, parse_metadata_workbook
-from catalogue_matching import match_tables_to_metadata
+from catalogue_matching import match_tables_to_metadata, match_result_to_push_groups
 from table_export import table_to_excel_bytes
 from original_sheet_export import extract_sheet_with_formatting_from_bytes
 
@@ -111,13 +111,40 @@ async def table_metadata(request: Request):
 
 
 @app.post("/api/group-tables")
-async def group_tables(request: Request):
-    """Cluster extracted tables by semantic similarity using Claude."""
-    data = await request.json()
-    tables_meta = data.get("tables", [])
-    extractor = _extractor_for(request)
+async def group_tables(
+    tables_json: str = Form(...),
+    metadata_files: list[UploadFile] = File(None),
+):
+    """Group extracted tables using the same rule-based logic as batch upload."""
+    tables = _json.loads(tables_json)
+    for t in tables:
+        if not t.get("source_file"):
+            t["source_file"] = t.get("filename") or "Dataset"
+
+    metadata_payloads = []
+    if metadata_files:
+        for f in metadata_files:
+            if not f or not f.filename:
+                continue
+            if not f.filename.lower().endswith((".xlsx", ".xls")):
+                raise HTTPException(400, f"Only .xlsx/.xls files are supported ({f.filename})")
+            content = await f.read()
+            metadata_payloads.append((f.filename, content))
+
+    def _run():
+        workbooks = []
+        for filename, content in metadata_payloads:
+            try:
+                workbooks.append(parse_metadata_workbook(content, filename))
+            except ValueError as e:
+                raise ValueError(f"{filename}: {e}")
+        result = match_tables_to_metadata(tables, workbooks)
+        return match_result_to_push_groups(result)
+
     try:
-        groups = extractor.group_tables_by_similarity(tables_meta)
+        groups = await asyncio.to_thread(_run)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, f"Grouping error: {e}")
     return {"groups": groups}
@@ -212,19 +239,23 @@ async def batch_extract(request: Request, files: list[UploadFile] = File(...)):
 @app.post("/api/catalogue/batch-match")
 async def batch_match(
     tables_json: str = Form(...),
-    metadata_files: list[UploadFile] = File(...),
+    metadata_files: list[UploadFile] = File(None),
 ):
     """Parses multiple metadata workbooks and matches them against a set of
     already-extracted tables. Returns a proposed mapping for review --
-    nothing is written to the database here."""
+    nothing is written to the database here. Metadata files are optional;
+    when omitted, groups are returned with empty catalogue fields."""
     tables = _json.loads(tables_json)
 
     metadata_payloads = []
-    for f in metadata_files:
-        if not f.filename.lower().endswith((".xlsx", ".xls")):
-            raise HTTPException(400, f"Only .xlsx/.xls files are supported ({f.filename})")
-        content = await f.read()
-        metadata_payloads.append((f.filename, content))
+    if metadata_files:
+        for f in metadata_files:
+            if not f or not f.filename:
+                continue
+            if not f.filename.lower().endswith((".xlsx", ".xls")):
+                raise HTTPException(400, f"Only .xlsx/.xls files are supported ({f.filename})")
+            content = await f.read()
+            metadata_payloads.append((f.filename, content))
 
     def _run():
         workbooks = []

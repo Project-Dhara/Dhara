@@ -46,7 +46,7 @@ export default function BatchUpload({ onMatched }) {
   const removeMetadata = (i) => setMetadataFiles((prev) => prev.filter((_, idx) => idx !== i))
 
   const busy = stage === 'extracting' || stage === 'matching'
-  const canRun = datasetFiles.length > 0 && metadataFiles.length > 0 && !busy
+  const canRun = datasetFiles.length > 0 && !busy
 
   const runMatch = async () => {
     setError('')

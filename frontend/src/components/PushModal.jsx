@@ -58,7 +58,13 @@ export default function PushModal({ tables, groups, onClose, inline = false, onP
       .then((data) => {
         const grps = data.groups || []
         setExistingGroups(grps)
-        if (grps.length > 0) selectExistingGroup(grps[0].metadata_id, grps)
+        if (grps.length > 0) {
+          // Prime the dropdown for "add to existing group", but do not
+          // copy those values into a new-group form. Without a metadata
+          // file, Product / Category / Geography etc. stay empty.
+          if (initialExcelFile) selectExistingGroup(grps[0].metadata_id, grps)
+          else setSelectedMetaId(grps[0].metadata_id)
+        }
       })
       .catch(() => {})
     // A metadata file picked earlier at the Files step (single-upload)
@@ -329,7 +335,7 @@ export default function PushModal({ tables, groups, onClose, inline = false, onP
             <MetadataSheetGrid
               rows={[{
                 id: 'single',
-                label: tablesToPush[0]?.title || tablesToPush[0]?.id || 'This dataset',
+                label: scope === 'all' ? 'All tables' : `Group: ${scope}`,
                 values: form,
               }]}
               onChange={(_rowId, key, value) => handleFormChange(key, value)}

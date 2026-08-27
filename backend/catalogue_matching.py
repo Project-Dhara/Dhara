@@ -103,6 +103,54 @@ def _distinguishing_word(description: str, others: list) -> str:
     return None
 
 
+_EMPTY_METADATA = {
+    "title": "",
+    "product": "",
+    "category": "",
+    "geography": "",
+    "frequency": "",
+    "time_period": "",
+    "data_source": "",
+    "description": "",
+    "last_updated": "",
+    "future_release": "",
+    "key_statistics": "",
+    "remarks": "",
+}
+
+
+def _groups_without_metadata(extracted_tables: list) -> dict:
+    """One group per source dataset file, with empty catalogue fields, so
+    the user can fill Product / Category / Geography etc. by hand."""
+    by_file = {}
+    order = []
+    for table in extracted_tables:
+        name = table.get("source_file") or "Dataset"
+        if name not in by_file:
+            by_file[name] = []
+            order.append(name)
+        by_file[name].append(table)
+    groups = [
+        {
+            "workbook_index": wi,
+            "file_name": name,
+            "metadata": dict(_EMPTY_METADATA),
+            "concepts": [],
+            "classifications": {},
+            "matched_tables": [
+                {"table": t, "inventory_item": None, "confidence": ""}
+                for t in by_file[name]
+            ],
+        }
+        for wi, name in enumerate(order)
+    ]
+    return {
+        "groups": groups,
+        "unmatched_tables": [],
+        "unmatched_inventory": [],
+    }
+
+
 def match_tables_to_metadata(extracted_tables: list, metadata_workbooks: list) -> dict:
     """
     extracted_tables: [{id, title, description, sheet, source_file, ...}, ...]
@@ -117,6 +165,9 @@ def match_tables_to_metadata(extracted_tables: list, metadata_workbooks: list) -
         "unmatched_inventory": [{file_name, inventory_item}, ...],
       }
     """
+    if not metadata_workbooks:
+        return _groups_without_metadata(extracted_tables)
+
     exact_index = {}
     stem_index = {}
     code_index = {}
@@ -225,7 +276,16 @@ def match_tables_to_metadata(extracted_tables: list, metadata_workbooks: list) -
             })
         else:
             still_unmatched.append(u)
-    unmatched_tables = still_unmatched
+
+    # Dataset files that didn't match any metadata workbook still need a
+    # metadata card (empty Product / Category / Geography etc.) so the user
+    # can fill them in by hand — same as uploading with no metadata files.
+    leftover = _groups_without_metadata([u["table"] for u in still_unmatched])
+    base = len(groups)
+    for g in leftover["groups"]:
+        g["workbook_index"] = base + g["workbook_index"]
+        groups.append(g)
+    unmatched_tables = leftover["unmatched_tables"]
 
     unmatched_inventory = []
     for mw in metadata_workbooks:
@@ -238,3 +298,17 @@ def match_tables_to_metadata(extracted_tables: list, metadata_workbooks: list) -
         "unmatched_tables": unmatched_tables,
         "unmatched_inventory": unmatched_inventory,
     }
+
+
+def match_result_to_push_groups(match_result: dict) -> list:
+    """Convert batch-style match groups to {name, table_ids} for single-file PushModal."""
+    out = []
+    for g in match_result.get("groups", []):
+        table_ids = [mt["table"]["id"] for mt in g.get("matched_tables", [])]
+        if not table_ids:
+            continue
+        out.append({
+            "name": g.get("file_name") or (g.get("metadata") or {}).get("title") or "Group",
+            "table_ids": table_ids,
+        })
+    return out

@@ -124,12 +124,10 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   const handleGroup = async () => {
     setGrouping(true)
     try {
-      const meta = tables.map(({ id, title, sheet, description }) => ({ id, title, sheet, description }))
-      const res = await fetch('/api/group-tables', withLlmKeyHeaders({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tables: meta }),
-      }))
+      const fd = new FormData()
+      fd.append('tables_json', JSON.stringify(tables))
+      if (singleMetaFile) fd.append('metadata_files', singleMetaFile)
+      const res = await fetch('/api/group-tables', { method: 'POST', body: fd })
       if (!res.ok) throw new Error('Grouping failed')
       const data = await res.json()
       setGroups(data.groups)
@@ -246,7 +244,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
             <div className="batch-upload-actions">
               <button
                 className="console-primary-btn"
-                disabled={!singleDatasetFile || !singleMetaFile || loading}
+                disabled={!singleDatasetFile || loading}
                 onClick={runSingleExtract}
               >
                 {loading ? 'Extracting tables…' : 'Preview files →'}
@@ -289,25 +287,6 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
 
         {step === 3 && mode === 'single' && (
           <div className="console-grouping-step">
-            {tables.length > 1 && (
-              <div className="console-preview-tabs">
-                {tables.map((t, i) => (
-                  <div
-                    key={t.id}
-                    className={`console-preview-tab${t.id === selectedId ? ' console-preview-tab-active' : ''}`}
-                    onClick={() => setSelectedId(t.id)}
-                    title={t.id}
-                  >
-                    <span className="console-preview-tab-id">{tableCode(t)}</span>
-                    <span className="console-preview-tab-meta">{t.row_count} rows</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {tables.find((t) => t.id === selectedId) && (
-              <TableViewer table={tables.find((t) => t.id === selectedId)} onUpdateId={handleUpdateId} compact />
-            )}
-
             <div className="console-group-action-row">
               <button className="console-secondary-btn" onClick={handleGroup} disabled={grouping || tables.length < 2}>
                 {grouping ? 'Grouping…' : 'Group similar tables'}

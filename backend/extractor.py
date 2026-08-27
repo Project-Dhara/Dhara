@@ -613,71 +613,80 @@ Return ONLY a valid JSON object — no prose, no markdown fences:
         return parsed.get("categories", [])
 
     def group_tables_by_similarity(self, tables_meta: list) -> list:
-        """Use Claude to cluster tables by semantic similarity of titles/topics."""
+        """Cluster tables using the same rule-based logic as batch upload."""
+        from catalogue_matching import match_tables_to_metadata, match_result_to_push_groups
+
         if not tables_meta:
             return []
-        if len(tables_meta) == 1:
-            return [{"name": tables_meta[0].get("title", "Table 1"), "table_ids": [tables_meta[0]["id"]]}]
 
-        if self.skip_llm:
-            return [{"name": t.get("title", f"Table {i+1}"), "table_ids": [t["id"]]}
-                    for i, t in enumerate(tables_meta)]
+        tables = []
+        for t in tables_meta:
+            tables.append({
+                **t,
+                "source_file": t.get("source_file") or t.get("filename") or "Dataset",
+            })
+        result = match_tables_to_metadata(tables, [])
+        return match_result_to_push_groups(result)
 
-        # Use simple numeric indices in the prompt — avoids Claude mangling complex ID strings.
-        # We map indices back to real IDs after parsing.
-        index_to_id = {str(i + 1): t["id"] for i, t in enumerate(tables_meta)}
-
-        lines = "\n".join(
-            f"{i+1}. title={t.get('title', '')!r}  sheet={t.get('sheet', '')!r}  desc={t.get('description', '')!r}"
-            for i, t in enumerate(tables_meta)
-        )
-        prompt = f"""You are given tables extracted from an Excel file. Each table has a number (1, 2, 3 …).
-
-Tables:
-{lines}
-
-Group tables that cover the same topic but different breakdowns (e.g. rural/urban, male/female, district-wise, age-group).
-Example: "Still Birth Rural" and "Still Birth Urban" → one group called "Still Birth".
-
-Return ONLY valid JSON, no prose, no markdown:
-{{"groups": [{{"name": "Group Name", "indices": [1, 2]}}, ...]}}
-
-Rules:
-- Use the table numbers (integers) in "indices", not titles.
-- Every table number from 1 to {len(tables_meta)} must appear in exactly one group.
-- Use a short descriptive group name (e.g. "Still Birth", "Live Birth", "Death Registration").
-- Tables on clearly different topics go in separate groups."""
-
-        resp = _call_with_retry(
-            self.client,
-            model=ANTHROPIC_MODEL,
-            max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = resp.content[0].text.strip()
-        parsed = _extract_json_with_key(text, "groups")
-        if parsed:
-            groups = parsed.get("groups", [])
-            result = []
-            seen_indices = set()
-            for g in groups:
-                ids = []
-                for idx in g.get("indices", []):
-                    key = str(idx)
-                    if key in index_to_id and key not in seen_indices:
-                        ids.append(index_to_id[key])
-                        seen_indices.add(key)
-                if ids:
-                    result.append({"name": g.get("name", "Group"), "table_ids": ids})
-            # append any tables Claude forgot to include
-            for key, tid in index_to_id.items():
-                if key not in seen_indices:
-                    result.append({"name": f"Table {key}", "table_ids": [tid]})
-            if result:
-                return result
-
-        return [{"name": t.get("title", f"Table {i+1}"), "table_ids": [t["id"]]}
-                for i, t in enumerate(tables_meta)]
+        # --- LLM grouping (disabled — use match_tables_to_metadata instead) ---
+        # if len(tables_meta) == 1:
+        #     return [{"name": tables_meta[0].get("title", "Table 1"), "table_ids": [tables_meta[0]["id"]]}]
+        #
+        # if self.skip_llm:
+        #     return [{"name": t.get("title", f"Table {i+1}"), "table_ids": [t["id"]]}
+        #             for i, t in enumerate(tables_meta)]
+        #
+        # index_to_id = {str(i + 1): t["id"] for i, t in enumerate(tables_meta)}
+        # lines = "\n".join(
+        #     f"{i+1}. title={t.get('title', '')!r}  sheet={t.get('sheet', '')!r}  desc={t.get('description', '')!r}"
+        #     for i, t in enumerate(tables_meta)
+        # )
+        # prompt = f"""You are given tables extracted from an Excel file. Each table has a number (1, 2, 3 …).
+        #
+        # Tables:
+        # {lines}
+        #
+        # Group tables that cover the same topic but different breakdowns (e.g. rural/urban, male/female, district-wise, age-group).
+        # Example: "Still Birth Rural" and "Still Birth Urban" → one group called "Still Birth".
+        #
+        # Return ONLY valid JSON, no prose, no markdown:
+        # {{"groups": [{{"name": "Group Name", "indices": [1, 2]}}, ...]}}
+        #
+        # Rules:
+        # - Use the table numbers (integers) in "indices", not titles.
+        # - Every table number from 1 to {len(tables_meta)} must appear in exactly one group.
+        # - Use a short descriptive group name (e.g. "Still Birth", "Live Birth", "Death Registration").
+        # - Tables on clearly different topics go in separate groups."""
+        #
+        # resp = _call_with_retry(
+        #     self.client,
+        #     model=ANTHROPIC_MODEL,
+        #     max_tokens=1024,
+        #     messages=[{"role": "user", "content": prompt}],
+        # )
+        # text = resp.content[0].text.strip()
+        # parsed = _extract_json_with_key(text, "groups")
+        # if parsed:
+        #     groups = parsed.get("groups", [])
+        #     result = []
+        #     seen_indices = set()
+        #     for g in groups:
+        #         ids = []
+        #         for idx in g.get("indices", []):
+        #             key = str(idx)
+        #             if key in index_to_id and key not in seen_indices:
+        #                 ids.append(index_to_id[key])
+        #                 seen_indices.add(key)
+        #         if ids:
+        #             result.append({"name": g.get("name", "Group"), "table_ids": ids})
+        #     for key, tid in index_to_id.items():
+        #         if key not in seen_indices:
+        #             result.append({"name": f"Table {key}", "table_ids": [tid]})
+        #     if result:
+        #         return result
+        #
+        # return [{"name": t.get("title", f"Table {i+1}"), "table_ids": [t["id"]]}
+        #         for i, t in enumerate(tables_meta)]
 
     # ── DES Catalogue enrichment ──────────────────────────────────────────────
 
