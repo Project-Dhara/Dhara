@@ -15,3 +15,7 @@ services:
         sync: false       # you will paste the value in the Render dashboard
       - key: PYTHON_VERSION
         value: 3.11.0
+    envVars:
+      - key: DATABASE_URL
+        value: $DATABASE_URL
+        sync: false   # paste Neon connection string in Render dashboard

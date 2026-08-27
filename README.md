@@ -62,9 +62,12 @@ Copy `backend/.env.example` to `backend/.env` and fill in:
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...          # Claude API key, used for extraction + enrichment
-DATABASE_URL=postgresql://...          # same Postgres DB des-website reads from
-GCS_BUCKET_NAME=dhara-toolkit-excel    # bucket for metadata + dataset Excel exports
+DATABASE_URL=postgresql://...          # Neon (or any Postgres) connection string, sslmode=require
+ENABLE_GCS=false                      # local/dev: skip Excel uploads; set true for production
+GCS_BUCKET_NAME=dhara-toolkit-excel    # required only when ENABLE_GCS=true
 ```
+
+Local testing only needs `DATABASE_URL` (Neon). Catalogue push writes dataset rows and metadata to Postgres; Excel file URLs stay empty until you enable GCS. To turn GCS on for production, set `ENABLE_GCS=true`, fill `GCS_BUCKET_NAME`, and authenticate with GCP (`gcloud auth application-default login` or a service account).
 
 ### 2. Backend
 

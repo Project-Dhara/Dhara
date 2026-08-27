@@ -140,9 +140,8 @@ export default function PushModal({ tables, groups, onClose, inline = false, onP
     setError('')
 
     // Click-through mode (VITE_ENABLE_CLICK_THROUGH=true): skip the real
-    // push -- it needs GCS + DB credentials this environment may not have
-    // -- and continue as if it succeeded. The real push path below is
-    // untouched and runs normally once those credentials are configured.
+    // push and continue as if it succeeded. Leave this off to write
+    // catalogue rows to Neon (GCS is optional via ENABLE_GCS).
     if (CLICK_THROUGH_ENABLED) {
       setResult({ tables_pushed: tablesToPush.length, metadata_id: 'click-through-demo' })
       setStep('done')
