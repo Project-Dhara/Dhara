@@ -98,7 +98,40 @@ def init_schema(conn):
             CREATE INDEX IF NOT EXISTS idx_dataset_rows_dataset_id
                 ON dataset_rows (dataset_id)
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS kyds_entries (
+                id          SERIAL PRIMARY KEY,
+                created_at  TIMESTAMPTZ DEFAULT NOW(),
+                user_email  TEXT,
+                user_name   TEXT,
+                user_dept   TEXT,
+                responses   JSONB NOT NULL
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_kyds_entries_created_at
+                ON kyds_entries (created_at DESC)
+        """)
     conn.commit()
+
+
+def save_kyds_entry(conn, responses, user=None):
+    """Persist a KYDS (Know Your Dataset) form submission for later use."""
+    user = user or {}
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO kyds_entries (user_email, user_name, user_dept, responses)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+        """, (
+            user.get("email"),
+            user.get("name"),
+            user.get("dept"),
+            json.dumps(responses),
+        ))
+        entry_id = cur.fetchone()[0]
+    conn.commit()
+    return entry_id
 
 
 def list_metadata_groups(conn):

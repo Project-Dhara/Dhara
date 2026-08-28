@@ -5,11 +5,13 @@ import Dashboard from './components/Dashboard'
 import Settings from './components/Settings'
 import Catalogue from './components/Catalogue'
 import Console from './components/Console'
+import KydsModal from './components/KydsModal'
 import { getLlmApiKey, setLlmApiKey } from './llmKey'
 
 export default function App() {
   const [authScreen, setAuthScreen] = useState('login') // 'login' | 'signup'
   const [loggedIn, setLoggedIn] = useState(false)
+  const [showKyds, setShowKyds] = useState(false)
   const [screen, setScreen] = useState('dashboard') // 'dashboard' | 'console' | 'catalogue' | 'settings'
   const [consoleKey, setConsoleKey] = useState(0)
 
@@ -31,6 +33,7 @@ export default function App() {
         onSubmit={(form) => {
           setUser((prev) => ({ ...prev, name: form.name || prev.name, email: form.email || prev.email }))
           setLoggedIn(true)
+          setShowKyds(true)
           setScreen('dashboard')
         }}
       />
@@ -59,8 +62,27 @@ export default function App() {
       screen={screen}
       user={user}
       onNavigate={setScreen}
-      onSignOut={() => { setLoggedIn(false); setAuthScreen('login') }}
+      onSignOut={() => { setLoggedIn(false); setShowKyds(false); setAuthScreen('login') }}
     >
+      {showKyds && (
+        <KydsModal
+          onSkip={() => setShowKyds(false)}
+          onSave={async (form) => {
+            try {
+              await fetch('/api/kyds', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  responses: form,
+                  user: { name: user.name, email: user.email, dept: user.dept },
+                }),
+              })
+            } finally {
+              setShowKyds(false)
+            }
+          }}
+        />
+      )}
       {screen === 'dashboard' && <Dashboard onStartFlow={startFlow} />}
 
       {screen === 'console' && (

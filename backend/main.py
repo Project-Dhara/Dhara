@@ -165,6 +165,29 @@ async def get_catalogue_groups():
         raise HTTPException(500, f"Catalogue error: {e}")
 
 
+@app.post("/api/kyds")
+async def save_kyds(request: Request):
+    """Store a KYDS (Know Your Dataset) form submission in Postgres."""
+    data = await request.json()
+    responses = data.get("responses")
+    if not isinstance(responses, dict):
+        raise HTTPException(400, "responses must be an object")
+    user = data.get("user") if isinstance(data.get("user"), dict) else {}
+
+    def _run():
+        conn = _cat.get_connection()
+        _cat.init_schema(conn)
+        entry_id = _cat.save_kyds_entry(conn, responses, user)
+        conn.close()
+        return entry_id
+
+    try:
+        entry_id = await asyncio.to_thread(_run)
+    except Exception as e:
+        raise HTTPException(500, f"KYDS save error: {e}")
+    return {"id": entry_id, "status": "saved"}
+
+
 @app.post("/api/catalogue/parse-metadata-excel")
 async def parse_metadata_excel(file: UploadFile = File(...)):
     """Reads a DES metadata workbook's `catalogue_summary` sheet and returns
