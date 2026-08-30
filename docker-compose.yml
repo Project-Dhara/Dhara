@@ -1,0 +1,23 @@
+# Option A: Postgres in Docker; run backend + frontend on the host.
+# Usage: docker compose up -d postgres
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: dhara-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dhara
+      POSTGRES_PASSWORD: dhara_local_password
+      POSTGRES_DB: dhara
+    ports:
+      - "5432:5432"
+    volumes:
+      - dhara_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dhara -d dhara"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  dhara_pg_data:

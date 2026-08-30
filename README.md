@@ -56,20 +56,43 @@ Excel" picker also auto-fills the form from a metadata workbook's
 
 ## Setup
 
-### 1. Environment
+### 1. Postgres (Docker) — Option A
+
+Run Postgres in Docker; keep backend and frontend on your machine.
+
+```bash
+# from dhara-poc/
+docker compose up -d postgres
+docker compose ps   # wait until postgres is healthy
+```
+
+Connection details (also in `backend/.env.example`):
+
+```
+postgresql://dhara:dhara_local_password@localhost:5432/dhara
+```
+
+Stop / reset:
+
+```bash
+docker compose down          # stop (keeps data)
+docker compose down -v       # stop and delete local DB volume
+```
+
+### 2. Environment
 
 Copy `backend/.env.example` to `backend/.env` and fill in:
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...          # Claude API key, used for extraction + enrichment
-DATABASE_URL=postgresql://...          # Neon (or any Postgres) connection string, sslmode=require
+ANTHROPIC_API_KEY=sk-ant-...          # optional if you paste the key in Settings UI
+DATABASE_URL=postgresql://dhara:dhara_local_password@localhost:5432/dhara
 ENABLE_GCS=false                      # local/dev: skip Excel uploads; set true for production
 GCS_BUCKET_NAME=dhara-toolkit-excel    # required only when ENABLE_GCS=true
 ```
 
-Local testing only needs `DATABASE_URL` (Neon). Catalogue push writes dataset rows and metadata to Postgres; Excel file URLs stay empty until you enable GCS. To turn GCS on for production, set `ENABLE_GCS=true`, fill `GCS_BUCKET_NAME`, and authenticate with GCP (`gcloud auth application-default login` or a service account).
+Local testing only needs `DATABASE_URL` pointing at Docker Postgres. Catalogue push writes dataset rows and metadata to Postgres; Excel file URLs stay empty until you enable GCS. To turn GCS on for production, set `ENABLE_GCS=true`, fill `GCS_BUCKET_NAME`, and authenticate with GCP (`gcloud auth application-default login` or a service account).
 
-### 2. Backend
+### 3. Backend
 
 ```bash
 cd backend
@@ -78,7 +101,7 @@ pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
-### 3. Frontend
+### 4. Frontend
 
 ```bash
 cd frontend
@@ -87,6 +110,13 @@ npm run dev
 ```
 
 Open http://localhost:5173 — Vite proxies `/api` to `localhost:8000`.
+
+Tables are created automatically on the first catalogue/KYDS API call (`init_schema`). Verify with:
+
+```bash
+curl http://localhost:8000/api/catalogue/groups
+docker exec -it dhara-postgres psql -U dhara -d dhara -c '\dt'
+```
 
 ## Deployment
 
