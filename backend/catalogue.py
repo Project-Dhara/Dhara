@@ -67,6 +67,9 @@ def init_schema(conn):
             ALTER TABLE metadata_groups ADD COLUMN IF NOT EXISTS user_email TEXT
         """)
         cur.execute("""
+            ALTER TABLE metadata_groups ADD COLUMN IF NOT EXISTS nmds_concepts JSONB DEFAULT '{}'
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS datasets (
                 dataset_id         TEXT PRIMARY KEY,
                 unique_dataset_id  TEXT,
@@ -243,8 +246,12 @@ def push_to_catalogue(
     meta_remarks,
     meta_excel_filename,
     user_email=None,
+    meta_nmds_concepts=None,   # list[{item_no, concept, details}], see backend/metadata_excel.py parse_concepts
 ):
     today = meta_last_updated or date.today().strftime("%B, %Y")
+    if isinstance(meta_key_statistics, (dict, list)):
+        meta_key_statistics = json.dumps(meta_key_statistics)
+    nmds_concepts = meta_nmds_concepts or []
     dataset_ids = []
     table_id_codes = []
 
@@ -282,14 +289,33 @@ def push_to_catalogue(
                     %s, %s, %s, %s, %s,
                     %s, %s, %s
                 )
+                ON CONFLICT (dataset_id) DO UPDATE SET
+                    unique_dataset_id = EXCLUDED.unique_dataset_id,
+                    table_id = EXCLUDED.table_id,
+                    metadata_id = EXCLUDED.metadata_id,
+                    title = EXCLUDED.title,
+                    short_description = EXCLUDED.short_description,
+                    long_description = EXCLUDED.long_description,
+                    category = EXCLUDED.category,
+                    geography = EXCLUDED.geography,
+                    frequency = EXCLUDED.frequency,
+                    time_period = EXCLUDED.time_period,
+                    data_source = EXCLUDED.data_source,
+                    units = EXCLUDED.units,
+                    classifications = EXCLUDED.classifications,
+                    concepts = EXCLUDED.concepts,
+                    age_column_keys = EXCLUDED.age_column_keys,
+                    source_excel = EXCLUDED.source_excel,
+                    original_excel = EXCLUDED.original_excel,
+                    user_email = EXCLUDED.user_email
             """, (
                 ds_id,
                 unique_ds_id,
                 table_code,
                 metadata_id if metadata_mode == "existing" else None,
-                table.get("description") or table.get("title", ""),
-                enriched.get("short_description") or table.get("description", ""),
-                enriched.get("long_description") or table.get("description", ""),
+                table.get("title") or table.get("table_id", ""),
+                enriched.get("short_description") or table.get("title", ""),
+                enriched.get("long_description") or table.get("title", ""),
                 meta_category,
                 meta_geography,
                 meta_frequency,
@@ -303,6 +329,11 @@ def push_to_catalogue(
                 table.get("original_excel_url"),
                 user_email,
             ))
+
+            # Re-pushing the same table (e.g. re-running the notebook) must not
+            # accumulate duplicate rows -- dataset_rows has no unique constraint
+            # of its own, so clear out this dataset's old rows first.
+            cur.execute("DELETE FROM dataset_rows WHERE dataset_id = %s", (ds_id,))
 
             for row_index, row in enumerate(rows):
                 cur.execute("""
@@ -341,11 +372,12 @@ def push_to_catalogue(
                 },
                 "classifications": _merge_classifications(enriched_data),
                 "concepts": STANDARD_CONCEPTS,
+                "nmds_concepts": nmds_concepts,
                 "dataset_inventory_list": [
                     {
                         "dataset_id": dataset_ids[j],
                         "table_id": table_id_codes[j],
-                        "title": tables[j].get("description") or tables[j].get("title", ""),
+                        "title": tables[j].get("title") or tables[j].get("table_id", ""),
                         "short_description": (enriched_data[j].get("short_description") if j < len(enriched_data) else "") or "",
                         "long_description": (enriched_data[j].get("long_description") if j < len(enriched_data) else "") or "",
                     }
@@ -359,13 +391,13 @@ def push_to_catalogue(
                     frequency, time_period, data_source, last_updated_date,
                     future_release, key_statistics, remarks,
                     metadata_excel, table_ids, classifications, concepts, full_record,
-                    user_email
+                    user_email, nmds_concepts
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s,
                     %s, %s, %s,
                     %s, %s, %s, %s, %s,
-                    %s
+                    %s, %s
                 )
             """, (
                 metadata_id,
@@ -387,6 +419,7 @@ def push_to_catalogue(
                 STANDARD_CONCEPTS,
                 json.dumps(full_record),
                 user_email,
+                json.dumps(nmds_concepts),
             ))
 
             # Back-fill metadata_id on datasets just inserted

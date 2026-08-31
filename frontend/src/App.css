@@ -1140,6 +1140,38 @@ body {
 .meta-field-missing.meta-badge { background: rgba(217, 91, 104, 0.08); border-color: #e3b3ba; }
 input.meta-field-missing.meta-primary-input { background: rgba(217, 91, 104, 0.06); border-color: #e3b3ba; }
 
+/* ── NMDS concept metadata step ──────────────────────────────────────────── */
+.nmds-form { display: flex; flex-direction: column; gap: 16px; }
+
+.nmds-topic-pills { display: flex; flex-wrap: wrap; gap: 8px; }
+.nmds-topic-pill {
+  display: flex; align-items: center; gap: 6px; padding: 6px 12px 6px 8px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 20px;
+  font-family: 'Inter', sans-serif; font-size: 12.5px; font-weight: 500; color: var(--ink-soft);
+  cursor: pointer; transition: border-color .12s ease, background .12s ease, color .12s ease;
+}
+.nmds-topic-pill:hover { border-color: var(--teal); color: var(--ink); }
+.nmds-topic-pill-num {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%; background: #ece4d6;
+  font-size: 10.5px; font-weight: 700; color: var(--ink-soft); flex: none;
+}
+.nmds-topic-pill-active { border-color: var(--teal); background: var(--sage); color: var(--ink); }
+.nmds-topic-pill-active .nmds-topic-pill-num { background: var(--teal); color: #fff; }
+.nmds-topic-pill-done:not(.nmds-topic-pill-active) .nmds-topic-pill-num { background: var(--teal); color: #fff; }
+
+.nmds-topic-box {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 18px 20px; display: flex; flex-direction: column; gap: 14px;
+}
+.nmds-topic-box-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.nmds-topic-box-title { font-size: 16px; font-weight: 700; color: var(--ink); }
+.nmds-topic-box-progress { font-size: 12.5px; color: var(--ink-soft); white-space: nowrap; }
+.nmds-topic-fields { display: flex; flex-direction: column; gap: 12px; }
+.nmds-topic-box-nav { display: flex; justify-content: space-between; gap: 12px; padding-top: 4px; border-top: 1px solid var(--line); margin-top: 4px; }
+.nmds-field { padding-left: 0; }
+.nmds-field .meta-long-label { color: var(--ink); }
+
 /* ── KYDS characterisation popup (post-login, optional) ──────────────────── */
 .kyds-overlay {
   position: fixed;

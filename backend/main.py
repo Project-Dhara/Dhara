@@ -16,7 +16,7 @@ load_dotenv()
 import auth as _auth
 from extractor import TableExtractor
 import catalogue as _cat
-from metadata_excel import parse_catalogue_summary, parse_metadata_workbook
+from metadata_excel import parse_catalogue_summary, parse_metadata_workbook, parse_concept_file
 from catalogue_matching import match_tables_to_metadata, match_result_to_push_groups
 from table_export import table_to_excel_bytes
 from original_sheet_export import extract_sheet_with_formatting_from_bytes
@@ -31,6 +31,8 @@ app.add_middleware(
 )
 
 LLM_KEY_HEADER = "x-llm-api-key"
+LLM_PROVIDER_HEADER = "x-llm-provider"
+_KNOWN_LLM_PROVIDERS = {"anthropic", "openai"}
 
 # GCS is opt-in so local/dev can push catalogue rows to Neon without a
 # bucket. Set ENABLE_GCS=true (and GCS_BUCKET_NAME) for production Excel
@@ -50,12 +52,15 @@ def _gcs_bucket_name() -> str:
 
 
 def _extractor_for(request: Request) -> TableExtractor:
-    """Build a TableExtractor from the caller's own LLM API key, sent on
-    every LLM-backed request from the frontend's Settings screen. No key on
-    the request means no LLM calls -- this replaces the old .env-based
-    ANTHROPIC_API_KEY / SKIP_LLM toggle, which is no longer read."""
+    """Build a TableExtractor from the caller's own LLM API key (and chosen
+    provider), sent on every LLM-backed request from the frontend's Settings
+    screen. No key on the request means no LLM calls -- this replaces the old
+    .env-based ANTHROPIC_API_KEY / SKIP_LLM toggle, which is no longer read."""
     key = request.headers.get(LLM_KEY_HEADER, "").strip() or None
-    return TableExtractor(api_key=key, skip_llm=not key)
+    provider = request.headers.get(LLM_PROVIDER_HEADER, "").strip().lower() or None
+    if provider not in _KNOWN_LLM_PROVIDERS:
+        provider = None  # e.g. "self-hosted" or unset -- let extractor.py auto-detect
+    return TableExtractor(api_key=key, skip_llm=not key, provider=provider)
 
 
 def require_user(request: Request) -> str:
@@ -182,8 +187,8 @@ async def table_metadata(request: Request, user_email: str = Depends(require_use
     extractor = _extractor_for(request)
     try:
         categories = extractor.extract_category_metadata(
-            title=data.get("title", ""),
-            description=data.get("description", ""),
+            title=data.get("table_id", ""),
+            description=data.get("title", ""),
             raw_header_rows=data.get("raw_header_rows", []),
             columns=data.get("columns", []),
             sample_rows=data.get("sample_rows", []),
@@ -295,6 +300,23 @@ async def parse_metadata_excel(file: UploadFile = File(...), user_email: str = D
     return {"fields": fields}
 
 
+@app.post("/api/catalogue/parse-concept-file")
+async def parse_concept_metadata_file(file: UploadFile = File(...), user_email: str = Depends(require_user)):
+    """Reads an NMDS concept metadata file -- either a standalone CSV or a
+    full metadata workbook's nmds_concept_meta_data sheet -- and returns the
+    concept rows used to prefill the NMDS concept metadata step."""
+    if not file.filename.lower().endswith((".xlsx", ".xls", ".csv")):
+        raise HTTPException(400, "Only .xlsx / .xls / .csv files are supported")
+    content = await file.read()
+    try:
+        concepts = await asyncio.to_thread(parse_concept_file, content, file.filename)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Failed to parse concept metadata file: {e}")
+    return {"concepts": concepts}
+
+
 @app.post("/api/catalogue/batch-extract")
 async def batch_extract(request: Request, files: list[UploadFile] = File(...), user_email: str = Depends(require_user)):
     """Runs table extraction across multiple uploaded dataset workbooks
@@ -395,6 +417,7 @@ async def batch_push(
     request: Request,
     groups_json: str = Form(...),
     metadata_files: list[UploadFile] = File(None),
+    nmds_concepts_json: Optional[str] = Form(None),
     user_email: str = Depends(require_user),
 ):
     """Pushes a reviewed/confirmed batch mapping to the catalogue -- one
@@ -408,6 +431,7 @@ async def batch_push(
     connection before it could commit. GCS is skipped unless ENABLE_GCS=true."""
     groups = _json.loads(groups_json)
     extractor = _extractor_for(request)
+    nmds_concepts = _json.loads(nmds_concepts_json) if nmds_concepts_json else None
 
     metadata_by_index = {}
     if metadata_files:
@@ -471,6 +495,7 @@ async def batch_push(
                     meta.get("remarks"),
                     p["excel_url"],
                     user_email,
+                    nmds_concepts,
                 )
                 results.append(result)
         finally:
@@ -553,10 +578,12 @@ async def push_to_catalogue(
     meta_key_statistics: Optional[str] = Form(None),
     meta_remarks: Optional[str] = Form(None),
     meta_excel: Optional[UploadFile] = File(None),
+    meta_nmds_concepts: Optional[str] = Form(None),
     user_email: str = Depends(require_user),
 ):
     tables = _json.loads(tables_json)
     extractor = _extractor_for(request)
+    nmds_concepts = _json.loads(meta_nmds_concepts) if meta_nmds_concepts else None
 
     # Upload Excel to GCS if provided
     excel_url = None
@@ -583,7 +610,7 @@ async def push_to_catalogue(
             meta_geography, meta_frequency, meta_time_period,
             meta_data_source, meta_last_updated, meta_future_release,
             meta_key_statistics, meta_remarks, excel_url,
-            user_email,
+            user_email, nmds_concepts,
         )
         conn.close()
         return result

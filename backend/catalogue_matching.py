@@ -81,13 +81,13 @@ def _sheet_suffix(sheet_name: str) -> str:
 
 
 def extracted_table_code(table: dict) -> str:
-    """Derives a matchable code from an extracted table's title + sheet
+    """Derives a matchable code from an extracted table's table_id + sheet
     name. Unlike normalize_inventory_code, ALL parenthetical content in the
-    title is stripped -- see module docstring for why."""
-    title = str(table.get("title", "") or "").upper()
-    title = re.sub(r"TABLE", "", title)
-    title = re.sub(r"\([^)]*\)", "", title)
-    base = re.sub(r"[^A-Z0-9&]", "", title)
+    table_id is stripped -- see module docstring for why."""
+    table_id = str(table.get("table_id", "") or "").upper()
+    table_id = re.sub(r"TABLE", "", table_id)
+    table_id = re.sub(r"\([^)]*\)", "", table_id)
+    base = re.sub(r"[^A-Z0-9&]", "", table_id)
     suffix = _sheet_suffix(table.get("sheet", ""))
     return f"{base}{suffix}" if suffix else base
 
@@ -153,7 +153,7 @@ def _groups_without_metadata(extracted_tables: list) -> dict:
 
 def match_tables_to_metadata(extracted_tables: list, metadata_workbooks: list) -> dict:
     """
-    extracted_tables: [{id, title, description, sheet, source_file, ...}, ...]
+    extracted_tables: [{id, table_id, title, sheet, source_file, ...}, ...]
     metadata_workbooks: [{file_name, summary, inventory, concepts, classifications}, ...]
 
     Returns:
@@ -217,12 +217,12 @@ def match_tables_to_metadata(extracted_tables: list, metadata_workbooks: list) -
                 hit, confidence = candidates[0], "code"
             elif len(candidates) > 1:
                 # The extracted ID itself often carries a breakdown label
-                # (e.g. "..._HINDU_...") that the title/description doesn't,
+                # (e.g. "..._HINDU_...") that the table_id/title doesn't,
                 # since the extractor derives it from sub-header rows deeper
                 # in the sheet -- include it in the search text.
                 haystack = " ".join([
+                    str(table.get("table_id", "")),
                     str(table.get("title", "")),
-                    str(table.get("description", "")),
                     str(table.get("sheet", "")),
                     str(table.get("id", "")),
                 ]).lower()

@@ -6,7 +6,7 @@ import Settings from './components/Settings'
 import Catalogue from './components/Catalogue'
 import Console from './components/Console'
 import KydsModal from './components/KydsModal'
-import { getLlmApiKey, setLlmApiKey } from './llmKey'
+import { getLlmApiKey, setLlmApiKey, getLlmProvider, setLlmProvider } from './llmKey'
 import { getStoredUser, clearSession, setSession, withAuthHeaders } from './auth'
 
 export default function App() {
@@ -20,7 +20,7 @@ export default function App() {
     storedUser || { name: '', role: 'Administrator', email: '', dept: '' }
   )
   const savedKey = getLlmApiKey()
-  const [settings, setSettings] = useState({ provider: 'Anthropic', apiKey: savedKey })
+  const [settings, setSettings] = useState({ provider: getLlmProvider() || 'Anthropic', apiKey: savedKey })
   const [keySaved, setKeySaved] = useState(!!savedKey)
 
   if (!loggedIn) {
@@ -52,6 +52,7 @@ export default function App() {
 
   const handleSaveKey = () => {
     setLlmApiKey(settings.apiKey.trim())
+    setLlmProvider(settings.provider.trim())
     setKeySaved(!!settings.apiKey.trim())
   }
 

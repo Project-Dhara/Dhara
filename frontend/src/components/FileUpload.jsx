@@ -7,12 +7,14 @@ export default function FileUpload({
   hint = 'XLSX, CSV — drag and drop or browse',
   selectedName,
   compact = false,
+  accept: acceptExt = '.xlsx,.xls',
+  extensionRegex = /\.(xlsx|xls)$/i,
 }) {
   const inputRef = useRef()
   const [dragging, setDragging] = useState(false)
 
   const accept = (file) => {
-    if (file && /\.(xlsx|xls)$/i.test(file.name)) onUpload(file)
+    if (file && extensionRegex.test(file.name)) onUpload(file)
   }
 
   return (
@@ -20,7 +22,7 @@ export default function FileUpload({
       <input
         ref={inputRef}
         type="file"
-        accept=".xlsx,.xls"
+        accept={acceptExt}
         style={{ display: 'none' }}
         onChange={(e) => accept(e.target.files[0])}
         disabled={loading}

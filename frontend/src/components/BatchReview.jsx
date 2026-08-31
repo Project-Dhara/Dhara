@@ -3,6 +3,8 @@ import { withLlmKeyHeaders } from '../llmKey'
 import { withAuthHeaders } from '../auth'
 import { CLICK_THROUGH_ENABLED } from '../clickThrough'
 import MetadataSheetGrid from './MetadataSheetGrid'
+import NmdsConceptForm from './NmdsConceptForm'
+import { emptyNmdsFields, nmdsFieldsToList, mergeNmdsConcepts } from '../nmdsConcepts'
 
 const CONFIDENCE_LABEL = {
   exact: 'Exact ID match',
@@ -17,9 +19,14 @@ const CONFIDENCE_LABEL = {
 export default function BatchReview({ matchResult, metadataFiles, onDone, onCancel }) {
   const [groups, setGroups] = useState(matchResult.groups)
   const [assignments, setAssignments] = useState({}) // unmatchedTableIndex -> groupIndex ('' = skip)
-  const [step, setStep] = useState('review') // review | pushing | done | error
+  const [step, setStep] = useState('review') // review | nmds | pushing | done | error
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
+
+  const [nmdsFields, setNmdsFields] = useState(emptyNmdsFields())
+  const [nmdsFile, setNmdsFile] = useState(null)
+  const [nmdsParsing, setNmdsParsing] = useState(false)
+  const [nmdsParseError, setNmdsParseError] = useState('')
 
   const updateMetadata = (groupIndex, metadata) => {
     setGroups((prev) => prev.map((g, i) => (i === groupIndex ? { ...g, metadata } : g)))
@@ -27,6 +34,29 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
 
   const assignedCount = Object.values(assignments).filter((v) => v !== '' && v !== undefined).length
   const totalMatched = groups.reduce((sum, g) => sum + g.matched_tables.length, 0) + assignedCount
+
+  const handleNmdsFileSelected = async (file) => {
+    setNmdsFile(file)
+    setNmdsParseError('')
+    if (!file) return
+
+    setNmdsParsing(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/catalogue/parse-concept-file', withAuthHeaders({ method: 'POST', body: fd }))
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Could not read this file' }))
+        throw new Error(err.detail || 'Could not read this file')
+      }
+      const { concepts } = await res.json()
+      setNmdsFields((prev) => mergeNmdsConcepts(prev, concepts))
+    } catch (e) {
+      setNmdsParseError(e.message)
+    } finally {
+      setNmdsParsing(false)
+    }
+  }
 
   const handlePush = async () => {
     setStep('pushing')
@@ -53,6 +83,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
       const fd = new FormData()
       fd.append('groups_json', JSON.stringify(finalGroups))
       metadataFiles.forEach((f) => fd.append('metadata_files', f))
+      fd.append('nmds_concepts_json', JSON.stringify(nmdsFieldsToList(nmdsFields)))
 
       const res = await fetch('/api/catalogue/batch-push', withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: fd })))
       if (!res.ok) {
@@ -95,6 +126,21 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
 
       {error && <div className="error-banner"><strong>Error:</strong> {error}</div>}
 
+      {step === 'nmds' || step === 'pushing' || step === 'error' ? (
+        <NmdsConceptForm
+          fields={nmdsFields}
+          onFieldChange={(concept, value) => setNmdsFields((prev) => ({ ...prev, [concept]: value }))}
+          onFileSelected={handleNmdsFileSelected}
+          file={nmdsFile}
+          parsing={nmdsParsing}
+          parseError={nmdsParseError}
+          onBack={() => setStep('review')}
+          onSave={handlePush}
+          saving={step === 'pushing'}
+          saveDisabled={step === 'pushing'}
+        />
+      ) : (
+        <>
       <MetadataSheetGrid
         rows={groups.map((g, gi) => ({ id: gi, label: g.file_name, values: g.metadata }))}
         onChange={(gi, key, value) => updateMetadata(gi, { ...groups[gi].metadata, [key]: value })}
@@ -185,13 +231,17 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
           </table>
         </div>
       )}
+        </>
+      )}
 
+      {step !== 'nmds' && step !== 'pushing' && step !== 'error' && (
       <div className="push-modal-footer batch-review-footer">
         <button className="console-secondary-btn" onClick={onCancel}>Cancel</button>
-        <button className="console-primary-btn" disabled={step === 'pushing' || totalMatched === 0} onClick={handlePush}>
-          {step === 'pushing' ? 'Pushing…' : `Save & continue to classification →`}
+        <button className="console-primary-btn" disabled={totalMatched === 0} onClick={() => setStep('nmds')}>
+          Show NMDS concept metadata →
         </button>
       </div>
+      )}
     </div>
   )
 }

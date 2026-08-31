@@ -1,0 +1,177 @@
+"""Validation helpers for extracted Table ID / Table Title fields.
+
+Two independent validators are provided, sharing a common result shape so
+callers can inspect or compare them:
+
+    {
+        "valid": bool,
+        "issues": [str, ...],
+        "table_id": str,
+        "title": str,
+    }
+
+* validate_table_fields_code -- fast, deterministic, regex/heuristic based.
+* validate_table_fields_llm  -- asks an OpenAI model to judge the pair.
+"""
+import json
+import os
+import re
+from typing import Dict, List, Optional
+
+import openai
+
+TABLE_MARKER_RE = re.compile(r"\bTABLE[\s:\-]", re.IGNORECASE)
+
+OPENAI_VALIDATION_MODEL = "gpt-4o"
+
+
+def validate_table_fields_code(table_id: str, title: str) -> Dict:
+    """Deterministic, code-based validation of a table's ID/title pair.
+
+    Flags the scenarios that commonly go wrong during extraction:
+      - Table ID and Table Title appear swapped.
+      - The ID part has no "TABLE" prefix at all.
+      - Either the Table ID or the Table Title is missing.
+    """
+    table_id = (table_id or "").strip()
+    title = (title or "").strip()
+    issues: List[str] = []
+
+    id_has_marker = bool(TABLE_MARKER_RE.search(table_id))
+    title_has_marker = bool(TABLE_MARKER_RE.search(title))
+
+    if not table_id:
+        issues.append("Table ID is missing")
+    if not title:
+        issues.append("Table Title is missing")
+
+    if table_id and title and title_has_marker and not id_has_marker:
+        issues.append("Table ID and Table Title appear to be swapped")
+
+    if table_id and not id_has_marker and not title_has_marker:
+        issues.append('Table ID has no "TABLE" prefix')
+
+    return {
+        "valid": not issues,
+        "issues": issues,
+        "table_id": table_id,
+        "title": title,
+    }
+
+
+def validate_table_fields_llm(
+    table_id: str,
+    title: str,
+    api_key: Optional[str] = None,
+    model: str = OPENAI_VALIDATION_MODEL,
+) -> Dict:
+    """Prompt-based validation using an OpenAI model to judge whether the
+    extracted Table ID and Table Title are correctly identified and
+    assigned (not swapped, not missing, well-formed)."""
+    table_id = (table_id or "").strip()
+    title = (title or "").strip()
+
+    client = openai.OpenAI(api_key=api_key or os.environ.get("OPENAI_API_KEY"))
+
+# f"""You are validating two fields extracted from a statistical table sheet.
+
+# Table ID (extracted): {table_id!r}
+
+# Table Title (extracted): {title!r}
+
+# Definitions:
+
+# * **Table ID** is a short table identifier. A valid Table ID normally contains the word `"TABLE"` as an identifier marker, followed by the table code. Variations in spacing or punctuation are valid, for example:
+
+#   * `"TABLE: D-12"`
+#   * `"TABLE : D-12"`
+#   * `"TABLE-D12"`
+#   * `"TABLE D 12"`
+
+#   The presence of `"TABLE"` in the **Table ID is expected and is NOT an error**.
+
+# * **Table Title** is usually longer descriptive free text explaining what the table contains, for example:
+#   `"PREGNANCY RELATED DEATHS BY AGE AND OCCUPATION (URBAN)"`.
+
+# Check **ONLY** for the following problems. Do not invent or report any other issue:
+
+# 1. **Swapped fields**
+
+#    * The Table ID and Table Title appear to be swapped.
+#    * For example, the Table ID contains long descriptive title-like text while the Table Title contains a short table identifier such as `"TABLE: D-18"`.
+
+# 2. **Invalid marker in Table Title**
+
+#    * The Table Title contains `"DESCRIPTION"` or `"SL.NO"` (case-insensitive) as a marker/header rather than as genuine descriptive content.
+#    * Do **not** report `"TABLE"` in the Table ID as an issue.
+
+# 3. **Missing field**
+
+#    * The Table ID is missing, empty, null, or contains only whitespace.
+#    * The Table Title is missing, empty, null, or contains only whitespace.
+
+# Important constraints:
+
+# * Do NOT report an issue merely because the Table ID contains `"TABLE"`. That is normal and expected.
+# * Do NOT report an issue saying `"The Table Title contains 'TABLE' as a marker"` unless such a rule is explicitly listed above. It is **not** one of the allowed validation rules.
+# * Do NOT check whether the Table ID is correctly formatted beyond what is necessary to detect swapped or missing fields.
+# * Do NOT infer additional validation rules.
+# * Report every applicable issue from the three categories above and no others.
+
+# If none of the listed problems apply, return:
+
+# {"valid": "true", "issues": []}
+
+# Otherwise return:
+
+# {"valid": "false", "issues": ["<issue 1>", "<issue 2>", ...]}
+
+# Respond with ONLY the JSON object. Do not include explanations, markdown, or additional text.
+# """
+    prompt = f"""You are validating fields extracted from a statistical table sheet.
+
+Table ID (extracted): {table_id!r}
+Table Title (extracted): {title!r}
+
+A correct Table ID contains the word "TABLE" as a marker (any spacing/punctuation
+around it is fine, e.g. "TABLE: D-12", "TABLE : D-12", "TABLE-D12", "TABLE D 12"
+are all valid -- do not flag these as missing the marker just because of spacing).
+The Table Title is a longer free-text sentence describing what the table
+contains.
+
+Check for these problems, and list every one that applies:
+1. The Table ID and Table Title look swapped (the title-looking
+   text is in the ID field, or vice versa).
+2. The Table Title contains "DESCRIPTION" or "SL.NO" as a marker.
+3. The Table ID or Table Title is missing/empty.
+
+If none of these problems apply, return valid=true and an empty issues list.
+Respond with ONLY a JSON object of this exact shape:
+{{"valid": true or false, "issues": ["...", ...]}}
+"""
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0,
+    )
+    text = response.choices[0].message.content or "{}"
+
+    try:
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        parsed = json.loads(match.group(0)) if match else {}
+    except (json.JSONDecodeError, AttributeError):
+        parsed = {}
+
+    issues = parsed.get("issues", [])
+    # Trust the issues list over the model's own "valid" flag -- models
+    # occasionally return valid=false with an empty issues list, which is
+    # a self-contradiction we shouldn't propagate to the caller.
+    valid = not issues
+
+    return {
+        "valid": bool(valid),
+        "issues": list(issues),
+        "table_id": table_id,
+        "title": title,
+    }

@@ -7,9 +7,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import openpyxl
 import anthropic
-from anthropic import RateLimitError
+from anthropic import RateLimitError as AnthropicRateLimitError
+import openai
+from openai import RateLimitError as OpenAIRateLimitError
 
 ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
+OPENAI_MODEL = "gpt-4o-mini"
 
 DDI_PREFIX = "DDI_DEL_DES_VS"
 DDI_YEAR   = "2024"
@@ -27,31 +30,31 @@ def _build_ddi_id(tbl: dict) -> str:
     """
     Build a DDI-format table ID.
 
-    _strip_title_desc puts the raw title rows into tbl["title"] / tbl["description"];
+    _strip_title_desc puts the raw title rows into tbl["table_id"] / tbl["title"];
     raw_header_rows holds the COLUMN header rows (not the table label rows).
 
     Mapping:
-      tbl["title"]         e.g. "Table : D-3"                                  → code "D3"
-      tbl["description"]   e.g. "Live Birth by Age … (Rural)"                  → top  "RURAL"
+      tbl["table_id"]      e.g. "Table : D-3"                                  → code "D3"
+      tbl["title"]         e.g. "Live Birth by Age … (Rural)"                  → top  "RURAL"
       raw_header_rows[0]   e.g. ["Religion-All", None, …]  (optional sub-row)  → nxt  "ALL"
 
     Result: DDI_DEL_DES_VS_B14_RURAL_ALL_2024_V1
     """
-    title       = tbl.get("title", "")
-    description = tbl.get("description", "")
+    table_id = tbl.get("table_id", "")
+    title    = tbl.get("title", "")
     raw_headers = tbl.get("raw_header_rows", [])
 
-    # 1. Table code from title row: "Table : D-3" → "D3", "Table : B-14" → "B14"
+    # 1. Table code from table_id row: "Table : D-3" → "D3", "Table : B-14" → "B14"
     code = ""
-    m = re.search(r"\b([A-Za-z]-\d+(?:\.\d+)?)\b", title)
+    m = re.search(r"\b([A-Za-z]-\d+(?:\.\d+)?)\b", table_id)
     if m:
         code = re.sub(r"[^A-Z0-9]", "", m.group(1).upper())
 
-    # 2. Top-level from the LAST parenthetical in description: "(Urban)" → "URBAN"
+    # 2. Top-level from the LAST parenthetical in title: "(Urban)" → "URBAN"
     #    The geographic/scope qualifier is always the last parenthetical.
-    #    Fall back to title if description has none.
+    #    Fall back to table_id if title has none.
     top = ""
-    for src in [description, title]:
+    for src in [title, table_id]:
         matches = re.findall(r"\(([^)]+)\)", src)
         if matches:
             candidate = re.sub(r"[^A-Z0-9]", "", matches[-1].strip().upper())
@@ -84,7 +87,15 @@ def _build_ddi_id(tbl: dict) -> str:
     return "_".join(parts)
 
 
-def _parse_retry_delay(error: RateLimitError) -> Optional[float]:
+def _detect_provider(api_key: Optional[str]) -> str:
+    """Guess the LLM provider from an API key's prefix. Anthropic keys are
+    "sk-ant-..."; anything else is treated as an OpenAI key."""
+    if api_key and api_key.startswith("sk-ant-"):
+        return "anthropic"
+    return "openai"
+
+
+def _parse_retry_delay(error: Exception) -> Optional[float]:
     """
     Extract the server-suggested retry delay from a 429 error body.
     Gemini embeds a retryDelay field (e.g. "24s") in the error details.
@@ -103,7 +114,7 @@ def _parse_retry_delay(error: RateLimitError) -> Optional[float]:
     return None
 
 
-def _is_daily_quota_error(error: RateLimitError) -> bool:
+def _is_daily_quota_error(error: Exception) -> bool:
     """
     Return True when the quota that's exhausted resets daily (not per-minute).
     Retrying in the same session won't help — fail fast so the caller falls
@@ -124,16 +135,17 @@ def _is_daily_quota_error(error: RateLimitError) -> bool:
     return False
 
 
-def _call_with_retry(client: anthropic.Anthropic, max_retries: int = 3, **kwargs):
+def _call_with_retry(call, max_retries: int = 3):
     """
-    Call client.messages.create with smart backoff on RateLimitError.
+    Call `call()` (a zero-arg thunk wrapping a provider-specific create call)
+    with smart backoff on RateLimitError.
     - Checks Retry-After header for the suggested wait time.
     - Falls back to 30 s / 60 s exponential backoff when no header is present.
     """
     for attempt in range(max_retries):
         try:
-            return client.messages.create(**kwargs)
-        except RateLimitError as e:
+            return call()
+        except (AnthropicRateLimitError, OpenAIRateLimitError) as e:
             if attempt == max_retries - 1:
                 raise
             wait = _parse_retry_delay(e) or (30 * (2 ** attempt))
@@ -167,12 +179,18 @@ def _extract_json_with_key(text: str, required_key: str) -> Optional[Dict]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TableExtractor:
-    def __init__(self, api_key: Optional[str] = None, skip_llm: bool = False):
+    def __init__(self, api_key: Optional[str] = None, skip_llm: bool = False, provider: Optional[str] = None):
         self.skip_llm = skip_llm
-        # Don't touch the Anthropic SDK at all in skip_llm mode -- constructing
-        # it raises if no API key is configured anywhere, which would otherwise
-        # make SKIP_LLM=1 unusable without also having a (unused) key set.
-        self.client = None if skip_llm else anthropic.Anthropic(api_key=api_key)
+        self.provider = provider or _detect_provider(api_key)
+        # Don't touch the SDK at all in skip_llm mode -- constructing it raises
+        # if no API key is configured anywhere, which would otherwise make
+        # SKIP_LLM=1 unusable without also having a (unused) key set.
+        if skip_llm:
+            self.client = None
+        elif self.provider == "openai":
+            self.client = openai.OpenAI(api_key=api_key)
+        else:
+            self.client = anthropic.Anthropic(api_key=api_key)
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -215,16 +233,16 @@ class TableExtractor:
             else:
                 seen_ids[base] = 1
 
-        # Within each sheet, if multiple tables share the same title (ignoring
+        # Within each sheet, if multiple tables share the same table_id (ignoring
         # whitespace differences like "TABLE: D-3" vs "TABLE : D-3"), keep the
-        # first one's title unchanged and suffix later ones with (2), (3)…
-        seen: Dict[Tuple[str, str], int] = {}  # (sheet, normalised_title) -> count seen so far
+        # first one's table_id unchanged and suffix later ones with (2), (3)…
+        seen: Dict[Tuple[str, str], int] = {}  # (sheet, normalised_table_id) -> count seen so far
         for tbl in all_tables:
-            norm_key = (tbl["sheet"], re.sub(r'\s+', '', tbl.get("title", "")).lower())
+            norm_key = (tbl["sheet"], re.sub(r'\s+', '', tbl.get("table_id", "")).lower())
             count = seen.get(norm_key, 0) + 1
             seen[norm_key] = count
             if count > 1:
-                tbl["title"] = f"{tbl['title']} ({count})"
+                tbl["table_id"] = f"{tbl['table_id']} ({count})"
 
         return all_tables
 
@@ -338,7 +356,7 @@ class TableExtractor:
         self, grid, start: int, end: int, sheet_name: str, filename: str, idx: int
     ) -> Optional[Dict]:
         block = grid[start : end + 1]
-        title, description, body_start = self._strip_title_desc(block)
+        table_id, title, body_start = self._strip_title_desc(block)
         body = block[body_start:]
         if not body:
             return None
@@ -349,7 +367,7 @@ class TableExtractor:
             structure = self._heuristic_structure(body, n_cols)
         else:
             try:
-                structure = self._direct_llm_structure(body, title, description, n_cols)
+                structure = self._direct_llm_structure(body, table_id, title, n_cols)
             except Exception as e:
                 print(f"Structure analysis failed ({e}), using heuristic")
                 structure = self._heuristic_structure(body, n_cols)
@@ -421,8 +439,8 @@ class TableExtractor:
 
         return {
             "id": f"{filename}__{sheet_name}__{idx}",
-            "title": title or f"Table {idx+1}",
-            "description": description,
+            "table_id": table_id or f"Table {idx+1}",
+            "title": title,
             "sheet": sheet_name,
             "filename": filename,
             "columns": columns,
@@ -470,6 +488,25 @@ class TableExtractor:
             body_start += 1
         return title, description, body_start
 
+    # ── LLM completion (provider-agnostic) ───────────────────────────────────
+
+    def _complete(self, prompt: str, max_tokens: int) -> str:
+        """Single-turn plain-text completion, routed to whichever provider
+        this extractor was constructed for."""
+        if self.provider == "openai":
+            resp = _call_with_retry(lambda: self.client.chat.completions.create(
+                model=OPENAI_MODEL,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+            ))
+            return resp.choices[0].message.content.strip()
+        resp = _call_with_retry(lambda: self.client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+        ))
+        return resp.content[0].text.strip()
+
     # ─────────────────────────────────────────────────────────────────────────
     # STRATEGY A — Direct LLM (single prompt → single response)
     # ─────────────────────────────────────────────────────────────────────────
@@ -501,13 +538,7 @@ Return JSON with:
 For multi-level headers (group row + sub-column row), combine: "AGE_<1", "AGE_1-4"
 Return ONLY valid JSON, no markdown fences."""
 
-        resp = _call_with_retry(
-            self.client,
-            model=ANTHROPIC_MODEL,
-            max_tokens=2048,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = resp.content[0].text.strip()
+        text = self._complete(prompt, max_tokens=2048)
         text = re.sub(r"```[a-z]*\n?", "", text).strip().rstrip("`").strip()
         return json.loads(text)
 
@@ -600,13 +631,7 @@ Return ONLY a valid JSON object — no prose, no markdown fences:
   ]
 }}"""
 
-        resp = _call_with_retry(
-            self.client,
-            model=ANTHROPIC_MODEL,
-            max_tokens=4096,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = resp.content[0].text.strip()
+        text = self._complete(prompt, max_tokens=1000)
         parsed = _extract_json_with_key(text, "categories")
         if parsed is None:
             return []
@@ -694,8 +719,8 @@ Return ONLY a valid JSON object — no prose, no markdown fences:
         """Use Claude to generate DES-catalogue-compatible metadata for one table."""
         if self.skip_llm:
             return {
-                "short_description": table.get("description", "") or table.get("title", ""),
-                "long_description": table.get("description", "") or table.get("title", ""),
+                "short_description": table.get("title", "") or table.get("table_id", ""),
+                "long_description": table.get("title", "") or table.get("table_id", ""),
                 "units": "Count",
                 "classifications": {},
                 "age_column_keys": {},
@@ -706,11 +731,11 @@ Return ONLY a valid JSON object — no prose, no markdown fences:
 
         prompt = f"""You are a data cataloguer for the Delhi Economic Survey (DES). Given an extracted Excel table, generate structured catalogue metadata.
 
-Table Title: {table.get('title', '')}
+Table ID: {table.get('table_id', '')}
 Sheet: {table.get('sheet', '')}
 Columns ({len(columns)}): {columns}
 Sample rows (first 6): {json.dumps(sample_rows, default=str)}
-Existing description: {table.get('description', '')}
+Existing title: {table.get('title', '')}
 
 Return ONLY a JSON object with exactly these fields:
 {{
@@ -739,13 +764,7 @@ Rules for age_column_keys:
 
 Return only valid JSON, no markdown fences, no explanation."""
 
-        resp = _call_with_retry(
-            self.client,
-            model=ANTHROPIC_MODEL,
-            max_tokens=1500,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = resp.content[0].text.strip()
+        text = self._complete(prompt, max_tokens=1500)
         # strip markdown fences
         text = re.sub(r"^```[a-z]*\n?", "", text)
         text = re.sub(r"\n?```$", "", text).strip()
@@ -756,8 +775,8 @@ Return only valid JSON, no markdown fences, no explanation."""
             result = parsed or {}
 
         return {
-            "short_description": result.get("short_description", table.get("description", "")),
-            "long_description": result.get("long_description", table.get("description", "")),
+            "short_description": result.get("short_description", table.get("title", "")),
+            "long_description": result.get("long_description", table.get("title", "")),
             "units": result.get("units", "Count"),
             "classifications": result.get("classifications", {}),
             "age_column_keys": result.get("age_column_keys", {}),

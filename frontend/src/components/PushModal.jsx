@@ -3,6 +3,8 @@ import { withLlmKeyHeaders } from '../llmKey'
 import { withAuthHeaders } from '../auth'
 import { CLICK_THROUGH_ENABLED } from '../clickThrough'
 import MetadataSheetGrid from './MetadataSheetGrid'
+import NmdsConceptForm from './NmdsConceptForm'
+import { emptyNmdsFields, nmdsFieldsToList, mergeNmdsConcepts } from '../nmdsConcepts'
 
 const FORM_FIELDS = [
   'title', 'product', 'category', 'geography', 'frequency', 'time_period',
@@ -52,6 +54,11 @@ export default function PushModal({ tables, groups, onClose, inline = false, onP
   const [step, setStep] = useState('config')
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
+
+  const [nmdsFields, setNmdsFields] = useState(emptyNmdsFields())
+  const [nmdsFile, setNmdsFile] = useState(null)
+  const [nmdsParsing, setNmdsParsing] = useState(false)
+  const [nmdsParseError, setNmdsParseError] = useState('')
 
   useEffect(() => {
     fetch('/api/catalogue/groups', withAuthHeaders())
@@ -142,6 +149,29 @@ export default function PushModal({ tables, groups, onClose, inline = false, onP
     }
   }
 
+  const handleNmdsFileSelected = async (file) => {
+    setNmdsFile(file)
+    setNmdsParseError('')
+    if (!file) return
+
+    setNmdsParsing(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/catalogue/parse-concept-file', withAuthHeaders({ method: 'POST', body: fd }))
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Could not read this file' }))
+        throw new Error(err.detail || 'Could not read this file')
+      }
+      const { concepts } = await res.json()
+      setNmdsFields((prev) => mergeNmdsConcepts(prev, concepts))
+    } catch (e) {
+      setNmdsParseError(e.message)
+    } finally {
+      setNmdsParsing(false)
+    }
+  }
+
   const handlePush = async () => {
     setStep('pushing')
     setError('')
@@ -177,6 +207,7 @@ export default function PushModal({ tables, groups, onClose, inline = false, onP
       if (excelFile) {
         fd.append('meta_excel', excelFile)
       }
+      fd.append('meta_nmds_concepts', JSON.stringify(nmdsFieldsToList(nmdsFields)))
 
       const res = await fetch('/api/catalogue/push', withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: fd })))
       if (!res.ok) {
@@ -225,11 +256,11 @@ export default function PushModal({ tables, groups, onClose, inline = false, onP
         {step === 'error' && (
           <div className="push-error-state">
             <div className="push-error-msg">{error}</div>
-            <button className="push-btn-secondary" onClick={() => setStep('config')}>Try Again</button>
+            <button className="push-btn-secondary" onClick={() => setStep('nmds')}>Try Again</button>
           </div>
         )}
 
-        {(step === 'config' || step === 'pushing') && (
+        {step === 'config' && (
           <>
             <div className="push-modal-body">
               {/* Section 1: scope */}
@@ -347,13 +378,30 @@ export default function PushModal({ tables, groups, onClose, inline = false, onP
               {!inline && <button className="push-btn-secondary" onClick={onClose}>Cancel</button>}
               <button
                 className="push-btn"
-                onClick={handlePush}
-                disabled={pushDisabled}
+                onClick={() => setStep('nmds')}
+                disabled={effectiveMode === 'new' && !form.title.trim()}
               >
-                {step === 'pushing' ? 'Pushing…' : `Save & continue to classification →`}
+                Show NMDS concept metadata →
               </button>
             </div>
           </>
+        )}
+
+        {(step === 'nmds' || step === 'pushing') && (
+          <div className="push-modal-body">
+            <NmdsConceptForm
+              fields={nmdsFields}
+              onFieldChange={(concept, value) => setNmdsFields((prev) => ({ ...prev, [concept]: value }))}
+              onFileSelected={handleNmdsFileSelected}
+              file={nmdsFile}
+              parsing={nmdsParsing}
+              parseError={nmdsParseError}
+              onBack={() => setStep('config')}
+              onSave={handlePush}
+              saving={step === 'pushing'}
+              saveDisabled={pushDisabled}
+            />
+          </div>
         )}
       </div>
     </div>

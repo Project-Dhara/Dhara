@@ -4,7 +4,8 @@ classification sheets / concept sheet) into structured data used to
 metadata files against extracted dataset tables.
 """
 
-from io import BytesIO
+import csv
+from io import BytesIO, StringIO
 
 import openpyxl
 
@@ -109,22 +110,56 @@ def parse_inventory(wb) -> list:
     return out
 
 
-def parse_concepts(wb) -> list:
-    sheet_name = next((n for n in wb.sheetnames if n.lower() == "nmds_concept_meta_data"), None)
-    if not sheet_name:
-        return []
-    rows = _rows(wb[sheet_name])
+def _concepts_from_dicts(dicts: list) -> list:
     out = []
-    for r in _rows_to_dicts(rows):
+    for r in dicts:
         concept = r.get("Concept Name")
         if not concept:
             continue
         out.append({
             "item_no": r.get("Item No"),
-            "concept": concept,
+            "concept": str(concept).strip(),
             "details": r.get("Details (Summary)"),
         })
     return out
+
+
+def parse_concepts(wb) -> list:
+    sheet_name = next((n for n in wb.sheetnames if n.lower() == "nmds_concept_meta_data"), None)
+    if not sheet_name:
+        return []
+    return _concepts_from_dicts(_rows_to_dicts(_rows(wb[sheet_name])))
+
+
+def parse_concepts_from_csv(file_bytes: bytes) -> list:
+    """Parses a standalone NMDS concept metadata CSV (Item No, Concept Name,
+    Details (Summary) columns), same shape as the nmds_concept_meta_data
+    sheet inside a full metadata workbook."""
+    text = file_bytes.decode("utf-8-sig", errors="replace")
+    rows = [row for row in csv.reader(StringIO(text)) if any(c.strip() for c in row)]
+    if len(rows) < 2:
+        return []
+    header = [h.strip() for h in rows[0]]
+    dicts = [
+        {header[i]: row[i] for i in range(min(len(header), len(row))) if header[i]}
+        for row in rows[1:]
+    ]
+    return _concepts_from_dicts(dicts)
+
+
+def parse_concept_file(file_bytes: bytes, filename: str) -> list:
+    """Parses either a standalone NMDS concept metadata CSV, or a full
+    metadata workbook's nmds_concept_meta_data sheet (falling back to the
+    active sheet when a dedicated concept-only workbook has no sheet by
+    that name)."""
+    if filename.lower().endswith(".csv"):
+        return parse_concepts_from_csv(file_bytes)
+
+    wb = openpyxl.load_workbook(BytesIO(file_bytes), data_only=True)
+    concepts = parse_concepts(wb)
+    if concepts:
+        return concepts
+    return _concepts_from_dicts(_rows_to_dicts(_rows(wb.active)))
 
 
 def parse_classifications(wb) -> dict:
