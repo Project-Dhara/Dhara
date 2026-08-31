@@ -6,13 +6,14 @@ import asyncio
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 load_dotenv()
 
+import auth as _auth
 from extractor import TableExtractor
 import catalogue as _cat
 from metadata_excel import parse_catalogue_summary, parse_metadata_workbook
@@ -57,6 +58,17 @@ def _extractor_for(request: Request) -> TableExtractor:
     return TableExtractor(api_key=key, skip_llm=not key)
 
 
+def require_user(request: Request) -> str:
+    """FastAPI dependency: verifies the bearer token and returns the email
+    it carries. Every write-path route below depends on this so data is
+    always stored under the authenticated caller, never a client-supplied
+    value."""
+    try:
+        return _auth.email_from_request(request)
+    except ValueError as e:
+        raise HTTPException(401, str(e))
+
+
 def _read_file(file: UploadFile) -> bytes:
     if not file.filename.lower().endswith((".xlsx", ".xls")):
         raise HTTPException(400, "Only .xlsx / .xls files are supported")
@@ -73,8 +85,81 @@ async def health():
     return {"status": "ok"}
 
 
+@app.post("/api/signup")
+async def signup(request: Request):
+    """Self-serve account creation. Enabled by default for dev — set
+    ENABLE_SIGNUP=false to lock this down to admin-provisioned accounts
+    only (see create_user.py) once this stops being a dev deployment."""
+    if os.getenv("ENABLE_SIGNUP", "true").strip().lower() not in ("1", "true", "yes"):
+        raise HTTPException(403, "Signup is disabled — ask an admin to create your account")
+
+    data = await request.json()
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+    name = (data.get("name") or "").strip() or None
+    dept = (data.get("dept") or "").strip() or None
+
+    if not _auth.is_valid_org_email(email):
+        raise HTTPException(400, "Email must be in name@organization.domain format")
+    if len(password) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters")
+
+    def _run():
+        conn = _cat.get_connection()
+        _cat.init_schema(conn)
+        if _cat.get_user_by_email(conn, email):
+            conn.close()
+            return False
+        _cat.create_user(conn, email, _auth.hash_password(password), name, dept)
+        conn.close()
+        return True
+
+    try:
+        created = await asyncio.to_thread(_run)
+    except Exception as e:
+        raise HTTPException(500, f"Signup error: {e}")
+
+    if not created:
+        raise HTTPException(409, "An account with that email already exists")
+
+    token = _auth.create_token(email)
+    return {"token": token, "email": email, "name": name, "dept": dept}
+
+
+@app.post("/api/login")
+async def login(request: Request):
+    """Accounts are admin-provisioned only (see create_user.py) — this just
+    verifies email/password and issues a bearer token."""
+    data = await request.json()
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+
+    if not _auth.is_valid_org_email(email):
+        raise HTTPException(400, "Email must be in name@organization.domain format")
+    if not password:
+        raise HTTPException(400, "Password is required")
+
+    def _run():
+        conn = _cat.get_connection()
+        _cat.init_schema(conn)
+        user = _cat.get_user_by_email(conn, email)
+        conn.close()
+        return user
+
+    try:
+        user = await asyncio.to_thread(_run)
+    except Exception as e:
+        raise HTTPException(500, f"Login error: {e}")
+
+    if not user or not _auth.verify_password(password, user["password_hash"]):
+        raise HTTPException(401, "Invalid email or password")
+
+    token = _auth.create_token(email)
+    return {"token": token, "email": email, "name": user.get("name"), "dept": user.get("dept")}
+
+
 @app.post("/api/extract")
-async def extract_direct(request: Request, file: UploadFile = File(...)):
+async def extract_direct(request: Request, file: UploadFile = File(...), user_email: str = Depends(require_user)):
     """Direct LLM mode — single prompt → single response per table."""
     if not file.filename.lower().endswith(".xlsx"):
         raise HTTPException(400, "Only .xlsx files are supported (re-save .xls as .xlsx)")
@@ -91,7 +176,7 @@ async def extract_direct(request: Request, file: UploadFile = File(...)):
 
 
 @app.post("/api/table-metadata")
-async def table_metadata(request: Request):
+async def table_metadata(request: Request, user_email: str = Depends(require_user)):
     """LLM-based semantic category extraction from a table's raw structure."""
     data = await request.json()
     extractor = _extractor_for(request)
@@ -114,6 +199,7 @@ async def table_metadata(request: Request):
 async def group_tables(
     tables_json: str = Form(...),
     metadata_files: list[UploadFile] = File(None),
+    user_email: str = Depends(require_user),
 ):
     """Group extracted tables using the same rule-based logic as batch upload."""
     tables = _json.loads(tables_json)
@@ -151,7 +237,7 @@ async def group_tables(
 
 
 @app.get("/api/catalogue/groups")
-async def get_catalogue_groups():
+async def get_catalogue_groups(user_email: str = Depends(require_user)):
     def _run():
         conn = _cat.get_connection()
         _cat.init_schema(conn)
@@ -166,18 +252,23 @@ async def get_catalogue_groups():
 
 
 @app.post("/api/kyds")
-async def save_kyds(request: Request):
-    """Store a KYDS (Know Your Dataset) form submission in Postgres."""
+async def save_kyds(request: Request, user_email: str = Depends(require_user)):
+    """Store a KYDS (Know Your Dataset) form submission in Postgres, always
+    attributed to the authenticated caller (never a client-supplied email)."""
     data = await request.json()
     responses = data.get("responses")
     if not isinstance(responses, dict):
         raise HTTPException(400, "responses must be an object")
-    user = data.get("user") if isinstance(data.get("user"), dict) else {}
 
     def _run():
         conn = _cat.get_connection()
         _cat.init_schema(conn)
-        entry_id = _cat.save_kyds_entry(conn, responses, user)
+        user_row = _cat.get_user_by_email(conn, user_email) or {}
+        entry_id = _cat.save_kyds_entry(conn, responses, {
+            "email": user_email,
+            "name": user_row.get("name"),
+            "dept": user_row.get("dept"),
+        })
         conn.close()
         return entry_id
 
@@ -189,7 +280,7 @@ async def save_kyds(request: Request):
 
 
 @app.post("/api/catalogue/parse-metadata-excel")
-async def parse_metadata_excel(file: UploadFile = File(...)):
+async def parse_metadata_excel(file: UploadFile = File(...), user_email: str = Depends(require_user)):
     """Reads a DES metadata workbook's `catalogue_summary` sheet and returns
     the fields used to prefill the Create Metadata form."""
     if not file.filename.lower().endswith((".xlsx", ".xls")):
@@ -205,7 +296,7 @@ async def parse_metadata_excel(file: UploadFile = File(...)):
 
 
 @app.post("/api/catalogue/batch-extract")
-async def batch_extract(request: Request, files: list[UploadFile] = File(...)):
+async def batch_extract(request: Request, files: list[UploadFile] = File(...), user_email: str = Depends(require_user)):
     """Runs table extraction across multiple uploaded dataset workbooks
     concurrently (each file's sheets are also processed concurrently, see
     TableExtractor.extract_from_file) and returns one combined table list,
@@ -263,6 +354,7 @@ async def batch_extract(request: Request, files: list[UploadFile] = File(...)):
 async def batch_match(
     tables_json: str = Form(...),
     metadata_files: list[UploadFile] = File(None),
+    user_email: str = Depends(require_user),
 ):
     """Parses multiple metadata workbooks and matches them against a set of
     already-extracted tables. Returns a proposed mapping for review --
@@ -303,6 +395,7 @@ async def batch_push(
     request: Request,
     groups_json: str = Form(...),
     metadata_files: list[UploadFile] = File(None),
+    user_email: str = Depends(require_user),
 ):
     """Pushes a reviewed/confirmed batch mapping to the catalogue -- one
     metadata group + its matched tables per entry in `groups_json`.
@@ -377,6 +470,7 @@ async def batch_push(
                     meta.get("key_statistics"),
                     meta.get("remarks"),
                     p["excel_url"],
+                    user_email,
                 )
                 results.append(result)
         finally:
@@ -459,6 +553,7 @@ async def push_to_catalogue(
     meta_key_statistics: Optional[str] = Form(None),
     meta_remarks: Optional[str] = Form(None),
     meta_excel: Optional[UploadFile] = File(None),
+    user_email: str = Depends(require_user),
 ):
     tables = _json.loads(tables_json)
     extractor = _extractor_for(request)
@@ -488,6 +583,7 @@ async def push_to_catalogue(
             meta_geography, meta_frequency, meta_time_period,
             meta_data_source, meta_last_updated, meta_future_release,
             meta_key_statistics, meta_remarks, excel_url,
+            user_email,
         )
         conn.close()
         return result

@@ -32,6 +32,15 @@ def get_connection():
 def init_schema(conn):
     with conn.cursor() as cur:
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                email          TEXT PRIMARY KEY,
+                password_hash  TEXT NOT NULL,
+                name           TEXT,
+                dept           TEXT,
+                created_at     TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS metadata_groups (
                 metadata_id       TEXT PRIMARY KEY,
                 title             TEXT,
@@ -50,8 +59,12 @@ def init_schema(conn):
                 table_ids         TEXT[],
                 classifications   JSONB DEFAULT '{}',
                 concepts          TEXT[] DEFAULT '{}',
-                full_record       JSONB DEFAULT '{}'
+                full_record       JSONB DEFAULT '{}',
+                user_email        TEXT
             )
+        """)
+        cur.execute("""
+            ALTER TABLE metadata_groups ADD COLUMN IF NOT EXISTS user_email TEXT
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS datasets (
@@ -72,7 +85,8 @@ def init_schema(conn):
                 concepts           TEXT[] DEFAULT '{}',
                 age_column_keys    JSONB DEFAULT '{}',
                 source_excel       TEXT,
-                original_excel     TEXT
+                original_excel     TEXT,
+                user_email         TEXT
             )
         """)
         cur.execute("""
@@ -82,13 +96,20 @@ def init_schema(conn):
             ALTER TABLE datasets ADD COLUMN IF NOT EXISTS original_excel TEXT
         """)
         cur.execute("""
+            ALTER TABLE datasets ADD COLUMN IF NOT EXISTS user_email TEXT
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS dataset_rows (
                 id         SERIAL PRIMARY KEY,
                 dataset_id TEXT REFERENCES datasets ON DELETE CASCADE,
                 sl_no      TEXT,
                 row_index  INTEGER,
-                row_data   JSONB NOT NULL
+                row_data   JSONB NOT NULL,
+                user_email TEXT
             )
+        """)
+        cur.execute("""
+            ALTER TABLE dataset_rows ADD COLUMN IF NOT EXISTS user_email TEXT
         """)
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_datasets_metadata_id
@@ -132,6 +153,27 @@ def save_kyds_entry(conn, responses, user=None):
         entry_id = cur.fetchone()[0]
     conn.commit()
     return entry_id
+
+
+def create_user(conn, email, password_hash, name=None, dept=None):
+    """Provision (or update) a login. Admin-only — see create_user.py."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO users (email, password_hash, name, dept)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (email) DO UPDATE
+                SET password_hash = EXCLUDED.password_hash,
+                    name          = COALESCE(EXCLUDED.name, users.name),
+                    dept          = COALESCE(EXCLUDED.dept, users.dept)
+        """, (email, password_hash, name, dept))
+    conn.commit()
+
+
+def get_user_by_email(conn, email):
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT email, password_hash, name, dept FROM users WHERE email = %s", (email,))
+        row = cur.fetchone()
+    return dict(row) if row else None
 
 
 def list_metadata_groups(conn):
@@ -200,6 +242,7 @@ def push_to_catalogue(
     meta_key_statistics,
     meta_remarks,
     meta_excel_filename,
+    user_email=None,
 ):
     today = meta_last_updated or date.today().strftime("%B, %Y")
     dataset_ids = []
@@ -231,13 +274,13 @@ def push_to_catalogue(
                     title, short_description, long_description,
                     category, geography, frequency, time_period,
                     data_source, units, classifications, concepts, age_column_keys,
-                    source_excel, original_excel
+                    source_excel, original_excel, user_email
                 ) VALUES (
                     %s, %s, %s, %s,
                     %s, %s, %s,
                     %s, %s, %s, %s,
                     %s, %s, %s, %s, %s,
-                    %s, %s
+                    %s, %s, %s
                 )
             """, (
                 ds_id,
@@ -258,17 +301,19 @@ def push_to_catalogue(
                 json.dumps(age_column_keys),
                 table.get("source_excel_url"),
                 table.get("original_excel_url"),
+                user_email,
             ))
 
             for row_index, row in enumerate(rows):
                 cur.execute("""
-                    INSERT INTO dataset_rows (dataset_id, sl_no, row_index, row_data)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO dataset_rows (dataset_id, sl_no, row_index, row_data, user_email)
+                    VALUES (%s, %s, %s, %s, %s)
                 """, (
                     ds_id,
                     _extract_sl_no(row, row_index),
                     row_index,
                     json.dumps(row, default=str),
+                    user_email,
                 ))
 
         # ── Handle metadata group ───────────────────────────────────────────
@@ -313,12 +358,14 @@ def push_to_catalogue(
                     metadata_id, title, description, product, category, geography,
                     frequency, time_period, data_source, last_updated_date,
                     future_release, key_statistics, remarks,
-                    metadata_excel, table_ids, classifications, concepts, full_record
+                    metadata_excel, table_ids, classifications, concepts, full_record,
+                    user_email
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s,
                     %s, %s, %s,
-                    %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s,
+                    %s
                 )
             """, (
                 metadata_id,
@@ -339,6 +386,7 @@ def push_to_catalogue(
                 json.dumps(_merge_classifications(enriched_data)),
                 STANDARD_CONCEPTS,
                 json.dumps(full_record),
+                user_email,
             ))
 
             # Back-fill metadata_id on datasets just inserted

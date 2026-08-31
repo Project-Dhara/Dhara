@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { withLlmKeyHeaders } from '../llmKey'
+import { withAuthHeaders } from '../auth'
 
 function FileList({ files, onRemove }) {
   if (files.length === 0) return null
@@ -54,7 +55,7 @@ export default function BatchUpload({ onMatched }) {
     try {
       const extractFd = new FormData()
       datasetFiles.forEach((f) => extractFd.append('files', f))
-      const extractRes = await fetch('/api/catalogue/batch-extract', withLlmKeyHeaders({ method: 'POST', body: extractFd }))
+      const extractRes = await fetch('/api/catalogue/batch-extract', withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: extractFd })))
       if (!extractRes.ok) {
         const err = await extractRes.json().catch(() => ({ detail: 'Extraction failed' }))
         throw new Error(err.detail || 'Extraction failed')
@@ -65,7 +66,7 @@ export default function BatchUpload({ onMatched }) {
       const matchFd = new FormData()
       matchFd.append('tables_json', JSON.stringify(extractData.tables))
       metadataFiles.forEach((f) => matchFd.append('metadata_files', f))
-      const matchRes = await fetch('/api/catalogue/batch-match', { method: 'POST', body: matchFd })
+      const matchRes = await fetch('/api/catalogue/batch-match', withAuthHeaders({ method: 'POST', body: matchFd }))
       if (!matchRes.ok) {
         const err = await matchRes.json().catch(() => ({ detail: 'Matching failed' }))
         throw new Error(err.detail || 'Matching failed')

@@ -7,20 +7,18 @@ import Catalogue from './components/Catalogue'
 import Console from './components/Console'
 import KydsModal from './components/KydsModal'
 import { getLlmApiKey, setLlmApiKey } from './llmKey'
+import { getStoredUser, clearSession, setSession, withAuthHeaders } from './auth'
 
 export default function App() {
-  const [authScreen, setAuthScreen] = useState('login') // 'login' | 'signup'
-  const [loggedIn, setLoggedIn] = useState(false)
+  const storedUser = getStoredUser()
+  const [loggedIn, setLoggedIn] = useState(!!storedUser)
   const [showKyds, setShowKyds] = useState(false)
   const [screen, setScreen] = useState('dashboard') // 'dashboard' | 'console' | 'catalogue' | 'settings'
   const [consoleKey, setConsoleKey] = useState(0)
 
-  const [user, setUser] = useState({
-    name: 'A. Menon',
-    role: 'Administrator',
-    email: 'a.menon@gov.in',
-    dept: 'Directorate of Economics and Statistics',
-  })
+  const [user, setUser] = useState(
+    storedUser || { name: '', role: 'Administrator', email: '', dept: '' }
+  )
   const savedKey = getLlmApiKey()
   const [settings, setSettings] = useState({ provider: 'Anthropic', apiKey: savedKey })
   const [keySaved, setKeySaved] = useState(!!savedKey)
@@ -28,10 +26,10 @@ export default function App() {
   if (!loggedIn) {
     return (
       <Auth
-        screen={authScreen}
-        onToggle={() => setAuthScreen((s) => (s === 'signup' ? 'login' : 'signup'))}
-        onSubmit={(form) => {
-          setUser((prev) => ({ ...prev, name: form.name || prev.name, email: form.email || prev.email }))
+        onSuccess={(data) => {
+          const nextUser = { name: data.name || data.email, email: data.email, dept: data.dept || '', role: 'Administrator' }
+          setSession(data.token, nextUser)
+          setUser(nextUser)
           setLoggedIn(true)
           setShowKyds(true)
           setScreen('dashboard')
@@ -62,21 +60,18 @@ export default function App() {
       screen={screen}
       user={user}
       onNavigate={setScreen}
-      onSignOut={() => { setLoggedIn(false); setShowKyds(false); setAuthScreen('login') }}
+      onSignOut={() => { clearSession(); setLoggedIn(false); setShowKyds(false) }}
     >
       {showKyds && (
         <KydsModal
           onSkip={() => setShowKyds(false)}
           onSave={async (form) => {
             try {
-              await fetch('/api/kyds', {
+              await fetch('/api/kyds', withAuthHeaders({
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  responses: form,
-                  user: { name: user.name, email: user.email, dept: user.dept },
-                }),
-              })
+                body: JSON.stringify({ responses: form }),
+              }))
             } finally {
               setShowKyds(false)
             }

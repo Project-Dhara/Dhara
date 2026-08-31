@@ -580,6 +580,8 @@ body {
   transition: background 160ms ease;
 }
 .auth-cta:hover { background: var(--teal-dark); }
+.auth-cta:disabled { opacity: 0.6; cursor: default; }
+.auth-error { font-size: 14px; color: #b3423a; }
 .auth-switch { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 15px; color: var(--ink-soft); }
 .auth-switch-cta { color: var(--teal); font-weight: 600; cursor: pointer; }
 

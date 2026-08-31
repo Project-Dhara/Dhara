@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { withLlmKeyHeaders } from '../llmKey'
+import { withAuthHeaders } from '../auth'
 import { CLICK_THROUGH_ENABLED } from '../clickThrough'
 import MetadataSheetGrid from './MetadataSheetGrid'
 
@@ -53,7 +54,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
       fd.append('groups_json', JSON.stringify(finalGroups))
       metadataFiles.forEach((f) => fd.append('metadata_files', f))
 
-      const res = await fetch('/api/catalogue/batch-push', withLlmKeyHeaders({ method: 'POST', body: fd }))
+      const res = await fetch('/api/catalogue/batch-push', withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: fd })))
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Push failed' }))
         throw new Error(err.detail || 'Push failed')

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { withLlmKeyHeaders } from '../llmKey'
+import { withAuthHeaders } from '../auth'
 import { CLICK_THROUGH_ENABLED } from '../clickThrough'
 import MetadataSheetGrid from './MetadataSheetGrid'
 
@@ -53,7 +54,7 @@ export default function PushModal({ tables, groups, onClose, inline = false, onP
   const [error, setError] = useState('')
 
   useEffect(() => {
-    fetch('/api/catalogue/groups')
+    fetch('/api/catalogue/groups', withAuthHeaders())
       .then((r) => r.json())
       .then((data) => {
         const grps = data.groups || []
@@ -121,7 +122,7 @@ export default function PushModal({ tables, groups, onClose, inline = false, onP
     try {
       const fd = new FormData()
       fd.append('file', file)
-      const res = await fetch('/api/catalogue/parse-metadata-excel', { method: 'POST', body: fd })
+      const res = await fetch('/api/catalogue/parse-metadata-excel', withAuthHeaders({ method: 'POST', body: fd }))
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Could not read this file' }))
         throw new Error(err.detail || 'Could not read this file')
@@ -177,7 +178,7 @@ export default function PushModal({ tables, groups, onClose, inline = false, onP
         fd.append('meta_excel', excelFile)
       }
 
-      const res = await fetch('/api/catalogue/push', withLlmKeyHeaders({ method: 'POST', body: fd }))
+      const res = await fetch('/api/catalogue/push', withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: fd })))
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
         throw new Error(err.detail || 'Push failed')

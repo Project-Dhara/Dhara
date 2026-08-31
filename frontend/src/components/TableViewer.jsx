@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import * as XLSX from 'xlsx'
 import { withLlmKeyHeaders } from '../llmKey'
+import { withAuthHeaders } from '../auth'
 
 
 const MAX_DISPLAY = 500
@@ -58,7 +59,7 @@ function numericStats(colName, rows) {
 async function downloadMetadataExcel(table, setLoading) {
   setLoading(true)
   try {
-    const res = await fetch('/api/table-metadata', withLlmKeyHeaders({
+    const res = await fetch('/api/table-metadata', withAuthHeaders(withLlmKeyHeaders({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -69,7 +70,7 @@ async function downloadMetadataExcel(table, setLoading) {
         sample_rows: table.rows.slice(0, 8),
         raw_notes: table.raw_notes || [],
       }),
-    }))
+    })))
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
       throw new Error(err.detail || 'Metadata extraction failed')

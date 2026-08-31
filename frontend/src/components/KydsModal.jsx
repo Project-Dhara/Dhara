@@ -129,6 +129,10 @@ const YES_NO = ['No', 'Yes']
 
 function emptyForm() {
   return {
+    datasetName: '',
+    description: '',
+    department: '',
+    characterisationDate: '',
     modality: [],
     otherModalityDescribe: '',
     specificFormats: '',
@@ -194,6 +198,23 @@ function ExclusiveCheckboxes({ options, selected, onChange }) {
   )
 }
 
+function ExclusiveCheckboxGrid({ options, selected, onChange }) {
+  return (
+    <div className="kyds-check-grid">
+      {options.map((opt) => (
+        <label key={opt} className="kyds-check">
+          <input
+            type="checkbox"
+            checked={selected.includes(opt)}
+            onChange={() => onChange(selected.includes(opt) ? [] : [opt])}
+          />
+          <span>{opt}</span>
+        </label>
+      ))}
+    </div>
+  )
+}
+
 function Field({ label, hint, children }) {
   return (
     <div className="kyds-field">
@@ -239,6 +260,50 @@ export default function KydsModal({ onSkip, onSave }) {
         <div className="kyds-body">
           <section className="kyds-section">
             <div className="kyds-section-head">
+              <span className="kyds-section-num">0</span>
+              <h2>About this assessment</h2>
+            </div>
+            <Field label="Dataset name">
+              <input
+                className="kyds-input"
+                type="text"
+                value={form.datasetName}
+                onChange={setText('datasetName')}
+                placeholder="Name the dataset is actually known by"
+              />
+            </Field>
+            <Field
+              label="Description of the dataset"
+              hint="What it contains, what a single row represents, and what it is used for."
+            >
+              <textarea
+                className="kyds-input kyds-textarea"
+                value={form.description}
+                onChange={setText('description')}
+                placeholder="e.g. Records of ration card holders in the district. One row per ration card..."
+              />
+            </Field>
+            <Field label="Department / ministry">
+              <input
+                className="kyds-input"
+                type="text"
+                value={form.department}
+                onChange={setText('department')}
+                placeholder="Department or ministry that holds this dataset"
+              />
+            </Field>
+            <Field label="Date of characterisation">
+              <input
+                className="kyds-input"
+                type="date"
+                value={form.characterisationDate}
+                onChange={setText('characterisationDate')}
+              />
+            </Field>
+          </section>
+
+          <section className="kyds-section">
+            <div className="kyds-section-head">
               <span className="kyds-section-num">1</span>
               <h2>Modality</h2>
             </div>
@@ -274,7 +339,7 @@ export default function KydsModal({ onSkip, onSave }) {
             </div>
 
             <h3 className="kyds-subhead">A. Personal-data sensitivity (DPDP Act)</h3>
-            <CheckboxGrid options={DPDP_TIERS} selected={form.dpdpTiers} onToggle={setList('dpdpTiers')} />
+            <ExclusiveCheckboxGrid options={DPDP_TIERS} selected={form.dpdpTiers} onChange={setExclusive('dpdpTiers')} />
 
             <h3 className="kyds-subhead">Special-category sub-types</h3>
             <CheckboxGrid
@@ -297,16 +362,16 @@ export default function KydsModal({ onSkip, onSave }) {
 
             <h3 className="kyds-subhead">B. Information / dataset classification (IT Act)</h3>
             <h4 className="kyds-group-label">Organisational classification</h4>
-            <CheckboxGrid
+            <ExclusiveCheckboxGrid
               options={ORG_CLASSIFICATION}
               selected={form.orgClassification}
-              onToggle={setList('orgClassification')}
+              onChange={setExclusive('orgClassification')}
             />
             <h4 className="kyds-group-label">National-interest classification (only if applicable)</h4>
-            <CheckboxGrid
+            <ExclusiveCheckboxGrid
               options={NATIONAL_CLASSIFICATION}
               selected={form.nationalClassification}
-              onToggle={setList('nationalClassification')}
+              onChange={setExclusive('nationalClassification')}
             />
           </section>
 
@@ -316,7 +381,7 @@ export default function KydsModal({ onSkip, onSave }) {
               <h2>Access level</h2>
             </div>
             <p className="kyds-section-lead">Pick the most restrictive level that governs the dataset.</p>
-            <CheckboxGrid options={ACCESS_LEVELS} selected={form.accessLevel} onToggle={setList('accessLevel')} />
+            <ExclusiveCheckboxGrid options={ACCESS_LEVELS} selected={form.accessLevel} onChange={setExclusive('accessLevel')} />
             <Field
               label="If a more open subset is published separately, what and at what aggregation"
             >
@@ -355,13 +420,13 @@ export default function KydsModal({ onSkip, onSave }) {
             </div>
             <p className="kyds-section-lead">Tick the finest level present.</p>
             <h4 className="kyds-group-label">Individual level</h4>
-            <CheckboxGrid options={GRANULARITY_INDIVIDUAL} selected={form.granularity} onToggle={setList('granularity')} />
+            <ExclusiveCheckboxGrid options={GRANULARITY_INDIVIDUAL} selected={form.granularity} onChange={setExclusive('granularity')} />
             <h4 className="kyds-group-label">Local level</h4>
-            <CheckboxGrid options={GRANULARITY_LOCAL} selected={form.granularity} onToggle={setList('granularity')} />
+            <ExclusiveCheckboxGrid options={GRANULARITY_LOCAL} selected={form.granularity} onChange={setExclusive('granularity')} />
             <h4 className="kyds-group-label">Regional level</h4>
-            <CheckboxGrid options={GRANULARITY_REGIONAL} selected={form.granularity} onToggle={setList('granularity')} />
+            <ExclusiveCheckboxGrid options={GRANULARITY_REGIONAL} selected={form.granularity} onChange={setExclusive('granularity')} />
             <h4 className="kyds-group-label">Statistical level</h4>
-            <CheckboxGrid options={GRANULARITY_STATISTICAL} selected={form.granularity} onToggle={setList('granularity')} />
+            <ExclusiveCheckboxGrid options={GRANULARITY_STATISTICAL} selected={form.granularity} onChange={setExclusive('granularity')} />
 
             <h3 className="kyds-subhead">Identifiability flags</h3>
             <Field label="Restricted to a sub-population?">
@@ -393,9 +458,9 @@ export default function KydsModal({ onSkip, onSave }) {
               <h2>Update frequency and retention</h2>
             </div>
             <h4 className="kyds-group-label">Update frequency</h4>
-            <CheckboxGrid options={UPDATE_FREQUENCY} selected={form.updateFrequency} onToggle={setList('updateFrequency')} />
+            <ExclusiveCheckboxGrid options={UPDATE_FREQUENCY} selected={form.updateFrequency} onChange={setExclusive('updateFrequency')} />
             <h4 className="kyds-group-label">Retention</h4>
-            <CheckboxGrid options={RETENTION} selected={form.retention} onToggle={setList('retention')} />
+            <ExclusiveCheckboxGrid options={RETENTION} selected={form.retention} onChange={setExclusive('retention')} />
             <Field label="Retention citation / purpose / event">
               <textarea
                 className="kyds-input kyds-textarea"

@@ -8,6 +8,7 @@ import BatchReview from './BatchReview'
 import Classify from './Classify'
 import Publish from './Publish'
 import { withLlmKeyHeaders } from '../llmKey'
+import { withAuthHeaders } from '../auth'
 
 // Short government table code for a tab button — e.g. "Table : D-12 & D-13"
 // → "D12, D13" — pulled from the source's own table-label row (`table.title`,
@@ -104,7 +105,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
     const formData = new FormData()
     formData.append('file', singleDatasetFile)
     try {
-      const res = await fetch('/api/extract', withLlmKeyHeaders({ method: 'POST', body: formData }))
+      const res = await fetch('/api/extract', withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: formData })))
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
         throw new Error(err.detail || 'Extraction failed')
@@ -127,7 +128,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
       const fd = new FormData()
       fd.append('tables_json', JSON.stringify(tables))
       if (singleMetaFile) fd.append('metadata_files', singleMetaFile)
-      const res = await fetch('/api/group-tables', { method: 'POST', body: fd })
+      const res = await fetch('/api/group-tables', withAuthHeaders({ method: 'POST', body: fd }))
       if (!res.ok) throw new Error('Grouping failed')
       const data = await res.json()
       setGroups(data.groups)
