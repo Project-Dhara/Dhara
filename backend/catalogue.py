@@ -158,6 +158,25 @@ def save_kyds_entry(conn, responses, user=None):
     return entry_id
 
 
+def get_latest_kyds_responses(conn, user_email):
+    """Returns the most recent KYDS form responses submitted by this user,
+    falling back to the most recent submission from any user if this one
+    has none, or None if no KYDS entries exist at all. Used to ground Stage
+    4 LLM metadata generation in real, DB-stored context instead of
+    hardcoded values."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("""
+            SELECT responses FROM kyds_entries
+            WHERE user_email = %s
+            ORDER BY created_at DESC LIMIT 1
+        """, (user_email,))
+        row = cur.fetchone()
+        if not row:
+            cur.execute("SELECT responses FROM kyds_entries ORDER BY created_at DESC LIMIT 1")
+            row = cur.fetchone()
+    return row["responses"] if row else None
+
+
 def create_user(conn, email, password_hash, name=None, dept=None):
     """Provision (or update) a login. Admin-only — see create_user.py."""
     with conn.cursor() as cur:

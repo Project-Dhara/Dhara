@@ -81,6 +81,31 @@ export default function PushModal({ tables, groups, onClose, inline = false, onP
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // No metadata file was uploaded for this scope's group -- fall back to
+  // whatever the backend already computed for it (Stage 4 LLM-generated
+  // fields when nothing matched a metadata workbook; see
+  // catalogue_matching.match_result_to_push_groups). A manually uploaded
+  // excel file always wins, per the "metadata file entry stays the same"
+  // rule -- so this only fires when none is present.
+  useEffect(() => {
+    if (excelFile || metaMode !== 'new' || scope === 'all') return
+    const grp = groups && groups.find((g) => g.name === scope)
+    const meta = grp?.metadata
+    if (!meta || !FORM_FIELDS.some((f) => meta[f])) return
+    setForm((prev) => {
+      const next = { ...emptyFields() }
+      for (const f of FORM_FIELDS) {
+        const v = meta[f]
+        if (v == null || v === '') continue
+        // key_statistics can come back as a JSON object (see the notebook's
+        // Stage 4 example output) rather than plain text.
+        next[f] = typeof v === 'object' ? JSON.stringify(v) : String(v)
+      }
+      return next
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope, excelFile, metaMode])
+
   const selectExistingGroup = (metadataId, groupsList = existingGroups) => {
     setSelectedMetaId(metadataId)
     const g = groupsList.find((x) => x.metadata_id === metadataId)

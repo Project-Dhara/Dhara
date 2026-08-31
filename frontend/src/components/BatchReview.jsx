@@ -6,16 +6,6 @@ import MetadataSheetGrid from './MetadataSheetGrid'
 import NmdsConceptForm from './NmdsConceptForm'
 import { emptyNmdsFields, nmdsFieldsToList, mergeNmdsConcepts } from '../nmdsConcepts'
 
-const CONFIDENCE_LABEL = {
-  exact: 'Exact ID match',
-  stem: 'ID match (ignoring year/version typo)',
-  code: 'Table-code match',
-  'code+keyword': 'Table-code + keyword match',
-  grouped: 'Grouped with siblings (no exact row)',
-  manual: 'Manually assigned',
-}
-
-
 export default function BatchReview({ matchResult, metadataFiles, onDone, onCancel }) {
   const [groups, setGroups] = useState(matchResult.groups)
   const [assignments, setAssignments] = useState({}) // unmatchedTableIndex -> groupIndex ('' = skip)
@@ -146,35 +136,6 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
         onChange={(gi, key, value) => updateMetadata(gi, { ...groups[gi].metadata, [key]: value })}
         note="Fields marked * are required. One card per metadata group."
       />
-
-      {groups.map((g, gi) => (
-        g.matched_tables.length > 0 && (
-          <div className="batch-group" key={gi}>
-            <div className="batch-group-header">
-              <span className="batch-group-file">{g.file_name}</span>
-              <span className="batch-group-count">{g.matched_tables.length} table{g.matched_tables.length !== 1 ? 's' : ''}</span>
-            </div>
-            <table className="batch-table-list">
-              <thead>
-                <tr><th>Dataset ID</th><th>Title</th><th>Match basis</th></tr>
-              </thead>
-              <tbody>
-                {g.matched_tables.map((mt, ti) => (
-                  <tr key={ti}>
-                    <td className="batch-table-id">{mt.table.id}</td>
-                    <td>{mt.table.description || mt.table.title}</td>
-                    <td>
-                      <span className="batch-confidence" data-confidence={mt.confidence}>
-                        {CONFIDENCE_LABEL[mt.confidence] || mt.confidence}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )
-      ))}
 
       {matchResult.unmatched_tables.length > 0 && (
         <div className="batch-group batch-group-warn">

@@ -103,6 +103,46 @@ def _distinguishing_word(description: str, others: list) -> str:
     return None
 
 
+def _base_title(title: str) -> str:
+    """Strips a trailing parenthetical qualifier, e.g. "INFANT DEATHS BY ...
+    (URBAN)" -> "INFANT DEATHS BY ...", so an urban/rural (or similar) split
+    of the same table collapses to one base title. Ported from the
+    notebook's Stage 3 `auto_group_tables`."""
+    base = re.sub(r"\s*\([^)]*\)\s*$", "", title or "").strip()
+    base = re.sub(r"\s+", " ", base).upper()
+    return base or (title or "").strip().upper()
+
+
+def auto_group_tables(tables: list) -> list:
+    """Groups extracted tables automatically by title, with no metadata
+    workbook required -- ports the notebook's Stage 3 `auto_group_tables`.
+
+    Tables sharing the same source file + sheet + base title (title with a
+    trailing qualifier like "(URBAN)"/"(RURAL)" stripped) are grouped
+    together, so an urban/rural (or similarly split) pair of tables from the
+    same sheet lands in one group instead of two.
+    """
+    groups_dict: Dict[tuple, dict] = {}
+    order = []
+    for table in tables:
+        source_file = table.get("source_file") or "Dataset"
+        sheet = table.get("sheet", "")
+        base_title = _base_title(table.get("title", ""))
+        group_key = (source_file, sheet, base_title)
+
+        if group_key not in groups_dict:
+            groups_dict[group_key] = {
+                "source_file": source_file,
+                "sheet": sheet,
+                "base_title": base_title,
+                "tables": [],
+            }
+            order.append(group_key)
+        groups_dict[group_key]["tables"].append(table)
+
+    return [groups_dict[k] for k in order]
+
+
 _EMPTY_METADATA = {
     "title": "",
     "product": "",
@@ -120,29 +160,28 @@ _EMPTY_METADATA = {
 
 
 def _groups_without_metadata(extracted_tables: list) -> dict:
-    """One group per source dataset file, with empty catalogue fields, so
-    the user can fill Product / Category / Geography etc. by hand."""
-    by_file = {}
-    order = []
-    for table in extracted_tables:
-        name = table.get("source_file") or "Dataset"
-        if name not in by_file:
-            by_file[name] = []
-            order.append(name)
-        by_file[name].append(table)
+    """One group per auto-grouped table cluster (see `auto_group_tables`),
+    with empty catalogue fields, so the user can fill Product / Category /
+    Geography etc. by hand. Tables that share a sheet + base title (e.g. an
+    urban/rural split) land in the same group instead of being scattered
+    across one group per file."""
+    auto_groups = auto_group_tables(extracted_tables)
     groups = [
         {
             "workbook_index": wi,
-            "file_name": name,
+            "file_name": (
+                f"{ag['source_file']} — {ag['base_title'].title()}"
+                if ag["base_title"] else ag["source_file"]
+            ),
             "metadata": dict(_EMPTY_METADATA),
             "concepts": [],
             "classifications": {},
             "matched_tables": [
                 {"table": t, "inventory_item": None, "confidence": ""}
-                for t in by_file[name]
+                for t in ag["tables"]
             ],
         }
-        for wi, name in enumerate(order)
+        for wi, ag in enumerate(auto_groups)
     ]
     return {
         "groups": groups,
@@ -301,7 +340,11 @@ def match_tables_to_metadata(extracted_tables: list, metadata_workbooks: list) -
 
 
 def match_result_to_push_groups(match_result: dict) -> list:
-    """Convert batch-style match groups to {name, table_ids} for single-file PushModal."""
+    """Convert batch-style match groups to {name, table_ids, metadata} for
+    single-file PushModal. `metadata` carries through whatever the group
+    already has -- values parsed from an uploaded metadata workbook, or
+    (see main.py's `_fill_empty_group_metadata`) Stage 4 LLM-generated
+    values when no metadata workbook was uploaded."""
     out = []
     for g in match_result.get("groups", []):
         table_ids = [mt["table"]["id"] for mt in g.get("matched_tables", [])]
@@ -310,5 +353,6 @@ def match_result_to_push_groups(match_result: dict) -> list:
         out.append({
             "name": g.get("file_name") or (g.get("metadata") or {}).get("title") or "Group",
             "table_ids": table_ids,
+            "metadata": g.get("metadata") or {},
         })
     return out

@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import ModeSelector from './ModeSelector'
 import FileUpload from './FileUpload'
 import TableViewer from './TableViewer'
 import PushModal from './PushModal'
 import BatchUpload from './BatchUpload'
 import BatchReview from './BatchReview'
+import ReconcileIds from './ReconcileIds'
 import Classify from './Classify'
 import Publish from './Publish'
 import { withLlmKeyHeaders } from '../llmKey'
@@ -26,9 +27,9 @@ function tableCode(table) {
 
 const STAGE_DEFS = [
   { name: 'Dataset Inventory', firstStep: 0, sub: 'Files, preview, grouping' },
-  { name: 'Metadata Workspace', firstStep: 4, sub: 'Title, category, coverage' },
-  { name: 'Transformation & Harmonisation', firstStep: 5, sub: 'Concepts and code maps' },
-  { name: 'Dataset Publication', firstStep: 6, sub: 'API, MCP, catalogue' },
+  { name: 'Metadata Workspace', firstStep: 5, sub: 'Title, category, coverage' },
+  { name: 'Transformation & Harmonisation', firstStep: 6, sub: 'Concepts and code maps' },
+  { name: 'Dataset Publication', firstStep: 7, sub: 'API, MCP, catalogue' },
 ]
 
 function stepInfoFor(step, mode) {
@@ -47,6 +48,10 @@ function stepInfoFor(step, mode) {
         ? 'Pick a table above to check the rows and the metadata read from the tag files.'
         : 'Pick a table above to check what was read from the workbook.',
     },
+    {
+      title: 'Confirm Table Details',
+      sub: 'Code-based and prompt-based validation disagreed on some tables — confirm or correct them.',
+    },
     { title: 'Grouping', sub: 'Optional. Tables with the same columns can share one metadata record.' },
     { title: 'Metadata', sub: 'One card per table. Fill in what you know — only the title is required.' },
     { title: 'Classification and harmonisation', sub: 'Map columns to standard concepts and code lists.' },
@@ -55,13 +60,13 @@ function stepInfoFor(step, mode) {
 }
 
 const BACK_LABELS = [
-  '', 'Choose another method', 'Change files', 'Back to preview', 'Back to grouping', 'Back to metadata',
+  '', 'Choose another method', 'Change files', 'Back to preview', 'Back to table details', 'Back to grouping', 'Back to metadata',
 ]
 
 function stageIndexForStep(step) {
-  if (step <= 3) return 0
-  if (step === 4) return 1
-  if (step === 5) return 2
+  if (step <= 4) return 0
+  if (step === 5) return 1
+  if (step === 6) return 2
   return 3
 }
 
@@ -128,6 +133,9 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
       const fd = new FormData()
       fd.append('tables_json', JSON.stringify(tables))
       if (singleMetaFile) fd.append('metadata_files', singleMetaFile)
+      // Sent so a group with no metadata-file match can be auto-filled via
+      // Stage 4 LLM metadata generation server-side instead of staying blank.
+      if (singleDatasetFile) fd.append('dataset_files', singleDatasetFile)
       const res = await fetch('/api/group-tables', withAuthHeaders({ method: 'POST', body: fd }))
       if (!res.ok) throw new Error('Grouping failed')
       const data = await res.json()
@@ -139,9 +147,37 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
     }
   }
 
+  // Auto-run grouping once on arriving at the grouping step, so Stage 4
+  // metadata generation happens without requiring the optional "Group
+  // similar tables" button click — mirrors batch mode, where matching (and
+  // therefore metadata generation) always runs automatically.
+  useEffect(() => {
+    if (step === 4 && mode === 'single' && groups === null && !grouping && tables.length > 0) {
+      handleGroup()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, mode])
+
   const handleUpdateId = (newId) => {
     setTables((prev) => prev.map((t) => t.id === selectedId ? { ...t, id: newId } : t))
     setSelectedId(newId)
+  }
+
+  const applyReconcile = (corrections) => {
+    const patchTable = (t) => (corrections[t.id] ? { ...t, ...corrections[t.id] } : t)
+    if (mode === 'single') {
+      setTables((prev) => prev.map(patchTable))
+    } else if (mode === 'batch') {
+      setMatchResult((prev) => prev && ({
+        ...prev,
+        groups: prev.groups.map((g) => ({
+          ...g,
+          matched_tables: g.matched_tables.map((mt) => ({ ...mt, table: patchTable(mt.table) })),
+        })),
+        unmatched_tables: prev.unmatched_tables.map((u) => ({ ...u, table: patchTable(u.table) })),
+      }))
+    }
+    setStep(4)
   }
 
   const handleMatched = (data) => {
@@ -194,7 +230,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
       <div className="console-main">
         <div className="console-header">
           <div>
-            {step > 0 && step < 6 && (
+            {step > 0 && step < 7 && (
               <div className="console-back" onClick={back}>← {BACK_LABELS[step]}</div>
             )}
             <div className="console-step-title">{info.title}</div>
@@ -286,14 +322,22 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
           </div>
         )}
 
-        {step === 3 && mode === 'single' && (
+        {step === 3 && (
+          <ReconcileIds
+            tables={mode === 'batch' ? batchAllTables : tables}
+            onContinue={applyReconcile}
+          />
+        )}
+
+        {step === 4 && mode === 'single' && (
           <div className="console-grouping-step">
             <div className="console-group-action-row">
               <button className="console-secondary-btn" onClick={handleGroup} disabled={grouping || tables.length < 2}>
                 {grouping ? 'Grouping…' : 'Group similar tables'}
               </button>
-              {tables.length < 2 && <span className="console-group-hint">Only one table — nothing to group.</span>}
-              {groups && <span className="console-group-hint">{groups.length} group{groups.length !== 1 ? 's' : ''} found</span>}
+              {tables.length < 2 && <span className="console-group-hint">Only one table — nothing to group, but metadata is still being prepared.</span>}
+              {grouping && <span className="console-group-hint">Preparing metadata…</span>}
+              {!grouping && groups && <span className="console-group-hint">{groups.length} group{groups.length !== 1 ? 's' : ''} found</span>}
             </div>
 
             {groups && groups.length > 0 && (
@@ -311,12 +355,12 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
             )}
 
             <div className="console-step-actions">
-              <button className="console-primary-btn" onClick={() => setStep(4)}>Continue to metadata →</button>
+              <button className="console-primary-btn" onClick={() => setStep(5)}>Continue to metadata →</button>
             </div>
           </div>
         )}
 
-        {step === 3 && mode === 'batch' && matchResult && (
+        {step === 4 && mode === 'batch' && matchResult && (
           <div className="console-grouping-step">
             <div className="console-group-summary">
               {matchResult.groups.map((g, i) => (
@@ -343,12 +387,12 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
               )}
             </div>
             <div className="console-step-actions">
-              <button className="console-primary-btn" onClick={() => setStep(4)}>Continue to metadata →</button>
+              <button className="console-primary-btn" onClick={() => setStep(5)}>Continue to metadata →</button>
             </div>
           </div>
         )}
 
-        {step === 4 && mode === 'single' && (
+        {step === 5 && mode === 'single' && (
           <PushModal
             tables={tables}
             groups={groups}
@@ -357,28 +401,28 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
             onPushed={(result, title) => {
               setMetaLabel(title || filename || selectedId || 'this dataset')
               setMetadataId(result?.metadata_id || null)
-              setStep(5)
+              setStep(6)
             }}
           />
         )}
 
-        {step === 4 && mode === 'batch' && matchResult && (
+        {step === 5 && mode === 'batch' && matchResult && (
           <BatchReview
             matchResult={matchResult}
             metadataFiles={metadataFiles}
             onDone={(label) => {
               setMetaLabel(label || 'this release')
-              setStep(5)
+              setStep(6)
             }}
-            onCancel={() => setStep(3)}
+            onCancel={() => setStep(4)}
           />
         )}
 
-        {step === 5 && (
-          <Classify datasetLabel={metaLabel || 'This dataset'} onContinue={() => setStep(6)} />
+        {step === 6 && (
+          <Classify datasetLabel={metaLabel || 'This dataset'} onContinue={() => setStep(7)} />
         )}
 
-        {step === 6 && (
+        {step === 7 && (
           <Publish
             datasetLabel={metaLabel || 'This dataset'}
             metadataId={metadataId}

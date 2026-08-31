@@ -17,9 +17,16 @@ import auth as _auth
 from extractor import TableExtractor
 import catalogue as _cat
 from metadata_excel import parse_catalogue_summary, parse_metadata_workbook, parse_concept_file
+from metadata_llm import (
+    METADATA_FIELDS,
+    extract_excel_facts,
+    generate_metadata_with_llm,
+    parse_llm_metadata_output,
+)
 from catalogue_matching import match_tables_to_metadata, match_result_to_push_groups
 from table_export import table_to_excel_bytes
 from original_sheet_export import extract_sheet_with_formatting_from_bytes
+from validation import validate_table_fields_code, validate_table_fields_llm
 
 app = FastAPI(title="Table Extractor API")
 
@@ -61,6 +68,102 @@ def _extractor_for(request: Request) -> TableExtractor:
     if provider not in _KNOWN_LLM_PROVIDERS:
         provider = None  # e.g. "self-hosted" or unset -- let extractor.py auto-detect
     return TableExtractor(api_key=key, skip_llm=not key, provider=provider)
+
+
+def _validate_table_id_title(table: dict) -> None:
+    """Runs the code-based and prompt-based Table ID / Table Title validators
+    on one extracted table (mirrors the notebook's Stage 2.5) and annotates
+    the table in place with the results plus a `id_title_mismatch` flag the
+    frontend uses to decide which tables need manual reconciliation."""
+    table_id = table.get("table_id", "")
+    title = table.get("title", "")
+
+    code_result = validate_table_fields_code(table_id, title)
+    try:
+        llm_result = validate_table_fields_llm(table_id, title)
+    except Exception as e:
+        llm_result = {"valid": None, "issues": [f"LLM validation skipped ({e})"]}
+
+    both_invalid_different_reasons = (
+        code_result["valid"] is False
+        and llm_result["valid"] is False
+        and set(code_result["issues"]) != set(llm_result["issues"])
+    )
+    mismatch = code_result["valid"] != llm_result["valid"] or both_invalid_different_reasons
+
+    table["id_validation"] = {"code": code_result, "llm": llm_result}
+    table["id_title_mismatch"] = mismatch
+
+
+def _validate_tables(tables: list) -> None:
+    """Runs `_validate_table_id_title` across all tables concurrently (each
+    call makes a blocking LLM request) and annotates them in place."""
+    if not tables:
+        return
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+        list(pool.map(_validate_table_id_title, tables))
+
+
+def _group_metadata_is_empty(metadata: Optional[dict]) -> bool:
+    return not any((metadata or {}).get(f) for f in METADATA_FIELDS)
+
+
+def _stringify_metadata_values(metadata: dict) -> dict:
+    """The LLM can return a structured value for a field like `key_statistics`
+    (see the notebook's own example output, a JSON object of headline
+    numbers) -- normalize every field to a plain string so it renders safely
+    in a text input/textarea on the frontend."""
+    out = {}
+    for field in METADATA_FIELDS:
+        v = metadata.get(field)
+        if v is None or v == "":
+            out[field] = None
+        elif isinstance(v, (dict, list)):
+            out[field] = _json.dumps(v)
+        else:
+            out[field] = str(v)
+    return out
+
+
+def _fill_empty_group_metadata(groups: list, dataset_bytes_by_filename: dict, kyds_responses: Optional[dict]) -> None:
+    """Stage 4 -- LLM metadata creation per group (mirrors the notebook's
+    `generate_metadata_per_group`). Only groups with no metadata (i.e. not
+    matched to a row in an uploaded metadata workbook) are touched; groups
+    that already carry values parsed from a metadata file are left as-is,
+    per bullet 1 -- metadata-file entry stays the source of truth when the
+    user provided one.
+
+    Excel facts are derived once per source file (no LLM involved) and, as
+    in the notebook, reused unchanged across every group from that file.
+    KYDS responses come from Postgres (see catalogue.get_latest_kyds_responses)
+    rather than a hardcoded payload."""
+    if not kyds_responses or not dataset_bytes_by_filename:
+        return
+
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    facts_cache: dict = {}
+
+    for g in groups:
+        if not _group_metadata_is_empty(g.get("metadata")):
+            continue
+        tables = [mt["table"] for mt in g.get("matched_tables", [])]
+        if not tables:
+            continue
+        source_file = tables[0].get("source_file")
+        content = dataset_bytes_by_filename.get(source_file)
+        if not content:
+            continue
+
+        if source_file not in facts_cache:
+            facts_cache[source_file] = extract_excel_facts(content, source_file)
+
+        try:
+            llm_output = generate_metadata_with_llm(
+                facts_cache[source_file], kyds=kyds_responses, api_key=openai_api_key,
+            )
+            g["metadata"] = _stringify_metadata_values(parse_llm_metadata_output(llm_output))
+        except Exception as e:
+            print(f"Stage 4 LLM metadata generation failed for group {g.get('file_name')}: {e}")
 
 
 def require_user(request: Request) -> str:
@@ -176,6 +279,7 @@ async def extract_direct(request: Request, file: UploadFile = File(...), user_em
         raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, f"Extraction error: {e}")
+    await asyncio.to_thread(_validate_tables, tables)
     return {"filename": file.filename, "mode": "direct_llm", "table_count": len(tables), "tables": tables}
 
 
@@ -204,9 +308,15 @@ async def table_metadata(request: Request, user_email: str = Depends(require_use
 async def group_tables(
     tables_json: str = Form(...),
     metadata_files: list[UploadFile] = File(None),
+    dataset_files: list[UploadFile] = File(None),
     user_email: str = Depends(require_user),
 ):
-    """Group extracted tables using the same rule-based logic as batch upload."""
+    """Group extracted tables using the same rule-based logic as batch upload.
+
+    When a group ends up with no metadata (no uploaded metadata workbook row
+    matched it), and the original dataset workbook is available (`dataset_files`),
+    its fields are auto-filled via Stage 4 LLM metadata generation instead of
+    being left blank -- see `_fill_empty_group_metadata`."""
     tables = _json.loads(tables_json)
     for t in tables:
         if not t.get("source_file"):
@@ -222,6 +332,12 @@ async def group_tables(
             content = await f.read()
             metadata_payloads.append((f.filename, content))
 
+    dataset_payloads = {}
+    if dataset_files:
+        for f in dataset_files:
+            if f and f.filename:
+                dataset_payloads[f.filename] = await f.read()
+
     def _run():
         workbooks = []
         for filename, content in metadata_payloads:
@@ -230,6 +346,14 @@ async def group_tables(
             except ValueError as e:
                 raise ValueError(f"{filename}: {e}")
         result = match_tables_to_metadata(tables, workbooks)
+
+        if dataset_payloads:
+            conn = _cat.get_connection()
+            _cat.init_schema(conn)
+            kyds_responses = _cat.get_latest_kyds_responses(conn, user_email)
+            conn.close()
+            _fill_empty_group_metadata(result["groups"], dataset_payloads, kyds_responses)
+
         return match_result_to_push_groups(result)
 
     try:
@@ -369,6 +493,7 @@ async def batch_extract(request: Request, files: list[UploadFile] = File(...), u
     for filename, tables in results:
         all_tables.extend(tables)
         per_file.append({"filename": filename, "table_count": len(tables)})
+    await asyncio.to_thread(_validate_tables, all_tables)
     return {"tables": all_tables, "per_file": per_file, "table_count": len(all_tables)}
 
 
@@ -376,12 +501,17 @@ async def batch_extract(request: Request, files: list[UploadFile] = File(...), u
 async def batch_match(
     tables_json: str = Form(...),
     metadata_files: list[UploadFile] = File(None),
+    dataset_files: list[UploadFile] = File(None),
     user_email: str = Depends(require_user),
 ):
     """Parses multiple metadata workbooks and matches them against a set of
     already-extracted tables. Returns a proposed mapping for review --
     nothing is written to the database here. Metadata files are optional;
-    when omitted, groups are returned with empty catalogue fields."""
+    when omitted (or when a dataset simply isn't described in any uploaded
+    metadata workbook), that group's fields are auto-filled via Stage 4 LLM
+    metadata generation instead of being left empty, provided the original
+    dataset workbook was also sent (`dataset_files`) -- see
+    `_fill_empty_group_metadata`."""
     tables = _json.loads(tables_json)
 
     metadata_payloads = []
@@ -394,6 +524,12 @@ async def batch_match(
             content = await f.read()
             metadata_payloads.append((f.filename, content))
 
+    dataset_payloads = {}
+    if dataset_files:
+        for f in dataset_files:
+            if f and f.filename:
+                dataset_payloads[f.filename] = await f.read()
+
     def _run():
         workbooks = []
         for filename, content in metadata_payloads:
@@ -401,7 +537,16 @@ async def batch_match(
                 workbooks.append(parse_metadata_workbook(content, filename))
             except ValueError as e:
                 raise ValueError(f"{filename}: {e}")
-        return match_tables_to_metadata(tables, workbooks)
+        result = match_tables_to_metadata(tables, workbooks)
+
+        if dataset_payloads:
+            conn = _cat.get_connection()
+            _cat.init_schema(conn)
+            kyds_responses = _cat.get_latest_kyds_responses(conn, user_email)
+            conn.close()
+            _fill_empty_group_metadata(result["groups"], dataset_payloads, kyds_responses)
+
+        return result
 
     try:
         result = await asyncio.to_thread(_run)

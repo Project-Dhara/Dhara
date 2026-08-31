@@ -66,6 +66,10 @@ export default function BatchUpload({ onMatched }) {
       const matchFd = new FormData()
       matchFd.append('tables_json', JSON.stringify(extractData.tables))
       metadataFiles.forEach((f) => matchFd.append('metadata_files', f))
+      // Sent so groups with no metadata-workbook match can be auto-filled
+      // via Stage 4 LLM metadata generation server-side (see main.py's
+      // _fill_empty_group_metadata) instead of staying blank.
+      datasetFiles.forEach((f) => matchFd.append('dataset_files', f))
       const matchRes = await fetch('/api/catalogue/batch-match', withAuthHeaders({ method: 'POST', body: matchFd }))
       if (!matchRes.ok) {
         const err = await matchRes.json().catch(() => ({ detail: 'Matching failed' }))
