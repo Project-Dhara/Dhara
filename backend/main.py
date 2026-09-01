@@ -79,10 +79,16 @@ def _validate_table_id_title(table: dict) -> None:
     title = table.get("title", "")
 
     code_result = validate_table_fields_code(table_id, title)
-    try:
-        llm_result = validate_table_fields_llm(table_id, title)
-    except Exception as e:
-        llm_result = {"valid": None, "issues": [f"LLM validation skipped ({e})"]}
+    if not table_id.strip() and not title.strip():
+        # Nothing to send the model -- both fields are already conclusively
+        # invalid, so skip the LLM call rather than prompting it with two
+        # empty strings.
+        llm_result = {"valid": False, "issues": ["Table ID and Table Title are both missing"]}
+    else:
+        try:
+            llm_result = validate_table_fields_llm(table_id, title)
+        except Exception as e:
+            llm_result = {"valid": None, "issues": [f"LLM validation skipped ({e})"]}
 
     # The regex/heuristic validator is deterministic and ground-truth for the
     # cases it checks (missing field, no "TABLE" marker, obvious swap), so it

@@ -8,10 +8,15 @@ import { withAuthHeaders } from '../auth'
 // Lives in the Dataset Inventory stage regardless of which step within it
 // (mode pick, preview, grouping) is showing, so it stays visible even after
 // "Change files" or a stage-nav jump straight to the preview.
-export default function KydsSummaryCard() {
+// `variant="corner"` renders a compact, top-right-corner form of this same
+// widget -- a "Create KYDS" button when the caller skipped the initial form,
+// or a small pill (name + Edit) once an entry exists -- for pages that show
+// the KYDS state alongside their header instead of as a full-width card.
+export default function KydsSummaryCard({ variant = 'card' }) {
   const [kydsEntry, setKydsEntry] = useState(null)
   const [kydsLoading, setKydsLoading] = useState(true)
   const [editingKyds, setEditingKyds] = useState(false)
+  const [creatingKyds, setCreatingKyds] = useState(false)
 
   useEffect(() => {
     fetch('/api/kyds/mine', withAuthHeaders())
@@ -34,10 +39,28 @@ export default function KydsSummaryCard() {
       }
     } finally {
       setEditingKyds(false)
+      setCreatingKyds(false)
     }
   }
 
-  if (kydsLoading || !kydsEntry) return null
+  if (kydsLoading) return null
+
+  if (!kydsEntry) {
+    if (variant !== 'corner') return null
+    return (
+      <>
+        <button type="button" className="console-secondary-btn" onClick={() => setCreatingKyds(true)}>
+          + Create KYDS
+        </button>
+        {creatingKyds && (
+          <KydsModal
+            onSkip={() => setCreatingKyds(false)}
+            onSave={saveKydsEdit}
+          />
+        )}
+      </>
+    )
+  }
 
   return (
     <>

@@ -40,9 +40,11 @@ def validate_table_fields_code(table_id: str, title: str) -> Dict:
     id_has_marker = bool(TABLE_MARKER_RE.search(table_id))
     title_has_marker = bool(TABLE_MARKER_RE.search(title))
 
-    if not table_id:
+    if not table_id and not title:
+        issues.append("Table ID and Table Title are both missing")
+    elif not table_id:
         issues.append("Table ID is missing")
-    if not title:
+    elif not title:
         issues.append("Table Title is missing")
 
     if table_id and title and title_has_marker and not id_has_marker:

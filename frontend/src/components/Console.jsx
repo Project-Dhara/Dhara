@@ -364,10 +364,13 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
             <div className="console-step-title">{info.title}</div>
             <div className="console-step-sub">{info.sub}</div>
           </div>
-          <div className="console-stage-counter">Stage {stageIdx + 1} of {STAGE_DEFS.length}</div>
+          <div className="console-header-right">
+            {stageIdx === 0 && (step === 0 || step === 1) && <KydsSummaryCard variant="corner" />}
+            <div className="console-stage-counter">Stage {stageIdx + 1} of {STAGE_DEFS.length}</div>
+          </div>
         </div>
 
-        {stageIdx === 0 && step !== 3 && <KydsSummaryCard />}
+        {stageIdx === 0 && step === 2 && <KydsSummaryCard />}
 
         {step === 0 && (
           <ModeSelector mode={mode} onModeChange={setMode} onPick={pickMode} />
