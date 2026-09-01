@@ -84,12 +84,16 @@ def _validate_table_id_title(table: dict) -> None:
     except Exception as e:
         llm_result = {"valid": None, "issues": [f"LLM validation skipped ({e})"]}
 
-    both_invalid_different_reasons = (
-        code_result["valid"] is False
-        and llm_result["valid"] is False
-        and set(code_result["issues"]) != set(llm_result["issues"])
+    # The regex/heuristic validator is deterministic and ground-truth for the
+    # cases it checks (missing field, no "TABLE" marker, obvious swap), so it
+    # is the source of truth for whether a table needs reconciliation. The
+    # LLM validator can misfire on well-formed pairs (see validation.py); we
+    # only let it force a mismatch when it flags a problem the code validator
+    # doesn't already catch -- i.e. the code validator says valid, but the
+    # LLM found an actual issue.
+    mismatch = (not code_result["valid"]) or (
+        code_result["valid"] and llm_result["valid"] is False and llm_result["issues"]
     )
-    mismatch = code_result["valid"] != llm_result["valid"] or both_invalid_different_reasons
 
     table["id_validation"] = {"code": code_result, "llm": llm_result}
     table["id_title_mismatch"] = mismatch

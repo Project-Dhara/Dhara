@@ -92,6 +92,38 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
 
   const allCorrected = mismatched.every((t) => isSaved(t))
 
+  // Combines the code- and LLM-validator issues for a table into a single
+  // de-duped list, and classifies each one by which field(s) it concerns so
+  // the reconcile card can tell the user exactly what to fix.
+  const mismatchInfo = (t) => {
+    const issues = [
+      ...(t.id_validation?.code?.issues || []),
+      ...(t.id_validation?.llm?.issues || []),
+    ].filter((v, i, arr) => arr.indexOf(v) === i)
+
+    let idFlagged = false
+    let titleFlagged = false
+    issues.forEach((issue) => {
+      const lower = issue.toLowerCase()
+      const mentionsId = lower.includes('table id') || lower.includes(' id ') || lower.startsWith('id')
+      const mentionsTitle = lower.includes('title')
+      const isSwap = lower.includes('swap')
+      if (isSwap || (mentionsId && mentionsTitle)) {
+        idFlagged = true
+        titleFlagged = true
+      } else if (mentionsId) {
+        idFlagged = true
+      } else if (mentionsTitle) {
+        titleFlagged = true
+      } else {
+        // Unclassifiable issue — flag both fields rather than hide the reason.
+        idFlagged = true
+        titleFlagged = true
+      }
+    })
+    return { issues, idFlagged, titleFlagged }
+  }
+
   return (
     <div className="console-grouping-step">
       <div className="reconcile-title">Confirm Table Details</div>
@@ -108,13 +140,21 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
       <div className="reconcile-list">
         {visible.map((t) => {
           const locked = lockedIds.has(t.id)
+          const showReason = t.id_title_mismatch && !isSaved(t)
+          const { issues, idFlagged, titleFlagged } = showReason ? mismatchInfo(t) : {}
           return (
-            <div className={`reconcile-card${t.id_title_mismatch && !isSaved(t) ? ' reconcile-card-unedited' : ''}`} key={t.id}>
+            <div className={`reconcile-card${showReason ? ' reconcile-card-unedited' : ''}`} key={t.id}>
               <div className="reconcile-card-head">{t.id}</div>
 
+              {showReason && issues.length > 0 && (
+                <ul className="reconcile-issues">
+                  {issues.map((issue, i) => <li key={i}>{issue}</li>)}
+                </ul>
+              )}
+
               <div className="reconcile-fields">
-                <label className="reconcile-field">
-                  <span>Table ID</span>
+                <label className={`reconcile-field${showReason && idFlagged ? ' reconcile-field-bad' : ''}`}>
+                  <span>Table ID{showReason && idFlagged ? ' — needs fixing' : ''}</span>
                   <input
                     value={drafts[t.id]?.table_id ?? ''}
                     onChange={(e) => updateDraft(t.id, 'table_id', e.target.value)}
@@ -122,8 +162,8 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
                     spellCheck={false}
                   />
                 </label>
-                <label className="reconcile-field">
-                  <span>Table Title</span>
+                <label className={`reconcile-field${showReason && titleFlagged ? ' reconcile-field-bad' : ''}`}>
+                  <span>Table Title{showReason && titleFlagged ? ' — needs fixing' : ''}</span>
                   <input
                     value={drafts[t.id]?.title ?? ''}
                     onChange={(e) => updateDraft(t.id, 'title', e.target.value)}

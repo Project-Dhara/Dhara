@@ -957,7 +957,8 @@ body {
 .reconcile-clean { font-size: 14px; color: var(--ink); background: #f2f8f5; border: 1px solid var(--green); border-radius: 10px; padding: 12px 16px; }
 .reconcile-list { display: flex; flex-direction: column; gap: 12px; }
 .reconcile-card { background: #ffffff; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
-.reconcile-card-unedited .reconcile-field input { border: 2px solid #c0392b; }
+.reconcile-field-bad input { border: 2px solid #c0392b; }
+.reconcile-field-bad span { color: #c0392b; font-weight: 600; }
 .reconcile-card-actions { display: flex; align-items: center; gap: 10px; }
 .reconcile-save-btn:disabled,
 .reconcile-edit-btn:disabled { opacity: 0.5; cursor: not-allowed; }

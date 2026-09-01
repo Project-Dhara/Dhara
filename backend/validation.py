@@ -128,26 +128,24 @@ def validate_table_fields_llm(
 
 # Respond with ONLY the JSON object. Do not include explanations, markdown, or additional text.
 # """
-    prompt = f"""You are validating fields extracted from a statistical table sheet.
+    prompt = f"""Validate a Table ID / Table Title pair extracted from a statistics sheet.
 
-Table ID (extracted): {table_id!r}
-Table Title (extracted): {title!r}
+Table ID: {table_id!r}
+Table Title: {title!r}
 
-A correct Table ID contains the word "TABLE" as a marker (any spacing/punctuation
-around it is fine, e.g. "TABLE: D-12", "TABLE : D-12", "TABLE-D12", "TABLE D 12"
-are all valid -- do not flag these as missing the marker just because of spacing).
-The Table Title is a longer free-text sentence describing what the table
-contains.
+Table ID is valid if it contains "TABLE" as a marker, any spacing/punctuation
+(e.g. "TABLE: D-12", "TABLE :D-14", "TABLE-D12"). Title is free text and may
+be short (e.g. "INFANTS DEATHS BY AGE AND SEX") -- never judge its wording,
+length, or plausibility.
 
-Check for these problems, and list every one that applies:
-1. The Table ID and Table Title look swapped (the title-looking
-   text is in the ID field, or vice versa).
-2. The Table Title contains "DESCRIPTION" or "SL.NO" as a marker.
-3. The Table ID or Table Title is missing/empty.
+List ONLY issues that apply, nothing else:
+1. swapped: title-like text is in the ID field, or vice versa.
+2. Title contains "DESCRIPTION" or "SL.NO" as a marker.
+3. ID or Title is missing/empty.
 
-If none of these problems apply, return valid=true and an empty issues list.
-Respond with ONLY a JSON object of this exact shape:
-{{"valid": true or false, "issues": ["...", ...]}}
+Example: id="TABLE :D-14", title="INFANTS DEATHS BY AGE AND SEX" -> valid=true, issues=[]
+
+Respond with ONLY: {{"valid": true or false, "issues": ["...", ...]}}
 """
 
     response = client.chat.completions.create(
