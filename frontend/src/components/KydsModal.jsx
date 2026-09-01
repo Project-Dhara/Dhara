@@ -225,8 +225,8 @@ function Field({ label, hint, children }) {
   )
 }
 
-export default function KydsModal({ onSkip, onSave }) {
-  const [form, setForm] = useState(emptyForm)
+export default function KydsModal({ onSkip, onSave, initialForm, editing = false }) {
+  const [form, setForm] = useState(() => ({ ...emptyForm(), ...(initialForm || {}) }))
   const [saving, setSaving] = useState(false)
   const savingRef = useRef(false)
 
@@ -248,13 +248,13 @@ export default function KydsModal({ onSkip, onSave }) {
         <div className="kyds-header">
           <div>
             <div className="kyds-eyebrow">Optional · Know Your Dataset</div>
-            <div id="kyds-title" className="kyds-title">KYDS Entry</div>
+            <div id="kyds-title" className="kyds-title">{editing ? 'Edit KYDS Entry' : 'KYDS Entry'}</div>
             <div className="kyds-sub">
               Record modality, sensitivity, access, granularity, retention and storage.
-              You can skip this and continue — none of these fields are required.
+              {editing ? ' Update any fields below and save.' : ' You can skip this and continue — none of these fields are required.'}
             </div>
           </div>
-          <button type="button" className="push-close" onClick={onSkip} aria-label="Skip KYDS form">×</button>
+          <button type="button" className="push-close" onClick={onSkip} aria-label={editing ? 'Close' : 'Skip KYDS form'}>×</button>
         </div>
 
         <div className="kyds-body">
@@ -520,7 +520,7 @@ export default function KydsModal({ onSkip, onSave }) {
 
         <div className="kyds-footer">
           <button type="button" className="push-btn-secondary" onClick={onSkip}>
-            Skip for now
+            {editing ? 'Cancel' : 'Skip for now'}
           </button>
           <button
             type="button"
@@ -533,7 +533,7 @@ export default function KydsModal({ onSkip, onSave }) {
               onSave(form)
             }}
           >
-            Save &amp; continue
+            {editing ? (saving ? 'Saving…' : 'Save changes') : 'Save & continue'}
           </button>
         </div>
       </div>

@@ -126,12 +126,24 @@ export default function BatchUpload({ onMatched }) {
 
       <div className="batch-upload-actions">
         <button className="console-primary-btn" disabled={!canRun} onClick={runMatch}>
-          {stage === 'extracting' && 'Extracting tables…'}
+          {busy && <span className="btn-spinner" />}
+          {stage === 'extracting' && 'Extracting & validating tables…'}
           {stage === 'matching' && 'Matching to metadata…'}
           {(stage === 'idle' || stage === 'error') && 'Preview files →'}
         </button>
-        <span className="batch-upload-hint">{datasetFiles.length} dataset · {metadataFiles.length} metadata</span>
+        {!busy && <span className="batch-upload-hint">{datasetFiles.length} dataset · {metadataFiles.length} metadata</span>}
       </div>
+
+      {busy && (
+        <div className="batch-upload-progress">
+          <div className="progress-step-list">
+            <div className="progress-step progress-step-active">
+              <span className="progress-step-dot" />
+              Extracting tables & validating Table ID / Title
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

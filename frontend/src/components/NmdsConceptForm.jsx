@@ -13,6 +13,7 @@ export default function NmdsConceptForm({
   file,
   parsing,
   parseError,
+  fileMismatch,
   onBack,
   onSave,
   saving,
@@ -49,13 +50,19 @@ export default function NmdsConceptForm({
         />
         {file && (
           <div className="push-excel-row">
-            {!parsing && !parseError && (
+            {!parsing && !parseError && !fileMismatch && (
               <div className="push-file-name">{file.name} — fields filled in below</div>
             )}
             {parsing && <div className="push-file-status">Reading concept metadata from {file.name}…</div>}
             {parseError && (
               <div className="push-file-error">
                 Couldn't auto-fill from {file.name}: {parseError}. You can still fill the fields in manually.
+              </div>
+            )}
+            {!parsing && !parseError && fileMismatch && (
+              <div className="push-file-warning">
+                ⚠ Couldn't match {file.name} against the known NMDS concepts — double-check you've uploaded the
+                right file. You can still fill the fields in manually below.
               </div>
             )}
           </div>

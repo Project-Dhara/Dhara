@@ -55,7 +55,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
     <div className="settings-screen">
       <div className="settings-head">
         <div className="settings-title">Settings</div>
-        <div className="settings-sub">DHARA uses your own model key for classification and harmonisation suggestions.</div>
+        
       </div>
 
       <div className="settings-card">

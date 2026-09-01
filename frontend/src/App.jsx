@@ -13,8 +13,21 @@ export default function App() {
   const storedUser = getStoredUser()
   const [loggedIn, setLoggedIn] = useState(!!storedUser)
   const [showKyds, setShowKyds] = useState(false)
-  const [screen, setScreen] = useState('dashboard') // 'dashboard' | 'console' | 'catalogue' | 'settings'
+  const [screen, setScreen] = useState(
+    () => sessionStorage.getItem('dhara_screen_v1') || 'dashboard'
+  ) // 'dashboard' | 'console' | 'catalogue' | 'settings'
   const [consoleKey, setConsoleKey] = useState(0)
+  const [consoleVisited, setConsoleVisited] = useState(screen === 'console')
+
+  const navigate = (next) => {
+    setScreen(next)
+    try {
+      sessionStorage.setItem('dhara_screen_v1', next)
+    } catch {
+      // best-effort
+    }
+    if (next === 'console') setConsoleVisited(true)
+  }
 
   const [user, setUser] = useState(
     storedUser || { name: '', role: 'Administrator', email: '', dept: '' }
@@ -32,15 +45,20 @@ export default function App() {
           setUser(nextUser)
           setLoggedIn(true)
           setShowKyds(true)
-          setScreen('dashboard')
+          navigate('dashboard')
         }}
       />
     )
   }
 
   const startFlow = () => {
+    try {
+      sessionStorage.removeItem('dhara_console_state_v1')
+    } catch {
+      // best-effort
+    }
     setConsoleKey((k) => k + 1)
-    setScreen('console')
+    navigate('console')
   }
 
   const handleSettingsChange = (next) => {
@@ -60,7 +78,7 @@ export default function App() {
     <AppShell
       screen={screen}
       user={user}
-      onNavigate={setScreen}
+      onNavigate={navigate}
       onSignOut={() => { clearSession(); setLoggedIn(false); setShowKyds(false) }}
     >
       {showKyds && (
@@ -81,19 +99,25 @@ export default function App() {
       )}
       {screen === 'dashboard' && <Dashboard onStartFlow={startFlow} />}
 
-      {screen === 'console' && (
-        <Console
-          key={consoleKey}
-          hasKey={keySaved}
-          onGoSettings={() => setScreen('settings')}
-          onGoDashboard={() => setScreen('dashboard')}
-          onGoCatalogue={() => setScreen('catalogue')}
-          onUploadAnother={startFlow}
-        />
+      {/* Kept mounted (hidden via CSS, not removed from the tree) once
+          visited, so navigating away to Settings/Catalogue and back doesn't
+          wipe in-progress flow state. Only an explicit "start new flow"
+          (startFlow) remounts it via consoleKey. */}
+      {consoleVisited && (
+        <div style={{ display: screen === 'console' ? 'contents' : 'none' }}>
+          <Console
+            key={consoleKey}
+            hasKey={keySaved}
+            onGoSettings={() => navigate('settings')}
+            onGoDashboard={() => navigate('dashboard')}
+            onGoCatalogue={() => navigate('catalogue')}
+            onUploadAnother={startFlow}
+          />
+        </div>
       )}
 
       {screen === 'catalogue' && (
-        <Catalogue hasKey={keySaved} onGoSettings={() => setScreen('settings')} />
+        <Catalogue hasKey={keySaved} onGoSettings={() => navigate('settings')} />
       )}
 
       {screen === 'settings' && (

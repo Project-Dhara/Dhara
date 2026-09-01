@@ -408,6 +408,26 @@ async def save_kyds(request: Request, user_email: str = Depends(require_user)):
     return {"id": entry_id, "status": "saved"}
 
 
+@app.get("/api/kyds/mine")
+async def get_my_kyds(user_email: str = Depends(require_user)):
+    """Returns the authenticated caller's own most recent KYDS entry (or
+    None), so the console can show it and offer an edit option."""
+    def _run():
+        conn = _cat.get_connection()
+        _cat.init_schema(conn)
+        entry = _cat.get_own_latest_kyds_entry(conn, user_email)
+        conn.close()
+        return entry
+
+    try:
+        entry = await asyncio.to_thread(_run)
+    except Exception as e:
+        raise HTTPException(500, f"KYDS fetch error: {e}")
+    if entry and entry.get("created_at"):
+        entry["created_at"] = entry["created_at"].isoformat()
+    return {"entry": entry}
+
+
 @app.post("/api/catalogue/parse-metadata-excel")
 async def parse_metadata_excel(file: UploadFile = File(...), user_email: str = Depends(require_user)):
     """Reads a DES metadata workbook's `catalogue_summary` sheet and returns

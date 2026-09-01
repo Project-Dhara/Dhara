@@ -200,19 +200,11 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
     <div className="table-viewer">
       {compact ? (
         <div className="viewer-compact-header">
-          <div className="viewer-compact-title">{table.description || table.title}</div>
+          <div className="viewer-title-label">Table Title</div>
+          <div className="viewer-compact-title">{table.title}</div>
+          {table.description && <div className="viewer-desc">{table.description}</div>}
           <div className="viewer-compact-meta">
             Sheet: {table.sheet} · {table.row_count.toLocaleString()} rows · {table.columns.length} columns
-          </div>
-          <div className="viewer-compact-actions">
-            <button className="btn-csv" onClick={() => downloadCSV(table)}>Download CSV</button>
-            <button
-              className="btn-meta"
-              onClick={() => downloadMetadataExcel(table, setMetaLoading)}
-              disabled={metaLoading}
-            >
-              {metaLoading ? 'Analysing…' : 'Download Classifications'}
-            </button>
           </div>
         </div>
       ) : (
@@ -221,6 +213,8 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
             <span className="catalogue-id-chip" title="Dataset ID (editable)">{table.id}</span>
             {editIdControl}
           </div>
+          <div className="viewer-title-label">Table Title</div>
+          <div className="viewer-compact-title">{table.title}</div>
           {table.description && <div className="viewer-desc">{table.description}</div>}
           <div className="viewer-meta">
             <span className="meta-chip">Sheet: {table.sheet}</span>
@@ -278,6 +272,16 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
           <span className="viewer-id-footer-label">Dataset ID</span>
           <span className="catalogue-id-chip" title="Dataset ID (editable)">{table.id}</span>
           {editIdControl}
+          <div className="viewer-compact-actions">
+            <button className="btn-csv" onClick={() => downloadCSV(table)}>Download CSV</button>
+            <button
+              className="btn-meta"
+              onClick={() => downloadMetadataExcel(table, setMetaLoading)}
+              disabled={metaLoading}
+            >
+              {metaLoading ? 'Analysing…' : 'Download Classifications'}
+            </button>
+          </div>
         </div>
       )}
     </div>

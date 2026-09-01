@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import ModeSelector from './ModeSelector'
+import KydsSummaryCard from './KydsSummaryCard'
 import FileUpload from './FileUpload'
 import TableViewer from './TableViewer'
 import PushModal from './PushModal'
@@ -26,10 +27,27 @@ function tableCode(table) {
 }
 
 const STAGE_DEFS = [
-  { name: 'Dataset Inventory', firstStep: 0, sub: 'Files, preview, grouping' },
-  { name: 'Metadata Workspace', firstStep: 5, sub: 'Title, category, coverage' },
-  { name: 'Transformation & Harmonisation', firstStep: 6, sub: 'Concepts and code maps' },
-  { name: 'Dataset Publication', firstStep: 7, sub: 'API, MCP, catalogue' },
+  {
+    name: 'Dataset Inventory', firstStep: 0, sub: 'Files, preview, grouping',
+    subs: [
+      { step: 0, label: 'Choose method' },
+      { step: 1, label: 'Files' },
+      { step: 2, label: 'Preview' },
+      { step: 3, label: 'Grouping' },
+    ],
+  },
+  {
+    name: 'Metadata Workspace', firstStep: 4, sub: 'Title, category, coverage',
+    subs: [{ step: 4, label: 'Metadata' }],
+  },
+  {
+    name: 'Transformation & Harmonisation', firstStep: 5, sub: 'Concepts and code maps',
+    subs: [{ step: 5, label: 'Classification & harmonisation' }],
+  },
+  {
+    name: 'Dataset Publication', firstStep: 6, sub: 'API, MCP, catalogue',
+    subs: [{ step: 6, label: 'Publish' }],
+  },
 ]
 
 function stepInfoFor(step, mode) {
@@ -43,16 +61,12 @@ function stepInfoFor(step, mode) {
         : 'One dataset workbook and its metadata tag file.',
     },
     {
-      title: 'Preview what was read',
+      title: 'Preview & confirm table details',
       sub: batch
-        ? 'Pick a table above to check the rows and the metadata read from the tag files.'
-        : 'Pick a table above to check what was read from the workbook.',
+        ? 'Pick a table above to check the rows and metadata read from the tag files, and correct any flagged Table ID / Title mismatches.'
+        : 'Pick a table above to check what was read from the workbook, and correct any flagged Table ID / Title mismatches.',
     },
-    {
-      title: 'Confirm Table Details',
-      sub: 'Code-based and prompt-based validation disagreed on some tables — confirm or correct them.',
-    },
-    { title: 'Grouping', sub: 'Optional. Tables with the same columns can share one metadata record.' },
+    { title: 'Grouping' },
     { title: 'Metadata', sub: 'One card per table. Fill in what you know — only the title is required.' },
     { title: 'Classification and harmonisation', sub: 'Map columns to standard concepts and code lists.' },
     { title: 'Publish this release', sub: 'Register the API and MCP endpoints for this release.' },
@@ -60,45 +74,104 @@ function stepInfoFor(step, mode) {
 }
 
 const BACK_LABELS = [
-  '', 'Choose another method', 'Change files', 'Back to preview', 'Back to table details', 'Back to grouping', 'Back to metadata',
+  '', 'Choose another method', 'Change files', 'Back to preview', 'Back to grouping', 'Back to metadata',
 ]
 
 function stageIndexForStep(step) {
-  if (step <= 4) return 0
-  if (step === 5) return 1
-  if (step === 6) return 2
+  if (step <= 3) return 0
+  if (step === 4) return 1
+  if (step === 5) return 2
   return 3
 }
 
+// Serializable slice of the flow state, persisted so it survives a page
+// refresh or a detour to another screen — File objects can't survive either
+// (browsers won't let a File be reconstructed from storage), so
+// singleDatasetFile/singleMetaFile/metadataFiles are deliberately excluded;
+// the user just re-adds files if they refresh mid-upload-step.
+const STORAGE_KEY = 'dhara_console_state_v1'
+
+function loadPersisted() {
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY)
+    if (!raw) return null
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
 export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatalogue, onUploadAnother }) {
-  const [step, setStep] = useState(0)
-  const [mode, setMode] = useState(null)
+  const persisted = loadPersisted()
+
+  const [step, setStep] = useState(persisted?.step ?? 0)
+  const [mode, setMode] = useState(persisted?.mode ?? null)
 
   // ── single-file flow state (ported from SingleFileFlow.jsx) ──
-  const [tables, setTables] = useState([])
-  const [selectedId, setSelectedId] = useState(null)
+  const [tables, setTables] = useState(persisted?.tables ?? [])
+  const [selectedId, setSelectedId] = useState(persisted?.selectedId ?? null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [filename, setFilename] = useState('')
-  const [groups, setGroups] = useState(null)
+  const [filename, setFilename] = useState(persisted?.filename ?? '')
+  const [groups, setGroups] = useState(persisted?.groups ?? null)
   const [grouping, setGrouping] = useState(false)
   const [singleDatasetFile, setSingleDatasetFile] = useState(null)
   const [singleMetaFile, setSingleMetaFile] = useState(null)
 
   // ── batch flow state (ported from BatchFlow.jsx) ──
-  const [matchResult, setMatchResult] = useState(null)
+  const [matchResult, setMatchResult] = useState(persisted?.matchResult ?? null)
   const [metadataFiles, setMetadataFiles] = useState([])
-  const [batchPreviewId, setBatchPreviewId] = useState(null)
+  const [batchPreviewId, setBatchPreviewId] = useState(persisted?.batchPreviewId ?? null)
 
   // ── carried into Classify / Publish after the metadata save ──
-  const [metaLabel, setMetaLabel] = useState('')
-  const [metadataId, setMetadataId] = useState(null)
+  const [metaLabel, setMetaLabel] = useState(persisted?.metaLabel ?? '')
+  const [metadataId, setMetadataId] = useState(persisted?.metadataId ?? null)
+
+  // Tracks which flagged (id_title_mismatch) tables have actually had their
+  // "Save details" button clicked in ReconcileIds — not merely opened — so
+  // Stage 2's continue button and the tab badges reflect real corrections,
+  // not just tabs the user happened to click through.
+  const [savedIds, setSavedIds] = useState(() => new Set(persisted?.savedIds ?? []))
+
+  // Tracks whether the metadata step (PushModal / BatchReview) has ever been
+  // reached for the current dataset, so it can stay mounted (see render
+  // below) instead of being torn down whenever the user steps back to
+  // Dataset Inventory to check the upload.
+  const [metadataStarted, setMetadataStarted] = useState(persisted?.metadataStarted ?? false)
+  useEffect(() => {
+    if (step === 4) setMetadataStarted(true)
+  }, [step])
+
+  // The furthest step reached so far — separate from `step` itself, which
+  // drops back down when the user steps back to Dataset Inventory. Stage nav
+  // must stay enabled for a stage the user already reached, even after
+  // going back; comparing against plain `step` disabled it as soon as it
+  // dropped, blocking the way forward again.
+  const [maxStepReached, setMaxStepReached] = useState(persisted?.maxStepReached ?? 0)
+  useEffect(() => {
+    setMaxStepReached((m) => Math.max(m, step))
+  }, [step])
+
+  useEffect(() => {
+    const toSave = {
+      step, mode, tables, selectedId, filename, groups, matchResult, batchPreviewId,
+      metaLabel, metadataId, savedIds: [...savedIds], metadataStarted, maxStepReached,
+    }
+    try {
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(toSave))
+    } catch {
+      // best-effort — e.g. storage full or unavailable
+    }
+  }, [step, mode, tables, selectedId, filename, groups, matchResult, batchPreviewId, metaLabel, metadataId, savedIds, metadataStarted, maxStepReached])
 
   const pickMode = (m) => {
     setMode(m)
     setTables([]); setSelectedId(null); setGroups(null); setFilename(''); setError(null)
     setMatchResult(null); setMetadataFiles([]); setBatchPreviewId(null)
     setSingleMetaFile(null); setSingleDatasetFile(null)
+    setSavedIds(new Set())
+    setMetadataStarted(false)
+    setMaxStepReached(1)
     setStep(1)
   }
 
@@ -119,6 +192,9 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
       setTables(data.tables)
       setFilename(data.filename)
       if (data.tables.length > 0) setSelectedId(data.tables[0].id)
+      setSavedIds(new Set())
+      setMetadataStarted(false)
+      setMaxStepReached(2)
       setStep(2)
     } catch (e) {
       setError(e.message)
@@ -152,7 +228,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   // similar tables" button click — mirrors batch mode, where matching (and
   // therefore metadata generation) always runs automatically.
   useEffect(() => {
-    if (step === 4 && mode === 'single' && groups === null && !grouping && tables.length > 0) {
+    if (step === 3 && mode === 'single' && groups === null && !grouping && tables.length > 0) {
       handleGroup()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -163,7 +239,10 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
     setSelectedId(newId)
   }
 
-  const applyReconcile = (corrections) => {
+  // Applies { tableId: { table_id, title } } corrections onto whichever
+  // table list is live for the current mode — used both for a single save
+  // (so the preview updates immediately) and the final "continue" step.
+  const patchTables = (corrections) => {
     const patchTable = (t) => (corrections[t.id] ? { ...t, ...corrections[t.id] } : t)
     if (mode === 'single') {
       setTables((prev) => prev.map(patchTable))
@@ -177,7 +256,11 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
         unmatched_tables: prev.unmatched_tables.map((u) => ({ ...u, table: patchTable(u.table) })),
       }))
     }
-    setStep(4)
+  }
+
+  const applyReconcile = (corrections) => {
+    patchTables(corrections)
+    setStep(3)
   }
 
   const handleMatched = (data) => {
@@ -186,6 +269,9 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
     const all = data.groups.flatMap((g) => g.matched_tables.map((mt) => mt.table))
       .concat(data.unmatched_tables.map((u) => u.table))
     if (all.length > 0) setBatchPreviewId(all[0].id)
+    setSavedIds(new Set())
+    setMetadataStarted(false)
+    setMaxStepReached(2)
     setStep(2)
   }
 
@@ -194,8 +280,20 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   const stageIdx = stageIndexForStep(step)
   const info = stepInfoFor(step, mode)
 
-  const goStage = (firstStep) => {
-    if (firstStep <= step) setStep(firstStep)
+  // Which stage's substeps are expanded in the sidebar — defaults to
+  // whichever stage the user is currently in, but clicking another stage's
+  // header expands that one (and collapses the rest) without navigating,
+  // so the user can peek at a stage's substeps before jumping into one.
+  const [expandedStage, setExpandedStage] = useState(stageIdx)
+  useEffect(() => {
+    setExpandedStage(stageIdx)
+  }, [stageIdx])
+
+  // A substep can only be jumped to once the user has actually reached it
+  // before — same rule as the old goStage, just applied per substep now
+  // that each one is individually clickable.
+  const goToStep = (targetStep) => {
+    if (targetStep <= maxStepReached) setStep(targetStep)
   }
 
   // ── step 2: preview ──
@@ -207,30 +305,60 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   const previewSelectedId = mode === 'batch' ? batchPreviewId : selectedId
   const previewSelected = previewTables.find((t) => t.id === previewSelectedId) || previewTables[0]
   const setPreviewSelected = mode === 'batch' ? setBatchPreviewId : setSelectedId
+  const selectPreviewTable = (id) => setPreviewSelected(id)
+  const markTableSaved = (id, correction) => {
+    setSavedIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id)))
+    if (correction) patchTables({ [id]: correction })
+  }
+  const mismatchedPreviewTables = previewTables.filter((t) => t.id_title_mismatch)
+  const unsavedMismatched = mismatchedPreviewTables.filter((t) => !savedIds.has(t.id))
 
   return (
     <div className="console">
       <aside className="console-stages">
         <div className="console-stages-label">Console stages</div>
-        {STAGE_DEFS.map((s, i) => (
-          <div
-            key={s.name}
-            className={`console-stage${i === stageIdx ? ' console-stage-active' : ''}${i < stageIdx ? ' console-stage-done' : ''}`}
-            onClick={() => goStage(s.firstStep)}
-          >
-            <div className="console-stage-mark">{i < stageIdx ? '✓' : i + 1}</div>
-            <div className="console-stage-text">
-              <div className="console-stage-name">{s.name}</div>
-              <div className="console-stage-sub">{s.sub}</div>
+        {STAGE_DEFS.map((s, i) => {
+          const expanded = i === expandedStage
+          return (
+            <div key={s.name} className="console-stage-block">
+              <div
+                className={`console-stage${i === stageIdx ? ' console-stage-active' : ''}${i < stageIdx ? ' console-stage-done' : ''}${expanded ? ' console-stage-expanded' : ''}`}
+                onClick={() => setExpandedStage(i)}
+              >
+                <div className="console-stage-mark">{i < stageIdx ? '✓' : i + 1}</div>
+                <div className="console-stage-text">
+                  <div className="console-stage-name">{s.name}</div>
+                  <div className="console-stage-sub">{s.sub}</div>
+                </div>
+              </div>
+              {expanded && (
+                <div className="console-substeps">
+                  {s.subs.map((sub) => {
+                    const active = sub.step === step
+                    const done = sub.step < step
+                    const reachable = sub.step <= maxStepReached
+                    return (
+                      <div
+                        key={sub.step}
+                        className={`console-substep${active ? ' console-substep-active' : ''}${done ? ' console-substep-done' : ''}${!reachable ? ' console-substep-disabled' : ''}`}
+                        onClick={() => reachable && goToStep(sub.step)}
+                      >
+                        <span className="console-substep-dot" />
+                        <span className="console-substep-label">{sub.label}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          )
+        })}
       </aside>
 
       <div className="console-main">
         <div className="console-header">
           <div>
-            {step > 0 && step < 7 && (
+            {step > 0 && step < 6 && (
               <div className="console-back" onClick={back}>← {BACK_LABELS[step]}</div>
             )}
             <div className="console-step-title">{info.title}</div>
@@ -238,6 +366,8 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
           </div>
           <div className="console-stage-counter">Stage {stageIdx + 1} of {STAGE_DEFS.length}</div>
         </div>
+
+        {stageIdx === 0 && step !== 3 && <KydsSummaryCard />}
 
         {step === 0 && (
           <ModeSelector mode={mode} onModeChange={setMode} onPick={pickMode} />
@@ -284,12 +414,25 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                 disabled={!singleDatasetFile || loading}
                 onClick={runSingleExtract}
               >
-                {loading ? 'Extracting tables…' : 'Preview files →'}
+                {loading && <span className="btn-spinner" />}
+                {loading ? 'Extracting & validating tables…' : 'Preview files →'}
               </button>
-              <span className="batch-upload-hint">
-                {singleDatasetFile ? '1' : '0'} dataset · {singleMetaFile ? '1' : '0'} metadata
-              </span>
+              {!loading && (
+                <span className="batch-upload-hint">
+                  {singleDatasetFile ? '1' : '0'} dataset · {singleMetaFile ? '1' : '0'} metadata
+                </span>
+              )}
             </div>
+            {loading && (
+              <div className="batch-upload-progress">
+                <div className="progress-step-list">
+                  <div className="progress-step progress-step-active">
+                    <span className="progress-step-dot" />
+                    Extracting tables & validating Table ID / Title
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -299,37 +442,47 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
 
         {step === 2 && previewTables.length > 0 && (
           <div className="console-preview-step">
+            {mismatchedPreviewTables.length > 0 && (
+              <div className="console-preview-flag-banner">
+                ⚠ {unsavedMismatched.length > 0
+                  ? `${unsavedMismatched.length} of ${mismatchedPreviewTables.length} flagged table${mismatchedPreviewTables.length !== 1 ? 's' : ''} still need correcting & saving — open each orange tab below.`
+                  : `All ${mismatchedPreviewTables.length} flagged table${mismatchedPreviewTables.length !== 1 ? 's' : ''} saved.`}
+              </div>
+            )}
             <div className="console-preview-tabs">
-              {previewTables.map((t, i) => (
-                <div
-                  key={t.id}
-                  className={`console-preview-tab${t.id === previewSelected?.id ? ' console-preview-tab-active' : ''}`}
-                  onClick={() => setPreviewSelected(t.id)}
-                  title={t.id}
-                >
-                  <span className="console-preview-tab-id">{tableCode(t)}</span>
-                  <span className="console-preview-tab-meta">{t.row_count} rows</span>
-                </div>
-              ))}
+              {previewTables.map((t, i) => {
+                const flagged = !!t.id_title_mismatch
+                const unsaved = flagged && !savedIds.has(t.id)
+                const resolved = !unsaved
+                return (
+                  <div
+                    key={t.id}
+                    className={`console-preview-tab${t.id === previewSelected?.id ? ' console-preview-tab-active' : ''}${unsaved ? ' console-preview-tab-flagged console-preview-tab-unreviewed' : ''}${resolved ? ' console-preview-tab-resolved' : ''}`}
+                    onClick={() => selectPreviewTable(t.id)}
+                    title={flagged ? `${t.id} — Table ID / Title need confirmation` : `${t.id} — no validation errors`}
+                  >
+                    <span className="console-preview-tab-badge">{unsaved ? '!' : '✓'}</span>
+                    <span className="console-preview-tab-id">{tableCode(t)}</span>
+                    <span className="console-preview-tab-meta">{t.row_count} rows</span>
+                  </div>
+                )
+              })}
             </div>
             {previewSelected && (
               <TableViewer table={previewSelected} onUpdateId={mode === 'single' ? handleUpdateId : undefined} compact />
             )}
-            <div className="console-step-actions">
-              <button className="console-primary-btn" onClick={() => setStep(3)}>Looks right, continue →</button>
-              <button className="console-secondary-btn" onClick={() => setStep(1)}>Change files</button>
-            </div>
+            <ReconcileIds
+              tables={mode === 'batch' ? batchAllTables : tables}
+              visibleId={previewSelected?.id}
+              onContinue={applyReconcile}
+              onNavigate={selectPreviewTable}
+              onSave={markTableSaved}
+              extraAction={<button className="console-secondary-btn" onClick={() => setStep(1)}>Change files</button>}
+            />
           </div>
         )}
 
-        {step === 3 && (
-          <ReconcileIds
-            tables={mode === 'batch' ? batchAllTables : tables}
-            onContinue={applyReconcile}
-          />
-        )}
-
-        {step === 4 && mode === 'single' && (
+        {step === 3 && mode === 'single' && (
           <div className="console-grouping-step">
             <div className="console-group-action-row">
               <button className="console-secondary-btn" onClick={handleGroup} disabled={grouping || tables.length < 2}>
@@ -355,12 +508,12 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
             )}
 
             <div className="console-step-actions">
-              <button className="console-primary-btn" onClick={() => setStep(5)}>Continue to metadata →</button>
+              <button className="console-primary-btn" onClick={() => setStep(4)}>Continue to metadata →</button>
             </div>
           </div>
         )}
 
-        {step === 4 && mode === 'batch' && matchResult && (
+        {step === 3 && mode === 'batch' && matchResult && (
           <div className="console-grouping-step">
             <div className="console-group-summary">
               {matchResult.groups.map((g, i) => (
@@ -387,42 +540,49 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
               )}
             </div>
             <div className="console-step-actions">
-              <button className="console-primary-btn" onClick={() => setStep(5)}>Continue to metadata →</button>
+              <button className="console-primary-btn" onClick={() => setStep(4)}>Continue to metadata →</button>
             </div>
           </div>
         )}
 
-        {step === 5 && mode === 'single' && (
-          <PushModal
-            tables={tables}
-            groups={groups}
-            inline
-            initialExcelFile={singleMetaFile}
-            onPushed={(result, title) => {
-              setMetaLabel(title || filename || selectedId || 'this dataset')
-              setMetadataId(result?.metadata_id || null)
-              setStep(6)
-            }}
-          />
+        {/* Kept mounted (hidden via CSS, not removed from the tree) once the
+            metadata step is reached, so stepping back to Dataset Inventory
+            and returning doesn't lose whatever was already filled in here. */}
+        {metadataStarted && mode === 'single' && (
+          <div style={{ display: step === 4 ? 'contents' : 'none' }}>
+            <PushModal
+              tables={tables}
+              groups={groups}
+              inline
+              initialExcelFile={singleMetaFile}
+              onPushed={(result, title) => {
+                setMetaLabel(title || filename || selectedId || 'this dataset')
+                setMetadataId(result?.metadata_id || null)
+                setStep(5)
+              }}
+            />
+          </div>
         )}
 
-        {step === 5 && mode === 'batch' && matchResult && (
-          <BatchReview
-            matchResult={matchResult}
-            metadataFiles={metadataFiles}
-            onDone={(label) => {
-              setMetaLabel(label || 'this release')
-              setStep(6)
-            }}
-            onCancel={() => setStep(4)}
-          />
+        {metadataStarted && mode === 'batch' && matchResult && (
+          <div style={{ display: step === 4 ? 'contents' : 'none' }}>
+            <BatchReview
+              matchResult={matchResult}
+              metadataFiles={metadataFiles}
+              onDone={(label) => {
+                setMetaLabel(label || 'this release')
+                setStep(5)
+              }}
+              onCancel={() => setStep(3)}
+            />
+          </div>
+        )}
+
+        {step === 5 && (
+          <Classify datasetLabel={metaLabel || 'This dataset'} onContinue={() => setStep(6)} />
         )}
 
         {step === 6 && (
-          <Classify datasetLabel={metaLabel || 'This dataset'} onContinue={() => setStep(7)} />
-        )}
-
-        {step === 7 && (
           <Publish
             datasetLabel={metaLabel || 'This dataset'}
             metadataId={metadataId}

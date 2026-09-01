@@ -4,7 +4,9 @@ import { withAuthHeaders } from '../auth'
 import { CLICK_THROUGH_ENABLED } from '../clickThrough'
 import MetadataSheetGrid from './MetadataSheetGrid'
 import NmdsConceptForm from './NmdsConceptForm'
-import { emptyNmdsFields, nmdsFieldsToList, mergeNmdsConcepts } from '../nmdsConcepts'
+import { emptyNmdsFields, nmdsFieldsToList, mergeNmdsConcepts, NMDS_CONCEPT_TEMPLATE } from '../nmdsConcepts'
+
+const KNOWN_NMDS_CONCEPTS = new Set(NMDS_CONCEPT_TEMPLATE.filter((r) => !r.section).map((r) => r.concept))
 
 const FORM_FIELDS = [
   'title', 'product', 'category', 'geography', 'frequency', 'time_period',
@@ -59,6 +61,10 @@ export default function PushModal({ tables, groups, onClose, inline = false, onP
   const [nmdsFile, setNmdsFile] = useState(null)
   const [nmdsParsing, setNmdsParsing] = useState(false)
   const [nmdsParseError, setNmdsParseError] = useState('')
+  // Flags when most rows in an uploaded concept file don't match any known
+  // NMDS concept name — usually means the wrong file was uploaded rather
+  // than a file that's just sparsely filled in.
+  const [nmdsFileMismatch, setNmdsFileMismatch] = useState(false)
 
   useEffect(() => {
     fetch('/api/catalogue/groups', withAuthHeaders())
@@ -177,7 +183,11 @@ export default function PushModal({ tables, groups, onClose, inline = false, onP
   const handleNmdsFileSelected = async (file) => {
     setNmdsFile(file)
     setNmdsParseError('')
-    if (!file) return
+    setNmdsFileMismatch(false)
+    if (!file) {
+      setNmdsFields(emptyNmdsFields())
+      return
+    }
 
     setNmdsParsing(true)
     try {
@@ -189,7 +199,15 @@ export default function PushModal({ tables, groups, onClose, inline = false, onP
         throw new Error(err.detail || 'Could not read this file')
       }
       const { concepts } = await res.json()
-      setNmdsFields((prev) => mergeNmdsConcepts(prev, concepts))
+      const rows = concepts || []
+      const matched = rows.filter((r) => r.concept && KNOWN_NMDS_CONCEPTS.has(r.concept) && r.details).length
+      // A wrong file most often has no "Concept Name" column at all, so the
+      // backend parses zero rows — that's just as much a mismatch signal as
+      // rows that parsed but mostly didn't match a known concept.
+      setNmdsFileMismatch(rows.length === 0 || matched / rows.length < 0.5)
+      // Reset before merging so a re-upload doesn't carry over values left
+      // behind by a previous (possibly wrong) file.
+      setNmdsFields(mergeNmdsConcepts(emptyNmdsFields(), concepts))
     } catch (e) {
       setNmdsParseError(e.message)
     } finally {
@@ -421,6 +439,7 @@ export default function PushModal({ tables, groups, onClose, inline = false, onP
               file={nmdsFile}
               parsing={nmdsParsing}
               parseError={nmdsParseError}
+              fileMismatch={nmdsFileMismatch}
               onBack={() => setStep('config')}
               onSave={handlePush}
               saving={step === 'pushing'}
