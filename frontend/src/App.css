@@ -1431,6 +1431,10 @@ body {
   flex: none; font-family: 'Inter', sans-serif; font-size: 12px; color: #8E9398;
 }
 .meta-card-label { font-size: 15px; font-weight: 600; color: var(--ink); }
+.meta-card-manual-tag {
+  font-family: 'Inter', sans-serif; font-size: 11.5px; font-weight: 600; color: #a15c00;
+  background: #fdf0d8; border: 1px solid #f0d6a3; border-radius: 6px; padding: 2px 8px;
+}
 
 .meta-primary-input {
   width: 100%; height: 42px; padding: 0 14px; box-sizing: border-box;

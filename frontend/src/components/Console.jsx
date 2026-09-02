@@ -73,6 +73,30 @@ const EMPTY_GROUP_METADATA = {
   future_release: '', key_statistics: '', remarks: '',
 }
 
+// Ports of backend/catalogue_matching.py's `_base_title` / `build_group_name`
+// / `auto_group_tables` -- needed client-side so a title correction made on
+// the preview page can re-derive group membership and each group's display
+// name from the *saved* title, instead of leaving both stuck on whatever the
+// backend computed from the pre-correction title at upload time.
+function baseTitle(title) {
+  const base = (title || '').replace(/\s*\([^)]*\)\s*$/, '').trim().replace(/\s+/g, ' ').toUpperCase()
+  return base || (title || '').trim().toUpperCase()
+}
+
+const GROUP_NAME_NOISE = new Set(['sl', 'no'])
+
+function buildGroupName(base) {
+  const title = (base || '').replace(/\s+/g, ' ').trim()
+  if (!title) return 'Untitled group'
+  const words = title.split(' ')
+  while (words.length && GROUP_NAME_NOISE.has(words[0].replace(/[.,]+$/, '').toLowerCase())) {
+    words.shift()
+  }
+  const cleaned = words.join(' ').trim().replace(/^[\s.,-]+|[\s.,-]+$/g, '') || title
+  return cleaned.replace(/\S+/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase())
+}
+
+
 // Lets the user hand-pick a set of tables (by title) and bundle them into a
 // new group, for cases the automatic title-based grouping didn't handle the
 // way they wanted. `tables` is the full list of {id, title} candidates.
@@ -446,14 +470,82 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   // updates immediately) and the final "continue" step.
   const patchTables = (corrections) => {
     const patchTable = (t) => (corrections[t._uid] ? { ...t, ...corrections[t._uid] } : t)
-    setMatchResult((prev) => prev && ({
-      ...prev,
-      groups: prev.groups.map((g) => ({
+    setMatchResult((prev) => {
+      if (!prev) return prev
+      const findTable = (uid) => {
+        for (const g of prev.groups) {
+          const mt = g.matched_tables.find((m) => m.table._uid === uid)
+          if (mt) return mt.table
+        }
+        return (prev.unmatched_tables.find((u) => u.table._uid === uid) || {}).table
+      }
+      const patched = {
+        ...prev,
+        groups: prev.groups.map((g) => ({
+          ...g,
+          matched_tables: g.matched_tables.map((mt) => ({ ...mt, table: patchTable(mt.table) })),
+        })),
+        unmatched_tables: prev.unmatched_tables.map((u) => ({ ...u, table: patchTable(u.table) })),
+      }
+      if (metadataFiles.length !== 0 || manualGrouping) return patched
+
+      // Grouping without a metadata workbook derives both group membership
+      // and each group's display name from table titles alone. Re-derive
+      // the display name of every existing group from its own (possibly
+      // just-corrected) members -- safe, since it never changes who's in
+      // which group -- and re-home only the tables whose *base* title
+      // actually changed, rather than rebuilding every group from scratch:
+      // a wholesale rebuild would re-key every table by its current title
+      // on every single save, and any two tables that happen to reduce to
+      // the same base title (or share a still-blank title) would collapse
+      // into one group even though neither of their titles changed.
+      const changedUids = Object.keys(corrections).filter((uid) => {
+        const before = findTable(uid)
+        return before && corrections[uid].title !== undefined
+          && baseTitle(corrections[uid].title) !== baseTitle(before.title)
+      })
+
+      let groups = patched.groups.map((g) => ({
         ...g,
-        matched_tables: g.matched_tables.map((mt) => ({ ...mt, table: patchTable(mt.table) })),
-      })),
-      unmatched_tables: prev.unmatched_tables.map((u) => ({ ...u, table: patchTable(u.table) })),
-    }))
+        file_name: buildGroupName(baseTitle(g.matched_tables[0]?.table.title || g.file_name)),
+      }))
+      let unmatched_tables = patched.unmatched_tables
+
+      if (changedUids.length > 0) {
+        const changed = new Set(changedUids)
+        const pulled = []
+        groups = groups
+          .map((g) => {
+            const [keep, take] = [[], []]
+            g.matched_tables.forEach((mt) => (changed.has(mt.table._uid) ? take : keep).push(mt))
+            pulled.push(...take)
+            return { ...g, matched_tables: keep }
+          })
+          .filter((g) => g.matched_tables.length > 0)
+        const unmatchedKeep = []
+        unmatched_tables.forEach((u) => (changed.has(u.table._uid) ? pulled.push(u) : unmatchedKeep.push(u)))
+        unmatched_tables = unmatchedKeep
+
+        pulled.forEach((mt) => {
+          const key = baseTitle(mt.table.title)
+          const dest = groups.find((g) => baseTitle(g.matched_tables[0].table.title) === key)
+          if (dest) {
+            dest.matched_tables.push(mt)
+          } else {
+            groups.push({
+              workbook_index: groups.length,
+              file_name: buildGroupName(key),
+              metadata: { ...EMPTY_GROUP_METADATA },
+              concepts: [],
+              classifications: {},
+              matched_tables: [mt],
+            })
+          }
+        })
+      }
+
+      return { ...patched, groups, unmatched_tables }
+    })
   }
 
   const applyReconcile = (corrections) => {
@@ -674,6 +766,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
               onContinue={applyReconcile}
               onNavigate={selectPreviewTable}
               onSave={markTableSaved}
+              savedIds={savedIds}
             />
           </div>
         )}

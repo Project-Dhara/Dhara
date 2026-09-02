@@ -516,13 +516,19 @@ def prepare_kyds_for_llm(kyds: Dict[str, Any]) -> Dict[str, Any]:
 
     The full KYDS object is still stored as-is in Postgres — this trimmed view is only for the LLM call.
     """
+    # KYDS responses are stored with the form's own camelCase keys (see
+    # emptyForm() in frontend/src/components/KydsModal.jsx) -- not the
+    # snake_case names used here previously, which meant every field but
+    # `modality`/`granularity`/`notes` silently read back None.
     return {
-        "dataset_purpose": kyds.get("dataset_purpose"),
-        "collection_method": kyds.get("collection_method"),
+        "dataset_name": kyds.get("datasetName"),
+        "description": kyds.get("description"),
+        "department": kyds.get("department"),
         "modality": kyds.get("modality"),
-        "specific_formats": kyds.get("specific_formats"),
+        "specific_formats": kyds.get("specificFormats"),
         "granularity": kyds.get("granularity"),
-        "update_frequency": kyds.get("update_frequency"),
+        "update_frequency": kyds.get("updateFrequency"),
+        "retention": kyds.get("retention"),
         "notes": kyds.get("notes"),
     }
 

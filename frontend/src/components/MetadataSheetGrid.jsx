@@ -78,6 +78,11 @@ export default function MetadataSheetGrid({
             <div className="meta-card-head">
               <span className="meta-card-num">{ri + 1}</span>
               <span className="meta-card-label" title={row.label}>{row.label}</span>
+              {row.manual && (
+                <span className="meta-card-manual-tag" title="No metadata was auto-mapped for this group — fill in the fields below by hand">
+                  Not auto-mapped — fill in manually
+                </span>
+              )}
             </div>
 
             {primaryCol && (

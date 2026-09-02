@@ -8,6 +8,15 @@ import { emptyNmdsFields, isNmdsFieldsComplete, nmdsFieldsToList, mergeNmdsConce
 
 const KNOWN_NMDS_CONCEPTS = new Set(NMDS_CONCEPT_TEMPLATE.filter((r) => !r.section).map((r) => r.concept))
 
+// A group whose auto-fill left every catalogue field blank (e.g. no metadata
+// workbook covered it) needs the same by-hand entry as the "no LLM key at
+// all" case -- just scoped to that one group instead of the whole page, so
+// the "Review auto-mapped" framing at the top doesn't mislead the user into
+// thinking this group's blank fields are the reviewed (correct) result.
+function isMetadataAutoMapped(metadata) {
+  return Object.entries(metadata || {}).some(([key, value]) => key !== 'title' && String(value || '').trim())
+}
+
 function emptyNmdsGroupState() {
   return { fields: emptyNmdsFields(), file: null, parsing: false, parseError: '', fileMismatch: false }
 }
@@ -52,6 +61,12 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
 
   const assignedCount = Object.values(assignments).filter((v) => v !== '' && v !== undefined).length
   const totalMatched = groups.reduce((sum, g) => sum + g.matched_tables.length, 0) + assignedCount
+  // Nothing got auto-mapped anywhere -- same "fill it in yourself" framing
+  // as the no-LLM-key case, just for a different reason (e.g. no metadata
+  // workbook covered any group), so the heading doesn't claim a review of
+  // an auto-mapping that never happened.
+  const noneAutoMapped = groups.length > 0 && groups.every((g) => !isMetadataAutoMapped(g.metadata))
+  const showFillInHeading = matchResult.llm_autofill_skipped_no_key || noneAutoMapped
 
   const handleNmdsFileSelected = async (groupIndex, file) => {
     patchNmdsGroup(groupIndex, { file, parseError: '', fileMismatch: false })
@@ -169,7 +184,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
     <div className="batch-review">
       {step === 'review' && (
         <div className="batch-review-header">
-          {matchResult.llm_autofill_skipped_no_key ? (
+          {showFillInHeading ? (
             <>
               <h2 className="batch-review-title-pill">Fill in Metadata</h2>
               <p>
@@ -201,7 +216,12 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
 
       {step !== 'done' && (
         <MetadataSheetGrid
-          rows={groups.map((g, gi) => ({ id: gi, label: g.file_name, values: g.metadata }))}
+          rows={groups.map((g, gi) => ({
+            id: gi,
+            label: g.file_name,
+            values: g.metadata,
+            manual: !matchResult.llm_autofill_skipped_no_key && !isMetadataAutoMapped(g.metadata),
+          }))}
           onChange={(gi, key, value) => updateMetadata(gi, { ...groups[gi].metadata, [key]: value })}
           renderGroupFooter={(row, gi) => {
             const nmdsState = nmdsByGroup[gi] || emptyNmdsGroupState()

@@ -16,7 +16,7 @@ import { useState } from 'react'
 // can legitimately share it. Keying by `t.id` would make a correction to one
 // such table silently apply to the other, and would render both under a
 // single tab.
-export default function ReconcileIds({ tables, onContinue, extraAction, visibleId, onNavigate, onSave, scopeTables }) {
+export default function ReconcileIds({ tables, onContinue, extraAction, visibleId, onNavigate, onSave, scopeTables, savedIds: persistedSavedIds }) {
   const mismatched = tables.filter((t) => t.id_title_mismatch)
   const visible = tables.filter((t) => t._uid === visibleId)
   // The top hint/clean message is scoped to whichever dataset is currently
@@ -33,13 +33,21 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
   // that table — compared against the live draft to decide whether the
   // save button should reappear (edited again since saving).
   const [savedSnapshots, setSavedSnapshots] = useState({})
-  const [savedIds, setSavedIds] = useState(() => new Set())
+  // Seeded from the parent's persisted `savedIds` (keyed by `_uid`, and kept
+  // alive across the whole console session) rather than starting empty —
+  // this component unmounts whenever the wizard leaves the preview step
+  // (e.g. visiting the grouping page and coming back), and an empty-Set
+  // restart made every already-saved table look unsaved/"needs fixing"
+  // again despite the correction still being applied to `matchResult`.
+  const [savedIds, setSavedIds] = useState(() => new Set(persistedSavedIds ?? []))
   // Fields lock (read-only) right after a save, so the user has to
   // deliberately click "Edit" to change a table's details again. Tables
   // that passed validation start locked too — the user must click "Edit"
   // before those fields (and the Save button) become usable, whereas a
   // flagged table starts unlocked since it needs correcting right away.
-  const [lockedIds, setLockedIds] = useState(() => new Set(tables.filter((t) => !t.id_title_mismatch).map((t) => t._uid)))
+  const [lockedIds, setLockedIds] = useState(() => new Set(
+    tables.filter((t) => !t.id_title_mismatch || persistedSavedIds?.has(t._uid)).map((t) => t._uid)
+  ))
 
   const updateDraft = (uid, field, value) => {
     setDrafts((prev) => ({ ...prev, [uid]: { ...prev[uid], [field]: value } }))
