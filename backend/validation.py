@@ -1,4 +1,4 @@
-"""Validation helpers for extracted Table ID / Table Title fields.
+"""Validation helpers for extracted Source Table ID / Table Title fields.
 
 Two independent validators are provided, sharing a common result shape so
 callers can inspect or compare them:
@@ -29,9 +29,9 @@ def validate_table_fields_code(table_id: str, title: str) -> Dict:
     """Deterministic, code-based validation of a table's ID/title pair.
 
     Flags the scenarios that commonly go wrong during extraction:
-      - Table ID and Table Title appear swapped.
+      - Source Table ID and Table Title appear swapped.
       - The ID part has no "TABLE" prefix at all.
-      - Either the Table ID or the Table Title is missing.
+      - Either the Source Table ID or the Table Title is missing.
     """
     table_id = (table_id or "").strip()
     title = (title or "").strip()
@@ -41,17 +41,17 @@ def validate_table_fields_code(table_id: str, title: str) -> Dict:
     title_has_marker = bool(TABLE_MARKER_RE.search(title))
 
     if not table_id and not title:
-        issues.append("Table ID and Table Title are both missing")
+        issues.append("Source Table ID and Table Title are both missing")
     elif not table_id:
-        issues.append("Table ID is missing")
+        issues.append("Source Table ID is missing")
     elif not title:
         issues.append("Table Title is missing")
 
     if table_id and title and title_has_marker and not id_has_marker:
-        issues.append("Table ID and Table Title appear to be swapped")
+        issues.append("Source Table ID and Table Title appear to be swapped")
 
     if table_id and not id_has_marker and not title_has_marker:
-        issues.append('Table ID has no "TABLE" prefix')
+        issues.append('Source Table ID has no "TABLE" prefix')
 
     return {
         "valid": not issues,
@@ -68,7 +68,7 @@ def validate_table_fields_llm(
     model: str = OPENAI_VALIDATION_MODEL,
 ) -> Dict:
     """Prompt-based validation using an OpenAI model to judge whether the
-    extracted Table ID and Table Title are correctly identified and
+    extracted Source Table ID and Table Title are correctly identified and
     assigned (not swapped, not missing, well-formed)."""
     table_id = (table_id or "").strip()
     title = (title or "").strip()
@@ -77,20 +77,20 @@ def validate_table_fields_llm(
 
 # f"""You are validating two fields extracted from a statistical table sheet.
 
-# Table ID (extracted): {table_id!r}
+# Source Table ID (extracted): {table_id!r}
 
 # Table Title (extracted): {title!r}
 
 # Definitions:
 
-# * **Table ID** is a short table identifier. A valid Table ID normally contains the word `"TABLE"` as an identifier marker, followed by the table code. Variations in spacing or punctuation are valid, for example:
+# * **Source Table ID** is a short table identifier. A valid Source Table ID normally contains the word `"TABLE"` as an identifier marker, followed by the table code. Variations in spacing or punctuation are valid, for example:
 
 #   * `"TABLE: D-12"`
 #   * `"TABLE : D-12"`
 #   * `"TABLE-D12"`
 #   * `"TABLE D 12"`
 
-#   The presence of `"TABLE"` in the **Table ID is expected and is NOT an error**.
+#   The presence of `"TABLE"` in the **Source Table ID is expected and is NOT an error**.
 
 # * **Table Title** is usually longer descriptive free text explaining what the table contains, for example:
 #   `"PREGNANCY RELATED DEATHS BY AGE AND OCCUPATION (URBAN)"`.
@@ -99,24 +99,24 @@ def validate_table_fields_llm(
 
 # 1. **Swapped fields**
 
-#    * The Table ID and Table Title appear to be swapped.
-#    * For example, the Table ID contains long descriptive title-like text while the Table Title contains a short table identifier such as `"TABLE: D-18"`.
+#    * The Source Table ID and Table Title appear to be swapped.
+#    * For example, the Source Table ID contains long descriptive title-like text while the Table Title contains a short table identifier such as `"TABLE: D-18"`.
 
 # 2. **Invalid marker in Table Title**
 
 #    * The Table Title contains `"DESCRIPTION"` or `"SL.NO"` (case-insensitive) as a marker/header rather than as genuine descriptive content.
-#    * Do **not** report `"TABLE"` in the Table ID as an issue.
+#    * Do **not** report `"TABLE"` in the Source Table ID as an issue.
 
 # 3. **Missing field**
 
-#    * The Table ID is missing, empty, null, or contains only whitespace.
+#    * The Source Table ID is missing, empty, null, or contains only whitespace.
 #    * The Table Title is missing, empty, null, or contains only whitespace.
 
 # Important constraints:
 
-# * Do NOT report an issue merely because the Table ID contains `"TABLE"`. That is normal and expected.
+# * Do NOT report an issue merely because the Source Table ID contains `"TABLE"`. That is normal and expected.
 # * Do NOT report an issue saying `"The Table Title contains 'TABLE' as a marker"` unless such a rule is explicitly listed above. It is **not** one of the allowed validation rules.
-# * Do NOT check whether the Table ID is correctly formatted beyond what is necessary to detect swapped or missing fields.
+# * Do NOT check whether the Source Table ID is correctly formatted beyond what is necessary to detect swapped or missing fields.
 # * Do NOT infer additional validation rules.
 # * Report every applicable issue from the three categories above and no others.
 
@@ -130,12 +130,12 @@ def validate_table_fields_llm(
 
 # Respond with ONLY the JSON object. Do not include explanations, markdown, or additional text.
 # """
-    prompt = f"""Validate a Table ID / Table Title pair extracted from a statistics sheet.
+    prompt = f"""Validate a Source Table ID / Table Title pair extracted from a statistics sheet.
 
-Table ID: {table_id!r}
+Source Table ID: {table_id!r}
 Table Title: {title!r}
 
-Table ID is valid if it contains "TABLE" as a marker, any spacing/punctuation
+Source Table ID is valid if it contains "TABLE" as a marker, any spacing/punctuation
 (e.g. "TABLE: D-12", "TABLE :D-14", "TABLE-D12"). Title is free text and may
 be short (e.g. "INFANTS DEATHS BY AGE AND SEX") -- never judge its wording,
 length, or plausibility.

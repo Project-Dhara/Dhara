@@ -85,15 +85,16 @@ export default function App() {
         <KydsModal
           onSkip={() => setShowKyds(false)}
           onSave={async (form) => {
-            try {
-              await fetch('/api/kyds', withAuthHeaders({
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ responses: form }),
-              }))
-            } finally {
-              setShowKyds(false)
+            const res = await fetch('/api/kyds', withAuthHeaders({
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ responses: form }),
+            }))
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({}))
+              throw new Error(err.detail || 'Could not save KYDS entry — please try again.')
             }
+            setShowKyds(false)
           }}
         />
       )}

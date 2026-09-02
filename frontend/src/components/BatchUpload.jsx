@@ -70,7 +70,7 @@ export default function BatchUpload({ onMatched }) {
       // via Stage 4 LLM metadata generation server-side (see main.py's
       // _fill_empty_group_metadata) instead of staying blank.
       datasetFiles.forEach((f) => matchFd.append('dataset_files', f))
-      const matchRes = await fetch('/api/catalogue/batch-match', withAuthHeaders({ method: 'POST', body: matchFd }))
+      const matchRes = await fetch('/api/catalogue/batch-match', withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: matchFd })))
       if (!matchRes.ok) {
         const err = await matchRes.json().catch(() => ({ detail: 'Matching failed' }))
         throw new Error(err.detail || 'Matching failed')
@@ -139,7 +139,7 @@ export default function BatchUpload({ onMatched }) {
           <div className="progress-step-list">
             <div className="progress-step progress-step-active">
               <span className="progress-step-dot" />
-              Extracting tables & validating Table ID / Title
+              Extracting tables & validating Source Table ID / Title
             </div>
           </div>
         </div>

@@ -78,6 +78,12 @@ export function emptyNmdsFields() {
   return fields
 }
 
+export function isNmdsFieldsComplete(fields) {
+  return NMDS_CONCEPT_TEMPLATE
+    .filter((row) => !row.section)
+    .every((row) => (fields[row.concept] || '').trim())
+}
+
 // Turns the {concept: details} field map back into the flat list shape the
 // backend already understands (see backend/metadata_excel.py parse_concepts).
 export function nmdsFieldsToList(fields) {

@@ -38,7 +38,7 @@ export default function NmdsConceptForm({
   return (
     <div className="nmds-form">
       <div className="push-section">
-        <div className="push-section-title">Upload NMDS concept metadata (optional)</div>
+        <div className="push-section-title">Upload NMDS concept metadata *</div>
         <FileUpload
           onUpload={onFileSelected}
           label="Add NMDS concept metadata file"
@@ -80,7 +80,7 @@ export default function NmdsConceptForm({
               onClick={() => setTopicIndex(i)}
             >
               <span className="nmds-topic-pill-num">{i + 1}</span>
-              {t.title}
+              <span className="nmds-topic-pill-label">{t.title}</span>
             </button>
           )
         })}

@@ -6,6 +6,8 @@ import { withAuthHeaders } from '../auth'
 
 const MAX_DISPLAY = 500
 
+const DATASET_ID_INFO = 'The Dataset ID is generated and is used for grouping and table identification.'
+
 function escape(v) {
   const s = v == null ? '' : String(v)
   return s.includes(',') || s.includes('"') || s.includes('\n')
@@ -200,8 +202,10 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
     <div className="table-viewer">
       {compact ? (
         <div className="viewer-compact-header">
-          <div className="viewer-title-label">Table Title</div>
-          <div className="viewer-compact-title">{table.title}</div>
+          <div className="viewer-title-line">
+            <div className="viewer-title-label">Table Title</div>
+            <div className="viewer-compact-title">{table.title}</div>
+          </div>
           {table.description && <div className="viewer-desc">{table.description}</div>}
           <div className="viewer-compact-meta">
             Sheet: {table.sheet} · {table.row_count.toLocaleString()} rows · {table.columns.length} columns
@@ -210,11 +214,17 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
       ) : (
         <div className="viewer-header">
           <div className="viewer-title-row">
-            <span className="catalogue-id-chip" title="Dataset ID (editable)">{table.id}</span>
+            <span className="catalogue-id-chip">{table.id}</span>
+            <span className="id-info-icon">
+              i
+              <span className="id-info-tooltip">{DATASET_ID_INFO}</span>
+            </span>
             {editIdControl}
           </div>
-          <div className="viewer-title-label">Table Title</div>
-          <div className="viewer-compact-title">{table.title}</div>
+          <div className="viewer-title-line">
+            <div className="viewer-title-label">Table Title</div>
+            <div className="viewer-compact-title">{table.title}</div>
+          </div>
           {table.description && <div className="viewer-desc">{table.description}</div>}
           <div className="viewer-meta">
             <span className="meta-chip">Sheet: {table.sheet}</span>
@@ -270,7 +280,11 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
       {compact && (
         <div className="viewer-id-footer">
           <span className="viewer-id-footer-label">Dataset ID</span>
-          <span className="catalogue-id-chip" title="Dataset ID (editable)">{table.id}</span>
+          <span className="catalogue-id-chip">{table.id}</span>
+          <span className="id-info-icon">
+            i
+            <span className="id-info-tooltip">{DATASET_ID_INFO}</span>
+          </span>
           {editIdControl}
           <div className="viewer-compact-actions">
             <button className="btn-csv" onClick={() => downloadCSV(table)}>Download CSV</button>

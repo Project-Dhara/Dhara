@@ -228,6 +228,7 @@ function Field({ label, hint, children }) {
 export default function KydsModal({ onSkip, onSave, initialForm, editing = false }) {
   const [form, setForm] = useState(() => ({ ...emptyForm(), ...(initialForm || {}) }))
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
   const savingRef = useRef(false)
 
   const setList = (key) => (value) => {
@@ -519,6 +520,7 @@ export default function KydsModal({ onSkip, onSave, initialForm, editing = false
         </div>
 
         <div className="kyds-footer">
+          {saveError && <span className="kyds-save-error">{saveError}</span>}
           <button type="button" className="push-btn-secondary" onClick={onSkip}>
             {editing ? 'Cancel' : 'Skip for now'}
           </button>
@@ -526,11 +528,20 @@ export default function KydsModal({ onSkip, onSave, initialForm, editing = false
             type="button"
             className="push-btn"
             disabled={saving}
-            onClick={() => {
+            onClick={async () => {
               if (savingRef.current) return
               savingRef.current = true
               setSaving(true)
-              onSave(form)
+              setSaveError('')
+              try {
+                await onSave(form)
+                // Success: the caller is expected to unmount this modal.
+              } catch (e) {
+                setSaveError(e?.message || 'Could not save — please try again.')
+              } finally {
+                savingRef.current = false
+                setSaving(false)
+              }
             }}
           >
             {editing ? (saving ? 'Saving…' : 'Save changes') : 'Save & continue'}

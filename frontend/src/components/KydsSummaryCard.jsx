@@ -27,20 +27,19 @@ export default function KydsSummaryCard({ variant = 'card' }) {
   }, [])
 
   const saveKydsEdit = async (form) => {
-    try {
-      const res = await fetch('/api/kyds', withAuthHeaders({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ responses: form }),
-      }))
-      if (res.ok) {
-        const data = await res.json()
-        setKydsEntry({ id: data.id, responses: form })
-      }
-    } finally {
-      setEditingKyds(false)
-      setCreatingKyds(false)
+    const res = await fetch('/api/kyds', withAuthHeaders({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ responses: form }),
+    }))
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || 'Could not save KYDS entry — please try again.')
     }
+    const data = await res.json()
+    setKydsEntry({ id: data.id, responses: form })
+    setEditingKyds(false)
+    setCreatingKyds(false)
   }
 
   if (kydsLoading) return null

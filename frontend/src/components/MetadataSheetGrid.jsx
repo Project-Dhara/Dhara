@@ -1,12 +1,12 @@
+import { useEffect, useState } from 'react'
+
 // Metadata entry, one card per table/metadata group. Field set mirrors what
 // the backend's /api/catalogue/push and /api/catalogue/batch-push accept
 // (see PushModal.jsx / BatchReview.jsx) — only `title` is actually required.
-// Short categorical fields render as compact editable badges that wrap;
-// free-text fields get their own full-width row. Everything wraps
-// vertically — nothing scrolls horizontally.
+// Short categorical fields render as compact editable badges; focused fields
+// expand to show wrapped content. Free-text fields get their own full-width row.
 export const METADATA_COLUMNS = [
-  { key: 'title', label: 'Title', type: 'primary', required: true, placeholder: 'e.g. Population Statistics 2024' },
-  { key: 'product', label: 'Product', type: 'badge', placeholder: 'e.g. Population_Data' },
+  { key: 'product', label: 'Product', type: 'badge', placeholder: 'e.g. Population_Data', readOnly: true },
   { key: 'category', label: 'Category', type: 'badge', placeholder: 'e.g. Demographics' },
   { key: 'geography', label: 'Geography', type: 'badge', placeholder: 'e.g. India' },
   { key: 'frequency', label: 'Frequency', type: 'badge', placeholder: 'e.g. Annually' },
@@ -19,41 +19,62 @@ export const METADATA_COLUMNS = [
   { key: 'remarks', label: 'Remarks', type: 'long', placeholder: 'Any additional notes or caveats' },
 ]
 
+function resizeBadgeInput(el, expanded) {
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = expanded ? `${el.scrollHeight}px` : ''
+}
+
 export default function MetadataSheetGrid({
   rows,
   columns = METADATA_COLUMNS,
   onChange,
-  enteredByLabel = 'you',
-  note = 'Fields marked * are required.',
+  renderGroupFooter,
 }) {
-  const requiredCols = columns.filter((c) => c.required)
-  const totalRequired = Math.max(1, rows.length) * requiredCols.length
-  const filledRequired = rows.reduce(
-    (n, row) => n + requiredCols.filter((c) => (row.values[c.key] || '').trim()).length,
-    0
-  )
-  const pct = totalRequired ? Math.round((filledRequired / totalRequired) * 100) : 0
-
   const primaryCol = columns.find((c) => c.type === 'primary')
   const badgeCols = columns.filter((c) => c.type === 'badge' || c.type === 'date')
   const longCols = columns.filter((c) => c.type === 'long')
 
+  const [activeIndex, setActiveIndex] = useState(0)
+  useEffect(() => {
+    if (activeIndex >= rows.length) setActiveIndex(Math.max(0, rows.length - 1))
+  }, [rows.length, activeIndex])
+
+  const activeRow = rows[activeIndex]
+
   return (
     <div className="meta-sheet">
-      <div className="meta-sheet-topbar">
-        <span className="meta-sheet-entered-pill">Entered by {enteredByLabel}</span>
-        <span className="meta-sheet-note">{note}</span>
-        <div className="meta-sheet-progress">
-          <div className="meta-sheet-progress-track">
-            <div className="meta-sheet-progress-fill" style={{ width: `${pct}%` }} />
-          </div>
-          <span className="meta-sheet-progress-label">{filledRequired}/{totalRequired} required fields</span>
+      <div className="meta-groups-section">
+        <div className="meta-groups-heading-row">
+          <h3 className="meta-groups-heading">Available Groups</h3>
+          <span className="meta-groups-count">
+            {rows.length} metadata group{rows.length !== 1 ? 's' : ''} — select to review
+          </span>
+        </div>
+        <div className="meta-carousel-nav">
+        {rows.map((row, ri) => (
+          <button
+            key={row.id}
+            type="button"
+            className={`meta-carousel-tab${ri === activeIndex ? ' meta-carousel-tab-active' : ''}`}
+            onClick={() => setActiveIndex(ri)}
+            title={row.label}
+          >
+            <span className="meta-carousel-tab-num">{ri + 1}</span>
+            <span className="meta-carousel-tab-label">{row.label}</span>
+          </button>
+        ))}
         </div>
       </div>
 
-      <div className="meta-cards">
-        {rows.map((row, ri) => (
-          <div className="meta-card" key={row.id}>
+      {activeRow && (
+        <div className="meta-carousel-viewport">
+          <div className="meta-cards">
+            {(() => {
+              const row = activeRow
+              const ri = activeIndex
+              return (
+            <div className="meta-card" key={row.id}>
             <div className="meta-card-head">
               <span className="meta-card-num">{ri + 1}</span>
               <span className="meta-card-label" title={row.label}>{row.label}</span>
@@ -74,10 +95,18 @@ export default function MetadataSheetGrid({
                 {badgeCols.map((c) => (
                   <label
                     key={c.key}
-                    className={`meta-badge${c.required && !(row.values[c.key] || '').trim() ? ' meta-field-missing' : ''}`}
+                    className={`meta-badge${c.required && !(row.values[c.key] || '').trim() ? ' meta-field-missing' : ''}${c.readOnly ? ' meta-badge-readonly' : ''}`}
                   >
                     <span className="meta-badge-label">{c.label}{c.required && ' *'}</span>
-                    {c.type === 'date' ? (
+                    {c.readOnly ? (
+                      <span
+                        className="meta-badge-input meta-badge-input-readonly"
+                        title={row.values[c.key] || ''}
+                        tabIndex={0}
+                      >
+                        {row.values[c.key] || c.placeholder}
+                      </span>
+                    ) : c.type === 'date' ? (
                       <input
                         className="meta-badge-input meta-badge-input-date"
                         type="date"
@@ -85,12 +114,17 @@ export default function MetadataSheetGrid({
                         onChange={(e) => onChange(row.id, c.key, e.target.value)}
                       />
                     ) : (
-                      <input
-                        className="meta-badge-input"
-                        type="text"
+                      <textarea
+                        className="meta-badge-input meta-badge-input-wrap"
+                        rows={1}
                         value={row.values[c.key] || ''}
                         placeholder={c.placeholder}
                         onChange={(e) => onChange(row.id, c.key, e.target.value)}
+                        onFocus={(e) => resizeBadgeInput(e.target, true)}
+                        onBlur={(e) => resizeBadgeInput(e.target, false)}
+                        onInput={(e) => {
+                          if (document.activeElement === e.target) resizeBadgeInput(e.target, true)
+                        }}
                       />
                     )}
                   </label>
@@ -114,9 +148,18 @@ export default function MetadataSheetGrid({
                 ))}
               </div>
             )}
+
+            {renderGroupFooter && (
+              <div className="meta-card-group-footer">
+                {renderGroupFooter(row, ri)}
+              </div>
+            )}
           </div>
-        ))}
-      </div>
+              )
+            })()}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -85,12 +85,6 @@ def _parse_catalogue_summary_from_wb(wb) -> dict:
     }
 
 
-def parse_catalogue_summary(file_bytes: bytes) -> dict:
-    """Group-level fields used to prefill the Create Metadata form."""
-    wb = openpyxl.load_workbook(BytesIO(file_bytes), data_only=True)
-    return _parse_catalogue_summary_from_wb(wb)
-
-
 def parse_inventory(wb) -> list:
     if "dataset_inventory_list" not in wb.sheetnames:
         return []

@@ -210,34 +210,6 @@ def get_user_by_email(conn, email):
     return dict(row) if row else None
 
 
-def list_metadata_groups(conn):
-    # Returns the full field set (not just display fields) so the frontend
-    # can prefill an edit form when a user adds tables to an existing group.
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute("""
-            SELECT
-                metadata_id,
-                title,
-                description,
-                product,
-                category,
-                geography,
-                frequency,
-                time_period,
-                data_source,
-                last_updated_date,
-                future_release,
-                key_statistics,
-                remarks,
-                array_length(table_ids, 1) AS table_count
-            FROM metadata_groups
-            ORDER BY title
-        """)
-        rows = cur.fetchall()
-    return [dict(r) for r in rows]
-
-
-
 def _make_dataset_id(table: dict, index: int) -> str:
     """Fallback dataset_id when table has no pre-built id."""
     suffix = uuid.uuid4().hex[:6]

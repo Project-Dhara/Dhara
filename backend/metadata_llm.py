@@ -3,17 +3,18 @@ Metadata generation from two sources: programmatically-derived Excel facts
 and human-provided KYDS (Know Your Dataset) form responses.
 
 extract_excel_facts()      -- regex/structure based, no LLM involved.
-generate_metadata_with_llm() -- sends both sources to an LLM (OpenAI) untouched.
+generate_metadata_with_llm() -- sends both sources to an LLM, via a
+    caller-supplied completion function so it runs on whichever
+    provider/key the user configured in Settings (see main.py's
+    `_extractor_for` / `TableExtractor._complete`), not a hardcoded
+    OpenAI env-var key.
 """
 
 import json
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import openpyxl
-from openai import OpenAI
-
-OPENAI_MODEL = "gpt-4o"
 
 _YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
 _YEAR_RANGE_RE = re.compile(r"\b(19|20)\d{2}\s*[-/–]\s*(?:(19|20)\d{2}|\d{2})\b")
@@ -530,22 +531,22 @@ def generate_metadata_with_llm(
     excel_facts: Dict[str, Any],
     *,
     kyds: Dict[str, Any],
-    api_key: Optional[str] = None,
-    model: str = OPENAI_MODEL,
-    **kwargs: Any,
+    complete_fn: Callable[[str, int], str],
 ) -> str:
     """
     Populate catalogue metadata fields using both the programmatically-derived
-    Excel facts and the human-provided KYDS form responses (kyds_responses), via
-    an OpenAI LLM call.
+    Excel facts and the human-provided KYDS form responses (kyds_responses).
+
+    `complete_fn(prompt, max_tokens)` performs the actual LLM call -- pass
+    `TableExtractor(api_key=..., provider=...)._complete`, built from the
+    caller's own Settings key, so this routes through whichever provider the
+    user configured instead of a fixed OpenAI env-var key.
 
     Only a trimmed subset of KYDS relevant to metadata generation is sent to the
     LLM (see prepare_kyds_for_llm), to save tokens. The full KYDS object should
     still be persisted as-is elsewhere (e.g. Postgres).
     """
-    client = OpenAI(api_key=api_key)
-
-    prompt = """You are a metadata-generation assistant for a data catalogue.
+    system_prompt = """You are a metadata-generation assistant for a data catalogue.
 
 Generate the following metadata fields using the provided `excel_facts` and `dataset_context` (KYDS):
 
@@ -570,16 +571,8 @@ Return ONLY valid JSON format output for the fields mentioned above.
     kyds_llm = prepare_kyds_for_llm(kyds)
     user_content = {"excel_facts": excel_facts, "dataset_context": kyds_llm}
 
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": json.dumps(user_content, default=str)},
-        ],
-        **kwargs,
-    )
-
-    return response.choices[0].message.content
+    prompt = f"{system_prompt}\n\n{json.dumps(user_content, default=str)}"
+    return complete_fn(prompt, 1500)
 
 
 METADATA_FIELDS = [

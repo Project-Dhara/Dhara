@@ -16,14 +16,14 @@ load_dotenv()
 import auth as _auth
 from extractor import TableExtractor
 import catalogue as _cat
-from metadata_excel import parse_catalogue_summary, parse_metadata_workbook, parse_concept_file
+from metadata_excel import parse_metadata_workbook, parse_concept_file
 from metadata_llm import (
     METADATA_FIELDS,
     extract_excel_facts,
     generate_metadata_with_llm,
     parse_llm_metadata_output,
 )
-from catalogue_matching import match_tables_to_metadata, match_result_to_push_groups
+from catalogue_matching import match_tables_to_metadata
 from table_export import table_to_excel_bytes
 from original_sheet_export import extract_sheet_with_formatting_from_bytes
 from validation import validate_table_fields_code, validate_table_fields_llm
@@ -71,7 +71,7 @@ def _extractor_for(request: Request) -> TableExtractor:
 
 
 def _validate_table_id_title(table: dict) -> None:
-    """Runs the code-based and prompt-based Table ID / Table Title validators
+    """Runs the code-based and prompt-based Source Table ID / Table Title validators
     on one extracted table (mirrors the notebook's Stage 2.5) and annotates
     the table in place with the results plus a `id_title_mismatch` flag the
     frontend uses to decide which tables need manual reconciliation."""
@@ -83,7 +83,7 @@ def _validate_table_id_title(table: dict) -> None:
         # Nothing to send the model -- both fields are already conclusively
         # invalid, so skip the LLM call rather than prompting it with two
         # empty strings.
-        llm_result = {"valid": False, "issues": ["Table ID and Table Title are both missing"]}
+        llm_result = {"valid": False, "issues": ["Source Table ID and Table Title are both missing"]}
     else:
         try:
             llm_result = validate_table_fields_llm(table_id, title)
@@ -135,7 +135,9 @@ def _stringify_metadata_values(metadata: dict) -> dict:
     return out
 
 
-def _fill_empty_group_metadata(groups: list, dataset_bytes_by_filename: dict, kyds_responses: Optional[dict]) -> None:
+def _fill_empty_group_metadata(
+    groups: list, dataset_bytes_by_filename: dict, kyds_responses: Optional[dict], extractor: TableExtractor,
+) -> bool:
     """Stage 4 -- LLM metadata creation per group (mirrors the notebook's
     `generate_metadata_per_group`). Only groups with no metadata (i.e. not
     matched to a row in an uploaded metadata workbook) are touched; groups
@@ -146,11 +148,28 @@ def _fill_empty_group_metadata(groups: list, dataset_bytes_by_filename: dict, ky
     Excel facts are derived once per source file (no LLM involved) and, as
     in the notebook, reused unchanged across every group from that file.
     KYDS responses come from Postgres (see catalogue.get_latest_kyds_responses)
-    rather than a hardcoded payload."""
-    if not kyds_responses or not dataset_bytes_by_filename:
-        return
+    rather than a hardcoded payload.
 
-    openai_api_key = os.getenv("OPENAI_API_KEY")
+    `extractor` supplies the LLM call, built from the caller's own Settings
+    key/provider (see `_extractor_for`) rather than a server-side env var.
+
+    Returns True when autofill was skipped specifically because no LLM key
+    is configured (as opposed to there being nothing to fill) -- callers use
+    this to tell the user why fields are still empty."""
+    if not kyds_responses or not dataset_bytes_by_filename:
+        return False
+
+    has_fillable_group = any(
+        _group_metadata_is_empty(g.get("metadata"))
+        and g.get("matched_tables")
+        and dataset_bytes_by_filename.get(g["matched_tables"][0]["table"].get("source_file"))
+        for g in groups
+    )
+    if not has_fillable_group:
+        return False
+    if extractor.skip_llm:
+        return True
+
     facts_cache: dict = {}
 
     for g in groups:
@@ -169,11 +188,13 @@ def _fill_empty_group_metadata(groups: list, dataset_bytes_by_filename: dict, ky
 
         try:
             llm_output = generate_metadata_with_llm(
-                facts_cache[source_file], kyds=kyds_responses, api_key=openai_api_key,
+                facts_cache[source_file], kyds=kyds_responses, complete_fn=extractor._complete,
             )
             g["metadata"] = _stringify_metadata_values(parse_llm_metadata_output(llm_output))
         except Exception as e:
             print(f"Stage 4 LLM metadata generation failed for group {g.get('file_name')}: {e}")
+
+    return False
 
 
 def require_user(request: Request) -> str:
@@ -276,24 +297,6 @@ async def login(request: Request):
     return {"token": token, "email": email, "name": user.get("name"), "dept": user.get("dept")}
 
 
-@app.post("/api/extract")
-async def extract_direct(request: Request, file: UploadFile = File(...), user_email: str = Depends(require_user)):
-    """Direct LLM mode — single prompt → single response per table."""
-    if not file.filename.lower().endswith(".xlsx"):
-        raise HTTPException(400, "Only .xlsx files are supported (re-save .xls as .xlsx)")
-    content = await file.read()
-    extractor = _extractor_for(request)
-    try:
-        tables = extractor.extract_from_file(content, file.filename)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    except Exception as e:
-        raise HTTPException(500, f"Extraction error: {e}")
-    await asyncio.to_thread(_validate_tables, tables)
-    return {"filename": file.filename, "mode": "direct_llm", "table_count": len(tables), "tables": tables}
-
-
-
 @app.post("/api/table-metadata")
 async def table_metadata(request: Request, user_email: str = Depends(require_user)):
     """LLM-based semantic category extraction from a table's raw structure."""
@@ -312,82 +315,6 @@ async def table_metadata(request: Request, user_email: str = Depends(require_use
         raise HTTPException(500, f"Metadata extraction error: {e}")
     return {"categories": categories}
 
-
-
-@app.post("/api/group-tables")
-async def group_tables(
-    tables_json: str = Form(...),
-    metadata_files: list[UploadFile] = File(None),
-    dataset_files: list[UploadFile] = File(None),
-    user_email: str = Depends(require_user),
-):
-    """Group extracted tables using the same rule-based logic as batch upload.
-
-    When a group ends up with no metadata (no uploaded metadata workbook row
-    matched it), and the original dataset workbook is available (`dataset_files`),
-    its fields are auto-filled via Stage 4 LLM metadata generation instead of
-    being left blank -- see `_fill_empty_group_metadata`."""
-    tables = _json.loads(tables_json)
-    for t in tables:
-        if not t.get("source_file"):
-            t["source_file"] = t.get("filename") or "Dataset"
-
-    metadata_payloads = []
-    if metadata_files:
-        for f in metadata_files:
-            if not f or not f.filename:
-                continue
-            if not f.filename.lower().endswith((".xlsx", ".xls")):
-                raise HTTPException(400, f"Only .xlsx/.xls files are supported ({f.filename})")
-            content = await f.read()
-            metadata_payloads.append((f.filename, content))
-
-    dataset_payloads = {}
-    if dataset_files:
-        for f in dataset_files:
-            if f and f.filename:
-                dataset_payloads[f.filename] = await f.read()
-
-    def _run():
-        workbooks = []
-        for filename, content in metadata_payloads:
-            try:
-                workbooks.append(parse_metadata_workbook(content, filename))
-            except ValueError as e:
-                raise ValueError(f"{filename}: {e}")
-        result = match_tables_to_metadata(tables, workbooks)
-
-        if dataset_payloads:
-            conn = _cat.get_connection()
-            _cat.init_schema(conn)
-            kyds_responses = _cat.get_latest_kyds_responses(conn, user_email)
-            conn.close()
-            _fill_empty_group_metadata(result["groups"], dataset_payloads, kyds_responses)
-
-        return match_result_to_push_groups(result)
-
-    try:
-        groups = await asyncio.to_thread(_run)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    except Exception as e:
-        raise HTTPException(500, f"Grouping error: {e}")
-    return {"groups": groups}
-
-
-@app.get("/api/catalogue/groups")
-async def get_catalogue_groups(user_email: str = Depends(require_user)):
-    def _run():
-        conn = _cat.get_connection()
-        _cat.init_schema(conn)
-        groups = _cat.list_metadata_groups(conn)
-        conn.close()
-        return groups
-    try:
-        groups = await asyncio.to_thread(_run)
-        return {"groups": groups}
-    except Exception as e:
-        raise HTTPException(500, f"Catalogue error: {e}")
 
 
 @app.post("/api/kyds")
@@ -438,22 +365,6 @@ async def get_my_kyds(user_email: str = Depends(require_user)):
     return {"entry": entry}
 
 
-@app.post("/api/catalogue/parse-metadata-excel")
-async def parse_metadata_excel(file: UploadFile = File(...), user_email: str = Depends(require_user)):
-    """Reads a DES metadata workbook's `catalogue_summary` sheet and returns
-    the fields used to prefill the Create Metadata form."""
-    if not file.filename.lower().endswith((".xlsx", ".xls")):
-        raise HTTPException(400, "Only .xlsx / .xls files are supported")
-    content = await file.read()
-    try:
-        fields = await asyncio.to_thread(parse_catalogue_summary, content)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    except Exception as e:
-        raise HTTPException(500, f"Failed to parse metadata Excel: {e}")
-    return {"fields": fields}
-
-
 @app.post("/api/catalogue/parse-concept-file")
 async def parse_concept_metadata_file(file: UploadFile = File(...), user_email: str = Depends(require_user)):
     """Reads an NMDS concept metadata file -- either a standalone CSV or a
@@ -499,15 +410,24 @@ async def batch_extract(request: Request, files: list[UploadFile] = File(...), u
                 cache[sheet] = _upload_original_sheet_to_gcs(xlsx_bytes, filename, sheet)
             t["original_excel_url"] = cache[sheet]
 
-    async def _extract_one(filename: str, content: bytes):
+    async def _extract_one(file_index: int, filename: str, content: bytes):
         try:
             tables = await asyncio.to_thread(extractor.extract_from_file, content, filename)
         except ValueError as e:
             raise HTTPException(400, f"{filename}: {e}")
         except Exception as e:
             raise HTTPException(500, f"Extraction error in {filename}: {e}")
-        for t in tables:
+        for i, t in enumerate(tables):
             t["source_file"] = filename
+            # `id` is the catalog/DDI-style code derived from the table's own
+            # content (TableExtractor._build_ddi_id) -- two physically
+            # different tables (e.g. the same table title appearing in two
+            # different uploaded workbooks) can legitimately end up with the
+            # same `id`, which is fine for catalog matching but breaks the
+            # frontend, which otherwise has nothing else to key preview tabs,
+            # reconcile cards and edits on. `_uid` is a plain positional
+            # identifier, unique within this batch regardless of content.
+            t["_uid"] = f"{file_index}__{i}"
         try:
             await asyncio.to_thread(_attach_original_sheets, filename, content, tables)
         except Exception as e:
@@ -516,7 +436,7 @@ async def batch_extract(request: Request, files: list[UploadFile] = File(...), u
             print(f"Original-sheet export failed for {filename}: {e}")
         return filename, tables
 
-    results = await asyncio.gather(*(_extract_one(fn, ct) for fn, ct in contents))
+    results = await asyncio.gather(*(_extract_one(i, fn, ct) for i, (fn, ct) in enumerate(contents)))
 
     all_tables = []
     per_file = []
@@ -529,6 +449,7 @@ async def batch_extract(request: Request, files: list[UploadFile] = File(...), u
 
 @app.post("/api/catalogue/batch-match")
 async def batch_match(
+    request: Request,
     tables_json: str = Form(...),
     metadata_files: list[UploadFile] = File(None),
     dataset_files: list[UploadFile] = File(None),
@@ -541,7 +462,11 @@ async def batch_match(
     metadata workbook), that group's fields are auto-filled via Stage 4 LLM
     metadata generation instead of being left empty, provided the original
     dataset workbook was also sent (`dataset_files`) -- see
-    `_fill_empty_group_metadata`."""
+    `_fill_empty_group_metadata`. Uses the caller's own LLM key/provider from
+    Settings (see `_extractor_for`); with no key configured, autofill is
+    skipped and the response flags this via `llm_autofill_skipped_no_key` so
+    the frontend can tell the user why fields are still empty."""
+    extractor = _extractor_for(request)
     tables = _json.loads(tables_json)
 
     metadata_payloads = []
@@ -568,13 +493,16 @@ async def batch_match(
             except ValueError as e:
                 raise ValueError(f"{filename}: {e}")
         result = match_tables_to_metadata(tables, workbooks)
+        result["llm_autofill_skipped_no_key"] = False
 
         if dataset_payloads:
             conn = _cat.get_connection()
             _cat.init_schema(conn)
             kyds_responses = _cat.get_latest_kyds_responses(conn, user_email)
             conn.close()
-            _fill_empty_group_metadata(result["groups"], dataset_payloads, kyds_responses)
+            result["llm_autofill_skipped_no_key"] = _fill_empty_group_metadata(
+                result["groups"], dataset_payloads, kyds_responses, extractor,
+            )
 
         return result
 
@@ -642,6 +570,7 @@ async def batch_push(
             "tables": [t for t, _ in prepped],
             "enriched": [e for _, e in prepped],
             "excel_url": excel_url,
+            "nmds_concepts": group.get("nmds_concepts") or nmds_concepts,
         }
 
     def _prepare_all():
@@ -670,7 +599,7 @@ async def batch_push(
                     meta.get("remarks"),
                     p["excel_url"],
                     user_email,
-                    nmds_concepts,
+                    p["nmds_concepts"],
                 )
                 results.append(result)
         finally:
@@ -732,70 +661,6 @@ def _upload_original_sheet_to_gcs(file_bytes: bytes, source_file: str, sheet: st
     datasets.original_excel. Returns None when GCS is disabled."""
     safe_name = f"{source_file}__{sheet}".replace("/", "_")
     return _upload_bytes_to_gcs(file_bytes, f"original_sheets/{safe_name}.xlsx")
-
-
-@app.post("/api/catalogue/push")
-async def push_to_catalogue(
-    request: Request,
-    tables_json: str = Form(...),
-    metadata_mode: str = Form(...),
-    metadata_id: Optional[str] = Form(None),
-    meta_title: Optional[str] = Form(None),
-    meta_description: Optional[str] = Form(None),
-    meta_product: Optional[str] = Form(None),
-    meta_category: Optional[str] = Form(None),
-    meta_geography: Optional[str] = Form(None),
-    meta_frequency: Optional[str] = Form(None),
-    meta_time_period: Optional[str] = Form(None),
-    meta_data_source: Optional[str] = Form(None),
-    meta_last_updated: Optional[str] = Form(None),
-    meta_future_release: Optional[str] = Form(None),
-    meta_key_statistics: Optional[str] = Form(None),
-    meta_remarks: Optional[str] = Form(None),
-    meta_excel: Optional[UploadFile] = File(None),
-    meta_nmds_concepts: Optional[str] = Form(None),
-    user_email: str = Depends(require_user),
-):
-    tables = _json.loads(tables_json)
-    extractor = _extractor_for(request)
-    nmds_concepts = _json.loads(meta_nmds_concepts) if meta_nmds_concepts else None
-
-    # Upload Excel to GCS if provided
-    excel_url = None
-    if meta_excel and meta_excel.filename:
-        excel_bytes = await meta_excel.read()
-        if excel_bytes:
-            try:
-                excel_url = await asyncio.to_thread(
-                    _upload_excel_to_gcs, excel_bytes, meta_excel.filename
-                )
-            except Exception as e:
-                raise HTTPException(500, f"GCS upload error: {e}")
-
-    # Per-table LLM enrichment (descriptions, classifications, units, age keys)
-    def _enrich():
-        return [extractor.enrich_for_catalogue(t) for t in tables]
-
-    def _run(enriched_data):
-        conn = _cat.get_connection()
-        _cat.init_schema(conn)
-        result = _cat.push_to_catalogue(
-            conn, tables, enriched_data, metadata_mode, metadata_id,
-            meta_title, meta_description, meta_product, meta_category,
-            meta_geography, meta_frequency, meta_time_period,
-            meta_data_source, meta_last_updated, meta_future_release,
-            meta_key_statistics, meta_remarks, excel_url,
-            user_email, nmds_concepts,
-        )
-        conn.close()
-        return result
-
-    try:
-        enriched = await asyncio.to_thread(_enrich)
-        result = await asyncio.to_thread(_run, enriched)
-        return result
-    except Exception as e:
-        raise HTTPException(500, f"Push error: {e}")
 
 
 # --- Serve React frontend (production) ---

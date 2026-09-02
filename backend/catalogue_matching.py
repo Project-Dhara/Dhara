@@ -113,34 +113,65 @@ def _base_title(title: str) -> str:
     return base or (title or "").strip().upper()
 
 
+_GROUP_NAME_NOISE = {"sl", "no"}
+
+
+def build_group_name(base_title: str) -> str:
+    """Derives a presentable name for an auto-grouped bucket of tables from
+    their (final, user-saved) title alone -- e.g. "Age Urban Rural All"
+    rather than "Infant & Mother Death D12-D182.xlsx — Sl. No. Age Urban
+    Rural All". Never includes the source filename or any other file detail,
+    and is never truncated -- the full title is always shown."""
+    title = re.sub(r"\s+", " ", (base_title or "")).strip()
+    if not title:
+        return "Untitled group"
+
+    # Drop leading enumeration/header noise ("Sl.", "No.") -- it labels a
+    # column, not the table's subject, so it adds no meaning to a group name.
+    words = title.split(" ")
+    while words and words[0].strip(".,").lower() in _GROUP_NAME_NOISE:
+        words.pop(0)
+    cleaned = " ".join(words).strip(" .,-") or title
+
+    return cleaned.title()
+
+
 def auto_group_tables(tables: list) -> list:
     """Groups extracted tables automatically by title, with no metadata
-    workbook required -- ports the notebook's Stage 3 `auto_group_tables`.
+    workbook required -- ports the notebook's Stage 3 `auto_group_tables`,
+    extended to group across dataset files.
 
-    Tables sharing the same source file + sheet + base title (title with a
-    trailing qualifier like "(URBAN)"/"(RURAL)" stripped) are grouped
-    together, so an urban/rural (or similarly split) pair of tables from the
-    same sheet lands in one group instead of two.
+    Tables sharing the same base title (title with a trailing qualifier like
+    "(URBAN)"/"(RURAL)" stripped) are grouped together, regardless of which
+    sheet or source file they came from -- so an urban/rural (or similarly
+    split) pair of tables lands in one group instead of two, and the same
+    table title appearing in two different uploaded dataset files is
+    recognized as one group spanning both files.
     """
-    groups_dict: Dict[tuple, dict] = {}
+    groups_dict: Dict[str, dict] = {}
     order = []
     for table in tables:
         source_file = table.get("source_file") or "Dataset"
         sheet = table.get("sheet", "")
         base_title = _base_title(table.get("title", ""))
-        group_key = (source_file, sheet, base_title)
+        group_key = base_title
 
         if group_key not in groups_dict:
             groups_dict[group_key] = {
                 "source_file": source_file,
                 "sheet": sheet,
+                "source_files": set(),
                 "base_title": base_title,
                 "tables": [],
             }
             order.append(group_key)
+        groups_dict[group_key]["source_files"].add(source_file)
         groups_dict[group_key]["tables"].append(table)
 
-    return [groups_dict[k] for k in order]
+    result = [groups_dict[k] for k in order]
+    for g in result:
+        g["source_files"] = sorted(g["source_files"])
+    return result
 
 
 _EMPTY_METADATA = {
@@ -169,10 +200,7 @@ def _groups_without_metadata(extracted_tables: list) -> dict:
     groups = [
         {
             "workbook_index": wi,
-            "file_name": (
-                f"{ag['source_file']} — {ag['base_title'].title()}"
-                if ag["base_title"] else ag["source_file"]
-            ),
+            "file_name": build_group_name(ag["base_title"]),
             "metadata": dict(_EMPTY_METADATA),
             "concepts": [],
             "classifications": {},
@@ -294,18 +322,27 @@ def match_tables_to_metadata(extracted_tables: list, metadata_workbooks: list) -
     # Fallback pass: a table that couldn't be tied to one specific metadata
     # row (e.g. a "combined" sheet that duplicates several already-matched
     # sub-tables) still clearly belongs to the same group as its sibling
-    # tables from the same source dataset file. Group it there instead of
-    # leaving it orphaned -- pushing only ever needed the table itself, not
-    # a specific inventory row (that's used for the confidence badge only).
+    # tables -- either from the same source dataset file, or sharing the
+    # same base title in a different uploaded file. Group it there instead
+    # of leaving it orphaned -- pushing only ever needed the table itself,
+    # not a specific inventory row (that's used for the confidence badge
+    # only).
     source_file_groups: Dict[str, set] = {}
+    base_title_groups: Dict[str, set] = {}
     for wi, g in enumerate(groups):
         for mt in g["matched_tables"]:
             source_file_groups.setdefault(mt["table"].get("source_file"), set()).add(wi)
+            base_title_groups.setdefault(_base_title(mt["table"].get("title", "")), set()).add(wi)
 
     still_unmatched = []
     for u in unmatched_tables:
         source_file = u["table"].get("source_file")
         candidate_groups = source_file_groups.get(source_file, set())
+        if len(candidate_groups) != 1:
+            base_title = _base_title(u["table"].get("title", ""))
+            title_candidates = base_title_groups.get(base_title, set())
+            if len(title_candidates) == 1:
+                candidate_groups = title_candidates
         if len(candidate_groups) == 1:
             wi = next(iter(candidate_groups))
             groups[wi]["matched_tables"].append({
@@ -337,22 +374,3 @@ def match_tables_to_metadata(extracted_tables: list, metadata_workbooks: list) -
         "unmatched_tables": unmatched_tables,
         "unmatched_inventory": unmatched_inventory,
     }
-
-
-def match_result_to_push_groups(match_result: dict) -> list:
-    """Convert batch-style match groups to {name, table_ids, metadata} for
-    single-file PushModal. `metadata` carries through whatever the group
-    already has -- values parsed from an uploaded metadata workbook, or
-    (see main.py's `_fill_empty_group_metadata`) Stage 4 LLM-generated
-    values when no metadata workbook was uploaded."""
-    out = []
-    for g in match_result.get("groups", []):
-        table_ids = [mt["table"]["id"] for mt in g.get("matched_tables", [])]
-        if not table_ids:
-            continue
-        out.append({
-            "name": g.get("file_name") or (g.get("metadata") or {}).get("title") or "Group",
-            "table_ids": table_ids,
-            "metadata": g.get("metadata") or {},
-        })
-    return out
