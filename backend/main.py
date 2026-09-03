@@ -572,6 +572,7 @@ async def batch_push(
             "excel_url": excel_url,
             "nmds_concepts": group.get("nmds_concepts") or nmds_concepts,
             "real_classifications": group.get("classifications") or {},
+            "catalogue_placement": group.get("catalogue_placement") or {},
         }
 
     def _prepare_all():
@@ -602,6 +603,7 @@ async def batch_push(
                     user_email,
                     p["nmds_concepts"],
                     p.get("real_classifications"),
+                    p.get("catalogue_placement"),
                 )
                 results.append(result)
         finally:
@@ -619,6 +621,21 @@ async def batch_push(
         raise HTTPException(500, f"Push error: {e}")
 
     return {"results": results, "groups_pushed": len(results)}
+
+
+@app.get("/api/catalogue/datasets")
+async def list_catalogue_datasets(user_email: str = Depends(require_user)):
+    """Published datasets for the Catalogue page."""
+    def _run():
+        conn = _cat.get_connection()
+        try:
+            _cat.init_schema(conn)
+            return _cat.list_catalogue_datasets(conn)
+        finally:
+            conn.close()
+
+    datasets = await asyncio.to_thread(_run)
+    return {"datasets": datasets}
 
 
 @app.get("/api/catalogue/metadata-groups/{metadata_id}/classifications")
@@ -671,6 +688,7 @@ async def update_classification_column(metadata_id: str, request: Request, user_
             _cat.init_schema(conn)
             return _cat.update_metadata_group_classification_column(
                 conn, metadata_id, column_name, codes, column_names=column_names,
+                expand_aliases=data.get("expand_aliases", True),
             )
         finally:
             conn.close()

@@ -8,6 +8,7 @@ import Console from './components/Console'
 import KydsModal from './components/KydsModal'
 import { getLlmApiKey, setLlmApiKey, getLlmProvider, setLlmProvider } from './llmKey'
 import { getStoredUser, clearSession, setSession, withAuthHeaders } from './auth'
+import { notifyKydsChanged } from './kydsEvents'
 
 export default function App() {
   const storedUser = getStoredUser()
@@ -95,6 +96,7 @@ export default function App() {
               throw new Error(err.detail || 'Could not save KYDS entry — please try again.')
             }
             setShowKyds(false)
+            notifyKydsChanged()
           }}
         />
       )}

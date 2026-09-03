@@ -1,4 +1,12 @@
 import { useState } from 'react'
+import { METADATA_COLUMNS } from './MetadataSheetGrid'
+import {
+  getDatasetIdConfig,
+  setDatasetIdConfig as persistDatasetIdConfig,
+  getMetadataRequiredFields,
+  setMetadataRequiredFields as persistMetadataRequiredFields,
+  STATISTICS_OPTIONS,
+} from '../settingsConfig'
 
 // Static status glyphs for the standards list — signal "this is a status",
 // not a control, since the row itself has no click behavior.
@@ -27,6 +35,27 @@ const STANDARDS = [
   { key: 'nic', name: 'National Industrial Classification (NIC 2008)', desc: 'Standard industry codes used during harmonisation.' },
 ]
 
+const SETTINGS_METADATA_FIELDS = [
+  ...METADATA_COLUMNS.map((c) => ({
+    key: c.key,
+    label: c.label,
+    title: `Require ${c.label.toLowerCase()}`,
+    desc: `Metadata sheet field “${c.label}” must be filled before submission.`,
+  })),
+  {
+    key: 'owner',
+    label: 'Owner',
+    title: 'Require owner',
+    desc: 'Datasets must be assigned an owner/department.',
+  },
+  {
+    key: 'autoTagDomain',
+    label: 'Tag domain',
+    title: 'Auto-tag domain',
+    desc: 'Automatically infer and tag the data domain from content.',
+  },
+]
+
 const CONFIG_TABS = [
   { key: 'dataset', label: 'Dataset ID configuration' },
   { key: 'metadata', label: 'Metadata configuration' },
@@ -40,11 +69,13 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
   const [customStandards, setCustomStandards] = useState([]) // saved custom standards: [{ name }]
   const [pendingFile, setPendingFile] = useState(null) // just uploaded, not yet saved
   const [activeTab, setActiveTab] = useState('dataset')
-  const [datasetIdConfig, setDatasetIdConfig] = useState({ prefix: 'DHR', separator: '-', digits: 4 })
-  const [metadataConfig, setMetadataConfig] = useState({ requireDescription: true, requireOwner: true, autoTagDomain: false })
+  const [datasetIdConfig, setDatasetIdConfig] = useState(getDatasetIdConfig)
+  const [savedDatasetIdConfig, setSavedDatasetIdConfig] = useState(getDatasetIdConfig)
+  const [extraRequiredFields, setExtraRequiredFields] = useState(getMetadataRequiredFields)
+  const [savedRequiredFields, setSavedRequiredFields] = useState(getMetadataRequiredFields)
+  const [pickingFields, setPickingFields] = useState(false)
 
   const setDatasetIdField = (key) => (e) => setDatasetIdConfig((prev) => ({ ...prev, [key]: e.target.value }))
-  const toggleMetadataField = (key) => () => setMetadataConfig((prev) => ({ ...prev, [key]: !prev[key] }))
 
   const setField = (key) => (e) => {
     const next = { ...local, [key]: e.target.value }
@@ -55,6 +86,19 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
 
   const status = keySaved ? 'Key saved' : local.apiKey ? 'Unsaved changes' : 'No key configured'
   const statusClass = keySaved ? 'settings-key-status-ok' : local.apiKey ? 'settings-key-status-warn' : 'settings-key-status-none'
+
+  const datasetIdDirty = JSON.stringify(datasetIdConfig) !== JSON.stringify(savedDatasetIdConfig)
+  const requiredFieldsDirty = JSON.stringify(extraRequiredFields) !== JSON.stringify(savedRequiredFields)
+
+  const saveDatasetIdConfig = () => {
+    persistDatasetIdConfig(datasetIdConfig)
+    setSavedDatasetIdConfig(datasetIdConfig)
+  }
+
+  const saveMetadataRequiredFields = () => {
+    persistMetadataRequiredFields(extraRequiredFields)
+    setSavedRequiredFields(extraRequiredFields)
+  }
 
   const saveCustomStandard = () => {
     if (!pendingFile) return
@@ -108,20 +152,42 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
             <div className="settings-grid-2">
               <div className="settings-field">
                 <label className="settings-label">Prefix</label>
-                <input className="settings-input" type="text" value={datasetIdConfig.prefix} onChange={setDatasetIdField('prefix')} />
+                <input
+                  className="settings-input"
+                  type="text"
+                  value={datasetIdConfig.prefix}
+                  onChange={setDatasetIdField('prefix')}
+                  placeholder="DDI_DES_DEL"
+                />
               </div>
               <div className="settings-field">
                 <label className="settings-label">Separator</label>
-                <input className="settings-input" type="text" value={datasetIdConfig.separator} onChange={setDatasetIdField('separator')} />
+                <input
+                  className="settings-input"
+                  type="text"
+                  value={datasetIdConfig.separator}
+                  onChange={setDatasetIdField('separator')}
+                  placeholder="_"
+                />
               </div>
               <div className="settings-field">
                 <label className="settings-label">Statistics</label>
-                <input className="settings-input" type="text" value={datasetIdConfig.digits} onChange={setDatasetIdField('digits')} />
+                <select
+                  className="settings-input"
+                  value={datasetIdConfig.statistics}
+                  onChange={setDatasetIdField('statistics')}
+                >
+                  {STATISTICS_OPTIONS.map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
               </div>
             </div>
             <div className="settings-key-row">
-              <button className="settings-save-btn">Save configuration</button>
-              <span className="settings-key-status-ok">All standards saved</span>
+              <button className="settings-save-btn" disabled={!datasetIdDirty} onClick={saveDatasetIdConfig}>Save configuration</button>
+              <span className={datasetIdDirty ? 'settings-key-status-warn' : 'settings-key-status-ok'}>
+                {datasetIdDirty ? 'Unsaved changes' : 'Configuration saved'}
+              </span>
             </div>
           </>
         )}
@@ -130,34 +196,87 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
           <>
             <div className="settings-sub-note">Controls which metadata fields are required when a dataset is submitted.</div>
             <div className="settings-standards-list">
-              <div className="settings-standard-item">
-                <CheckIcon className="settings-standard-check" />
-                <div className="settings-standard-text">
-                  <div className="settings-standard-name">Require description</div>
-                  <div className="settings-standard-desc">Datasets must include a description before submission.</div>
+              {Object.keys(extraRequiredFields).length === 0 && (
+                <div className="settings-standard-item">
+                  <div className="settings-standard-text">
+                    <div className="settings-standard-desc">No required fields. Add fields from the metadata sheet below.</div>
+                  </div>
                 </div>
-                <input type="checkbox" checked={metadataConfig.requireDescription} onChange={toggleMetadataField('requireDescription')} />
-              </div>
-              <div className="settings-standard-item">
-                <CheckIcon className="settings-standard-check" />
-                <div className="settings-standard-text">
-                  <div className="settings-standard-name">Require owner</div>
-                  <div className="settings-standard-desc">Datasets must be assigned an owner/department.</div>
-                </div>
-                <input type="checkbox" checked={metadataConfig.requireOwner} onChange={toggleMetadataField('requireOwner')} />
-              </div>
-              <div className="settings-standard-item">
-                <CheckIcon className="settings-standard-check" />
-                <div className="settings-standard-text">
-                  <div className="settings-standard-name">Auto-tag domain</div>
-                  <div className="settings-standard-desc">Automatically infer and tag the data domain from content.</div>
-                </div>
-                <input type="checkbox" checked={metadataConfig.autoTagDomain} onChange={toggleMetadataField('autoTagDomain')} />
-              </div>
+              )}
+              {Object.keys(extraRequiredFields).map((key) => {
+                const field = SETTINGS_METADATA_FIELDS.find((c) => c.key === key)
+                if (!field) return null
+                return (
+                  <div className="settings-standard-item" key={key}>
+                    <CheckIcon className="settings-standard-check" />
+                    <div className="settings-standard-text">
+                      <div className="settings-standard-name">{field.title}</div>
+                      <div className="settings-standard-desc">{field.desc}</div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={extraRequiredFields[key]}
+                      onChange={() => setExtraRequiredFields((prev) => ({ ...prev, [key]: !prev[key] }))}
+                    />
+                    <button
+                      type="button"
+                      className="settings-field-remove"
+                      onClick={() => setExtraRequiredFields((prev) => {
+                        const next = { ...prev }
+                        delete next[key]
+                        return next
+                      })}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )
+              })}
             </div>
+            {(() => {
+              const available = SETTINGS_METADATA_FIELDS.filter((c) => extraRequiredFields[c.key] === undefined)
+              return (
+                <>
+                  <div className="settings-upload-row">
+                    <button
+                      type="button"
+                      className="settings-upload-btn"
+                      disabled={!available.length}
+                      onClick={() => setPickingFields((open) => !open)}
+                    >
+                      {pickingFields ? 'Hide metadata sheet fields' : '+ Add required field'}
+                    </button>
+                  </div>
+                  {pickingFields && available.length > 0 && (
+                    <div className="settings-field-picker">
+                      <div className="settings-field-picker-note">
+                        Fields from the metadata sheet. Choose one to require it on submission.
+                      </div>
+                      <div className="settings-field-picker-list">
+                        {available.map((c) => (
+                          <button
+                            type="button"
+                            key={c.key}
+                            className="settings-field-chip"
+                            onClick={() => {
+                              setExtraRequiredFields((prev) => ({ ...prev, [c.key]: true }))
+                              if (available.length <= 1) setPickingFields(false)
+                            }}
+                          >
+                            {c.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )
+            })()}
             <div className="settings-key-row">
-              <button className="settings-save-btn">Save configuration</button>
-              <span className="settings-key-status-ok">All standards saved</span>
+              <button className="settings-save-btn" disabled={!requiredFieldsDirty} onClick={saveMetadataRequiredFields}>Save configuration</button>
+              <span className={requiredFieldsDirty ? 'settings-key-status-warn' : 'settings-key-status-ok'}>
+                {requiredFieldsDirty ? 'Unsaved changes' : 'Configuration saved'}
+              </span>
             </div>
           </>
         )}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import KydsModal from './KydsModal'
 import { withAuthHeaders } from '../auth'
+import { notifyKydsChanged, onKydsChanged } from '../kydsEvents'
 
 // Shows the caller's own KYDS entry (if any), with an edit option — editing
 // re-saves to Postgres via the same /api/kyds endpoint used for the initial
@@ -19,11 +20,26 @@ export default function KydsSummaryCard({ variant = 'card' }) {
   const [creatingKyds, setCreatingKyds] = useState(false)
 
   useEffect(() => {
-    fetch('/api/kyds/mine', withAuthHeaders())
-      .then((r) => (r.ok ? r.json() : { entry: null }))
-      .then((data) => setKydsEntry(data.entry || null))
-      .catch(() => setKydsEntry(null))
-      .finally(() => setKydsLoading(false))
+    let cancelled = false
+    const load = () => {
+      fetch('/api/kyds/mine', withAuthHeaders())
+        .then((r) => (r.ok ? r.json() : { entry: null }))
+        .then((data) => {
+          if (!cancelled) setKydsEntry(data.entry || null)
+        })
+        .catch(() => {
+          if (!cancelled) setKydsEntry(null)
+        })
+        .finally(() => {
+          if (!cancelled) setKydsLoading(false)
+        })
+    }
+    load()
+    const off = onKydsChanged(load)
+    return () => {
+      cancelled = true
+      off()
+    }
   }, [])
 
   const saveKydsEdit = async (form) => {
@@ -40,6 +56,7 @@ export default function KydsSummaryCard({ variant = 'card' }) {
     setKydsEntry({ id: data.id, responses: form })
     setEditingKyds(false)
     setCreatingKyds(false)
+    notifyKydsChanged()
   }
 
   if (kydsLoading) return null

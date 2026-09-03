@@ -6,6 +6,9 @@ import BatchReview from './BatchReview'
 import ReconcileIds from './ReconcileIds'
 import Classify from './Classify'
 import Publish from './Publish'
+import { withAuthHeaders } from '../auth'
+import { withLlmKeyHeaders } from '../llmKey'
+import { CLICK_THROUGH_ENABLED } from '../clickThrough'
 
 // Short government table code for a tab button — e.g. "Table : D-12 & D-13"
 // → "D12, D13" — pulled from the source's own table-label row (`table.title`,
@@ -274,6 +277,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   const [metaLabel, setMetaLabel] = useState(persisted?.metaLabel ?? '')
   const [metadataId, setMetadataId] = useState(persisted?.metadataId ?? null)
   const [metadataIds, setMetadataIds] = useState(persisted?.metadataIds ?? [])
+  const [pendingGroups, setPendingGroups] = useState(persisted?.pendingGroups ?? null)
 
   // Tracks which flagged (id_title_mismatch) tables have actually had their
   // "Save details" button clicked in ReconcileIds — not merely opened — so
@@ -303,7 +307,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   useEffect(() => {
     const toSave = {
       step, matchResult, batchPreviewId, selectedDataset,
-      metaLabel, metadataId, metadataIds, savedIds: [...savedIds], metadataStarted, maxStepReached,
+      metaLabel, metadataId, metadataIds, pendingGroups, savedIds: [...savedIds], metadataStarted, maxStepReached,
       autoMatchResult: autoMatchResultRef.current,
     }
     try {
@@ -311,7 +315,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
     } catch {
       // best-effort — e.g. storage full or unavailable
     }
-  }, [step, matchResult, batchPreviewId, selectedDataset, metaLabel, metadataId, metadataIds, savedIds, metadataStarted, maxStepReached])
+  }, [step, matchResult, batchPreviewId, selectedDataset, metaLabel, metadataId, metadataIds, pendingGroups, savedIds, metadataStarted, maxStepReached])
 
   const renameBatchGroup = (index, newName) => {
     setMatchResult((prev) => prev && ({
@@ -554,6 +558,34 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
     setManualGrouping(false)
     setEditingGroups(false)
     setStep(3)
+  }
+
+  const publishFromClassify = async ({ groups } = {}) => {
+    if (CLICK_THROUGH_ENABLED) {
+      setPendingGroups(groups || pendingGroups)
+      setStep(6)
+      return
+    }
+    if (!groups?.length) {
+      throw new Error('No metadata groups to publish')
+    }
+    const fd = new FormData()
+    fd.append('groups_json', JSON.stringify(groups))
+    metadataFiles.forEach((f) => fd.append('metadata_files', f))
+    const res = await fetch('/api/catalogue/batch-push', withAuthHeaders(withLlmKeyHeaders({
+      method: 'POST',
+      body: fd,
+    })))
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Could not publish to the catalogue' }))
+      throw new Error(typeof err.detail === 'string' ? err.detail : 'Could not publish to the catalogue')
+    }
+    const data = await res.json()
+    const ids = (data.results || []).map((r) => r.metadata_id).filter(Boolean)
+    setMetadataIds(ids)
+    setMetadataId(ids[0] || null)
+    setPendingGroups(groups)
+    setStep(6)
   }
 
   const handleMatched = (data) => {
@@ -975,10 +1007,11 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
             <BatchReview
               matchResult={matchResult}
               metadataFiles={metadataFiles}
-              onDone={(label, ids) => {
+              onDone={(label, ids, groups) => {
                 setMetaLabel(label || 'this release')
                 setMetadataIds(ids || [])
                 setMetadataId((ids && ids[0]) || null)
+                setPendingGroups(groups || null)
                 setStep(5)
               }}
               onCancel={() => setStep(3)}
@@ -987,7 +1020,12 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
         )}
 
         {step === 5 && (
-          <Classify metadataIds={metadataIds} datasetLabel={metaLabel || 'This dataset'} onContinue={() => setStep(6)} />
+          <Classify
+            metadataIds={metadataIds}
+            datasetLabel={metaLabel || 'This dataset'}
+            groups={pendingGroups}
+            onContinue={publishFromClassify}
+          />
         )}
 
         {step === 6 && (

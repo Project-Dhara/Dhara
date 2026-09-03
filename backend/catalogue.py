@@ -70,6 +70,15 @@ def init_schema(conn):
             ALTER TABLE metadata_groups ADD COLUMN IF NOT EXISTS nmds_concepts JSONB DEFAULT '{}'
         """)
         cur.execute("""
+            ALTER TABLE metadata_groups ADD COLUMN IF NOT EXISTS sector TEXT
+        """)
+        cur.execute("""
+            ALTER TABLE metadata_groups ADD COLUMN IF NOT EXISTS theme TEXT
+        """)
+        cur.execute("""
+            ALTER TABLE metadata_groups ADD COLUMN IF NOT EXISTS catalogue_product TEXT
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS datasets (
                 dataset_id         TEXT PRIMARY KEY,
                 unique_dataset_id  TEXT,
@@ -362,6 +371,113 @@ def get_recent_classification_columns(conn, user_email, limit=12):
     return columns
 
 
+def _nmds_concepts_as_list(raw):
+    """Normalise stored NMDS JSON (list of rows or {concept: details}) for the catalogue."""
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+    if isinstance(raw, dict):
+        return [
+            {"item_no": "", "concept": k, "details": v or ""}
+            for k, v in raw.items()
+            if str(v or "").strip()
+        ]
+    out = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        details = row.get("details") or ""
+        if not str(details).strip():
+            continue
+        out.append({
+            "item_no": row.get("item_no") or "",
+            "concept": row.get("concept") or "",
+            "details": details,
+        })
+    return out
+
+
+def list_catalogue_datasets(conn):
+    """Published datasets for the catalogue page (everything in `datasets`)."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("""
+            SELECT
+              d.dataset_id,
+              d.title,
+              d.short_description,
+              d.long_description,
+              d.geography,
+              d.frequency,
+              d.time_period,
+              d.data_source,
+              d.classifications,
+              d.category,
+              d.metadata_id,
+              m.sector,
+              m.theme,
+              m.catalogue_product,
+              m.nmds_concepts,
+              m.last_updated_date,
+              (SELECT COUNT(*)::int FROM dataset_rows r WHERE r.dataset_id = d.dataset_id) AS row_count
+            FROM datasets d
+            LEFT JOIN metadata_groups m ON m.metadata_id = d.metadata_id
+            ORDER BY m.last_updated_date DESC NULLS LAST, d.dataset_id DESC
+        """)
+        rows = [dict(r) for r in cur.fetchall()]
+
+    out = []
+    for row in rows:
+        cls = row.get("classifications") or {}
+        if isinstance(cls, str):
+            try:
+                cls = json.loads(cls)
+            except json.JSONDecodeError:
+                cls = {}
+        facets = list(cls.keys()) if isinstance(cls, dict) else []
+        title = row.get("title") or row["dataset_id"]
+        geo = row.get("geography") or "—"
+        freq = row.get("frequency") or "—"
+        source = row.get("data_source") or "—"
+        summary = (row.get("long_description") or row.get("short_description") or "").strip() or title
+        tags = []
+        for x in (row.get("theme"), row.get("catalogue_product"), row.get("sector"), row.get("category"), geo):
+            if x and str(x).strip() and str(x) not in tags:
+                tags.append(str(x).strip())
+        for f in facets:
+            if f not in tags:
+                tags.append(f)
+        keywords = " ".join(
+            str(x) for x in [
+                row["dataset_id"], title, geo, freq, source,
+                row.get("theme"), row.get("catalogue_product"), *facets,
+            ] if x
+        ).lower()
+        nmds = _nmds_concepts_as_list(row.get("nmds_concepts"))
+        out.append({
+            "id": row["dataset_id"],
+            "title": title,
+            "rows": str(row.get("row_count") or 0),
+            "geo": geo,
+            "freq": freq,
+            "source": source,
+            "access": "Public",
+            "summary": summary,
+            "nmds_concepts": nmds,
+            "keywords": keywords,
+            "facets": facets,
+            "tags": tags[:16],
+            "theme": row.get("theme"),
+            "product": row.get("catalogue_product"),
+            "time_period": row.get("time_period"),
+            "metadata_id": row.get("metadata_id"),
+        })
+    return out
+
+
 def _classifications_from_linked_datasets(conn, metadata_id):
     """If the metadata group was saved with empty classifications (LLM skipped),
     rebuild them from per-dataset JSON and, failing that, from stored rows."""
@@ -471,9 +587,11 @@ def _expand_alias_names(classifications, names, codes):
     return names + extra
 
 
-def update_metadata_group_classification_column(conn, metadata_id, column_name, codes, column_names=None):
+def update_metadata_group_classification_column(
+    conn, metadata_id, column_name, codes, column_names=None, expand_aliases=True,
+):
     """Persist code/definition rows to the metadata group and every linked
-    dataset table, including duplicate column names collapsed in the UI."""
+    dataset table. expand_aliases copies to hidden same-value columns."""
     names = [n for n in (column_names or [column_name]) if n]
     if not names:
         return False
@@ -483,7 +601,8 @@ def update_metadata_group_classification_column(conn, metadata_id, column_name, 
         if not row:
             return False
         classifications = row[0] or {}
-        names = _expand_alias_names(classifications, names, codes)
+        if expand_aliases:
+            names = _expand_alias_names(classifications, names, codes)
         for name in names:
             classifications[name] = codes
         cur.execute(
@@ -496,7 +615,7 @@ def update_metadata_group_classification_column(conn, metadata_id, column_name, 
         )
         for dataset_id, ds_cls in cur.fetchall():
             ds_cls = dict(ds_cls or {})
-            ds_names = _expand_alias_names(ds_cls, names, codes)
+            ds_names = _expand_alias_names(ds_cls, names, codes) if expand_aliases else names
             changed = False
             for name in ds_names:
                 if ds_cls.get(name) != codes:
@@ -552,6 +671,7 @@ def push_to_catalogue(
     user_email=None,
     meta_nmds_concepts=None,   # list[{item_no, concept, details}], see backend/metadata_excel.py parse_concepts
     meta_real_classifications=None,  # {sheet_name: [{code, value, definition}]}
+    catalogue_placement=None,  # {sector, theme, product} from Classify
 ):
     today = meta_last_updated or date.today().strftime("%B, %Y")
     if isinstance(meta_key_statistics, (dict, list)):
@@ -691,6 +811,7 @@ def push_to_catalogue(
                 "classifications": group_classifications,
                 "concepts": STANDARD_CONCEPTS,
                 "nmds_concepts": nmds_concepts,
+                "catalogue_placement": catalogue_placement or {},
                 "dataset_inventory_list": [
                     {
                         "dataset_id": dataset_ids[j],
@@ -738,6 +859,18 @@ def push_to_catalogue(
                 json.dumps(full_record),
                 user_email,
                 json.dumps(nmds_concepts),
+            ))
+
+            placement = catalogue_placement or {}
+            cur.execute("""
+                UPDATE metadata_groups
+                SET sector = %s, theme = %s, catalogue_product = %s
+                WHERE metadata_id = %s
+            """, (
+                placement.get("sector"),
+                placement.get("theme"),
+                placement.get("product"),
+                metadata_id,
             ))
 
             # Back-fill metadata_id on datasets just inserted

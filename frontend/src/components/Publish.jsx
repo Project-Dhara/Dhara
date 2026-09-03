@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react'
 
-// Mock-only "Dataset Publication" step: an animated "publishing…" state,
-// then a published summary with API/MCP endpoint cards. Reuses the real
-// dataset name/id from Console state where available. No backend calls —
-// the actual catalogue write already happened at the Metadata Workspace step.
+// Confirmation screen after Continue to publish writes the release to
+// Postgres. API/MCP URLs here are still display placeholders.
 
 const PUBLISH_STEPS = [
   'Validating harmonised columns',

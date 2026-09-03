@@ -1,7 +1,5 @@
 import { useEffect, useState } from 'react'
-import { withLlmKeyHeaders } from '../llmKey'
 import { withAuthHeaders } from '../auth'
-import { CLICK_THROUGH_ENABLED } from '../clickThrough'
 import MetadataSheetGrid from './MetadataSheetGrid'
 import NmdsGroupPanel from './NmdsGroupPanel'
 import { emptyNmdsFields, isNmdsFieldsComplete, nmdsFieldsToList, mergeNmdsConcepts, NMDS_CONCEPT_TEMPLATE } from '../nmdsConcepts'
@@ -128,63 +126,20 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
       return
     }
 
-    setStep('pushing')
-    setError('')
-    setToast(null)
-
-    // Click-through mode (VITE_ENABLE_CLICK_THROUGH=true): skip the real
-    // push and continue as if it succeeded. Leave this off to write
-    // catalogue rows to Neon (GCS is optional via ENABLE_GCS).
-    if (CLICK_THROUGH_ENABLED) {
-      setResult({ groups_pushed: groups.length })
-      setStep('done')
-      return
-    }
-
-    try {
-      const finalGroups = groups.map((g, gi) => ({
-        ...g,
-        matched_tables: [...g.matched_tables],
-        nmds_concepts: nmdsFieldsToList(nmdsByGroup[gi]?.fields || emptyNmdsFields()),
-      }))
-      matchResult.unmatched_tables.forEach((u, idx) => {
-        const target = assignments[idx]
-        if (target !== undefined && target !== '') {
-          finalGroups[Number(target)].matched_tables.push({ table: u.table, confidence: 'manual' })
-        }
-      })
-
-      const fd = new FormData()
-      fd.append('groups_json', JSON.stringify(finalGroups))
-      metadataFiles.forEach((f) => fd.append('metadata_files', f))
-
-      const res = await fetch('/api/catalogue/batch-push', withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: fd })))
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: 'Push failed' }))
-        throw new Error(err.detail || 'Push failed')
+    const finalGroups = groups.map((g, gi) => ({
+      ...g,
+      matched_tables: [...g.matched_tables],
+      nmds_concepts: nmdsFieldsToList(nmdsByGroup[gi]?.fields || emptyNmdsFields()),
+    }))
+    matchResult.unmatched_tables.forEach((u, idx) => {
+      const target = assignments[idx]
+      if (target !== undefined && target !== '') {
+        finalGroups[Number(target)].matched_tables.push({ table: u.table, confidence: 'manual' })
       }
-      const data = await res.json()
-      setResult(data)
-      setStep('done')
-    } catch (e) {
-      setError(e.message)
-      setStep('error')
-    }
-  }
+    })
 
-  if (step === 'done' && result) {
     const label = groups[0]?.metadata?.title || groups[0]?.file_name || ''
-    return (
-      <div className="batch-review">
-        <div className="push-success">
-          <div className="push-success-icon">✓</div>
-          <div className="push-success-msg">
-            {result.groups_pushed} metadata group{result.groups_pushed !== 1 ? 's' : ''} pushed
-          </div>
-          <button className="push-btn" onClick={() => onDone(label, (result.results || []).map((r) => r.metadata_id).filter(Boolean))}>Continue to classification →</button>
-        </div>
-      </div>
-    )
+    onDone(label, [], finalGroups)
   }
 
   return (
@@ -196,7 +151,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
               <h2 className="batch-review-title-pill">Fill in Metadata</h2>
               <p>
                 {totalMatched} table{totalMatched !== 1 ? 's' : ''} matched across {groups.length} metadata group{groups.length !== 1 ? 's' : ''}.
-                Fields couldn't be auto-filled — please fill them in groupwise below, including the NMDS fields for each group. Your entries are kept as you move between groups, so you won't need to refill a group you've already completed. Nothing is pushed to the catalogue until you confirm below.
+                Fields couldn't be auto-filled — please fill them in groupwise below, including the NMDS fields for each group. Your entries are kept as you move between groups. The catalogue is written after classification, when you continue to publish.
               </p>
             </>
           ) : (
@@ -204,7 +159,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
               <h2 className="batch-review-title-pill">Review auto-mapped catalogue</h2>
               <p>
                 {totalMatched} table{totalMatched !== 1 ? 's' : ''} matched across {groups.length} metadata group{groups.length !== 1 ? 's' : ''}.
-                Kindly review the fields across all groups. Nothing is pushed until you confirm below.
+                Kindly review the fields across all groups. The catalogue is written after classification, when you continue to publish.
               </p>
             </>
           )}
@@ -313,9 +268,9 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
       )}
 
       <div className="push-modal-footer batch-review-footer">
-        <button className="console-secondary-btn" onClick={onCancel} disabled={step === 'pushing'}>Cancel</button>
-        <button className="console-primary-btn" disabled={totalMatched === 0 || step === 'pushing'} onClick={handlePush}>
-          {step === 'pushing' ? 'Pushing…' : 'Push to catalogue →'}
+        <button className="console-secondary-btn" onClick={onCancel}>Cancel</button>
+        <button className="console-primary-btn" disabled={totalMatched === 0} onClick={handlePush}>
+          Continue to classification →
         </button>
       </div>
 
