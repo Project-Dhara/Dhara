@@ -136,7 +136,75 @@ def init_schema(conn):
             CREATE INDEX IF NOT EXISTS idx_kyds_entries_created_at
                 ON kyds_entries (created_at DESC)
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS nco_2015_codes (
+                nco_code           TEXT PRIMARY KEY,
+                occupation_title   TEXT NOT NULL,
+                division_code      TEXT,
+                division_title     TEXT,
+                subdivision_code   TEXT,
+                subdivision_title  TEXT,
+                group_code         TEXT,
+                group_title        TEXT,
+                family_code        TEXT,
+                family_title       TEXT,
+                qp_nos_reference   TEXT
+            )
+        """)
     conn.commit()
+
+
+NCO_2015_CSV_PATH = os.path.join(os.path.dirname(__file__), "data", "nco_2015_concordance.csv")
+
+
+def seed_nco_2015(conn, csv_path=NCO_2015_CSV_PATH):
+    """Load the concordance CSV into nco_2015_codes if the table is empty."""
+    import csv as _csv
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM nco_2015_codes")
+        if cur.fetchone()[0] > 0:
+            return 0
+    if not os.path.exists(csv_path):
+        return 0
+    rows = []
+    with open(csv_path, newline="", encoding="utf-8-sig") as f:
+        for r in _csv.DictReader(f):
+            code = (r.get("NCO_2015_Code") or "").strip()
+            title = (r.get("Occupation_Title") or "").strip()
+            if not code or not title:
+                continue
+            rows.append((
+                code, title,
+                (r.get("Division_Code") or "").strip(),
+                (r.get("Division_Title") or "").strip(),
+                (r.get("SubDivision_Code") or "").strip(),
+                (r.get("SubDivision_Title") or "").strip(),
+                (r.get("Group_Code") or "").strip(),
+                (r.get("Group_Title") or "").strip(),
+                (r.get("Family_Code") or "").strip(),
+                (r.get("Family_Title") or "").strip(),
+                (r.get("QP_NOS_Reference") or "").strip(),
+            ))
+    if not rows:
+        return 0
+    with conn.cursor() as cur:
+        psycopg2.extras.execute_values(
+            cur,
+            """
+            INSERT INTO nco_2015_codes (
+                nco_code, occupation_title,
+                division_code, division_title,
+                subdivision_code, subdivision_title,
+                group_code, group_title,
+                family_code, family_title,
+                qp_nos_reference
+            ) VALUES %s
+            ON CONFLICT (nco_code) DO NOTHING
+            """,
+            rows,
+        )
+    conn.commit()
+    return len(rows)
 
 
 def save_kyds_entry(conn, responses, user=None):
@@ -210,6 +278,239 @@ def get_user_by_email(conn, email):
     return dict(row) if row else None
 
 
+def _normalize_code_entry(entry):
+    """A classification entry is normally {code, value, definition} (from the
+    real metadata-excel parse). But when no metadata-excel sheet covered a
+    dimension, the LLM-guessed fallback stores it as a flat list of plain
+    value strings instead — normalize those too so the frontend always gets
+    a consistent {code, value, definition} shape."""
+    if isinstance(entry, dict):
+        return {"code": entry.get("code"), "value": entry.get("value"), "definition": entry.get("definition")}
+    return {"code": entry, "value": entry, "definition": None}
+
+
+def get_metadata_group_classifications(conn, metadata_id):
+    """Read metadata_groups.classifications for the Classify step, reshaped
+    into the [{name, concept, note, codes}] array the frontend expects."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT classifications FROM metadata_groups WHERE metadata_id = %s", (metadata_id,))
+        row = cur.fetchone()
+    if not row:
+        return None
+    classifications = row[0] or {}
+    if not classifications:
+        classifications = _classifications_from_linked_datasets(conn, metadata_id)
+    return [
+        {"name": name, "concept": name, "note": "", "codes": [_normalize_code_entry(e) for e in codes]}
+        for name, codes in classifications.items()
+        if codes
+    ]
+
+
+def get_definition_facts(conn, metadata_id):
+    """Compact catalogue + workbook facts for filling classification definitions."""
+    if not metadata_id:
+        return {}
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT title, description, product, category, geography, frequency,
+                   time_period, data_source, key_statistics, full_record
+            FROM metadata_groups WHERE metadata_id = %s
+        """, (metadata_id,))
+        row = cur.fetchone()
+    if not row:
+        return {}
+    rec = row[9] or {}
+    inventory = rec.get("dataset_inventory_list") or []
+    return {
+        "title": row[0],
+        "description": row[1],
+        "product": row[2],
+        "category": row[3],
+        "geography": row[4],
+        "frequency": row[5],
+        "time_period": row[6],
+        "data_source": row[7],
+        "key_statistics": row[8],
+        "tables": [
+            {
+                "title": t.get("title"),
+                "short_description": t.get("short_description"),
+            }
+            for t in inventory[:10]
+            if isinstance(t, dict)
+        ],
+    }
+
+
+def get_recent_classification_columns(conn, user_email, limit=12):
+    """Fallback when the frontend has no metadataIds in session: the most
+    recently pushed groups for this user."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT metadata_id FROM metadata_groups
+            WHERE user_email = %s
+            ORDER BY last_updated_date DESC NULLS LAST, metadata_id DESC
+            LIMIT %s
+        """, (user_email, limit))
+        ids = [r[0] for r in cur.fetchall()]
+    columns = []
+    for mid in ids:
+        cols = get_metadata_group_classifications(conn, mid) or []
+        for c in cols:
+            columns.append({**c, "_metadataId": mid})
+    return columns
+
+
+def _classifications_from_linked_datasets(conn, metadata_id):
+    """If the metadata group was saved with empty classifications (LLM skipped),
+    rebuild them from per-dataset JSON and, failing that, from stored rows."""
+    merged = {}
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT classifications FROM datasets WHERE metadata_id = %s",
+            (metadata_id,),
+        )
+        for (ds_cls,) in cur.fetchall():
+            for name, codes in (ds_cls or {}).items():
+                if name not in merged and codes:
+                    merged[name] = codes
+        if merged:
+            return merged
+        cur.execute("""
+            SELECT dr.row_data
+            FROM datasets d
+            JOIN dataset_rows dr ON dr.dataset_id = d.dataset_id
+            WHERE d.metadata_id = %s
+            ORDER BY d.dataset_id, dr.row_index
+        """, (metadata_id,))
+        rows = [r[0] or {} for r in cur.fetchall()]
+    if not rows:
+        return {}
+    cols = list(rows[0].keys())
+    return _classifications_from_table_data([{"columns": cols, "rows": rows}])
+
+
+def _classifications_from_table_data(tables):
+    """Treat low-cardinality non-numeric columns as classification dimensions."""
+    merged = {}
+    for table in tables or []:
+        columns = table.get("columns") or []
+        rows = table.get("rows") or []
+        for col in columns:
+            values, seen = [], set()
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                raw = row.get(col)
+                if raw is None or raw == "":
+                    continue
+                s = str(raw).strip()
+                if not s:
+                    continue
+                try:
+                    float(s.replace(",", ""))
+                    continue
+                except ValueError:
+                    pass
+                key = s.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                values.append({"code": s, "value": s, "definition": None})
+            if 2 <= len(values) <= 40:
+                name = re.sub(r"\s+", "_", str(col).strip()) or str(col)
+                if name not in merged:
+                    merged[name] = values
+                else:
+                    existing = {(e.get("value") or "").lower() for e in merged[name]}
+                    for e in values:
+                        if (e["value"] or "").lower() not in existing:
+                            merged[name].append(e)
+                            existing.add((e["value"] or "").lower())
+    return merged
+
+
+def _merge_real_classifications(llm_merged, real):
+    """Real metadata-excel code lists win per column name; LLM/heuristic
+    guesses fill columns the workbook didn't cover."""
+    merged = dict(llm_merged or {})
+    merged.update(real or {})
+    return merged
+
+
+def _classification_value_key(entries):
+    vals = []
+    for e in entries or []:
+        if isinstance(e, dict):
+            v = str(e.get("value") or "").strip().lower()
+        else:
+            v = str(e).strip().lower()
+        if v:
+            vals.append(v)
+    return tuple(sorted(vals))
+
+
+def _is_occupation_name(name):
+    return bool(re.search(r"occupat", name or "", re.I))
+
+
+def _expand_alias_names(classifications, names, codes):
+    """Include hidden duplicate columns that share the same value list."""
+    names = [n for n in names if n]
+    target = _classification_value_key(codes)
+    if not target:
+        return names
+    occ = any(_is_occupation_name(n) for n in names)
+    extra = [
+        n for n, ents in (classifications or {}).items()
+        if n not in names
+        and _is_occupation_name(n) == occ
+        and _classification_value_key(ents) == target
+    ]
+    return names + extra
+
+
+def update_metadata_group_classification_column(conn, metadata_id, column_name, codes, column_names=None):
+    """Persist code/definition rows to the metadata group and every linked
+    dataset table, including duplicate column names collapsed in the UI."""
+    names = [n for n in (column_names or [column_name]) if n]
+    if not names:
+        return False
+    with conn.cursor() as cur:
+        cur.execute("SELECT classifications FROM metadata_groups WHERE metadata_id = %s FOR UPDATE", (metadata_id,))
+        row = cur.fetchone()
+        if not row:
+            return False
+        classifications = row[0] or {}
+        names = _expand_alias_names(classifications, names, codes)
+        for name in names:
+            classifications[name] = codes
+        cur.execute(
+            "UPDATE metadata_groups SET classifications = %s WHERE metadata_id = %s",
+            (json.dumps(classifications), metadata_id),
+        )
+        cur.execute(
+            "SELECT dataset_id, classifications FROM datasets WHERE metadata_id = %s FOR UPDATE",
+            (metadata_id,),
+        )
+        for dataset_id, ds_cls in cur.fetchall():
+            ds_cls = dict(ds_cls or {})
+            ds_names = _expand_alias_names(ds_cls, names, codes)
+            changed = False
+            for name in ds_names:
+                if ds_cls.get(name) != codes:
+                    ds_cls[name] = codes
+                    changed = True
+            if changed:
+                cur.execute(
+                    "UPDATE datasets SET classifications = %s WHERE dataset_id = %s",
+                    (json.dumps(ds_cls), dataset_id),
+                )
+    conn.commit()
+    return True
+
+
 def _make_dataset_id(table: dict, index: int) -> str:
     """Fallback dataset_id when table has no pre-built id."""
     suffix = uuid.uuid4().hex[:6]
@@ -250,6 +551,7 @@ def push_to_catalogue(
     meta_excel_filename,
     user_email=None,
     meta_nmds_concepts=None,   # list[{item_no, concept, details}], see backend/metadata_excel.py parse_concepts
+    meta_real_classifications=None,  # {sheet_name: [{code, value, definition}]}
 ):
     today = meta_last_updated or date.today().strftime("%B, %Y")
     if isinstance(meta_key_statistics, (dict, list)):
@@ -274,8 +576,14 @@ def push_to_catalogue(
             columns = table.get("columns", [])
             rows = table.get("rows", [])
 
-            # Merge classifications from enriched data
-            classifications = enriched.get("classifications") or {}
+            # Merge LLM guesses with metadata-excel code lists (ground truth)
+            # and a heuristic from the table values if both are empty.
+            classifications = _merge_real_classifications(
+                enriched.get("classifications") or {},
+                meta_real_classifications,
+            )
+            if not classifications:
+                classifications = _classifications_from_table_data([table])
             age_column_keys = enriched.get("age_column_keys") or {}
 
             cur.execute("""
@@ -354,6 +662,13 @@ def push_to_catalogue(
         if metadata_mode == "new":
             metadata_id = f"AUTO-{re.sub(r'[^A-Z0-9]', '-', (meta_title or 'DATA').upper())[:20]}-{uuid.uuid4().hex[:6]}"
 
+            group_classifications = _merge_real_classifications(
+                _merge_classifications(enriched_data),
+                meta_real_classifications,
+            )
+            if not group_classifications:
+                group_classifications = _classifications_from_table_data(tables)
+
             # Build full_record to mirror DES catalogue JSON file structure
             full_record = {
                 "metadata": {
@@ -373,7 +688,7 @@ def push_to_catalogue(
                     "metadata_excel": meta_excel_filename,
                     "table_ids": table_id_codes,
                 },
-                "classifications": _merge_classifications(enriched_data),
+                "classifications": group_classifications,
                 "concepts": STANDARD_CONCEPTS,
                 "nmds_concepts": nmds_concepts,
                 "dataset_inventory_list": [
@@ -418,7 +733,7 @@ def push_to_catalogue(
                 meta_remarks,
                 meta_excel_filename,
                 dataset_ids,
-                json.dumps(_merge_classifications(enriched_data)),
+                json.dumps(group_classifications),
                 STANDARD_CONCEPTS,
                 json.dumps(full_record),
                 user_email,

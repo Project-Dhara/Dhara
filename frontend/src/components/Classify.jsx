@@ -1,82 +1,162 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { withAuthHeaders } from '../auth'
+import { withLlmKeyHeaders } from '../llmKey'
 
-// Mock-only "Transformation & Harmonisation" step — local state only, no
-// backend calls. The real catalogue write already happened at the
-// Metadata Workspace step.
-
-// Classified columns — each column DHARA recognized, its standard concept,
-// and the code list read from the data. Code and definition are editable
-// (a steward may want to rename/annotate them); value is what was actually
-// found in the source data, so it stays fixed.
-const CLASSIFIED_COLUMNS = [
-  {
-    name: 'District', concept: 'Geography (LGD)', note: 'registration units',
-    codes: [
-      { code: 'mcd', value: 'mcd', definition: 'municipal corporation of delhi' },
-      { code: 'ndmc', value: 'ndmc', definition: 'new delhi municipal council' },
-      { code: 'dcb', value: 'delhi cantt', definition: 'delhi cantonment board' },
-    ],
-  },
-  {
-    name: 'area', concept: 'Area type', note: 'urban / rural split',
-    codes: [
-      { code: 'urban', value: 'urban', definition: 'within municipal limits' },
-      { code: 'rural', value: 'rural', definition: 'outside municipal limits' },
-    ],
-  },
-  {
-    name: 'Place of occurence', concept: 'Place of occurrence', note: 'institutional status',
-    codes: [
-      { code: 'inst', value: 'institutional', definition: 'occurred in a hospital or care facility' },
-      { code: 'non_inst', value: 'non-institutional', definition: 'occurred outside a care facility' },
-    ],
-  },
-  {
-    name: 'Gender', concept: 'Sex', note: 'standard sex code list',
-    codes: [
-      { code: 'M', value: 'male', definition: 'male' },
-      { code: 'F', value: 'female', definition: 'female' },
-      { code: 'O', value: 'other', definition: 'other / not stated' },
-    ],
-  },
-]
-
-const RULE_DEFS = [
-  ['sex', 'Gender values → standard code list', 'MALE → Male · FEMALE → Female · OTHER → Other', '3 of 3 matched'],
-  ['age', 'Age columns → one age_group field', 'Three wide columns folded into age_group with three bands', 'wide → long'],
-  ['occ', 'Occupation → NCO-2015 divisions', '5 of 6 values matched. SERVICE WORKERS needs a division picked.', '1 needs review'],
-  ['geo', 'Geography → LGD codes', 'National Capital Territory of Delhi → state code 07', '1 of 1 matched'],
-  ['num', 'Numeric formats', 'Thousands separators stripped, blank cells read as 0', '40 cells changed'],
-]
-
-const MAP_DEFS = {
-  sex: { sourceHead: 'Value in file', targetHead: 'Standard code', rows: [['MALE', 'Male', '18 rows'], ['FEMALE', 'Female', '18 rows'], ['OTHER', 'Other', '4 rows']] },
-  age: { sourceHead: 'Column in file', targetHead: 'age_group band', rows: [['AGE_LESS_THAN_15', '0–14', 'integer'], ['AGE_15_24', '15–24', 'integer'], ['AGE_25_34', '25–34', 'integer']] },
-  occ: { sourceHead: 'Occupation in file', targetHead: 'NCO-2015 division', rows: [
-    ['PROFESSIONAL / TECHNICAL', '2 — Professionals', '4 rows'], ['ADMINISTRATIVE, EXECUTIVE', '1 — Managers', '3 rows'],
-    ['CLERICAL WORKERS', '4 — Clerical support', '2 rows'], ['SALE WORKERS', '5 — Service and sales', '2 rows'],
-    ['SERVICE WORKERS', '', '6 rows'], ['NOT STATED', '', '1 row']] },
-  geo: { sourceHead: 'Geography in file', targetHead: 'LGD code', rows: [['NATIONAL CAPITAL TERRITORY OF DELHI', '07 — NCT of Delhi', 'state']] },
-  num: { sourceHead: 'Pattern found', targetHead: 'Read as', rows: [['1,232', '1232', '12 cells'], ['(blank)', '0', '6 cells'], ['-', '0', '2 cells']] },
-}
-const AI_FILL = { occ: { 'SERVICE WORKERS': '5 — Service and sales', 'NOT STATED': '0 — Not stated' } }
+// The classified columns (name/concept/note + code list) come from the real
+// metadata-excel classification sheets, fetched below — see
+// backend/catalogue.py::get_metadata_group_classifications and
+// backend/metadata_excel.py::parse_classifications. Code and definition are
+// editable (a steward may want to rename/annotate them); value is what was
+// actually found in the source data, so it stays fixed.
 
 const TAGS = ['births', 'registration', 'sex', 'age group', 'occupation', 'Delhi', 'CRS', 'annual']
 
-export default function Classify({ datasetLabel, onContinue }) {
-  const [classified, setClassified] = useState(false)
-  const [selectedCol, setSelectedCol] = useState(CLASSIFIED_COLUMNS[0].name)
-  const [columnCodes, setColumnCodes] = useState(() =>
-    Object.fromEntries(CLASSIFIED_COLUMNS.map((c) => [c.name, c.codes.map((row) => ({ ...row }))]))
-  )
-  const [savedCodes, setSavedCodes] = useState(columnCodes)
-  const [openRule, setOpenRule] = useState(null)
-  const [ruleState, setRuleState] = useState({}) // id -> 'skip' | undefined
-  const [maps, setMaps] = useState({}) // id -> { src: target }
-  const [taxonomy, setTaxonomy] = useState({ sector: 'Demography', theme: 'Vital Statistics', product: 'Delhi Vital Statistics' })
+function isOccupationColumn(name) {
+  return /occupat/i.test(name || '')
+}
 
-  const activeColumn = CLASSIFIED_COLUMNS.find((c) => c.name === selectedCol)
+function rowMapped(row) {
+  return Boolean(String(row?.code || '').trim()) && Boolean(String(row?.definition || '').trim())
+}
+
+function cloneCodeRows(codes) {
+  return (codes || []).map((row) => ({
+    code: row.code ?? '',
+    value: row.value ?? '',
+    definition: row.definition ?? '',
+  }))
+}
+
+function codesFingerprint(codes) {
+  return JSON.stringify(
+    [...(codes || [])]
+      .map((r) => String(r.value ?? r.code ?? '').trim().toLowerCase())
+      .filter(Boolean)
+      .sort()
+  )
+}
+
+function pickCanonicalName(names) {
+  return [...names].sort((a, b) => a.length - b.length || a.localeCompare(b))[0]
+}
+
+function collapseEquivalentColumns(columns) {
+  const groups = new Map()
+  columns.forEach((c) => {
+    const key = isOccupationColumn(c.name)
+      ? `occ:${codesFingerprint(c.codes)}`
+      : `name:${c.name}`
+    const list = groups.get(key) || []
+    list.push(c)
+    groups.set(key, list)
+  })
+  return [...groups.values()].map((list) => {
+    const names = list.map((c) => c.name)
+    const occNames = names.filter(isOccupationColumn)
+    const name = pickCanonicalName(occNames.length ? occNames : names)
+    const primary = list.find((c) => c.name === name) || list[0]
+    const aliasNames = [...new Set(names)].filter((n) => n !== primary.name)
+    return {
+      ...primary,
+      name: primary.name,
+      codes: cloneCodeRows(primary.codes),
+      aliases: list.map((c) => ({ name: c.name, _metadataId: c._metadataId })),
+      aliasNames,
+    }
+  })
+}
+
+function flattenForHarmonise(columns) {
+  const out = []
+  columns.forEach((c) => {
+    const aliases = c.aliases?.length
+      ? c.aliases
+      : [{ name: c.name, _metadataId: c._metadataId }]
+    const seen = new Set()
+    aliases.forEach((a) => {
+      const name = a.name || c.name
+      const key = `${a._metadataId || ''}::${name}`
+      if (seen.has(key)) return
+      seen.add(key)
+      out.push({
+        id: key,
+        name,
+        sourceName: c.name,
+        isAlias: name !== c.name,
+        column: c,
+      })
+    })
+  })
+  return out
+}
+
+export default function Classify({ metadataIds, datasetLabel, onContinue }) {
+  const [classified, setClassified] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState('')
+  const [classifiedColumns, setClassifiedColumns] = useState([])
+  const [selectedCol, setSelectedCol] = useState(null)
+  const [columnCodes, setColumnCodes] = useState({})
+  const [savedCodes, setSavedCodes] = useState({})
+  const [saving, setSaving] = useState(false)
+  const [openRule, setOpenRule] = useState(null)
+  const [ruleState, setRuleState] = useState({}) // column name -> 'skip' | undefined
+  const [taxonomy, setTaxonomy] = useState({ sector: 'Demography', theme: 'Vital Statistics', product: 'Delhi Vital Statistics' })
+  const [ncoMatchesByCol, setNcoMatchesByCol] = useState({})
+  const [ncoLoading, setNcoLoading] = useState(false)
+  const [ncoError, setNcoError] = useState('')
+  const [fillAiLoading, setFillAiLoading] = useState(false)
+  const [fillAiError, setFillAiError] = useState('')
+
+  useEffect(() => {
+    const ids = Array.isArray(metadataIds) ? metadataIds.filter(Boolean) : [metadataIds].filter(Boolean)
+    let cancelled = false
+    setLoading(true)
+    setLoadError('')
+
+    const loadFromGroups = () => Promise.all(ids.map((id) =>
+      fetch(`/api/catalogue/metadata-groups/${id}/classifications`, withAuthHeaders())
+        .then(async (res) => {
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({ detail: 'Failed to load classifications' }))
+            throw new Error(err.detail || 'Failed to load classifications')
+          }
+          return res.json()
+        })
+        .then((data) => (data.columns || []).map((c) => ({ ...c, _metadataId: id })))
+    )).then((perGroup) => perGroup.flat())
+
+    const loadRecent = () =>
+      fetch('/api/catalogue/classifications/recent', withAuthHeaders())
+        .then(async (res) => {
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({ detail: 'Failed to load classifications' }))
+            throw new Error(err.detail || 'Failed to load classifications')
+          }
+          return res.json()
+        })
+        .then((data) => data.columns || [])
+
+    const apply = (raw) => {
+      if (cancelled) return
+      const columns = collapseEquivalentColumns(raw)
+      setClassifiedColumns(columns)
+      const codes = Object.fromEntries(columns.map((c) => [c.name, cloneCodeRows(c.codes)]))
+      setColumnCodes(codes)
+      setSavedCodes(codes)
+      setSelectedCol(columns[0]?.name ?? null)
+    }
+
+    ;(ids.length ? loadFromGroups() : loadRecent())
+      .then(apply)
+      .catch((e) => { if (!cancelled) setLoadError(e.message) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [metadataIds])
+
+  const activeColumn = classifiedColumns.find((c) => c.name === selectedCol)
   const activeCodes = columnCodes[selectedCol] || []
+  const ncoMatches = (selectedCol && ncoMatchesByCol[selectedCol]) || null
   const columnDirty = JSON.stringify(columnCodes[selectedCol]) !== JSON.stringify(savedCodes[selectedCol])
 
   const setCodeField = (rowIndex, field, value) => {
@@ -85,30 +165,91 @@ export default function Classify({ datasetLabel, onContinue }) {
       [selectedCol]: prev[selectedCol].map((row, i) => (i === rowIndex ? { ...row, [field]: value } : row)),
     }))
   }
-  const saveColumnCodes = () => {
-    setSavedCodes((prev) => ({ ...prev, [selectedCol]: columnCodes[selectedCol].map((row) => ({ ...row })) }))
-  }
-
-  const mapValue = (id, src, dflt) => {
-    const m = maps[id] || {}
-    return m[src] !== undefined ? m[src] : dflt
-  }
-  const setMapValue = (id, src) => (e) => {
-    const v = e.target.value
-    setMaps((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), [src]: v } }))
-  }
-  const ruleFilled = (id) => MAP_DEFS[id].rows.every(([src, dflt]) => String(mapValue(id, src, dflt)).trim())
-  const ruleDone = (id) => ruleState[id] === 'skip' || ruleFilled(id)
-  const classReady = classified && RULE_DEFS.every(([id]) => ruleDone(id))
-
-  const aiFillRule = (id) => {
-    const next = {}
-    MAP_DEFS[id].rows.forEach(([src, dflt]) => {
-      const cur = mapValue(id, src, dflt)
-      next[src] = String(cur).trim() ? cur : ((AI_FILL[id] && AI_FILL[id][src]) || '')
+  const persistColumnCodes = (column, rows) => {
+    if (!column || !rows) return
+    const codes = rows.map((row) => ({ ...row }))
+    setSavedCodes((prev) => ({ ...prev, [column.name]: codes }))
+    const aliases = column.aliases?.length
+      ? column.aliases
+      : [{ name: column.name, _metadataId: column._metadataId }]
+    const byGroup = {}
+    aliases.forEach((a) => {
+      if (!a._metadataId || !a.name) return
+      if (!byGroup[a._metadataId]) byGroup[a._metadataId] = []
+      if (!byGroup[a._metadataId].includes(a.name)) byGroup[a._metadataId].push(a.name)
     })
-    setMaps((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), ...next } }))
+    const entries = Object.entries(byGroup)
+    if (!entries.length) return
+    setSaving(true)
+    Promise.all(entries.map(([ownerId, names]) =>
+      fetch(`/api/catalogue/metadata-groups/${ownerId}/classifications`, withAuthHeaders({
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ column_name: names[0], column_names: names, codes }),
+      }))
+    ))
+      .catch(() => {})
+      .finally(() => setSaving(false))
   }
+
+  const saveColumnCodes = () => {
+    persistColumnCodes(activeColumn, columnCodes[selectedCol])
+  }
+
+  const fillDefinitionsWithAi = () => {
+    if (isOccupationColumn(selectedCol) || !activeColumn) return
+    const columns = [{
+      name: activeColumn.name,
+      metadata_id: activeColumn._metadataId || activeColumn.aliases?.[0]?._metadataId || null,
+      values: (columnCodes[activeColumn.name] || []).map((r) => r.value || r.code).filter(Boolean),
+    }].filter((c) => c.values.length)
+    if (!columns.length) return
+    setFillAiLoading(true)
+    setFillAiError('')
+    fetch('/api/catalogue/fill-definitions', withAuthHeaders(withLlmKeyHeaders({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ columns }),
+    })))
+      .then(async (res) => {
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: 'Could not fill definitions' }))
+          throw new Error(typeof err.detail === 'string' ? err.detail : 'Could not fill definitions')
+        }
+        return res.json()
+      })
+      .then((data) => {
+        const byCol = data.definitions || {}
+        const defs = byCol[activeColumn.name] || {}
+        const nextRows = (columnCodes[activeColumn.name] || []).map((row) => {
+          const d = defs[row.value] || defs[row.code]
+          if (!d) return row
+          return { ...row, definition: String(d) }
+        })
+        setColumnCodes((prev) => ({ ...prev, [activeColumn.name]: nextRows }))
+        persistColumnCodes(activeColumn, nextRows)
+      })
+      .catch((e) => setFillAiError(e.message))
+      .finally(() => setFillAiLoading(false))
+  }
+
+  const columnMapped = (name) => {
+    const rows = columnCodes[name] || []
+    return rows.length > 0 && rows.every(rowMapped)
+  }
+  const columnNeedsNcoReview = (sourceName) => {
+    const matches = ncoMatchesByCol[sourceName]
+    if (!matches) return false
+    return Object.values(matches).some((m) => m && m.needs_manual_review)
+  }
+  const ncoReviewCount = (sourceName) => {
+    const matches = ncoMatchesByCol[sourceName] || {}
+    const rows = columnCodes[sourceName] || []
+    return rows.filter((row) => matches[row.value]?.needs_manual_review).length
+  }
+  const ruleDone = (name) => ruleState[name] === 'skip' || columnMapped(name)
+  const classReady = classified && classifiedColumns.length > 0 && classifiedColumns.every((c) => ruleDone(c.name))
+  const harmoniseEntries = flattenForHarmonise(classifiedColumns)
 
   return (
     <div className="classify-step">
@@ -123,23 +264,51 @@ export default function Classify({ datasetLabel, onContinue }) {
         </button>
       </div>
 
-      {classified && (
+      {classified && loading && (
+        <div className="classify-card classcols-card">Loading classified columns…</div>
+      )}
+
+      {classified && !loading && loadError && (
+        <div className="classify-card classcols-card">Couldn't load classifications: {loadError}</div>
+      )}
+
+      {classified && !loading && !loadError && classifiedColumns.length === 0 && (
+        <div className="classify-card classcols-card">No classification columns found for this dataset.</div>
+      )}
+
+      {classified && !loading && !loadError && classifiedColumns.length > 0 && (
         <>
           <div className="classify-card classcols-card">
             <div className="classify-card-head">
               <span>Classified columns</span>
-              <span className="classify-card-note">{CLASSIFIED_COLUMNS.length} columns · pick one to check its code list</span>
+              <span className="classify-card-note">
+                {classifiedColumns.length} columns · pick one to check its code list
+                {saving ? ' · saving…' : ''}
+                {fillAiError && !isOccupationColumn(selectedCol) ? ` · ${fillAiError}` : ''}
+              </span>
+              {!isOccupationColumn(selectedCol) && (
+              <button
+                type="button"
+                className="classcols-fill-ai-btn"
+                disabled={fillAiLoading || !activeCodes.length}
+                onClick={fillDefinitionsWithAi}
+              >
+                {fillAiLoading ? 'Filling…' : 'Fill with AI'}
+              </button>
+              )}
             </div>
 
             <div className="classcols-chips">
-              {CLASSIFIED_COLUMNS.map((c) => (
+              {classifiedColumns.map((c) => (
                 <div
                   key={c.name}
                   className={`classcols-chip${c.name === selectedCol ? ' classcols-chip-active' : ''}`}
                   onClick={() => setSelectedCol(c.name)}
                 >
                   <div className="classcols-chip-name">{c.name}</div>
-                  <div className="classcols-chip-count">{c.codes.length} codes</div>
+                  <div className="classcols-chip-count">
+                    {c.codes.length} codes{c.aliasNames?.length ? ` · +${c.aliasNames.length} same list` : ''}
+                  </div>
                 </div>
               ))}
             </div>
@@ -151,7 +320,12 @@ export default function Classify({ datasetLabel, onContinue }) {
                     <span className="classcols-detail-name">{activeColumn.name}</span>
                     <span className="classcols-detail-concept">{activeColumn.concept}</span>
                   </div>
-                  <div className="classcols-detail-meta">{activeCodes.length} values · {activeColumn.note}</div>
+                  <div className="classcols-detail-meta">
+                    {activeCodes.length} values
+                    {activeColumn.aliasNames?.length
+                      ? ` · also ${activeColumn.aliasNames.join(', ')}`
+                      : activeColumn.note ? ` · ${activeColumn.note}` : ''}
+                  </div>
                 </div>
 
                 <div className="classcols-table">
@@ -181,6 +355,92 @@ export default function Classify({ datasetLabel, onContinue }) {
                   <span className="classcols-footer-hint">Code and definition can be edited. Values come from the data and stay fixed.</span>
                   <button className="classcols-save-btn" disabled={!columnDirty} onClick={saveColumnCodes}>Save changes</button>
                 </div>
+
+                {isOccupationColumn(activeColumn.name) && (
+                  <div className="classcols-nco">
+                    <div className="classcols-nco-head">
+                      <div>
+                        <div className="classcols-nco-title">NCO 2015 level suggestion</div>
+                        <div className="classcols-nco-blurb">
+                          Fills Code and Definition above from the suggested NCO code and title. The table below stays so you can see level and confidence. Edit and Save as needed.
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="classcols-save-btn"
+                        disabled={ncoLoading || activeCodes.length === 0}
+                        onClick={() => {
+                          const values = activeCodes.map((r) => r.value || r.code).filter(Boolean)
+                          setNcoLoading(true)
+                          setNcoError('')
+                          fetch('/api/catalogue/match-nco', withAuthHeaders(withLlmKeyHeaders({
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ values }),
+                          })))
+                            .then(async (res) => {
+                              if (!res.ok) {
+                                const err = await res.json().catch(() => ({ detail: 'NCO matching failed' }))
+                                throw new Error(err.detail || 'NCO matching failed')
+                              }
+                              return res.json()
+                            })
+                            .then((data) => {
+                              const occName = selectedCol
+                              const matches = data.matches || {}
+                              setNcoMatchesByCol((prev) => ({ ...prev, [occName]: matches }))
+                              if (!isOccupationColumn(occName)) return
+                              const col = classifiedColumns.find((c) => c.name === occName)
+                              const rows = columnCodes[occName] || []
+                              const nextRows = rows.map((row) => {
+                                const m = matches[row.value]
+                                if (!m || m.code == null || m.code === '') return row
+                                return {
+                                  ...row,
+                                  code: String(m.code),
+                                  definition: m.title != null && m.title !== '' ? String(m.title) : row.definition,
+                                }
+                              })
+                              setColumnCodes((prev) => ({ ...prev, [occName]: nextRows }))
+                              persistColumnCodes(col, nextRows)
+                            })
+                            .catch((e) => setNcoError(e.message))
+                            .finally(() => setNcoLoading(false))
+                        }}
+                      >
+                        {ncoLoading ? 'Matching…' : 'Suggest NCO levels'}
+                      </button>
+                    </div>
+                    {ncoError && <div className="classcols-nco-error">{ncoError}</div>}
+                    {ncoMatches && (
+                      <div className="classcols-table classcols-nco-table">
+                        <div className="classcols-table-head classcols-nco-head-row">
+                          <div>Value</div><div>Level</div><div>Suggested code</div><div>Title</div>
+                        </div>
+                        {activeCodes.map((row) => {
+                          const m = ncoMatches[row.value]
+                          return (
+                            <div className="classcols-row classcols-nco-head-row" key={row.value || row.code}>
+                              <div className="classcols-value">{row.value}</div>
+                              <div className="classcols-value">{m ? m.level : '—'}</div>
+                              <div className="classcols-value">{m ? m.code : '—'}</div>
+                              <div>
+                                <div className="classcols-value">{m ? m.title : '—'}</div>
+                                {m && (
+                                  <div className="classcols-nco-meta">
+                                    {m.confidence} confidence
+                                    {m.needs_manual_review ? ' · review' : ''}
+                                    {m.codes?.length > 1 ? ' · both valid' : ''}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -188,60 +448,87 @@ export default function Classify({ datasetLabel, onContinue }) {
           <div className="classify-card">
             <div className="classify-card-head">
               <span>Harmonisation</span>
-              <span className="classify-card-note">{RULE_DEFS.filter(([id]) => ruleDone(id)).length} of {RULE_DEFS.length} ready</span>
+              <span className="classify-card-note">
+                {classifiedColumns.filter((c) => ruleDone(c.name)).length} of {classifiedColumns.length} lists ready
+                {harmoniseEntries.length > classifiedColumns.length
+                  ? ` · ${harmoniseEntries.length} columns including duplicates`
+                  : ''}
+              </span>
             </div>
-            {RULE_DEFS.map(([id, title, detail, count]) => {
+            {harmoniseEntries.map((entry) => {
+              const { id, name, sourceName, isAlias, column: c } = entry
+              const rows = columnCodes[sourceName] || []
               const open = openRule === id
-              const done = ruleDone(id)
-              const skipped = ruleState[id] === 'skip'
+              const done = ruleDone(sourceName)
+              const skipped = ruleState[sourceName] === 'skip'
+              const mappedCount = rows.filter(rowMapped).length
+              const occ = isOccupationColumn(sourceName) || isOccupationColumn(name)
+              const reviewCount = occ ? ncoReviewCount(sourceName) : 0
+              const review = occ && columnNeedsNcoReview(sourceName)
+              const detail = isAlias
+                ? `Same mapping as ${sourceName}${occ ? ' (NCO applied)' : ''}`
+                : occ
+                  ? (review ? `${reviewCount} value${reviewCount === 1 ? '' : 's'} need review` : 'Value → NCO code and title')
+                  : 'Value → code and definition from classification'
+              const status = skipped ? 'Skipped' : review ? 'Needs review' : done ? 'Ready' : 'Needs review'
+              const countLabel = occ && reviewCount > 0
+                ? `${reviewCount} needs review`
+                : `${mappedCount} of ${rows.length} mapped`
               return (
                 <div className="classify-rule" key={id}>
                   <div className="classify-rule-head" onClick={() => setOpenRule(open ? null : id)}>
-                    <span className={`classify-rule-dot${done ? ' classify-rule-dot-done' : ''}`} />
+                    <span className={`classify-rule-dot${done && !review ? ' classify-rule-dot-done' : ''}`} />
                     <div className="classify-rule-text">
-                      <div className="classify-rule-title">{title}</div>
+                      <div className="classify-rule-title">{name}</div>
                       <div className="classify-rule-detail">{detail}</div>
                     </div>
-                    <span className={`classify-rule-status${done ? ' classify-rule-status-done' : ''}`}>
-                      {skipped ? 'Skipped' : done ? 'Ready' : 'Needs review'}
+                    <span className={`classify-rule-status${done && !review ? ' classify-rule-status-done' : ''}`}>
+                      {status}
                     </span>
-                    <span className="classify-rule-count">{count}</span>
+                    <span className="classify-rule-count">{countLabel}</span>
                     <span className={`classify-rule-chev${open ? ' classify-rule-chev-open' : ''}`}>▾</span>
                   </div>
                   {open && (
                     <div className="classify-rule-body">
                       <div className="classify-rule-actions">
-                        <button className="classify-ai-btn" onClick={() => aiFillRule(id)}>✨ AI-fill blanks</button>
-                        <button className="classify-clear-btn" onClick={() => setMaps((prev) => ({ ...prev, [id]: {} }))}>Clear</button>
-                        <button className="classify-skip-btn" onClick={() => setRuleState((prev) => ({ ...prev, [id]: prev[id] === 'skip' ? undefined : 'skip' }))}>
-                          {skipped ? 'Unskip' : 'Skip this rule'}
+                        <button
+                          type="button"
+                          className="classify-skip-btn"
+                          onClick={() => setRuleState((prev) => ({ ...prev, [sourceName]: prev[sourceName] === 'skip' ? undefined : 'skip' }))}
+                        >
+                          {skipped ? 'Unskip' : 'Skip this column'}
                         </button>
                       </div>
-                      <div className="classify-map-table">
-                        <div className="classify-map-head">
+                      <div className="classify-map-table classify-map-table-review">
+                        <div className="classify-map-head classify-map-head-review">
                           <div>#</div>
-                          <div>{MAP_DEFS[id].sourceHead}</div>
-                          <div>{MAP_DEFS[id].targetHead}</div>
+                          <div>Value in file</div>
+                          <div>Code</div>
+                          <div>Definition</div>
                           <div>Match</div>
                         </div>
-                        {MAP_DEFS[id].rows.map(([src, dflt, meta], i) => {
-                          const val = mapValue(id, src, dflt)
-                          const filled = String(val).trim().length > 0
+                        {rows.map((row, i) => {
+                          const m = occ ? (ncoMatchesByCol[sourceName] || {})[row.value] : null
+                          const filled = rowMapped(row)
+                          const rowReview = Boolean(m?.needs_manual_review)
                           return (
-                            <div className="classify-map-row" key={src}>
+                            <div className="classify-map-row classify-map-head-review" key={row.value || i}>
                               <div className="classify-map-n">{i + 1}</div>
                               <div className="classify-map-source">
-                                <div>{src}</div>
-                                <div className="classify-map-source-meta">{meta}</div>
+                                <div>{row.value}</div>
+                                {m && (
+                                  <div className="classify-map-source-meta">
+                                    {m.level}
+                                    {rowReview ? ' · review' : ''}
+                                    {m.codes?.length > 1 ? ' · both valid' : ''}
+                                  </div>
+                                )}
                               </div>
-                              <input
-                                className="classify-map-input"
-                                type="text"
-                                value={val}
-                                onChange={setMapValue(id, src)}
-                                placeholder="type a value…"
-                              />
-                              <div className="classify-map-mark">{filled ? '✓' : '—'}</div>
+                              <div className="classify-map-source">{row.code || '—'}</div>
+                              <div className="classify-map-source">{row.definition || '—'}</div>
+                              <div className={`classify-map-mark${rowReview ? ' classify-map-mark-review' : ''}`}>
+                                {rowReview ? '!' : filled ? '✓' : '—'}
+                              </div>
                             </div>
                           )
                         })}
@@ -285,7 +572,7 @@ export default function Classify({ datasetLabel, onContinue }) {
       <div className="classify-continue-row">
         <button className="console-primary-btn" disabled={!classReady} onClick={onContinue}>Continue to publish →</button>
         <span className="classify-continue-hint">
-          {classified ? (classReady ? 'All rules ready.' : 'Fill in or skip the remaining rules to continue.') : 'Run classification to continue.'}
+          {classified ? (classReady ? 'All columns ready.' : 'Fill or skip remaining columns to continue.') : 'Run classification to continue.'}
         </span>
       </div>
     </div>

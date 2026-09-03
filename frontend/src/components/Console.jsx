@@ -273,6 +273,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   // ── carried into Classify / Publish after the metadata save ──
   const [metaLabel, setMetaLabel] = useState(persisted?.metaLabel ?? '')
   const [metadataId, setMetadataId] = useState(persisted?.metadataId ?? null)
+  const [metadataIds, setMetadataIds] = useState(persisted?.metadataIds ?? [])
 
   // Tracks which flagged (id_title_mismatch) tables have actually had their
   // "Save details" button clicked in ReconcileIds — not merely opened — so
@@ -302,7 +303,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   useEffect(() => {
     const toSave = {
       step, matchResult, batchPreviewId, selectedDataset,
-      metaLabel, metadataId, savedIds: [...savedIds], metadataStarted, maxStepReached,
+      metaLabel, metadataId, metadataIds, savedIds: [...savedIds], metadataStarted, maxStepReached,
       autoMatchResult: autoMatchResultRef.current,
     }
     try {
@@ -310,7 +311,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
     } catch {
       // best-effort — e.g. storage full or unavailable
     }
-  }, [step, matchResult, batchPreviewId, selectedDataset, metaLabel, metadataId, savedIds, metadataStarted, maxStepReached])
+  }, [step, matchResult, batchPreviewId, selectedDataset, metaLabel, metadataId, metadataIds, savedIds, metadataStarted, maxStepReached])
 
   const renameBatchGroup = (index, newName) => {
     setMatchResult((prev) => prev && ({
@@ -974,8 +975,10 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
             <BatchReview
               matchResult={matchResult}
               metadataFiles={metadataFiles}
-              onDone={(label) => {
+              onDone={(label, ids) => {
                 setMetaLabel(label || 'this release')
+                setMetadataIds(ids || [])
+                setMetadataId((ids && ids[0]) || null)
                 setStep(5)
               }}
               onCancel={() => setStep(3)}
@@ -984,7 +987,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
         )}
 
         {step === 5 && (
-          <Classify datasetLabel={metaLabel || 'This dataset'} onContinue={() => setStep(6)} />
+          <Classify metadataIds={metadataIds} datasetLabel={metaLabel || 'This dataset'} onContinue={() => setStep(6)} />
         )}
 
         {step === 6 && (

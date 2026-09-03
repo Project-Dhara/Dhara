@@ -596,3 +596,42 @@ def parse_llm_metadata_output(llm_output: str) -> Dict[str, Any]:
     text = re.sub(r"```[a-zA-Z]*\n?", "", llm_output).strip().rstrip("`")
     parsed = json.loads(text)
     return {field: parsed.get(field) for field in METADATA_FIELDS}
+
+
+def fill_classification_definitions(
+    complete_fn: Callable[[str, int], str],
+    column_name: str,
+    values: List[str],
+    facts: Dict[str, Any],
+) -> Dict[str, str]:
+    """One-sentence definitions for classification values, grounded in catalogue/excel facts."""
+    if not values:
+        return {}
+    prompt = f"""You write brief catalogue labels for classification code-list values.
+
+Dataset facts from the source workbook / catalogue record:
+{json.dumps(facts or {{}}, default=str)[:4500]}
+
+Column name: {column_name}
+Values: {json.dumps(values)}
+
+Return ONLY a JSON object mapping each value (exact string) to a short definition.
+Keep each definition under 8 words. No full sentences unless needed. No statistics.
+If the facts do not explain a label, restate the label in plain language.
+Do not include occupation/NCO codes."""
+    text = complete_fn(prompt, min(800, 160 + 40 * len(values)))
+    text = re.sub(r"```[a-zA-Z]*\n?", "", text).strip().rstrip("`")
+    parsed = json.loads(text)
+    if not isinstance(parsed, dict):
+        return {}
+    out = {}
+    for v in values:
+        d = parsed.get(v)
+        if d is None:
+            # case-insensitive key match
+            d = next((parsed[k] for k in parsed if str(k).strip().lower() == str(v).strip().lower()), None)
+        if d:
+            words = str(d).strip().rstrip(".").split()
+            out[str(v)] = " ".join(words[:8])
+    return out
+

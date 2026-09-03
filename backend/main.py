@@ -571,6 +571,7 @@ async def batch_push(
             "enriched": [e for _, e in prepped],
             "excel_url": excel_url,
             "nmds_concepts": group.get("nmds_concepts") or nmds_concepts,
+            "real_classifications": group.get("classifications") or {},
         }
 
     def _prepare_all():
@@ -600,6 +601,7 @@ async def batch_push(
                     p["excel_url"],
                     user_email,
                     p["nmds_concepts"],
+                    p.get("real_classifications"),
                 )
                 results.append(result)
         finally:
@@ -617,6 +619,140 @@ async def batch_push(
         raise HTTPException(500, f"Push error: {e}")
 
     return {"results": results, "groups_pushed": len(results)}
+
+
+@app.get("/api/catalogue/metadata-groups/{metadata_id}/classifications")
+async def get_classifications(metadata_id: str, user_email: str = Depends(require_user)):
+    """Classification columns + code lists for the Classify step."""
+    def _run():
+        conn = _cat.get_connection()
+        try:
+            _cat.init_schema(conn)
+            return _cat.get_metadata_group_classifications(conn, metadata_id)
+        finally:
+            conn.close()
+
+    columns = await asyncio.to_thread(_run)
+    if columns is None:
+        raise HTTPException(404, f"No metadata group found for {metadata_id}")
+    return {"columns": columns}
+
+
+@app.get("/api/catalogue/classifications/recent")
+async def get_recent_classifications(user_email: str = Depends(require_user)):
+    """Classified columns from this user's most recent metadata groups —
+    used when Classify has no metadataIds in session (e.g. refresh)."""
+    def _run():
+        conn = _cat.get_connection()
+        try:
+            _cat.init_schema(conn)
+            return _cat.get_recent_classification_columns(conn, user_email)
+        finally:
+            conn.close()
+
+    columns = await asyncio.to_thread(_run)
+    return {"columns": columns}
+
+
+@app.patch("/api/catalogue/metadata-groups/{metadata_id}/classifications")
+async def update_classification_column(metadata_id: str, request: Request, user_email: str = Depends(require_user)):
+    """Persist edited code/definition rows for one classification column,
+    or several alias columns that share the same categorical values."""
+    data = await request.json()
+    column_name = data.get("column_name")
+    column_names = data.get("column_names")
+    codes = data.get("codes")
+    if codes is None or (not column_name and not column_names):
+        raise HTTPException(400, "column_name (or column_names) and codes are required")
+
+    def _run():
+        conn = _cat.get_connection()
+        try:
+            _cat.init_schema(conn)
+            return _cat.update_metadata_group_classification_column(
+                conn, metadata_id, column_name, codes, column_names=column_names,
+            )
+        finally:
+            conn.close()
+
+    ok = await asyncio.to_thread(_run)
+    if not ok:
+        raise HTTPException(404, f"No metadata group found for {metadata_id}")
+    return {"status": "ok"}
+
+
+@app.post("/api/catalogue/fill-definitions")
+async def fill_definitions(request: Request, user_email: str = Depends(require_user)):
+    """Fill classification definitions from values + catalogue/excel facts.
+    Occupation columns are skipped (NCO matching owns those)."""
+    import re as _re
+    from metadata_llm import fill_classification_definitions
+
+    data = await request.json()
+    columns = data.get("columns") or []
+    if not isinstance(columns, list):
+        raise HTTPException(400, "columns must be a list")
+    extractor = _extractor_for(request)
+    if extractor.skip_llm:
+        raise HTTPException(400, "Configure an LLM key in Settings to fill definitions.")
+
+    def _run():
+        conn = _cat.get_connection()
+        try:
+            _cat.init_schema(conn)
+            out = {}
+            facts_by_id = {}
+            for col in columns:
+                name = (col.get("name") or "").strip()
+                if not name or _re.search(r"occupat", name, _re.I):
+                    continue
+                values = [str(v) for v in (col.get("values") or []) if v is not None and str(v).strip()]
+                if not values:
+                    continue
+                mid = col.get("metadata_id")
+                if mid not in facts_by_id:
+                    facts_by_id[mid] = _cat.get_definition_facts(conn, mid)
+                try:
+                    out[name] = fill_classification_definitions(
+                        extractor._complete, name, values, facts_by_id[mid],
+                    )
+                except Exception:
+                    out[name] = {}
+            return out
+        finally:
+            conn.close()
+
+    definitions = await asyncio.to_thread(_run)
+    return {"definitions": definitions}
+
+
+@app.post("/api/catalogue/match-nco")
+async def match_nco(request: Request, user_email: str = Depends(require_user)):
+    """Suggest the coarsest fitting NCO 2015 level (division, subdivision, or family).
+    Does not return specific .xxxx job codes."""
+    import nco_matching as _nco
+    data = await request.json()
+    values = data.get("values") or []
+    if not isinstance(values, list):
+        raise HTTPException(400, "values must be a list of strings")
+    unique = []
+    for v in values:
+        s = str(v).strip() if v is not None else ""
+        if s and s not in unique:
+            unique.append(s)
+    extractor = _extractor_for(request)
+
+    def _run():
+        conn = _cat.get_connection()
+        try:
+            _cat.init_schema(conn)
+            _cat.seed_nco_2015(conn)
+            return _nco.match_occupations(conn, unique, extractor=extractor)
+        finally:
+            conn.close()
+
+    matches = await asyncio.to_thread(_run)
+    return {"matches": matches, "llm_used": not extractor.skip_llm}
 
 
 def _upload_bytes_to_gcs(file_bytes: bytes, blob_name: str) -> Optional[str]:

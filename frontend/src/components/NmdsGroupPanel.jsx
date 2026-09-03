@@ -21,6 +21,8 @@ export default function NmdsGroupPanel({
   onCloseModal,
   groupLabel,
   onSaveGroup,
+  onApplyToAll,
+  canApplyToAll,
 }) {
   const filledCount = nmdsFieldsToList(fields).length
 
@@ -36,6 +38,18 @@ export default function NmdsGroupPanel({
         extensionRegex={/\.(xlsx|xls|csv)$/i}
         compact
       />
+      {canApplyToAll && (
+        <label className="nmds-apply-all">
+          <input
+            type="checkbox"
+            disabled={filledCount === 0}
+            onChange={(e) => {
+              if (e.target.checked) onApplyToAll?.()
+            }}
+          />
+          <span>Apply to all</span>
+        </label>
+      )}
       {file && (
         <div className="push-excel-row">
           {!parsing && !parseError && !fileMismatch && (

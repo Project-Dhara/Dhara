@@ -55,6 +55,13 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
     setNmdsByGroup((prev) => prev.map((g, i) => (i === groupIndex ? { ...g, ...patch } : g)))
   }
 
+  const applyNmdsToAll = (groupIndex) => {
+    const source = nmdsByGroup[groupIndex]?.fields || emptyNmdsFields()
+    const copy = { ...source }
+    setNmdsByGroup((prev) => prev.map((g, i) => (i === groupIndex ? g : { ...g, fields: { ...copy } })))
+    setToast({ type: 'success', message: 'NMDS fields applied to all other groups.' })
+  }
+
   const updateMetadata = (groupIndex, metadata) => {
     setGroups((prev) => prev.map((g, i) => (i === groupIndex ? { ...g, metadata } : g)))
   }
@@ -174,7 +181,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
           <div className="push-success-msg">
             {result.groups_pushed} metadata group{result.groups_pushed !== 1 ? 's' : ''} pushed
           </div>
-          <button className="push-btn" onClick={() => onDone(label)}>Continue to classification →</button>
+          <button className="push-btn" onClick={() => onDone(label, (result.results || []).map((r) => r.metadata_id).filter(Boolean))}>Continue to classification →</button>
         </div>
       </div>
     )
@@ -241,6 +248,8 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
                 onCloseModal={() => setNmdsModalGroup(null)}
                 groupLabel={row.label}
                 onSaveGroup={() => handleSaveGroup(gi)}
+                canApplyToAll={groups.length > 1}
+                onApplyToAll={() => applyNmdsToAll(gi)}
               />
             )
           }}

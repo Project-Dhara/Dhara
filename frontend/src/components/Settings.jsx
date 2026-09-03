@@ -115,8 +115,8 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
                 <input className="settings-input" type="text" value={datasetIdConfig.separator} onChange={setDatasetIdField('separator')} />
               </div>
               <div className="settings-field">
-                <label className="settings-label">Number of digits</label>
-                <input className="settings-input" type="number" min="1" value={datasetIdConfig.digits} onChange={setDatasetIdField('digits')} />
+                <label className="settings-label">Statistics</label>
+                <input className="settings-input" type="text" value={datasetIdConfig.digits} onChange={setDatasetIdField('digits')} />
               </div>
             </div>
             <div className="settings-key-row">
