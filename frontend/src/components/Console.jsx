@@ -6,9 +6,6 @@ import BatchReview from './BatchReview'
 import ReconcileIds from './ReconcileIds'
 import Classify from './Classify'
 import Publish from './Publish'
-import { withAuthHeaders } from '../auth'
-import { withLlmKeyHeaders } from '../llmKey'
-import { CLICK_THROUGH_ENABLED } from '../clickThrough'
 
 // Short government table code for a tab button — e.g. "Table : D-12 & D-13"
 // → "D12, D13" — pulled from the source's own table-label row (`table.title`,
@@ -560,31 +557,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
     setStep(3)
   }
 
-  const publishFromClassify = async ({ groups } = {}) => {
-    if (CLICK_THROUGH_ENABLED) {
-      setPendingGroups(groups || pendingGroups)
-      setStep(6)
-      return
-    }
-    if (!groups?.length) {
-      throw new Error('No metadata groups to publish')
-    }
-    const fd = new FormData()
-    fd.append('groups_json', JSON.stringify(groups))
-    metadataFiles.forEach((f) => fd.append('metadata_files', f))
-    const res = await fetch('/api/catalogue/batch-push', withAuthHeaders(withLlmKeyHeaders({
-      method: 'POST',
-      body: fd,
-    })))
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: 'Could not publish to the catalogue' }))
-      throw new Error(typeof err.detail === 'string' ? err.detail : 'Could not publish to the catalogue')
-    }
-    const data = await res.json()
-    const ids = (data.results || []).map((r) => r.metadata_id).filter(Boolean)
-    setMetadataIds(ids)
-    setMetadataId(ids[0] || null)
-    setPendingGroups(groups)
+  const publishFromClassify = () => {
     setStep(6)
   }
 
@@ -1007,11 +980,11 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
             <BatchReview
               matchResult={matchResult}
               metadataFiles={metadataFiles}
-              onDone={(label, ids, groups) => {
+              onDone={(label, ids) => {
                 setMetaLabel(label || 'this release')
                 setMetadataIds(ids || [])
                 setMetadataId((ids && ids[0]) || null)
-                setPendingGroups(groups || null)
+                setPendingGroups(null)
                 setStep(5)
               }}
               onCancel={() => setStep(3)}
@@ -1023,7 +996,6 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
           <Classify
             metadataIds={metadataIds}
             datasetLabel={metaLabel || 'This dataset'}
-            groups={pendingGroups}
             onContinue={publishFromClassify}
           />
         )}

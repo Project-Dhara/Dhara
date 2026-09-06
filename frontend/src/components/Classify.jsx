@@ -114,26 +114,7 @@ function flattenForHarmonise(columns) {
   return out
 }
 
-function columnsFromPendingGroups(groups) {
-  return (groups || []).flatMap((g, gi) =>
-    Object.entries(g.classifications || {})
-      .filter(([, codes]) => Array.isArray(codes) && codes.length)
-      .map(([name, codes]) => ({
-        name,
-        concept: name,
-        note: '',
-        codes: (codes || []).map((e) => (
-          e && typeof e === 'object'
-            ? { code: e.code ?? '', value: e.value ?? e.code ?? '', definition: e.definition ?? '' }
-            : { code: String(e ?? ''), value: String(e ?? ''), definition: '' }
-        )),
-        _metadataId: `pending-${gi}`,
-        _groupIndex: gi,
-      })),
-  )
-}
-
-export default function Classify({ metadataIds, datasetLabel, groups, onContinue }) {
+export default function Classify({ metadataIds, datasetLabel, onContinue }) {
   const [classified, setClassified] = useState(false)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
@@ -203,17 +184,14 @@ export default function Classify({ metadataIds, datasetLabel, groups, onContinue
       setHarmRows(harm)
     }
 
-    const pendingCols = columnsFromPendingGroups(groups)
-    const start = pendingCols.length
-      ? Promise.resolve(pendingCols)
-      : (ids.length ? loadFromGroups() : loadRecent())
+    const start = ids.length ? loadFromGroups() : loadRecent()
 
     start
       .then(apply)
       .catch((e) => { if (!cancelled) setLoadError(e.message) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [metadataIds, groups])
+  }, [metadataIds])
 
   const activeColumn = classifiedColumns.find((c) => c.name === selectedCol)
   const activeCodes = columnCodes[selectedCol] || []
@@ -387,39 +365,10 @@ export default function Classify({ metadataIds, datasetLabel, groups, onContinue
     if (!classReady || publishing) return
     setPublishing(true)
     setPublishError('')
-    const nextGroups = (groups || []).map((g) => ({
-      ...g,
-      catalogue_placement: taxonomy,
-      metadata: { ...(g.metadata || {}) },
-      classifications: { ...(g.classifications || {}) },
-    }))
-    flattenForHarmonise(classifiedColumns).forEach((e) => {
-      const gi = e.groupIndex ?? e.column._groupIndex
-      if (gi == null || !nextGroups[gi]) return
-      const rows = harmRows[e.id] || columnCodes[e.sourceName] || []
-      nextGroups[gi].classifications[e.name] = rows.map((row) => ({
-        code: row.code ?? '',
-        value: row.value ?? '',
-        definition: row.definition ?? '',
-      }))
-    })
-    classifiedColumns.forEach((c) => {
-      const gi = c._groupIndex
-      const rows = columnCodes[c.name]
-      if (gi == null || !nextGroups[gi] || !rows) return
-      nextGroups[gi].classifications[c.name] = rows.map((row) => ({
-        code: row.code ?? '',
-        value: row.value ?? '',
-        definition: row.definition ?? '',
-      }))
-    })
     try {
-      if (!nextGroups.length) {
-        throw new Error('No metadata groups to publish. Return to metadata and continue to classification again.')
-      }
-      await onContinue({ groups: nextGroups, taxonomy })
+      await Promise.resolve(onContinue?.())
     } catch (e) {
-      setPublishError(e.message || 'Could not publish to the catalogue')
+      setPublishError(e.message || 'Could not continue to publish')
     } finally {
       setPublishing(false)
     }
@@ -538,7 +487,7 @@ export default function Classify({ metadataIds, datasetLabel, groups, onContinue
                   <div className="classcols-nco">
                     <div className="classcols-nco-head">
                       <div>
-                        <div className="classcols-nco-title">NCO 2015 level suggestion</div>
+                        <div className="classcols-nco-title">NCO 2015 code suggestion</div>
                         <div className="classcols-nco-blurb">
                           Fills Code and Definition above from the suggested NCO code and title. Harmonisation still asks you to verify those codes before they are saved.
                         </div>
@@ -598,7 +547,7 @@ export default function Classify({ metadataIds, datasetLabel, groups, onContinue
                             .finally(() => setNcoLoading(false))
                         }}
                       >
-                        {ncoLoading ? 'Matching…' : 'Suggest NCO levels'}
+                        {ncoLoading ? 'Matching…' : 'Suggest NCO codes'}
                       </button>
                     </div>
                     {ncoError && <div className="classcols-nco-error">{ncoError}</div>}
@@ -826,13 +775,13 @@ export default function Classify({ metadataIds, datasetLabel, groups, onContinue
 
       <div className="classify-continue-row">
         <button className="console-primary-btn" disabled={!classReady || publishing} onClick={publishRelease}>
-          {publishing ? 'Publishing…' : 'Continue to publish →'}
+          {publishing ? 'Continuing…' : 'Continue to publish →'}
         </button>
         <span className="classify-continue-hint">
           {publishError
             ? publishError
             : classified
-              ? (classReady ? 'Writes this release to the catalogue, then opens publication.' : 'Map the classified columns, then verify or skip the remaining columns below.')
+              ? (classReady ? 'Catalogue already saved — continue to the publication confirmation.' : 'Map the classified columns, then verify or skip the remaining columns below.')
               : 'Run classification to continue.'}
         </span>
       </div>

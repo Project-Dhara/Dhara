@@ -28,6 +28,37 @@ from table_export import table_to_excel_bytes
 from original_sheet_export import extract_sheet_with_formatting_from_bytes
 from validation import validate_table_fields_code, validate_table_fields_llm
 
+
+def _title_looks_like_column_headers(title: str, columns: list) -> bool:
+    """True when an extracted 'title' is really the header row joined together."""
+    text = " ".join(str(title or "").split()).strip().upper()
+    cols = [" ".join(str(c).split()).strip().upper() for c in (columns or []) if c is not None and str(c).strip()]
+    if not text or len(cols) < 2:
+        return False
+    joined = " ".join(cols)
+    if text == joined:
+        return True
+    # Header-like if most leading column names appear as tokens in the title.
+    hits = sum(1 for c in cols[: min(6, len(cols))] if c and c in text)
+    return hits >= min(3, len(cols))
+
+
+def _catalogue_table_title(table: dict, inventory_item: Optional[dict] = None) -> str:
+    """Prefer a real descriptive title over mis-extracted column-header text."""
+    inv_title = str((inventory_item or {}).get("short_description") or "").strip()
+    title = str(table.get("title") or "").strip()
+    table_id = str(table.get("table_id") or "").strip()
+    columns = table.get("columns") or []
+
+    if title and not _title_looks_like_column_headers(title, columns):
+        return title
+    if inv_title:
+        return inv_title
+    if table_id and not _title_looks_like_column_headers(table_id, columns):
+        return table_id
+    return title or inv_title or table_id or str(table.get("id") or "")
+
+
 app = FastAPI(title="Table Extractor API")
 
 app.add_middleware(
@@ -552,7 +583,12 @@ async def batch_push(
         return t, extractor.enrich_for_catalogue(t)
 
     def _prepare_group(group):
-        tables = [mt["table"] for mt in group.get("matched_tables", [])]
+        tables = []
+        for mt in group.get("matched_tables", []):
+            raw = mt.get("table") or {}
+            t = dict(raw)
+            t["title"] = _catalogue_table_title(t, mt.get("inventory_item"))
+            tables.append(t)
         if not tables:
             return None
 

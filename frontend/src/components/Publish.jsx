@@ -31,8 +31,8 @@ export default function Publish({ datasetLabel, metadataId, hasKey, onGoSettings
   }, [publishing, doneSteps])
 
   const idBase = metadataId || 'DHARA_NEW_RELEASE'
-  const apiUrl = `https://catalogue.dhara.ekstep.org/api/datasets/${idBase}`
-  const mcpUrl = 'https://catalogue.dhara.ekstep.org/mcp'
+  const apiUrl = `https://catalogue.dhara.people+ai.org/api/datasets/${idBase}`
+  const mcpUrl = 'https://catalogue.dhara.people+ai.org/mcp'
 
   const copy = (label, text) => {
     navigator.clipboard?.writeText(text).catch(() => {})

@@ -954,6 +954,16 @@ body {
 .cat-meta-value { font-size: 13.5px; color: var(--ink); }
 
 .cat-api-hint { font-size: 14px; line-height: 1.5; color: var(--ink-soft); margin: 0; }
+.cat-api-soon { display: flex; flex-direction: column; gap: 14px; }
+.cat-api-soon-card { gap: 10px; }
+.cat-api-soon-title { font-size: 18px; font-weight: 700; color: var(--ink); }
+.cat-api-soon-blurb { font-size: 14px; line-height: 1.55; color: var(--ink-soft); }
+.cat-api-preview-btn {
+  align-self: flex-start; margin-top: 4px; padding: 8px 14px; border-radius: 8px;
+  border: 1px solid var(--teal); background: #fff; color: var(--teal);
+  font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.cat-api-preview-btn:hover { background: var(--cream); }
 .cat-endpoint { display: flex; flex-direction: column; gap: 12px; }
 .cat-endpoint-card { gap: 10px; }
 .cat-endpoint-row { display: flex; align-items: center; gap: 10px; min-width: 0; }

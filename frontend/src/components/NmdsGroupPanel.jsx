@@ -13,6 +13,7 @@ export default function NmdsGroupPanel({
   onFieldChange,
   onFileSelected,
   file,
+  appliedFrom,
   parsing,
   parseError,
   fileMismatch,
@@ -23,8 +24,10 @@ export default function NmdsGroupPanel({
   onSaveGroup,
   onApplyToAll,
   canApplyToAll,
+  appliedToAll,
 }) {
   const filledCount = nmdsFieldsToList(fields).length
+  const prefilledHint = appliedFrom?.fileName || (appliedFrom ? 'Fields filled in' : null)
 
   return (
     <div className="push-section nmds-group-panel">
@@ -33,7 +36,7 @@ export default function NmdsGroupPanel({
         onUpload={onFileSelected}
         label="Add NMDS concept metadata file"
         hint="XLSX or CSV — prefills the topics below"
-        selectedName={file?.name}
+        selectedName={file?.name || prefilledHint}
         accept=".xlsx,.xls,.csv"
         extensionRegex={/\.(xlsx|xls|csv)$/i}
         compact
@@ -42,6 +45,7 @@ export default function NmdsGroupPanel({
         <label className="nmds-apply-all">
           <input
             type="checkbox"
+            checked={!!appliedToAll}
             disabled={filledCount === 0}
             onChange={(e) => {
               if (e.target.checked) onApplyToAll?.()
@@ -50,10 +54,17 @@ export default function NmdsGroupPanel({
           <span>Apply to all</span>
         </label>
       )}
-      {file && (
+      {(file || appliedFrom) && (
         <div className="push-excel-row">
-          {!parsing && !parseError && !fileMismatch && (
+          {!parsing && !parseError && !fileMismatch && file && (
             <div className="push-file-name">{file.name} — fields filled in, click below to review</div>
+          )}
+          {!parsing && !parseError && !fileMismatch && !file && appliedFrom && (
+            <div className="push-file-name">
+              {appliedFrom.fileName
+                ? `${appliedFrom.fileName} — fields filled in, click below to review`
+                : 'Fields filled in, click below to review'}
+            </div>
           )}
           {parsing && <div className="push-file-status">Reading concept metadata from {file.name}…</div>}
           {parseError && (

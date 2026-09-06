@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
+import { withLlmKeyHeaders } from '../llmKey'
 import { withAuthHeaders } from '../auth'
+import { CLICK_THROUGH_ENABLED } from '../clickThrough'
 import MetadataSheetGrid from './MetadataSheetGrid'
 import NmdsGroupPanel from './NmdsGroupPanel'
 import { emptyNmdsFields, isNmdsFieldsComplete, nmdsFieldsToList, mergeNmdsConcepts, NMDS_CONCEPT_TEMPLATE } from '../nmdsConcepts'
@@ -16,7 +18,11 @@ function isMetadataAutoMapped(metadata) {
 }
 
 function emptyNmdsGroupState() {
-  return { fields: emptyNmdsFields(), file: null, parsing: false, parseError: '', fileMismatch: false }
+  return { fields: emptyNmdsFields(), file: null, appliedFrom: null, appliedToAll: false, parsing: false, parseError: '', fileMismatch: false }
+}
+
+function nmdsGroupLabel(group, groupIndex) {
+  return group?.metadata?.title || group?.file_name || `Group ${groupIndex + 1}`
 }
 
 export default function BatchReview({ matchResult, metadataFiles, onDone, onCancel }) {
@@ -54,9 +60,26 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
   }
 
   const applyNmdsToAll = (groupIndex) => {
-    const source = nmdsByGroup[groupIndex]?.fields || emptyNmdsFields()
-    const copy = { ...source }
-    setNmdsByGroup((prev) => prev.map((g, i) => (i === groupIndex ? g : { ...g, fields: { ...copy } })))
+    const sourceState = nmdsByGroup[groupIndex] || emptyNmdsGroupState()
+    const copy = { ...sourceState.fields }
+    const appliedFrom = {
+      groupLabel: nmdsGroupLabel(groups[groupIndex], groupIndex),
+      fileName: sourceState.file?.name || null,
+    }
+    setNmdsByGroup((prev) => prev.map((g, i) => (
+      i === groupIndex
+        ? { ...g, appliedToAll: true }
+        : {
+            ...g,
+            fields: { ...copy },
+            appliedFrom,
+            appliedToAll: true,
+            file: null,
+            parseError: '',
+            fileMismatch: false,
+            parsing: false,
+          }
+    )))
     setToast({ type: 'success', message: 'NMDS fields applied to all other groups.' })
   }
 
@@ -74,9 +97,9 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
   const showFillInHeading = matchResult.llm_autofill_skipped_no_key || noneAutoMapped
 
   const handleNmdsFileSelected = async (groupIndex, file) => {
-    patchNmdsGroup(groupIndex, { file, parseError: '', fileMismatch: false })
+    patchNmdsGroup(groupIndex, { file, appliedFrom: null, appliedToAll: false, parseError: '', fileMismatch: false })
     if (!file) {
-      patchNmdsGroup(groupIndex, { fields: emptyNmdsFields() })
+      patchNmdsGroup(groupIndex, { fields: emptyNmdsFields(), appliedFrom: null })
       return
     }
 
@@ -126,20 +149,87 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
       return
     }
 
-    const finalGroups = groups.map((g, gi) => ({
-      ...g,
-      matched_tables: [...g.matched_tables],
-      nmds_concepts: nmdsFieldsToList(nmdsByGroup[gi]?.fields || emptyNmdsFields()),
-    }))
-    matchResult.unmatched_tables.forEach((u, idx) => {
-      const target = assignments[idx]
-      if (target !== undefined && target !== '') {
-        finalGroups[Number(target)].matched_tables.push({ table: u.table, confidence: 'manual' })
-      }
-    })
+    setStep('pushing')
+    setError('')
+    setToast(null)
 
+    // Click-through mode (VITE_ENABLE_CLICK_THROUGH=true): skip the real
+    // push and continue as if it succeeded. Leave this off to write
+    // catalogue rows (GCS is optional via ENABLE_GCS).
+    if (CLICK_THROUGH_ENABLED) {
+      setResult({ groups_pushed: groups.length, results: [] })
+      setStep('done')
+      return
+    }
+
+    try {
+      // Always take the latest table objects from matchResult so title / table_id
+      // corrections made in ReconcileIds (and patched onto matchResult) are what
+      // get written to the catalogue — BatchReview's local `groups` copy can lag.
+      const tablesByUid = {}
+      matchResult.groups.forEach((g) => {
+        g.matched_tables.forEach((mt) => {
+          if (mt?.table?._uid) tablesByUid[mt.table._uid] = mt.table
+        })
+      })
+      matchResult.unmatched_tables.forEach((u) => {
+        if (u?.table?._uid) tablesByUid[u.table._uid] = u.table
+      })
+
+      const finalGroups = groups.map((g, gi) => ({
+        ...g,
+        matched_tables: g.matched_tables.map((mt) => ({
+          ...mt,
+          table: tablesByUid[mt.table?._uid] || mt.table,
+        })),
+        nmds_concepts: nmdsFieldsToList(nmdsByGroup[gi]?.fields || emptyNmdsFields()),
+      }))
+      matchResult.unmatched_tables.forEach((u, idx) => {
+        const target = assignments[idx]
+        if (target !== undefined && target !== '') {
+          finalGroups[Number(target)].matched_tables.push({
+            table: tablesByUid[u.table?._uid] || u.table,
+            confidence: 'manual',
+          })
+        }
+      })
+
+      const fd = new FormData()
+      fd.append('groups_json', JSON.stringify(finalGroups))
+      metadataFiles.forEach((f) => fd.append('metadata_files', f))
+
+      const res = await fetch('/api/catalogue/batch-push', withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: fd })))
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Push failed' }))
+        throw new Error(err.detail || 'Push failed')
+      }
+      const data = await res.json()
+      setResult(data)
+      setStep('done')
+    } catch (e) {
+      setError(e.message)
+      setStep('error')
+    }
+  }
+
+  if (step === 'done' && result) {
     const label = groups[0]?.metadata?.title || groups[0]?.file_name || ''
-    onDone(label, [], finalGroups)
+    return (
+      <div className="batch-review">
+        <div className="push-success">
+          <div className="push-success-icon">✓</div>
+          <div className="push-success-msg">
+            {result.groups_pushed} metadata group{result.groups_pushed !== 1 ? 's' : ''} pushed
+          </div>
+          <button
+            className="push-btn"
+            onClick={() => onDone(label, (result.results || []).map((r) => r.metadata_id).filter(Boolean))}
+          >
+            Continue to classification →
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -151,7 +241,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
               <h2 className="batch-review-title-pill">Fill in Metadata</h2>
               <p>
                 {totalMatched} table{totalMatched !== 1 ? 's' : ''} matched across {groups.length} metadata group{groups.length !== 1 ? 's' : ''}.
-                Fields couldn't be auto-filled — please fill them in groupwise below, including the NMDS fields for each group. Your entries are kept as you move between groups. The catalogue is written after classification, when you continue to publish.
+                Fields couldn't be auto-filled — please fill them in groupwise below, including the NMDS fields for each group. Your entries are kept as you move between groups. Nothing is pushed to the catalogue until you confirm below.
               </p>
             </>
           ) : (
@@ -159,7 +249,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
               <h2 className="batch-review-title-pill">Review auto-mapped catalogue</h2>
               <p>
                 {totalMatched} table{totalMatched !== 1 ? 's' : ''} matched across {groups.length} metadata group{groups.length !== 1 ? 's' : ''}.
-                Kindly review the fields across all groups. The catalogue is written after classification, when you continue to publish.
+                Kindly review the fields across all groups. Nothing is pushed until you confirm below.
               </p>
             </>
           )}
@@ -195,6 +285,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
                 }
                 onFileSelected={(file) => handleNmdsFileSelected(gi, file)}
                 file={nmdsState.file}
+                appliedFrom={nmdsState.appliedFrom}
                 parsing={nmdsState.parsing}
                 parseError={nmdsState.parseError}
                 fileMismatch={nmdsState.fileMismatch}
@@ -204,6 +295,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
                 groupLabel={row.label}
                 onSaveGroup={() => handleSaveGroup(gi)}
                 canApplyToAll={groups.length > 1}
+                appliedToAll={!!nmdsState.appliedToAll}
                 onApplyToAll={() => applyNmdsToAll(gi)}
               />
             )
@@ -268,9 +360,9 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
       )}
 
       <div className="push-modal-footer batch-review-footer">
-        <button className="console-secondary-btn" onClick={onCancel}>Cancel</button>
-        <button className="console-primary-btn" disabled={totalMatched === 0} onClick={handlePush}>
-          Continue to classification →
+        <button className="console-secondary-btn" onClick={onCancel} disabled={step === 'pushing'}>Cancel</button>
+        <button className="console-primary-btn" disabled={totalMatched === 0 || step === 'pushing'} onClick={handlePush}>
+          {step === 'pushing' ? 'Saving…' : 'Save Metadata →'}
         </button>
       </div>
 

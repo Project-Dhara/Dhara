@@ -7,7 +7,7 @@ const TOOL_DESCS = {
   get_table: 'Return rows of a published table, with optional filters.',
   get_metadata: 'Return the NMDS metadata record for a release.',
 }
-const MCP_URL = 'https://catalogue.dhara.ekstep.org/mcp'
+const MCP_URL = 'https://catalogue.dhara.people+ai.org/mcp'
 
 const TABS = ['summary', 'metadata', 'api', 'mcp']
 
@@ -68,6 +68,8 @@ export default function Catalogue({ hasKey, onGoSettings }) {
   const [summaryChip, setSummaryChip] = useState('ai')
   const [mcpOpen, setMcpOpen] = useState(false)
   const [copied, setCopied] = useState(null)
+  const [apiPreviewOpen, setApiPreviewOpen] = useState(false)
+  const [mcpPreviewOpen, setMcpPreviewOpen] = useState(false)
   const [datasets, setDatasets] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -123,7 +125,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
     setTimeout(() => setCopied(null), 1500)
   }
 
-  const apiUrl = sel ? `https://catalogue.dhara.ekstep.org/api/datasets/${sel.id}` : ''
+  const apiUrl = sel ? `https://catalogue.dhara.people+ai.org/api/datasets/${sel.id}` : ''
 
   return (
     <div className="cat-screen">
@@ -177,7 +179,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
               <div
                 key={d.id}
                 className={`cat-list-row${d.id === sel?.id ? ' cat-list-row-active' : ''}`}
-                onClick={() => { setSelId(d.id); setTab('summary'); setSummaryChip('ai') }}
+                onClick={() => { setSelId(d.id); setTab('summary'); setSummaryChip('ai'); setApiPreviewOpen(false); setMcpPreviewOpen(false) }}
               >
                 <div className="cat-list-row-top">
                   <span className="cat-list-dot" />
@@ -236,7 +238,15 @@ export default function Catalogue({ hasKey, onGoSettings }) {
 
             <div className="cat-tabs">
               {TABS.map((t) => (
-                <div key={t} className={`cat-tab${tab === t ? ' cat-tab-active' : ''}`} onClick={() => setTab(t)}>
+                <div
+                  key={t}
+                  className={`cat-tab${tab === t ? ' cat-tab-active' : ''}`}
+                  onClick={() => {
+                    setTab(t)
+                    if (t !== 'api') setApiPreviewOpen(false)
+                    if (t !== 'mcp') setMcpPreviewOpen(false)
+                  }}
+                >
                   {t[0].toUpperCase() + t.slice(1)}
                 </div>
               ))}
@@ -328,45 +338,81 @@ export default function Catalogue({ hasKey, onGoSettings }) {
               )}
 
               {tab === 'api' && (
-                <EndpointCard
-                  label="Dataset endpoint"
-                  url={apiUrl}
-                  copied={copied}
-                  copyLabel="api"
-                  onCopy={() => copy('api', apiUrl)}
-                  hint="Fetch the harmonised table as JSON. Add ?format=csv for a flat file."
-                >
-                  <div className="cat-tag-list cat-api-formats">
-                    <span className="cat-tag-chip">GET</span>
-                    <span className="cat-tag-chip">JSON</span>
-                    <span className="cat-tag-chip">CSV</span>
+                <div className="cat-api-soon">
+                  <div className="cat-meta-card cat-meta-card-wide cat-api-soon-card">
+                    <div className="cat-api-soon-title">Coming soon</div>
+                    <div className="cat-api-soon-blurb">
+                      Live dataset API access is not available yet. Open a preview of the planned endpoint for this release.
+                    </div>
+                    <button
+                      type="button"
+                      className="cat-api-preview-btn"
+                      onClick={() => setApiPreviewOpen((v) => !v)}
+                      aria-expanded={apiPreviewOpen}
+                    >
+                      {apiPreviewOpen ? 'Hide preview' : 'Preview'}
+                    </button>
                   </div>
-                  <div className="cat-example-box">
-                    <div className="cat-example-label">Example</div>
-                    <div className="cat-example-code">curl -H "Authorization: Bearer $TOKEN" "{apiUrl}"</div>
-                  </div>
-                </EndpointCard>
+                  {apiPreviewOpen && (
+                    <EndpointCard
+                      label="Dataset endpoint"
+                      url={apiUrl}
+                      copied={copied}
+                      copyLabel="api"
+                      onCopy={() => copy('api', apiUrl)}
+                      hint="Fetch the harmonised table as JSON. Add ?format=csv for a flat file."
+                    >
+                      <div className="cat-tag-list cat-api-formats">
+                        <span className="cat-tag-chip">GET</span>
+                        <span className="cat-tag-chip">JSON</span>
+                        <span className="cat-tag-chip">CSV</span>
+                      </div>
+                      <div className="cat-example-box">
+                        <div className="cat-example-label">Example</div>
+                        <div className="cat-example-code">curl -H "Authorization: Bearer $TOKEN" "{apiUrl}"</div>
+                      </div>
+                    </EndpointCard>
+                  )}
+                </div>
               )}
 
               {tab === 'mcp' && (
-                <EndpointCard
-                  label="MCP endpoint"
-                  url={MCP_URL}
-                  copied={copied}
-                  copyLabel="mcp2"
-                  onCopy={() => copy('mcp2', MCP_URL)}
-                  hint="Add this endpoint to an assistant so it can find and read this release."
-                >
-                  <div className="cat-mcp-tools-grid">
-                    {MCP_TOOLS.map((t) => (
-                      <div className="cat-meta-card" key={t}>
-                        <div className="cat-meta-card-label">Tool</div>
-                        <div className="cat-tool-name">{t}</div>
-                        <div className="cat-tool-desc">{TOOL_DESCS[t]}</div>
-                      </div>
-                    ))}
+                <div className="cat-api-soon">
+                  <div className="cat-meta-card cat-meta-card-wide cat-api-soon-card">
+                    <div className="cat-api-soon-title">Coming soon</div>
+                    <div className="cat-api-soon-blurb">
+                      Live MCP access is not available yet. Open a preview of the planned endpoint and tools for this release.
+                    </div>
+                    <button
+                      type="button"
+                      className="cat-api-preview-btn"
+                      onClick={() => setMcpPreviewOpen((v) => !v)}
+                      aria-expanded={mcpPreviewOpen}
+                    >
+                      {mcpPreviewOpen ? 'Hide preview' : 'Preview'}
+                    </button>
                   </div>
-                </EndpointCard>
+                  {mcpPreviewOpen && (
+                    <EndpointCard
+                      label="MCP endpoint"
+                      url={MCP_URL}
+                      copied={copied}
+                      copyLabel="mcp2"
+                      onCopy={() => copy('mcp2', MCP_URL)}
+                      hint="Add this endpoint to an assistant so it can find and read this release."
+                    >
+                      <div className="cat-mcp-tools-grid">
+                        {MCP_TOOLS.map((t) => (
+                          <div className="cat-meta-card" key={t}>
+                            <div className="cat-meta-card-label">Tool</div>
+                            <div className="cat-tool-name">{t}</div>
+                            <div className="cat-tool-desc">{TOOL_DESCS[t]}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </EndpointCard>
+                  )}
+                </div>
               )}
             </div>
           </div>
