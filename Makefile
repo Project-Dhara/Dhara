@@ -2,7 +2,7 @@ COMPOSE ?= docker compose
 .DEFAULT_GOAL := help
 
 # Local URLs (override if you change ports in docker-compose.yml)
-FRONTEND_URL ?= http://localhost:5173
+FRONTEND_URL ?= http://localhost:3000
 BACKEND_URL  ?= http://localhost:8000
 PROD_URL     ?= http://localhost:8080
 API_DOCS     ?= $(BACKEND_URL)/docs
@@ -21,7 +21,7 @@ urls: ## Print local service URLs
 	@echo "  Prod (all):  $(PROD_URL)"
 	@echo ""
 
-up: ## Start Postgres, backend (:8000), and frontend (:5173)
+up: ## Start Postgres, backend (:8000), and frontend (:3000)
 	$(COMPOSE) up -d --build
 	@echo ""
 	@echo "  UI:      $(FRONTEND_URL)"

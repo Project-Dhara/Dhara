@@ -1,15 +1,19 @@
+'use client'
+
 import { useRef, useState } from 'react'
-import { withLlmKeyHeaders } from '../llmKey'
-import { withAuthHeaders } from '../auth'
+import { withLlmKeyHeaders } from '../lib/llmKey'
+import { withAuthHeaders } from '../lib/auth'
+import Button from './ui/Button'
+import ErrorBanner from './ui/ErrorBanner'
 
 function FileList({ files, onRemove }) {
   if (files.length === 0) return null
   return (
-    <ul className="batch-file-list">
+    <ul className="flex list-none flex-col gap-1">
       {files.map((f, i) => (
-        <li key={`${f.name}-${i}`}>
-          <span className="batch-file-name">{f.name}</span>
-          <button className="batch-file-remove" onClick={() => onRemove(i)} title="Remove">✕</button>
+        <li key={`${f.name}-${i}`} className="flex items-center justify-between gap-2 text-[13px]">
+          <span className="break-all">{f.name}</span>
+          <button className="flex-none text-ink-soft hover:text-[#b91c1c]" onClick={() => onRemove(i)} title="Remove">✕</button>
         </li>
       ))}
     </ul>
@@ -86,7 +90,7 @@ export default function BatchUpload({ onMatched }) {
   }
 
   return (
-    <div className="batch-upload">
+    <div className="flex w-full flex-col gap-[18px]">
       <input
         ref={fileInputRef}
         type="file"
@@ -96,49 +100,55 @@ export default function BatchUpload({ onMatched }) {
         onChange={(e) => { handleFilesChosen(e.target.files); e.target.value = '' }}
       />
 
-      <div className="batch-upload-cols">
-        <div className="batch-upload-col">
-          <div className="batch-upload-label-row">
-            <span className="batch-upload-swatch" style={{ background: 'var(--green)' }} />
-            <span className="batch-upload-label">Dataset files</span>
+      <div className="grid w-full grid-cols-1 gap-5 sm:grid-cols-2">
+        <div className="flex min-w-0 flex-col gap-2.5">
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-sm bg-green" />
+            <span className="text-xs font-bold uppercase tracking-wide text-ink">Dataset files</span>
           </div>
-          <div className={`file-drop file-drop-compact${busy ? ' file-drop-disabled' : ''}`} onClick={() => !busy && openPicker('dataset')}>
-            <div className="file-drop-title">Add dataset files</div>
-            <div className="file-drop-hint">XLSX — drag and drop or browse</div>
+          <div
+            className={`flex h-[84px] cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-[#c9bda6] bg-[#FFFCF6] ${busy ? 'cursor-not-allowed opacity-60' : ''}`}
+            onClick={() => !busy && openPicker('dataset')}
+          >
+            <div className="text-[15px] font-semibold text-teal">Add dataset files</div>
+            <div className="text-[13px] text-[#8E9398]">XLSX — drag and drop or browse</div>
           </div>
           <FileList files={datasetFiles} onRemove={removeDataset} />
         </div>
 
-        <div className="batch-upload-col">
-          <div className="batch-upload-label-row">
-            <span className="batch-upload-swatch" style={{ background: 'var(--yellow)' }} />
-            <span className="batch-upload-label">Metadata files</span>
+        <div className="flex min-w-0 flex-col gap-2.5">
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-sm bg-yellow" />
+            <span className="text-xs font-bold uppercase tracking-wide text-ink">Metadata files</span>
           </div>
-          <div className={`file-drop file-drop-compact${busy ? ' file-drop-disabled' : ''}`} onClick={() => !busy && openPicker('metadata')}>
-            <div className="file-drop-title">Add metadata files</div>
-            <div className="file-drop-hint">XLSX tag files</div>
+          <div
+            className={`flex h-[84px] cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-[#c9bda6] bg-[#FFFCF6] ${busy ? 'cursor-not-allowed opacity-60' : ''}`}
+            onClick={() => !busy && openPicker('metadata')}
+          >
+            <div className="text-[15px] font-semibold text-teal">Add metadata files</div>
+            <div className="text-[13px] text-[#8E9398]">XLSX tag files</div>
           </div>
           <FileList files={metadataFiles} onRemove={removeMetadata} />
         </div>
       </div>
 
-      {error && <div className="error-banner"><strong>Error:</strong> {error}</div>}
+      {error && <ErrorBanner>{error}</ErrorBanner>}
 
-      <div className="batch-upload-actions">
-        <button className="console-primary-btn" disabled={!canRun} onClick={runMatch}>
-          {busy && <span className="btn-spinner" />}
+      <div className="flex items-center gap-4">
+        <Button disabled={!canRun} onClick={runMatch}>
+          {busy && <span className="inline-block h-[13px] w-[13px] animate-spin rounded-full border-2 border-white/50 border-t-white" />}
           {stage === 'extracting' && 'Extracting & validating tables…'}
           {stage === 'matching' && 'Matching to metadata…'}
           {(stage === 'idle' || stage === 'error') && 'Preview files →'}
-        </button>
-        {!busy && <span className="batch-upload-hint">{datasetFiles.length} dataset · {metadataFiles.length} metadata</span>}
+        </Button>
+        {!busy && <span className="text-xs text-[#8E9398]">{datasetFiles.length} dataset · {metadataFiles.length} metadata</span>}
       </div>
 
       {busy && (
-        <div className="batch-upload-progress">
-          <div className="progress-step-list">
-            <div className="progress-step progress-step-active">
-              <span className="progress-step-dot" />
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-2 text-[13px] font-medium text-ink">
+              <span className="h-2 w-2 flex-none animate-pulse rounded-full bg-teal" />
               Extracting tables & validating Source Table ID / Title
             </div>
           </div>

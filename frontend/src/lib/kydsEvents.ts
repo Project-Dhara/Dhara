@@ -4,7 +4,7 @@ export function notifyKydsChanged() {
   window.dispatchEvent(new Event(KYDS_CHANGED))
 }
 
-export function onKydsChanged(handler) {
+export function onKydsChanged(handler: () => void) {
   window.addEventListener(KYDS_CHANGED, handler)
   return () => window.removeEventListener(KYDS_CHANGED, handler)
 }

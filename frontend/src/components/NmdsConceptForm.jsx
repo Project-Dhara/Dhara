@@ -1,6 +1,9 @@
+'use client'
+
 import { useState } from 'react'
-import { NMDS_TOPICS } from '../nmdsConcepts'
+import { NMDS_TOPICS } from '../lib/nmdsConcepts'
 import FileUpload from './FileUpload'
+import Button from './ui/Button'
 
 // Upload-or-fill-manually form for the NMDS concept metadata sheet
 // (nmds_concept_meta_data — see backend/metadata_excel.py parse_concepts).
@@ -36,9 +39,9 @@ export default function NmdsConceptForm({
   }
 
   return (
-    <div className="nmds-form">
-      <div className="push-section">
-        <div className="push-section-title">Upload NMDS concept metadata *</div>
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-2">
+        <div className="text-xs font-bold uppercase tracking-wide text-ink">Upload NMDS concept metadata *</div>
         <FileUpload
           onUpload={onFileSelected}
           label="Add NMDS concept metadata file"
@@ -49,18 +52,18 @@ export default function NmdsConceptForm({
           compact
         />
         {file && (
-          <div className="push-excel-row">
+          <div className="mt-1.5 flex flex-col gap-0.5">
             {!parsing && !parseError && !fileMismatch && (
-              <div className="push-file-name">{file.name} — fields filled in below</div>
+              <div className="mt-0.5 text-[11px] text-teal">{file.name} — fields filled in below</div>
             )}
-            {parsing && <div className="push-file-status">Reading concept metadata from {file.name}…</div>}
+            {parsing && <div className="mt-0.5 text-[11px] text-ink-soft">Reading concept metadata from {file.name}…</div>}
             {parseError && (
-              <div className="push-file-error">
+              <div className="mt-0.5 text-[11px] text-[#c0392b]">
                 Couldn't auto-fill from {file.name}: {parseError}. You can still fill the fields in manually.
               </div>
             )}
             {!parsing && !parseError && fileMismatch && (
-              <div className="push-file-warning">
+              <div className="mt-1 text-[13.5px] font-medium text-[#8a4b0f]">
                 ⚠ Couldn't match {file.name} against the known NMDS concepts — double-check you've uploaded the
                 right file. You can still fill the fields in manually below.
               </div>
@@ -69,37 +72,41 @@ export default function NmdsConceptForm({
         )}
       </div>
 
-      <div className="nmds-topic-pills">
+      <div className="grid grid-cols-4 gap-x-4 gap-y-3.5 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
         {NMDS_TOPICS.map((t, i) => {
           const filled = t.items.filter((r) => (fields[r.concept] || '').trim()).length
+          const active = i === topicIndex
+          const done = filled === t.items.length
           return (
             <button
               key={t.item_no}
               type="button"
-              className={`nmds-topic-pill${i === topicIndex ? ' nmds-topic-pill-active' : ''}${filled === t.items.length ? ' nmds-topic-pill-done' : ''}`}
+              className={`grid min-w-0 grid-cols-[18px_1fr] items-center gap-2 rounded-full border px-2.5 py-1.5 pl-2 font-sans text-[12.5px] font-medium transition-colors ${
+                active ? 'border-teal bg-sage text-ink' : 'border-line bg-surface text-ink-soft hover:border-teal hover:text-ink'
+              }`}
               onClick={() => setTopicIndex(i)}
             >
-              <span className="nmds-topic-pill-num">{i + 1}</span>
-              <span className="nmds-topic-pill-label">{t.title}</span>
+              <span className={`inline-flex h-[18px] w-[18px] items-center justify-center rounded-full text-[10.5px] font-bold ${active || done ? 'bg-teal text-white' : 'bg-[#ece4d6] text-ink-soft'}`}>{i + 1}</span>
+              <span className="min-w-0 text-center leading-tight">{t.title}</span>
             </button>
           )
         })}
       </div>
 
-      <div className="nmds-topic-box">
-        <div className="nmds-topic-box-head">
-          <div className="nmds-topic-box-title">{topic.item_no}. {topic.title}</div>
-          <div className="nmds-topic-box-progress">
+      <div className="flex flex-col gap-3.5 rounded-[10px] border border-line bg-surface p-4 px-[18px]">
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <div className="text-base font-bold text-ink">{topic.item_no}. {topic.title}</div>
+          <div className="whitespace-nowrap text-[12.5px] text-ink-soft">
             Topic {topicIndex + 1} of {NMDS_TOPICS.length} · {filledInTopic}/{topic.items.length} filled
           </div>
         </div>
 
-        <div className="nmds-topic-fields">
+        <div className="flex flex-col gap-3">
           {topic.items.map((row) => (
-            <label className="meta-long-field nmds-field" key={row.item_no}>
-              <span className="meta-long-label">{row.item_no} {row.concept}</span>
+            <label className="flex flex-col gap-1" key={row.item_no}>
+              <span className="font-sans text-[11px] font-semibold uppercase tracking-wide text-[#8E9398]">{row.item_no} {row.concept}</span>
               <textarea
-                className="meta-long-input"
+                className="box-border min-h-[44px] w-full resize-y rounded-lg border border-line bg-cream px-3 py-2 font-sans text-[13.5px] leading-relaxed text-ink placeholder:text-[#a49c8e] focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal"
                 rows={3}
                 value={fields[row.concept] || ''}
                 placeholder={`Details for ${row.concept}`}
@@ -109,13 +116,13 @@ export default function NmdsConceptForm({
           ))}
         </div>
 
-        <div className="nmds-topic-box-nav">
-          <button type="button" className="push-btn-secondary" onClick={goBack} disabled={saving}>
+        <div className="mt-1 flex justify-between gap-3 border-t border-line pt-1">
+          <Button variant="secondary" size="sm" onClick={goBack} disabled={saving}>
             {isFirst ? '← Back to metadata' : '← Previous topic'}
-          </button>
-          <button type="button" className="push-btn" onClick={goNext} disabled={saving || (isLast && saveDisabled)}>
+          </Button>
+          <Button size="sm" onClick={goNext} disabled={saving || (isLast && saveDisabled)}>
             {isLast ? (saving ? 'Pushing…' : 'Save & continue to classification →') : 'Next topic →'}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

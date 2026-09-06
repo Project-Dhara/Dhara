@@ -1,21 +1,21 @@
 services:
   - type: web
     name: table-extractor
-    env: python
+    env: docker
+    dockerfilePath: ./Dockerfile
     region: singapore   # change to your preferred region
     plan: free
-    buildCommand: |
-      pip install -r backend/requirements.txt &&
-      cd frontend &&
-      npm install &&
-      npm run build
-    startCommand: cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false       # you will paste the value in the Render dashboard
-      - key: PYTHON_VERSION
-        value: 3.11.0
-    envVars:
+      - key: OPENAI_API_KEY
+        sync: false       # you will paste the value in the Render dashboard
       - key: DATABASE_URL
-        value: $DATABASE_URL
-        sync: false   # paste Neon connection string in Render dashboard
+        sync: false       # paste Neon connection string in the Render dashboard
+      - key: JWT_SECRET
+        sync: false       # paste a random secret in the Render dashboard
+      - key: ENABLE_GCS
+        value: "false"
+    # Render sets $PORT itself; the Dockerfile's start.sh reads it for
+    # Next.js's public-facing port and always runs FastAPI internally on
+    # BACKEND_PORT (8000, not publicly exposed) -- no port config needed here.

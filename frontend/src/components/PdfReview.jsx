@@ -1,5 +1,12 @@
+'use client'
+
 import { useEffect, useState } from 'react'
-import { withAuthHeaders } from '../auth'
+import { useRouter } from 'next/navigation'
+import { withAuthHeaders } from '../lib/auth'
+import { isGarbled } from '../lib/garbled'
+import Badge from './ui/Badge'
+import Button from './ui/Button'
+import ErrorBanner from './ui/ErrorBanner'
 
 const CLASSIFICATION_LABELS = {
   domain: 'Domain', subject: 'Subject', entity: 'Entity', table_type: 'Table type',
@@ -18,20 +25,22 @@ const REASON_LABELS = {
 const ROLE_OPTIONS = ['identifier', 'dimension', 'measure', 'attribute', 'unknown']
 
 function ReviewBadge({ needed, reason }) {
-  if (!needed) return <span className="pdf-badge pdf-badge-ok">No review needed</span>
-  return <span className="pdf-badge pdf-badge-warn">{REASON_LABELS[reason] || 'Needs review'}</span>
+  if (!needed) return <Badge tone="ok">No review needed</Badge>
+  return <Badge tone="warn">{REASON_LABELS[reason] || 'Needs review'}</Badge>
 }
 
 // One table's classification/column fields, editable where flagged for
-// human review. Only classification/column metadata is ever edited here --
-// the extracted rows themselves are shown read-only and untouched, per the
-// "human review is about table meaning, not rewriting source data" contract.
+// human review -- plus, now, individual extracted-data cells that look
+// garbled/corrupted (auto-detected, see utils/garbled.js). Everything else
+// in the extracted rows stays read-only: human review is about table
+// meaning (and fixing genuine extraction corruption), not rewriting data.
 function TableDetail({ table, onSave }) {
   const [draft, setDraft] = useState(() => ({
     classification: Object.fromEntries(
       Object.entries(table.classification || {}).map(([k, f]) => [k, f?.value ?? ''])
     ),
     columns: (table.columns || []).map((c) => ({ role: c.role, concept: c.concept || '', description: c.description || '' })),
+    rows: (table.rows || []).map((row) => [...row]),
   }))
   const [saved, setSaved] = useState(false)
 
@@ -42,6 +51,15 @@ function TableDetail({ table, onSave }) {
       ...prev,
       columns: prev.columns.map((c, i) => (i === idx ? { ...c, [key]: value } : c)),
     }))
+  const setCell = (rowIdx, colIdx, value) =>
+    setDraft((prev) => ({
+      ...prev,
+      rows: prev.rows.map((row, r) => (r === rowIdx ? row.map((v, c) => (c === colIdx ? value : v)) : row)),
+    }))
+
+  const previewRows = table.rows || []
+  const previewLimit = Math.min(5, previewRows.length)
+  const anyCellGarbled = previewRows.slice(0, previewLimit).some((row) => row.some((v) => isGarbled(v)))
 
   const handleSave = () => {
     const classification = Object.fromEntries(
@@ -58,29 +76,29 @@ function TableDetail({ table, onSave }) {
       human_review_needed: false,
       human_review_reason: null,
     }))
-    onSave({ classification, columns, human_review_needed: false, human_review_reason: null })
+    onSave({ classification, columns, rows: draft.rows, human_review_needed: false, human_review_reason: null })
     setSaved(true)
   }
 
   return (
-    <div className="pdf-table-detail">
-      {table.description && <p className="pdf-table-description">{table.description}</p>}
+    <div className="flex flex-col gap-3 border-t border-line px-3.5 pb-3.5 pt-3">
+      {table.description && <p className="text-[13px] text-ink-soft">{table.description}</p>}
 
-      <div className="pdf-detail-section-label">Classification</div>
-      <div className="pdf-classification-grid">
+      <div className="text-[11px] font-bold uppercase tracking-wide text-ink-soft">Classification</div>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2">
         {Object.entries(CLASSIFICATION_LABELS).map(([key, label]) => {
           const field = table.classification?.[key] || {}
           return (
-            <div key={key} className={`pdf-field${field.human_review_needed ? ' pdf-field-flagged' : ''}`}>
-              <div className="pdf-field-label">{label}</div>
+            <div key={key} className={`flex flex-col gap-1 rounded-md p-2 ${field.human_review_needed ? 'border border-yellow bg-[#fff8e1]' : 'bg-outer-bg'}`}>
+              <div className="text-[11px] font-bold uppercase text-ink-soft">{label}</div>
               {field.human_review_needed ? (
                 <input
-                  className="pdf-field-input"
+                  className="rounded border border-yellow px-1.5 py-1 text-[13px]"
                   value={draft.classification[key] ?? ''}
                   onChange={(e) => setField(key, e.target.value)}
                 />
               ) : (
-                <div className="pdf-field-value">{field.value ?? <em className="pdf-field-empty">—</em>}</div>
+                <div className="text-[13px] text-ink">{field.value ?? <em className="text-[#a49c8e]">—</em>}</div>
               )}
               {field.human_review_needed && <ReviewBadge needed reason={field.human_review_reason} />}
             </div>
@@ -88,37 +106,39 @@ function TableDetail({ table, onSave }) {
         })}
       </div>
 
-      <div className="pdf-detail-section-label">Columns</div>
-      <div className="pdf-columns-table-wrap">
-        <table className="pdf-columns-table">
+      <div className="text-[11px] font-bold uppercase tracking-wide text-ink-soft">Columns</div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[600px] border-collapse text-[13px]">
           <thead>
             <tr>
-              <th>Name</th><th>Role</th><th>Concept</th><th>Description</th><th>Data type</th><th>Review</th>
+              {['Name', 'Role', 'Concept', 'Description', 'Data type', 'Review'].map((h) => (
+                <th key={h} className="border border-line bg-outer-bg px-2.5 py-1.5 text-left text-[11.5px] uppercase text-ink-soft">{h}</th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {(table.columns || []).map((c, i) => (
-              <tr key={i} className={c.human_review_needed ? 'pdf-column-flagged' : ''}>
-                <td>{c.name}</td>
-                <td>
+              <tr key={i} className={c.human_review_needed ? 'bg-[#fff8e1]' : ''}>
+                <td className="border border-line px-2.5 py-1.5">{c.name}</td>
+                <td className="border border-line px-2.5 py-1.5">
                   {c.human_review_needed ? (
-                    <select value={draft.columns[i].role} onChange={(e) => setColumn(i, 'role', e.target.value)}>
+                    <select className="w-full rounded border border-yellow px-1 py-0.5" value={draft.columns[i].role} onChange={(e) => setColumn(i, 'role', e.target.value)}>
                       {ROLE_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}
                     </select>
                   ) : c.role}
                 </td>
-                <td>
+                <td className="border border-line px-2.5 py-1.5">
                   {c.human_review_needed ? (
-                    <input value={draft.columns[i].concept} onChange={(e) => setColumn(i, 'concept', e.target.value)} />
+                    <input className="w-full rounded border border-yellow px-1 py-0.5" value={draft.columns[i].concept} onChange={(e) => setColumn(i, 'concept', e.target.value)} />
                   ) : (c.concept ?? '—')}
                 </td>
-                <td>
+                <td className="border border-line px-2.5 py-1.5">
                   {c.human_review_needed ? (
-                    <input value={draft.columns[i].description} onChange={(e) => setColumn(i, 'description', e.target.value)} />
+                    <input className="w-full rounded border border-yellow px-1 py-0.5" value={draft.columns[i].description} onChange={(e) => setColumn(i, 'description', e.target.value)} />
                   ) : (c.description ?? '—')}
                 </td>
-                <td>{c.data_type}</td>
-                <td>{c.human_review_needed ? <ReviewBadge needed reason={c.human_review_reason} /> : '—'}</td>
+                <td className="border border-line px-2.5 py-1.5">{c.data_type}</td>
+                <td className="border border-line px-2.5 py-1.5">{c.human_review_needed ? <ReviewBadge needed reason={c.human_review_reason} /> : '—'}</td>
               </tr>
             ))}
           </tbody>
@@ -127,30 +147,51 @@ function TableDetail({ table, onSave }) {
 
       {table.uncertain_cells?.length > 0 && (
         <>
-          <div className="pdf-detail-section-label">Extraction uncertainties</div>
-          <ul className="pdf-uncertain-list">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-ink-soft">Extraction uncertainties</div>
+          <ul className="list-disc pl-5 text-[13px] text-ink">
             {table.uncertain_cells.map((note, i) => <li key={i}>{note}</li>)}
           </ul>
         </>
       )}
 
-      <div className="pdf-detail-section-label">Extracted data ({table.rows?.length || 0} rows, read-only)</div>
-      <div className="pdf-rows-preview-wrap">
-        <table className="pdf-rows-preview">
-          <thead><tr>{(table.columns || []).map((c, i) => <th key={i}>{c.name}</th>)}</tr></thead>
+      <div className="text-[11px] font-bold uppercase tracking-wide text-ink-soft">
+        Extracted data ({table.rows?.length || 0} rows{anyCellGarbled ? ` — ${previewRows.slice(0, previewLimit).flat().filter((v) => isGarbled(v)).length} cell(s) need review` : ', read-only'})
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[600px] border-collapse text-[13px]">
+          <thead>
+            <tr>{(table.columns || []).map((c, i) => <th key={i} className="border border-line bg-outer-bg px-2.5 py-1.5 text-left text-[11.5px] uppercase text-ink-soft">{c.name}</th>)}</tr>
+          </thead>
           <tbody>
-            {(table.rows || []).slice(0, 5).map((row, i) => (
-              <tr key={i}>{row.map((v, j) => <td key={j}>{v === null ? '' : String(v)}</td>)}</tr>
+            {previewRows.slice(0, previewLimit).map((row, r) => (
+              <tr key={r}>
+                {row.map((v, c) => {
+                  const flagged = isGarbled(v)
+                  return (
+                    <td key={c} className={`border border-line px-2.5 py-1.5 ${flagged ? 'bg-[#fff8e1]' : ''}`}>
+                      {flagged ? (
+                        <input
+                          className="w-full rounded border border-yellow px-1 py-0.5"
+                          value={draft.rows[r]?.[c] ?? ''}
+                          onChange={(e) => setCell(r, c, e.target.value)}
+                        />
+                      ) : (v === null ? '' : String(v))}
+                    </td>
+                  )
+                })}
+              </tr>
             ))}
           </tbody>
         </table>
-        {table.rows?.length > 5 && <div className="pdf-rows-more">…and {table.rows.length - 5} more row(s)</div>}
+        {previewRows.length > previewLimit && (
+          <div className="mt-1 text-xs text-ink-soft">…and {previewRows.length - previewLimit} more row(s)</div>
+        )}
       </div>
 
       {table.human_review_needed && !saved && (
-        <button className="console-primary-btn" onClick={handleSave}>Save review & mark resolved</button>
+        <Button variant="primary" className="self-start" onClick={handleSave}>Save review &amp; mark resolved</Button>
       )}
-      {saved && <div className="pdf-reviewed-hint">✓ Reviewed — this table's flags are cleared.</div>}
+      {saved && <div className="text-[13px] font-semibold text-[#3d7a3d]">✓ Reviewed — this table's flags are cleared.</div>}
     </div>
   )
 }
@@ -160,6 +201,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
   const [error, setError] = useState('')
   const [expanded, setExpanded] = useState(null)
   const [reviewedIds, setReviewedIds] = useState(() => new Set())
+  const router = useRouter()
 
   useEffect(() => {
     let cancelled = false
@@ -188,41 +230,43 @@ export default function PdfReview({ jobId, filename, onDone }) {
     }
   }
 
-  if (error) return <div className="error-banner"><strong>Error:</strong> {error}</div>
-  if (!tables) return <div className="pdf-review-loading">Loading results…</div>
+  if (error) return <ErrorBanner>{error}</ErrorBanner>
+  if (!tables) return <div className="py-10 text-center text-ink-soft">Loading results…</div>
 
   const needsReview = tables.filter((t) => t.human_review_needed && !reviewedIds.has(t.table_id))
 
   return (
-    <div className="pdf-review">
-      <div className="pdf-review-header">
-        <div>
-          <div className="pdf-review-title">{filename}</div>
-          <div className="pdf-review-subtitle">
+    <div className="flex flex-col gap-3">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="text-lg font-bold leading-snug text-ink">{filename}</div>
+          <div className="mt-0.5 text-[13px] text-ink-soft">
             {tables.length} table(s) extracted · {needsReview.length} need review
           </div>
         </div>
-        <button className="console-secondary-btn" onClick={onDone}>Upload another PDF</button>
+        <div className="flex flex-none items-center gap-2.5">
+          <Button variant="secondary" onClick={onDone}>Upload another PDF</Button>
+          <Button variant="primary" onClick={() => router.push(`/console/pdf-next-steps/${jobId}`)}>Continue →</Button>
+        </div>
       </div>
 
-      <div className="pdf-review-list">
+      <div className="flex flex-col gap-2 rounded-xl border border-line bg-white p-3 sm:p-4">
         {tables.map((t) => {
           const isOpen = expanded === t.table_id
           const reviewed = reviewedIds.has(t.table_id)
           return (
-            <div key={t.table_id} className={`pdf-review-card${isOpen ? ' pdf-review-card-open' : ''}`}>
-              <div className="pdf-review-card-head" onClick={() => setExpanded(isOpen ? null : t.table_id)}>
-                <div className="pdf-review-card-titles">
-                  <div className="pdf-review-card-title">{t.title || `Page ${t.page} table`}</div>
-                  <div className="pdf-review-card-meta">
+            <div key={t.table_id} className={`overflow-hidden rounded-lg border bg-surface ${isOpen ? 'border-teal' : 'border-line'}`}>
+              <div
+                className="flex cursor-pointer items-center justify-between gap-3 px-3.5 py-2.5 hover:bg-cream"
+                onClick={() => setExpanded(isOpen ? null : t.table_id)}
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-[14px] font-semibold leading-snug text-ink">{t.title || `Page ${t.page} table`}</div>
+                  <div className="mt-0.5 text-[11.5px] leading-snug text-ink-soft">
                     Page {t.page} · {t.semantic_status === 'classified' ? 'AI-classified' : 'Auto-accepted (no AI review)'}
                   </div>
                 </div>
-                {reviewed ? (
-                  <span className="pdf-badge pdf-badge-ok">✓ Reviewed</span>
-                ) : (
-                  <ReviewBadge needed={t.human_review_needed} reason={t.human_review_reason} />
-                )}
+                {reviewed ? <Badge tone="ok">✓ Reviewed</Badge> : <ReviewBadge needed={t.human_review_needed} reason={t.human_review_reason} />}
               </div>
               {isOpen && <TableDetail table={t} onSave={(edits) => saveReview(t.table_id, edits)} />}
             </div>

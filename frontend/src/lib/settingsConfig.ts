@@ -16,7 +16,7 @@ export const DEFAULT_METADATA_REQUIRED_FIELDS = {
   autoTagDomain: false,
 }
 
-function readJson(key, fallback) {
+function readJson<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key)
     if (!raw) return fallback
@@ -27,7 +27,7 @@ function readJson(key, fallback) {
   }
 }
 
-function writeJson(key, value) {
+function writeJson(key: string, value: unknown) {
   try {
     localStorage.setItem(key, JSON.stringify(value))
   } catch {
@@ -39,16 +39,16 @@ export function getDatasetIdConfig() {
   return { ...DEFAULT_DATASET_ID_CONFIG, ...readJson(DATASET_ID_KEY, {}) }
 }
 
-export function setDatasetIdConfig(config) {
+export function setDatasetIdConfig(config: unknown) {
   writeJson(DATASET_ID_KEY, config)
 }
 
 export function getMetadataRequiredFields() {
-  const stored = readJson(METADATA_REQUIRED_KEY, null)
+  const stored = readJson<typeof DEFAULT_METADATA_REQUIRED_FIELDS | null>(METADATA_REQUIRED_KEY, null)
   if (!stored) return { ...DEFAULT_METADATA_REQUIRED_FIELDS }
   return stored
 }
 
-export function setMetadataRequiredFields(fields) {
+export function setMetadataRequiredFields(fields: unknown) {
   writeJson(METADATA_REQUIRED_KEY, fields)
 }

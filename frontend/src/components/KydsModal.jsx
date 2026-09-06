@@ -1,4 +1,6 @@
-import { useRef, useState } from 'react'
+'use client'
+
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 const MODALITY_OPTIONS = [
   'Structured / tabular',
@@ -127,6 +129,12 @@ const DPIA_OPTIONS = ['Yes', 'In progress', 'No', 'Not required']
 
 const YES_NO = ['No', 'Yes']
 
+// Short labels for the scrollspy dots -- the real section titles (below)
+// are often too long to fit next to 8 dots in a fixed-width header.
+const SECTION_LABELS = [
+  'About', 'Modality', 'Sensitivity', 'Access', 'Granularity', 'Frequency', 'Storage', 'Notes',
+]
+
 function emptyForm() {
   return {
     datasetName: '',
@@ -166,11 +174,12 @@ function toggleIn(list, value) {
 
 function CheckboxGrid({ options, selected, onToggle }) {
   return (
-    <div className="kyds-check-grid">
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-x-3 gap-y-1.5">
       {options.map((opt) => (
-        <label key={opt} className="kyds-check">
+        <label key={opt} className="flex cursor-pointer items-start gap-2 py-1 text-[13px] leading-tight text-ink">
           <input
             type="checkbox"
+            className="mt-0.5 h-[15px] w-[15px] flex-none accent-teal"
             checked={selected.includes(opt)}
             onChange={() => onToggle(opt)}
           />
@@ -183,11 +192,12 @@ function CheckboxGrid({ options, selected, onToggle }) {
 
 function ExclusiveCheckboxes({ options, selected, onChange }) {
   return (
-    <div className="kyds-check-row">
+    <div className="flex flex-wrap gap-x-4 gap-y-2">
       {options.map((opt) => (
-        <label key={opt} className="kyds-check">
+        <label key={opt} className="flex cursor-pointer items-start gap-2 py-1 text-[13px] leading-tight text-ink">
           <input
             type="checkbox"
+            className="mt-0.5 h-[15px] w-[15px] flex-none accent-teal"
             checked={selected.includes(opt)}
             onChange={() => onChange(selected.includes(opt) ? [] : [opt])}
           />
@@ -200,11 +210,12 @@ function ExclusiveCheckboxes({ options, selected, onChange }) {
 
 function ExclusiveCheckboxGrid({ options, selected, onChange }) {
   return (
-    <div className="kyds-check-grid">
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-x-3 gap-y-1.5">
       {options.map((opt) => (
-        <label key={opt} className="kyds-check">
+        <label key={opt} className="flex cursor-pointer items-start gap-2 py-1 text-[13px] leading-tight text-ink">
           <input
             type="checkbox"
+            className="mt-0.5 h-[15px] w-[15px] flex-none accent-teal"
             checked={selected.includes(opt)}
             onChange={() => onChange(selected.includes(opt) ? [] : [opt])}
           />
@@ -217,19 +228,87 @@ function ExclusiveCheckboxGrid({ options, selected, onChange }) {
 
 function Field({ label, hint, children }) {
   return (
-    <div className="kyds-field">
-      <label className="kyds-label">{label}</label>
-      {hint && <div className="kyds-hint">{hint}</div>}
+    <div className="mt-1 flex flex-col gap-1">
+      <label className="text-xs font-semibold text-ink">{label}</label>
+      {hint && <div className="text-xs text-ink-soft">{hint}</div>}
       {children}
     </div>
   )
 }
 
-export default function KydsModal({ onSkip, onSave, initialForm, editing = false }) {
+const inputClass = 'w-full rounded-[7px] border border-line bg-cream px-3 py-2 font-sans text-[13.5px] text-ink placeholder:text-[#a49c8e] focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal'
+const textareaClass = `${inputClass} min-h-[72px] resize-y leading-relaxed`
+
+// Sticky scrollspy dot-row: click a dot to jump to that section; the
+// current section is highlighted as the user scrolls, and every dot up to
+// the furthest section ever reached stays filled ("visited"), even if the
+// user scrolls back up -- there's no real per-field validation in this
+// form (see KydsModal below), so "visited" (scrolled past) is the only
+// honestly-derivable progress signal, not "completed".
+function ScrollspyNav({ activeIndex, maxSeenIndex, onJump }) {
+  return (
+    <div className="flex items-center gap-1.5 border-b border-line bg-cream px-6 py-2.5">
+      {SECTION_LABELS.map((label, i) => {
+        const visited = i <= maxSeenIndex
+        const isCurrent = i === activeIndex
+        return (
+          <button
+            key={label}
+            type="button"
+            onClick={() => onJump(i)}
+            className="group flex flex-1 flex-col items-center gap-1"
+            title={label}
+          >
+            <span
+              className={`h-1.5 w-full rounded-full transition-colors ${
+                isCurrent ? 'bg-teal' : visited ? 'bg-teal/50' : 'bg-line'
+              } ${isCurrent ? 'ring-2 ring-teal/30' : ''}`}
+            />
+            <span className={`text-center text-[10px] font-semibold leading-tight ${isCurrent ? 'text-teal' : 'text-ink-soft'}`}>
+              {label}
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+export default function KydsModal({ onSkip, onSave, initialForm = null, editing = false }) {
   const [form, setForm] = useState(() => ({ ...emptyForm(), ...(initialForm || {}) }))
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
   const savingRef = useRef(false)
+
+  const bodyRef = useRef(null)
+  const sectionRefs = useRef([])
+  const [activeIndex, setActiveIndex] = useState(0)
+  const [maxSeenIndex, setMaxSeenIndex] = useState(0)
+
+  useEffect(() => {
+    const bodyEl = bodyRef.current
+    if (!bodyEl) return undefined
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.filter((e) => e.isIntersecting)
+        if (visible.length === 0) return
+        // Prefer the topmost intersecting section as "current".
+        visible.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)
+        const idx = sectionRefs.current.indexOf(visible[0].target)
+        if (idx !== -1) {
+          setActiveIndex(idx)
+          setMaxSeenIndex((prev) => Math.max(prev, idx))
+        }
+      },
+      { root: bodyEl, threshold: [0, 0.5] }
+    )
+    sectionRefs.current.forEach((el) => el && observer.observe(el))
+    return () => observer.disconnect()
+  }, [])
+
+  const jumpTo = (i) => {
+    sectionRefs.current[i]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 
   const setList = (key) => (value) => {
     setForm((prev) => ({ ...prev, [key]: toggleIn(prev[key], value) }))
@@ -243,30 +322,37 @@ export default function KydsModal({ onSkip, onSave, initialForm, editing = false
     setForm((prev) => ({ ...prev, [key]: next }))
   }
 
+  const sectionProps = (i) => ({
+    ref: (el) => { sectionRefs.current[i] = el },
+    className: 'flex flex-col gap-2.5 rounded-[10px] border border-line bg-white px-[18px] pb-[18px] pt-4',
+  })
+
   return (
-    <div className="kyds-overlay" role="dialog" aria-modal="true" aria-labelledby="kyds-title">
-      <div className="kyds-modal">
-        <div className="kyds-header">
+    <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-[rgba(16,64,63,0.52)] p-5" role="dialog" aria-modal="true" aria-labelledby="kyds-title">
+      <div className="flex max-h-[92vh] w-full max-w-[860px] flex-col overflow-hidden rounded-[14px] bg-surface shadow-dhara">
+        <div className="relative flex flex-shrink-0 items-center justify-center bg-cream px-12 pb-4 pt-5 text-center">
           <div>
-            <div className="kyds-eyebrow">Optional · Know Your Dataset</div>
-            <div id="kyds-title" className="kyds-title">{editing ? 'Edit KYDS Entry' : 'KYDS Entry'}</div>
-            <div className="kyds-sub">
+            <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-teal">Optional · Know Your Dataset</div>
+            <div id="kyds-title" className="text-2xl font-bold tracking-tight text-ink">{editing ? 'Edit KYDS Entry' : 'KYDS Entry'}</div>
+            <div className="mt-1.5 text-[13.5px] leading-relaxed text-ink-soft">
               Record modality, sensitivity, access, granularity, retention and storage.
               {editing ? ' Update any fields below and save.' : ' You can skip this and continue — none of these fields are required.'}
             </div>
           </div>
-          <button type="button" className="push-close" onClick={onSkip} aria-label={editing ? 'Close' : 'Skip KYDS form'}>×</button>
+          <button type="button" className="absolute right-4 top-4 text-xl leading-none text-ink-soft hover:text-ink" onClick={onSkip} aria-label={editing ? 'Close' : 'Skip KYDS form'}>×</button>
         </div>
 
-        <div className="kyds-body">
-          <section className="kyds-section">
-            <div className="kyds-section-head">
-              <span className="kyds-section-num">0</span>
-              <h2>About this assessment</h2>
+        <ScrollspyNav activeIndex={activeIndex} maxSeenIndex={maxSeenIndex} onJump={jumpTo} />
+
+        <div ref={bodyRef} className="flex flex-1 flex-col gap-[18px] overflow-y-auto px-6 pb-6 pt-[18px]">
+          <section {...sectionProps(0)}>
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-teal text-xs font-bold text-white">0</span>
+              <h2 className="text-[16px] font-bold text-ink">About this assessment</h2>
             </div>
             <Field label="Dataset name">
               <input
-                className="kyds-input"
+                className={inputClass}
                 type="text"
                 value={form.datasetName}
                 onChange={setText('datasetName')}
@@ -278,7 +364,7 @@ export default function KydsModal({ onSkip, onSave, initialForm, editing = false
               hint="What it contains, what a single row represents, and what it is used for."
             >
               <textarea
-                className="kyds-input kyds-textarea"
+                className={textareaClass}
                 value={form.description}
                 onChange={setText('description')}
                 placeholder="e.g. Records of ration card holders in the district. One row per ration card..."
@@ -286,7 +372,7 @@ export default function KydsModal({ onSkip, onSave, initialForm, editing = false
             </Field>
             <Field label="Department / ministry">
               <input
-                className="kyds-input"
+                className={inputClass}
                 type="text"
                 value={form.department}
                 onChange={setText('department')}
@@ -295,7 +381,7 @@ export default function KydsModal({ onSkip, onSave, initialForm, editing = false
             </Field>
             <Field label="Date of characterisation">
               <input
-                className="kyds-input"
+                className={inputClass}
                 type="date"
                 value={form.characterisationDate}
                 onChange={setText('characterisationDate')}
@@ -303,16 +389,16 @@ export default function KydsModal({ onSkip, onSave, initialForm, editing = false
             </Field>
           </section>
 
-          <section className="kyds-section">
-            <div className="kyds-section-head">
-              <span className="kyds-section-num">1</span>
-              <h2>Modality</h2>
+          <section {...sectionProps(1)}>
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-teal text-xs font-bold text-white">1</span>
+              <h2 className="text-[16px] font-bold text-ink">Modality</h2>
             </div>
-            <p className="kyds-section-lead">Tick every category present in the dataset.</p>
+            <p className="text-[13px] leading-snug text-ink-soft">Tick every category present in the dataset.</p>
             <CheckboxGrid options={MODALITY_OPTIONS} selected={form.modality} onToggle={setList('modality')} />
             <Field label="Other — describe">
               <input
-                className="kyds-input"
+                className={inputClass}
                 type="text"
                 value={form.otherModalityDescribe}
                 onChange={setText('otherModalityDescribe')}
@@ -324,7 +410,7 @@ export default function KydsModal({ onSkip, onSave, initialForm, editing = false
               hint="Optional, for precision — e.g. Excel (.xlsx), GeoJSON, PDF."
             >
               <input
-                className="kyds-input"
+                className={inputClass}
                 type="text"
                 value={form.specificFormats}
                 onChange={setText('specificFormats')}
@@ -333,16 +419,16 @@ export default function KydsModal({ onSkip, onSave, initialForm, editing = false
             </Field>
           </section>
 
-          <section className="kyds-section">
-            <div className="kyds-section-head">
-              <span className="kyds-section-num">2</span>
-              <h2>Sensitivity and classification</h2>
+          <section {...sectionProps(2)}>
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-teal text-xs font-bold text-white">2</span>
+              <h2 className="text-[16px] font-bold text-ink">Sensitivity and classification</h2>
             </div>
 
-            <h3 className="kyds-subhead">A. Personal-data sensitivity (DPDP Act)</h3>
+            <h3 className="mt-1.5 text-[13px] font-bold text-ink">A. Personal-data sensitivity (DPDP Act)</h3>
             <ExclusiveCheckboxGrid options={DPDP_TIERS} selected={form.dpdpTiers} onChange={setExclusive('dpdpTiers')} />
 
-            <h3 className="kyds-subhead">Special-category sub-types</h3>
+            <h3 className="mt-1.5 text-[13px] font-bold text-ink">Special-category sub-types</h3>
             <CheckboxGrid
               options={SPECIAL_CATEGORY_SUBTYPES}
               selected={form.specialCategorySubtypes}
@@ -354,21 +440,21 @@ export default function KydsModal({ onSkip, onSave, initialForm, editing = false
               hint="Proportion of records / which fields."
             >
               <textarea
-                className="kyds-input kyds-textarea"
+                className={textareaClass}
                 value={form.degreePerTier}
                 onChange={setText('degreePerTier')}
                 placeholder="e.g. PII in 12% of rows — name, Aadhaar, phone"
               />
             </Field>
 
-            <h3 className="kyds-subhead">B. Information / dataset classification (IT Act)</h3>
-            <h4 className="kyds-group-label">Organisational classification</h4>
+            <h3 className="mt-1.5 text-[13px] font-bold text-ink">B. Information / dataset classification (IT Act)</h3>
+            <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-[#8E9398]">Organisational classification</h4>
             <ExclusiveCheckboxGrid
               options={ORG_CLASSIFICATION}
               selected={form.orgClassification}
               onChange={setExclusive('orgClassification')}
             />
-            <h4 className="kyds-group-label">National-interest classification (only if applicable)</h4>
+            <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-[#8E9398]">National-interest classification (only if applicable)</h4>
             <ExclusiveCheckboxGrid
               options={NATIONAL_CLASSIFICATION}
               selected={form.nationalClassification}
@@ -376,18 +462,16 @@ export default function KydsModal({ onSkip, onSave, initialForm, editing = false
             />
           </section>
 
-          <section className="kyds-section">
-            <div className="kyds-section-head">
-              <span className="kyds-section-num">3</span>
-              <h2>Access level</h2>
+          <section {...sectionProps(3)}>
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-teal text-xs font-bold text-white">3</span>
+              <h2 className="text-[16px] font-bold text-ink">Access level</h2>
             </div>
-            <p className="kyds-section-lead">Pick the most restrictive level that governs the dataset.</p>
+            <p className="text-[13px] leading-snug text-ink-soft">Pick the most restrictive level that governs the dataset.</p>
             <ExclusiveCheckboxGrid options={ACCESS_LEVELS} selected={form.accessLevel} onChange={setExclusive('accessLevel')} />
-            <Field
-              label="If a more open subset is published separately, what and at what aggregation"
-            >
+            <Field label="If a more open subset is published separately, what and at what aggregation">
               <input
-                className="kyds-input"
+                className={inputClass}
                 type="text"
                 value={form.moreOpenSubset}
                 onChange={setText('moreOpenSubset')}
@@ -396,7 +480,7 @@ export default function KydsModal({ onSkip, onSave, initialForm, editing = false
             </Field>
             <Field label="If Restricted: sharing partner">
               <input
-                className="kyds-input"
+                className={inputClass}
                 type="text"
                 value={form.restrictedSharingPartner}
                 onChange={setText('restrictedSharingPartner')}
@@ -405,7 +489,7 @@ export default function KydsModal({ onSkip, onSave, initialForm, editing = false
             </Field>
             <Field label="If Embargoed: release trigger and responsible authority">
               <input
-                className="kyds-input"
+                className={inputClass}
                 type="text"
                 value={form.embargoedRelease}
                 onChange={setText('embargoedRelease')}
@@ -414,22 +498,22 @@ export default function KydsModal({ onSkip, onSave, initialForm, editing = false
             </Field>
           </section>
 
-          <section className="kyds-section">
-            <div className="kyds-section-head">
-              <span className="kyds-section-num">4</span>
-              <h2>Granularity</h2>
+          <section {...sectionProps(4)}>
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-teal text-xs font-bold text-white">4</span>
+              <h2 className="text-[16px] font-bold text-ink">Granularity</h2>
             </div>
-            <p className="kyds-section-lead">Tick the finest level present.</p>
-            <h4 className="kyds-group-label">Individual level</h4>
+            <p className="text-[13px] leading-snug text-ink-soft">Tick the finest level present.</p>
+            <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-[#8E9398]">Individual level</h4>
             <ExclusiveCheckboxGrid options={GRANULARITY_INDIVIDUAL} selected={form.granularity} onChange={setExclusive('granularity')} />
-            <h4 className="kyds-group-label">Local level</h4>
+            <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-[#8E9398]">Local level</h4>
             <ExclusiveCheckboxGrid options={GRANULARITY_LOCAL} selected={form.granularity} onChange={setExclusive('granularity')} />
-            <h4 className="kyds-group-label">Regional level</h4>
+            <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-[#8E9398]">Regional level</h4>
             <ExclusiveCheckboxGrid options={GRANULARITY_REGIONAL} selected={form.granularity} onChange={setExclusive('granularity')} />
-            <h4 className="kyds-group-label">Statistical level</h4>
+            <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-[#8E9398]">Statistical level</h4>
             <ExclusiveCheckboxGrid options={GRANULARITY_STATISTICAL} selected={form.granularity} onChange={setExclusive('granularity')} />
 
-            <h3 className="kyds-subhead">Identifiability flags</h3>
+            <h3 className="mt-1.5 text-[13px] font-bold text-ink">Identifiability flags</h3>
             <Field label="Restricted to a sub-population?">
               <ExclusiveCheckboxes
                 options={YES_NO}
@@ -453,18 +537,18 @@ export default function KydsModal({ onSkip, onSave, initialForm, editing = false
             </Field>
           </section>
 
-          <section className="kyds-section">
-            <div className="kyds-section-head">
-              <span className="kyds-section-num">5</span>
-              <h2>Update frequency and retention</h2>
+          <section {...sectionProps(5)}>
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-teal text-xs font-bold text-white">5</span>
+              <h2 className="text-[16px] font-bold text-ink">Update frequency and retention</h2>
             </div>
-            <h4 className="kyds-group-label">Update frequency</h4>
+            <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-[#8E9398]">Update frequency</h4>
             <ExclusiveCheckboxGrid options={UPDATE_FREQUENCY} selected={form.updateFrequency} onChange={setExclusive('updateFrequency')} />
-            <h4 className="kyds-group-label">Retention</h4>
+            <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-[#8E9398]">Retention</h4>
             <ExclusiveCheckboxGrid options={RETENTION} selected={form.retention} onChange={setExclusive('retention')} />
             <Field label="Retention citation / purpose / event">
               <textarea
-                className="kyds-input kyds-textarea"
+                className={textareaClass}
                 value={form.retentionCitation}
                 onChange={setText('retentionCitation')}
                 placeholder="e.g. Rule X of Y Rules, 8 years from closure"
@@ -472,26 +556,26 @@ export default function KydsModal({ onSkip, onSave, initialForm, editing = false
             </Field>
           </section>
 
-          <section className="kyds-section">
-            <div className="kyds-section-head">
-              <span className="kyds-section-num">6</span>
-              <h2>Storage</h2>
+          <section {...sectionProps(6)}>
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-teal text-xs font-bold text-white">6</span>
+              <h2 className="text-[16px] font-bold text-ink">Storage</h2>
             </div>
-            <h4 className="kyds-group-label">Offline</h4>
+            <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-[#8E9398]">Offline</h4>
             <CheckboxGrid options={STORAGE_OFFLINE} selected={form.storage} onToggle={setList('storage')} />
-            <h4 className="kyds-group-label">Online</h4>
+            <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-[#8E9398]">Online</h4>
             <CheckboxGrid options={STORAGE_ONLINE} selected={form.storage} onToggle={setList('storage')} />
           </section>
 
-          <section className="kyds-section">
-            <div className="kyds-section-head">
-              <span className="kyds-section-num">7</span>
-              <h2>Notes and lawful basis</h2>
-              <span className="kyds-optional-pill">Optional</span>
+          <section {...sectionProps(7)}>
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-teal text-xs font-bold text-white">7</span>
+              <h2 className="text-[16px] font-bold text-ink">Notes and lawful basis</h2>
+              <span className="ml-auto rounded-full bg-sage px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-[#3d5230]">Optional</span>
             </div>
             <Field label="If Restricted access — lawful basis cited">
               <textarea
-                className="kyds-input kyds-textarea"
+                className={textareaClass}
                 value={form.restrictedLawfulBasis}
                 onChange={setText('restrictedLawfulBasis')}
                 placeholder="Cite the statute or exemption — an MOU alone is not a lawful basis"
@@ -499,7 +583,7 @@ export default function KydsModal({ onSkip, onSave, initialForm, editing = false
             </Field>
             <Field label="If Special-category — sectoral / constitutional basis cited">
               <textarea
-                className="kyds-input kyds-textarea"
+                className={textareaClass}
                 value={form.specialCategoryBasis}
                 onChange={setText('specialCategoryBasis')}
                 placeholder="e.g. Aadhaar Act 2016; Mental Healthcare Act 2017"
@@ -510,7 +594,7 @@ export default function KydsModal({ onSkip, onSave, initialForm, editing = false
             </Field>
             <Field label="Notes">
               <textarea
-                className="kyds-input kyds-textarea"
+                className={textareaClass}
                 value={form.notes}
                 onChange={setText('notes')}
                 placeholder="Any additional characterisation notes"
@@ -519,14 +603,14 @@ export default function KydsModal({ onSkip, onSave, initialForm, editing = false
           </section>
         </div>
 
-        <div className="kyds-footer">
-          {saveError && <span className="kyds-save-error">{saveError}</span>}
-          <button type="button" className="push-btn-secondary" onClick={onSkip}>
+        <div className="flex flex-shrink-0 items-center justify-end gap-2 border-t border-line bg-white px-5 py-3">
+          {saveError && <span className="mr-auto text-[12.5px] text-[#b3261e]">{saveError}</span>}
+          <button type="button" className="rounded-[7px] border border-line bg-cream px-4 py-2 text-[13px] font-semibold text-ink hover:bg-outer-bg" onClick={onSkip}>
             {editing ? 'Cancel' : 'Skip for now'}
           </button>
           <button
             type="button"
-            className="push-btn"
+            className="rounded-[7px] bg-teal px-5 py-2 text-[13px] font-bold text-white transition-colors hover:bg-teal-dark disabled:cursor-default disabled:opacity-50"
             disabled={saving}
             onClick={async () => {
               if (savingRef.current) return

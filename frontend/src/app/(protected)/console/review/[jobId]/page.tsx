@@ -1,0 +1,29 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useParams, useRouter } from 'next/navigation'
+import PdfReview from '../../../../../components/PdfReview'
+import { withAuthHeaders } from '../../../../../lib/auth'
+
+export default function PdfReviewPage() {
+  const { jobId } = useParams<{ jobId: string }>()
+  const router = useRouter()
+  const [filename, setFilename] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(`/api/pdf/jobs/${jobId}`, withAuthHeaders())
+      .then((res) => res.json())
+      .then((data) => { if (!cancelled) setFilename(data.filename) })
+      .catch(() => { /* PdfReview itself surfaces a load error */ })
+    return () => { cancelled = true }
+  }, [jobId])
+
+  return (
+    <PdfReview
+      jobId={jobId}
+      filename={filename}
+      onDone={() => router.push('/console')}
+    />
+  )
+}

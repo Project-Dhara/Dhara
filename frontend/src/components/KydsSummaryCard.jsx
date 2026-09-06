@@ -1,7 +1,10 @@
+'use client'
+
 import { useEffect, useState } from 'react'
 import KydsModal from './KydsModal'
-import { withAuthHeaders } from '../auth'
-import { notifyKydsChanged, onKydsChanged } from '../kydsEvents'
+import Button from './ui/Button'
+import { withAuthHeaders } from '../lib/auth'
+import { notifyKydsChanged, onKydsChanged } from '../lib/kydsEvents'
 
 // Shows the caller's own KYDS entry (if any), with an edit option — editing
 // re-saves to Postgres via the same /api/kyds endpoint used for the initial
@@ -65,9 +68,9 @@ export default function KydsSummaryCard({ variant = 'card' }) {
     if (variant !== 'corner') return null
     return (
       <>
-        <button type="button" className="console-secondary-btn" onClick={() => setCreatingKyds(true)}>
+        <Button variant="secondary" size="sm" onClick={() => setCreatingKyds(true)}>
           + Create KYDS
-        </button>
+        </Button>
         {creatingKyds && (
           <KydsModal
             onSkip={() => setCreatingKyds(false)}
@@ -80,14 +83,14 @@ export default function KydsSummaryCard({ variant = 'card' }) {
 
   return (
     <>
-      <div className="kyds-summary-card">
-        <div className="kyds-summary-text">
-          <span className="kyds-summary-label">Know Your Dataset</span>
-          <span className="kyds-summary-name">{kydsEntry.responses?.datasetName?.trim() || 'Untitled dataset'}</span>
+      <div className="flex items-center justify-between gap-4 rounded-lg border border-line bg-white px-4 py-3">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-xs uppercase tracking-wide text-[#8E9398]">Know Your Dataset</span>
+          <span className="text-[15px] font-semibold text-ink">{kydsEntry.responses?.datasetName?.trim() || 'Untitled dataset'}</span>
         </div>
-        <button type="button" className="console-secondary-btn" onClick={() => setEditingKyds(true)}>
+        <Button variant="secondary" size="sm" onClick={() => setEditingKyds(true)}>
           Edit
-        </button>
+        </Button>
       </div>
 
       {editingKyds && (

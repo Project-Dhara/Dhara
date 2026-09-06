@@ -1,3 +1,5 @@
+'use client'
+
 import { useState } from 'react'
 import { METADATA_COLUMNS } from './MetadataSheetGrid'
 import {
@@ -6,7 +8,7 @@ import {
   getMetadataRequiredFields,
   setMetadataRequiredFields as persistMetadataRequiredFields,
   STATISTICS_OPTIONS,
-} from '../settingsConfig'
+} from '../lib/settingsConfig'
 
 // Static status glyphs for the standards list — signal "this is a status",
 // not a control, since the row itself has no click behavior.
@@ -106,39 +108,44 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
     setPendingFile(null)
   }
 
+  const inputClass = 'h-[42px] rounded-md border border-[#ddd3c0] bg-white px-3 font-sans text-[15px] text-ink'
+  const fieldLabelClass = 'text-[13px] font-semibold text-ink'
+  const statusToneClass = { ok: 'text-[13px] text-[#3d7a3d]', warn: 'text-[13px] text-[#9a7413]', none: 'text-[13px] text-[#8E9398]' }
+
   return (
-    <div className="settings-screen">
-      <div className="settings-head">
-        <div className="settings-title">Settings</div>
-        
+    <div className="flex max-w-[720px] flex-col gap-[22px]">
+      <div className="flex flex-col gap-1.5">
+        <div className="font-display text-4xl font-medium text-ink">Settings</div>
       </div>
 
-      <div className="settings-card">
-        <div className="settings-card-title">LLM API key</div>
-        <div className="settings-grid-2">
-          <div className="settings-field">
-            <label className="settings-label">Provider</label>
-            <select className="settings-input" value={local.provider} onChange={setField('provider')}>
+      <div className="flex flex-col gap-[18px] rounded-lg border border-line bg-white p-6">
+        <div className="text-lg font-semibold text-ink">LLM API key</div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label className={fieldLabelClass}>Provider</label>
+            <select className={inputClass} value={local.provider} onChange={setField('provider')}>
               {PROVIDERS.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
-          <div className="settings-field">
-            <label className="settings-label">API key</label>
-            <input className="settings-input" type="password" value={local.apiKey} onChange={setField('apiKey')} placeholder="sk-..." />
+          <div className="flex flex-col gap-1.5">
+            <label className={fieldLabelClass}>API key</label>
+            <input className={inputClass} type="password" value={local.apiKey} onChange={setField('apiKey')} placeholder="sk-..." />
           </div>
         </div>
-        <div className="settings-key-row">
-          <button className="settings-save-btn" onClick={onSaveKey}>Save key</button>
-          <span className={statusClass}>{status}</span>
+        <div className="flex items-center gap-3.5">
+          <button className="flex h-10 items-center rounded-md bg-teal px-[18px] text-[15px] font-semibold text-white transition-colors hover:bg-teal-dark" onClick={onSaveKey}>Save key</button>
+          <span className={statusClass === 'settings-key-status-ok' ? statusToneClass.ok : statusClass === 'settings-key-status-warn' ? statusToneClass.warn : statusToneClass.none}>{status}</span>
         </div>
       </div>
 
-      <div className="settings-card">
-        <div className="settings-tab-row">
+      <div className="flex flex-col gap-[18px] rounded-lg border border-line bg-white p-6">
+        <div className="flex flex-wrap gap-2">
           {CONFIG_TABS.map((t) => (
             <button
               key={t.key}
-              className={`settings-tab-pill ${activeTab === t.key ? 'settings-tab-pill-active' : ''}`}
+              className={`h-9 rounded-full border px-[18px] text-sm font-semibold transition-colors ${
+                activeTab === t.key ? 'border-teal bg-teal text-white' : 'border-line bg-cream text-ink-soft hover:bg-sage hover:text-ink'
+              }`}
               onClick={() => setActiveTab(t.key)}
             >
               {t.label}
@@ -148,32 +155,32 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
 
         {activeTab === 'dataset' && (
           <>
-            <div className="settings-sub-note">Controls how new dataset IDs are generated.</div>
-            <div className="settings-grid-2">
-              <div className="settings-field">
-                <label className="settings-label">Prefix</label>
+            <div className="-mt-2.5 text-sm text-ink-soft">Controls how new dataset IDs are generated.</div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className={fieldLabelClass}>Prefix</label>
                 <input
-                  className="settings-input"
+                  className={inputClass}
                   type="text"
                   value={datasetIdConfig.prefix}
                   onChange={setDatasetIdField('prefix')}
                   placeholder="DDI_DES_DEL"
                 />
               </div>
-              <div className="settings-field">
-                <label className="settings-label">Separator</label>
+              <div className="flex flex-col gap-1.5">
+                <label className={fieldLabelClass}>Separator</label>
                 <input
-                  className="settings-input"
+                  className={inputClass}
                   type="text"
                   value={datasetIdConfig.separator}
                   onChange={setDatasetIdField('separator')}
                   placeholder="_"
                 />
               </div>
-              <div className="settings-field">
-                <label className="settings-label">Statistics</label>
+              <div className="flex flex-col gap-1.5">
+                <label className={fieldLabelClass}>Statistics</label>
                 <select
-                  className="settings-input"
+                  className={inputClass}
                   value={datasetIdConfig.statistics}
                   onChange={setDatasetIdField('statistics')}
                 >
@@ -183,9 +190,9 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
                 </select>
               </div>
             </div>
-            <div className="settings-key-row">
-              <button className="settings-save-btn" disabled={!datasetIdDirty} onClick={saveDatasetIdConfig}>Save configuration</button>
-              <span className={datasetIdDirty ? 'settings-key-status-warn' : 'settings-key-status-ok'}>
+            <div className="flex items-center gap-3.5">
+              <button className="flex h-10 items-center rounded-md bg-teal px-[18px] text-[15px] font-semibold text-white transition-colors hover:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]" disabled={!datasetIdDirty} onClick={saveDatasetIdConfig}>Save configuration</button>
+              <span className={datasetIdDirty ? statusToneClass.warn : statusToneClass.ok}>
                 {datasetIdDirty ? 'Unsaved changes' : 'Configuration saved'}
               </span>
             </div>
@@ -194,12 +201,12 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
 
         {activeTab === 'metadata' && (
           <>
-            <div className="settings-sub-note">Controls which metadata fields are required when a dataset is submitted.</div>
-            <div className="settings-standards-list">
+            <div className="-mt-2.5 text-sm text-ink-soft">Controls which metadata fields are required when a dataset is submitted.</div>
+            <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-cream">
               {Object.keys(extraRequiredFields).length === 0 && (
-                <div className="settings-standard-item">
-                  <div className="settings-standard-text">
-                    <div className="settings-standard-desc">No required fields. Add fields from the metadata sheet below.</div>
+                <div className="flex cursor-default select-text items-start gap-3 border-b border-line bg-white px-4 py-3.5 last:border-b-0">
+                  <div className="flex flex-1 flex-col gap-0.5">
+                    <div className="text-[13px] text-ink-soft">No required fields. Add fields from the metadata sheet below.</div>
                   </div>
                 </div>
               )}
@@ -207,11 +214,11 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
                 const field = SETTINGS_METADATA_FIELDS.find((c) => c.key === key)
                 if (!field) return null
                 return (
-                  <div className="settings-standard-item" key={key}>
-                    <CheckIcon className="settings-standard-check" />
-                    <div className="settings-standard-text">
-                      <div className="settings-standard-name">{field.title}</div>
-                      <div className="settings-standard-desc">{field.desc}</div>
+                  <div className="flex cursor-default select-text items-start gap-3 border-b border-line bg-white px-4 py-3.5 last:border-b-0" key={key}>
+                    <CheckIcon className="mt-0.5 h-4 w-4 flex-none text-[#3d7a3d]" />
+                    <div className="flex flex-1 flex-col gap-0.5">
+                      <div className="text-[15px] font-semibold text-ink">{field.title}</div>
+                      <div className="text-[13px] text-ink-soft">{field.desc}</div>
                     </div>
                     <input
                       type="checkbox"
@@ -220,7 +227,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
                     />
                     <button
                       type="button"
-                      className="settings-field-remove"
+                      className="flex-none rounded-[5px] border border-line px-2.5 py-1 text-xs font-semibold text-ink-soft transition-colors hover:border-[#c45c4a] hover:text-[#c45c4a]"
                       onClick={() => setExtraRequiredFields((prev) => {
                         const next = { ...prev }
                         delete next[key]
@@ -237,10 +244,10 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
               const available = SETTINGS_METADATA_FIELDS.filter((c) => extraRequiredFields[c.key] === undefined)
               return (
                 <>
-                  <div className="settings-upload-row">
+                  <div className="flex items-center gap-3">
                     <button
                       type="button"
-                      className="settings-upload-btn"
+                      className="inline-flex h-10 items-center rounded-md border border-teal bg-white px-4 text-sm font-semibold text-teal transition-colors hover:bg-sage disabled:cursor-default disabled:opacity-45"
                       disabled={!available.length}
                       onClick={() => setPickingFields((open) => !open)}
                     >
@@ -248,16 +255,16 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
                     </button>
                   </div>
                   {pickingFields && available.length > 0 && (
-                    <div className="settings-field-picker">
-                      <div className="settings-field-picker-note">
+                    <div className="flex flex-col gap-2.5 rounded-lg border border-line bg-white px-4 py-3">
+                      <div className="text-[13px] text-ink-soft">
                         Fields from the metadata sheet. Choose one to require it on submission.
                       </div>
-                      <div className="settings-field-picker-list">
+                      <div className="flex flex-wrap gap-2">
                         {available.map((c) => (
                           <button
                             type="button"
                             key={c.key}
-                            className="settings-field-chip"
+                            className="h-8 rounded-full border border-line bg-cream px-3 text-[13px] font-semibold text-ink transition-colors hover:border-teal hover:bg-sage"
                             onClick={() => {
                               setExtraRequiredFields((prev) => ({ ...prev, [c.key]: true }))
                               if (available.length <= 1) setPickingFields(false)
@@ -272,9 +279,9 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
                 </>
               )
             })()}
-            <div className="settings-key-row">
-              <button className="settings-save-btn" disabled={!requiredFieldsDirty} onClick={saveMetadataRequiredFields}>Save configuration</button>
-              <span className={requiredFieldsDirty ? 'settings-key-status-warn' : 'settings-key-status-ok'}>
+            <div className="flex items-center gap-3.5">
+              <button className="flex h-10 items-center rounded-md bg-teal px-[18px] text-[15px] font-semibold text-white transition-colors hover:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]" disabled={!requiredFieldsDirty} onClick={saveMetadataRequiredFields}>Save configuration</button>
+              <span className={requiredFieldsDirty ? statusToneClass.warn : statusToneClass.ok}>
                 {requiredFieldsDirty ? 'Unsaved changes' : 'Configuration saved'}
               </span>
             </div>
@@ -283,42 +290,42 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
 
         {activeTab === 'classification' && (
           <>
-            <div className="settings-sub-note">Current supported classification codes. Add your own if you need one that isn't listed.</div>
+            <div className="-mt-2.5 text-sm text-ink-soft">Current supported classification codes. Add your own if you need one that isn't listed.</div>
 
-            <div className="settings-standards-list">
+            <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-cream">
               {STANDARDS.map((s) => (
-                <div key={s.key} className="settings-standard-item">
-                  <CheckIcon className="settings-standard-check" />
-                  <div className="settings-standard-text">
-                    <div className="settings-standard-name">{s.name}</div>
-                    <div className="settings-standard-desc">{s.desc}</div>
+                <div key={s.key} className="flex cursor-default select-text items-start gap-3 border-b border-line bg-white px-4 py-3.5 last:border-b-0">
+                  <CheckIcon className="mt-0.5 h-4 w-4 flex-none text-[#3d7a3d]" />
+                  <div className="flex flex-1 flex-col gap-0.5">
+                    <div className="text-[15px] font-semibold text-ink">{s.name}</div>
+                    <div className="text-[13px] text-ink-soft">{s.desc}</div>
                   </div>
                 </div>
               ))}
 
               {customStandards.map((s, i) => (
-                <div key={`${s.name}-${i}`} className="settings-standard-item">
-                  <CheckIcon className="settings-standard-check" />
-                  <div className="settings-standard-text">
-                    <div className="settings-standard-name">{s.name}</div>
-                    <div className="settings-standard-desc">Custom standard, uploaded by you.</div>
+                <div key={`${s.name}-${i}`} className="flex cursor-default select-text items-start gap-3 border-b border-line bg-white px-4 py-3.5 last:border-b-0">
+                  <CheckIcon className="mt-0.5 h-4 w-4 flex-none text-[#3d7a3d]" />
+                  <div className="flex flex-1 flex-col gap-0.5">
+                    <div className="text-[15px] font-semibold text-ink">{s.name}</div>
+                    <div className="text-[13px] text-ink-soft">Custom standard, uploaded by you.</div>
                   </div>
                 </div>
               ))}
 
               {pendingFile && (
-                <div className="settings-standard-item settings-standard-item-pending">
-                  <ClockIcon className="settings-standard-check" />
-                  <div className="settings-standard-text">
-                    <div className="settings-standard-name">{pendingFile.name}</div>
-                    <div className="settings-standard-desc">Not yet saved — click "Save configuration" to add it below.</div>
+                <div className="flex cursor-default select-text items-start gap-3 border-b border-line bg-[#fffaf1] px-4 py-3.5 last:border-b-0">
+                  <ClockIcon className="mt-0.5 h-4 w-4 flex-none text-[#9a7413]" />
+                  <div className="flex flex-1 flex-col gap-0.5">
+                    <div className="text-[15px] font-semibold text-ink">{pendingFile.name}</div>
+                    <div className="text-[13px] text-ink-soft">Not yet saved — click "Save configuration" to add it below.</div>
                   </div>
                 </div>
               )}
             </div>
 
-            <div className="settings-upload-row">
-              <label className="settings-upload-btn">
+            <div className="flex items-center gap-3">
+              <label className="inline-flex h-10 cursor-pointer items-center rounded-md border border-teal bg-white px-4 text-sm font-semibold text-teal transition-colors hover:bg-sage">
                 + Add custom standard
                 <input
                   type="file"
@@ -329,11 +336,11 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
               </label>
             </div>
 
-            <div className="settings-key-row">
-              <button className="settings-save-btn" disabled={!pendingFile} onClick={saveCustomStandard}>
+            <div className="flex items-center gap-3.5">
+              <button className="flex h-10 items-center rounded-md bg-teal px-[18px] text-[15px] font-semibold text-white transition-colors hover:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]" disabled={!pendingFile} onClick={saveCustomStandard}>
                 Save configuration
               </button>
-              <span className={pendingFile ? 'settings-key-status-warn' : 'settings-key-status-ok'}>
+              <span className={pendingFile ? statusToneClass.warn : statusToneClass.ok}>
                 {pendingFile ? 'Unsaved changes' : 'All standards saved'}
               </span>
             </div>
@@ -341,26 +348,26 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
         )}
       </div>
 
-      <div className="settings-card">
-        <div className="settings-card-title">User information</div>
-        <div className="settings-grid-2">
-          <div className="settings-field">
-            <label className="settings-label">Name</label>
-            <input className="settings-input" type="text" value={user.name} onChange={setUserField('name')} />
+      <div className="flex flex-col gap-[18px] rounded-lg border border-line bg-white p-6">
+        <div className="text-lg font-semibold text-ink">User information</div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label className={fieldLabelClass}>Name</label>
+            <input className={inputClass} type="text" value={user.name} onChange={setUserField('name')} />
           </div>
-          <div className="settings-field">
-            <label className="settings-label">Role</label>
-            <select className="settings-input" value={user.role} onChange={setUserField('role')}>
+          <div className="flex flex-col gap-1.5">
+            <label className={fieldLabelClass}>Role</label>
+            <select className={inputClass} value={user.role} onChange={setUserField('role')}>
               {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
-          <div className="settings-field">
-            <label className="settings-label">Email</label>
-            <input className="settings-input" type="email" value={user.email} onChange={setUserField('email')} />
+          <div className="flex flex-col gap-1.5">
+            <label className={fieldLabelClass}>Email</label>
+            <input className={inputClass} type="email" value={user.email} onChange={setUserField('email')} />
           </div>
-          <div className="settings-field">
-            <label className="settings-label">Department</label>
-            <input className="settings-input" type="text" value={user.dept} onChange={setUserField('dept')} />
+          <div className="flex flex-col gap-1.5">
+            <label className={fieldLabelClass}>Department</label>
+            <input className={inputClass} type="text" value={user.dept} onChange={setUserField('dept')} />
           </div>
         </div>
       </div>

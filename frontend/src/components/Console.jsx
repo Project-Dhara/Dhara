@@ -1,12 +1,19 @@
+'use client'
+
 import { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import KydsSummaryCard from './KydsSummaryCard'
 import TableViewer from './TableViewer'
 import BatchUpload from './BatchUpload'
-import PdfUpload from './PdfUpload'
 import BatchReview from './BatchReview'
 import ReconcileIds from './ReconcileIds'
 import Classify from './Classify'
 import Publish from './Publish'
+import Button from './ui/Button'
+import Badge from './ui/Badge'
+import ErrorBanner from './ui/ErrorBanner'
+import { withAuthHeaders } from '../lib/auth'
+import { withLlmKeyHeaders } from '../lib/llmKey'
 
 // Short government table code for a tab button — e.g. "Table : D-12 & D-13"
 // → "D12, D13" — pulled from the source's own table-label row (`table.title`,
@@ -43,24 +50,24 @@ function GroupNameEditor({ name, onSave }) {
 
   if (editing) {
     return (
-      <span className="group-name-edit-row">
+      <span className="flex min-w-0 flex-1 items-center gap-1.5">
         <input
-          className="group-name-edit-input"
+          className="min-w-0 flex-1 rounded border border-teal px-2 py-1 text-sm"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={handleKeyDown}
           autoFocus
           spellCheck={false}
         />
-        <button className="id-edit-save" onClick={saveEdit} title="Save">✓</button>
-        <button className="id-edit-cancel" onClick={cancelEdit} title="Cancel">✕</button>
+        <button className="rounded bg-teal px-1.5 py-1 text-xs text-white hover:bg-teal-dark" onClick={saveEdit} title="Save">✓</button>
+        <button className="rounded border border-line px-1.5 py-1 text-xs text-ink-soft hover:bg-outer-bg" onClick={cancelEdit} title="Cancel">✕</button>
       </span>
     )
   }
   return (
-    <span className="group-name-edit-row">
-      <span className="console-group-card-file">{name}</span>
-      <button className="group-name-edit-btn" onClick={startEdit} title="Edit group name">✎</button>
+    <span className="flex min-w-0 flex-1 items-center gap-1.5">
+      <span className="text-sm font-semibold text-ink">{name}</span>
+      <button className="text-xs text-ink-soft hover:text-teal" onClick={startEdit} title="Edit group name">✎</button>
     </span>
   )
 }
@@ -97,6 +104,17 @@ function buildGroupName(base) {
   return cleaned.replace(/\S+/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase())
 }
 
+// Generic centered-overlay modal shell -- replaces .push-overlay, used by
+// AddGroupModal and the manual/automatic-grouping confirm dialogs.
+function ModalOverlay({ children, className = '' }) {
+  return (
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-[rgba(11,30,45,0.5)] p-4" role="dialog" aria-modal="true">
+      <div className={`flex max-h-[85vh] w-full flex-col gap-3.5 overflow-hidden rounded-xl bg-surface p-5 shadow-dhara ${className}`}>
+        {children}
+      </div>
+    </div>
+  )
+}
 
 // Lets the user hand-pick a set of tables (by title) and bundle them into a
 // new group, for cases the automatic title-based grouping didn't handle the
@@ -116,50 +134,56 @@ function AddGroupModal({ tables, onCreate, onClose }) {
   const canCreate = name.trim() && selected.size > 0
 
   return (
-    <div className="push-overlay" role="dialog" aria-modal="true">
-      <div className="add-group-modal">
-        <div className="add-group-modal-head">
-          <div className="add-group-modal-title">Add group manually</div>
-          <button className="push-close" onClick={onClose} aria-label="Close">×</button>
-        </div>
-
-        <label className="add-group-name-field">
-          <span>Group name</span>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Infant Mortality By Age"
-            autoFocus
-          />
-        </label>
-
-        <div className="add-group-table-list">
-          {tables.map((t) => (
-            <label key={t.id} className="add-group-table-row">
-              <input
-                type="checkbox"
-                checked={selected.has(t.id)}
-                onChange={() => toggle(t.id)}
-              />
-              <span className="add-group-table-title">{t.title || 'Untitled table'}</span>
-              <span className="add-group-table-id">{t.id}</span>
-            </label>
-          ))}
-        </div>
-
-        <div className="add-group-modal-actions">
-          <span className="console-group-hint">{selected.size} table{selected.size !== 1 ? 's' : ''} selected</span>
-          <button className="console-secondary-btn" onClick={onClose}>Cancel</button>
-          <button
-            className="console-primary-btn"
-            disabled={!canCreate}
-            onClick={() => onCreate(name.trim(), [...selected])}
-          >
-            Create group
-          </button>
-        </div>
+    <ModalOverlay className="max-w-[560px]">
+      <div className="flex items-center justify-between">
+        <div className="text-[16px] font-bold text-ink">Add group manually</div>
+        <button className="rounded p-1 text-lg text-ink-soft hover:bg-cream hover:text-ink" onClick={onClose} aria-label="Close">×</button>
       </div>
-    </div>
+
+      <label className="flex flex-col gap-1.5 text-[13px] text-ink-soft">
+        <span>Group name</span>
+        <input
+          className="rounded-md border border-line px-2.5 py-2 text-sm text-ink"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Infant Mortality By Age"
+          autoFocus
+        />
+      </label>
+
+      <div className="flex max-h-[40vh] flex-col overflow-y-auto rounded-lg border border-line">
+        {tables.map((t) => (
+          <label key={t.id} className="flex cursor-pointer items-center gap-2.5 border-b border-cream px-3 py-2 text-[13px] last:border-b-0 hover:bg-cream">
+            <input
+              type="checkbox"
+              checked={selected.has(t.id)}
+              onChange={() => toggle(t.id)}
+            />
+            <span className="flex-1 text-ink">{t.title || 'Untitled table'}</span>
+            <span className="whitespace-nowrap text-[11.5px] text-ink-soft">{t.id}</span>
+          </label>
+        ))}
+      </div>
+
+      <div className="flex items-center justify-end gap-2.5">
+        <span className="mr-auto text-[13px] text-ink-soft">{selected.size} table{selected.size !== 1 ? 's' : ''} selected</span>
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button variant="primary" disabled={!canCreate} onClick={() => onCreate(name.trim(), [...selected])}>Create group</Button>
+      </div>
+    </ModalOverlay>
+  )
+}
+
+function ConfirmDialog({ title, body, onCancel, onContinue }) {
+  return (
+    <ModalOverlay className="max-w-[440px]">
+      <div className="text-[16px] font-bold text-ink">{title}</div>
+      <p className="text-[13px] text-ink-soft">{body}</p>
+      <div className="flex items-center justify-end gap-2.5">
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button variant="primary" onClick={onContinue}>Continue</Button>
+      </div>
+    </ModalOverlay>
   )
 }
 
@@ -186,20 +210,43 @@ const STAGE_DEFS = [
   },
 ]
 
+// Three-line header per step: name (orientation), a purpose sentence that's
+// now filled in for every step (previously blank for steps 2/3/4), and a
+// forward-looking cue -- "you are here, this is why, this is what happens
+// next," per the redesign brief. Terminal step (6) has no "next" line.
 function stepInfoFor(step) {
   return [
-    { title: 'Dataset inventory', sub: 'Bring datasets into DHARA.' },
+    null,
     {
       title: 'Select dataset and metadata files',
-      sub: 'Upload the workbooks and their metadata tag files for this release.',
+      purpose: 'Upload the workbooks and their metadata tag files for this release, or a PDF report instead.',
+      next: 'Next: preview the extracted tables.',
     },
     {
-      title: 'Preview'
+      title: 'Preview',
+      purpose: 'Confirm the extracted tables look right, and resolve any Source Table ID / Title mismatches.',
+      next: 'Next: group tables into datasets.',
     },
-    { title: 'Grouping' },
-    { title: 'Metadata' },
-    { title: 'Classification and harmonisation', sub: 'Map columns to standard concepts and code lists.' },
-    { title: 'Publish this release', sub: 'Register the API and MCP endpoints for this release.' },
+    {
+      title: 'Grouping',
+      purpose: 'Confirm which tables belong together — every table needs a group before you can add metadata.',
+      next: 'Next: add metadata for each group.',
+    },
+    {
+      title: 'Metadata',
+      purpose: 'Add catalogue metadata — title, category, coverage — for each group.',
+      next: 'Next: map columns to standard concepts and code lists.',
+    },
+    {
+      title: 'Classification and harmonisation',
+      purpose: 'Map columns to standard concepts and code lists.',
+      next: 'Next: publish this release.',
+    },
+    {
+      title: 'Publish this release',
+      purpose: 'Register the API and MCP endpoints for this release.',
+      next: null,
+    },
   ][step]
 }
 
@@ -231,15 +278,162 @@ function loadPersisted() {
   }
 }
 
+// Left stage rail — permanent sidebar with expandable substeps, matching the
+// original console layout (horizontal top stepper stacked stage + Files/Preview/
+// Grouping under it and ate vertical space without helping later stages).
+function StageSidebar({ stageIdx, step, maxStepReached, expandedStage, setExpandedStage, goToStep }) {
+  return (
+    <aside className="flex w-[218px] flex-none flex-col gap-1 rounded-[10px] border border-line bg-white py-3">
+      <div className="px-4 pb-2.5 text-[11px] uppercase tracking-[0.07em] text-[#8E9398]">Console stages</div>
+      {STAGE_DEFS.map((s, i) => {
+        const expanded = i === expandedStage
+        const active = i === stageIdx
+        const done = i < stageIdx
+        return (
+          <div key={s.name} className="flex flex-col">
+            <button
+              type="button"
+              className="flex cursor-pointer items-start gap-2.5 px-4 py-2.5 text-left"
+              onClick={() => setExpandedStage(i)}
+            >
+              <span
+                className={`flex h-5 w-5 flex-none items-center justify-center rounded-full text-[11px] font-semibold ${
+                  active ? 'bg-teal text-white' : done ? 'bg-sage text-[#3d7a3d]' : 'bg-cream text-[#8E9398]'
+                }`}
+              >
+                {done ? '✓' : i + 1}
+              </span>
+              <span className="min-w-0">
+                <span className={`block text-[13.5px] font-semibold ${active ? 'text-ink' : 'text-ink-soft'}`}>{s.name}</span>
+                <span className="block text-[11.5px] text-[#8E9398]">{s.sub}</span>
+              </span>
+            </button>
+            {expanded && (
+              <div className="flex flex-col gap-0.5 py-0.5 pl-[46px] pr-4 pb-2">
+                {s.subs.map((sub) => {
+                  const subActive = sub.step === step
+                  const subDone = sub.step < step
+                  const reachable = sub.step <= maxStepReached
+                  return (
+                    <button
+                      key={sub.step}
+                      type="button"
+                      disabled={!reachable}
+                      onClick={() => reachable && goToStep(sub.step)}
+                      className={`flex items-center gap-2 py-[5px] text-left ${reachable ? 'cursor-pointer' : 'cursor-default'}`}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 flex-none rounded-full ${
+                          subActive ? 'bg-teal' : subDone ? 'bg-sage' : 'bg-line'
+                        }`}
+                      />
+                      <span
+                        className={`text-[12.5px] ${
+                          subActive ? 'font-semibold text-ink' : !reachable ? 'text-[#C7CBCE]' : subDone ? 'text-ink-soft' : 'text-[#8E9398]'
+                        }`}
+                      >
+                        {sub.label}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </aside>
+  )
+}
+
+// Step 1 file-type choice. XLSX reveals the workbook uploader in the same
+// content panel; PDF opens the file picker immediately and starts upload —
+// no second "drop a PDF" screen that restates the same choice.
+function UploadChoice({ choice, onChoose, onPdfFile, pdfUploading, pdfError, onClearPdfError }) {
+  const pdfInputRef = useRef(null)
+  const [pdfDragging, setPdfDragging] = useState(false)
+
+  const takePdf = (file) => {
+    if (!file || !/\.pdf$/i.test(file.name) || pdfUploading) return
+    onPdfFile(file)
+  }
+
+  if (choice === 'xlsx') {
+    return (
+      <button type="button" className="self-start text-[13px] font-semibold text-teal hover:text-teal-dark" onClick={() => onChoose(null)}>
+        ← Choose a different file type
+      </button>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <input
+        ref={pdfInputRef}
+        type="file"
+        accept=".pdf"
+        className="hidden"
+        disabled={pdfUploading}
+        onChange={(e) => {
+          takePdf(e.target.files?.[0])
+          e.target.value = ''
+        }}
+      />
+      <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-2">
+        <button
+          type="button"
+          onClick={() => onChoose('xlsx')}
+          disabled={pdfUploading}
+          className="flex min-h-[112px] w-full flex-col items-start gap-2 rounded-xl border border-line bg-cream/40 p-5 text-left transition-colors hover:border-teal hover:bg-cream disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <div className="text-[16px] font-bold text-ink">Upload data workbooks (.xlsx)</div>
+          <div className="text-[13px] leading-snug text-ink-soft">Matched against metadata tag files and grouped automatically.</div>
+        </button>
+        <button
+          type="button"
+          disabled={pdfUploading}
+          onClick={() => !pdfUploading && pdfInputRef.current?.click()}
+          onDragOver={(e) => { e.preventDefault(); setPdfDragging(true) }}
+          onDragLeave={() => setPdfDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault()
+            setPdfDragging(false)
+            takePdf(e.dataTransfer.files?.[0])
+          }}
+          className={`flex min-h-[112px] w-full flex-col items-start gap-2 rounded-xl border border-dashed bg-cream/40 p-5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+            pdfDragging ? 'border-teal bg-sage' : 'border-line hover:border-teal hover:bg-cream'
+          }`}
+        >
+          <div className="text-[16px] font-bold text-ink">{pdfUploading ? 'Uploading PDF…' : 'Upload PDF reports'}</div>
+          <div className="text-[13px] leading-snug text-ink-soft">
+            {pdfUploading ? 'Starting extraction…' : 'Click or drop a PDF — tables are extracted and reviewed for accuracy.'}
+          </div>
+        </button>
+      </div>
+      {pdfError && (
+        <div className="flex flex-col gap-2">
+          <ErrorBanner>{pdfError}</ErrorBanner>
+          <Button variant="secondary" size="sm" className="self-start" onClick={onClearPdfError}>Try again</Button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatalogue, onUploadAnother }) {
   const persisted = loadPersisted()
 
   const [step, setStep] = useState(persisted?.step ?? 1)
-  const mode = 'batch'
+  const [uploadChoice, setUploadChoice] = useState(null)
+  const [pdfUploading, setPdfUploading] = useState(false)
+  const [pdfError, setPdfError] = useState('')
+  const router = useRouter()
 
-  const [showAddGroup, setShowAddGroup] = useState(false)
-  const [showManualGroupingConfirm, setShowManualGroupingConfirm] = useState(false)
-  const [showAutoGroupingConfirm, setShowAutoGroupingConfirm] = useState(false)
+  // Consolidates the three previously-independent dialog booleans
+  // (showAddGroup / showManualGroupingConfirm / showAutoGroupingConfirm)
+  // into one piece of state, so at most one dialog can ever be open at a
+  // time by construction. Values: null | 'addGroup' | 'manualConfirm' | 'autoConfirm'.
+  const [activeDialog, setActiveDialog] = useState(null)
   // Lets the user delete a group or create a new group for unmatched tables
   // from the automatically-grouped view, without wiping the existing
   // groups the way "Group manually" does.
@@ -300,6 +494,13 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   const [maxStepReached, setMaxStepReached] = useState(persisted?.maxStepReached ?? 0)
   useEffect(() => {
     setMaxStepReached((m) => Math.max(m, step))
+  }, [step])
+
+  // Peek at another stage's substeps without navigating — expand follows the
+  // active stage, but a click can temporarily open a different one.
+  const [expandedStage, setExpandedStage] = useState(() => stageIndexForStep(persisted?.step ?? 1))
+  useEffect(() => {
+    setExpandedStage(stageIndexForStep(step))
   }, [step])
 
   useEffect(() => {
@@ -419,7 +620,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
       })
       return { ...prev, groups, unmatched_tables: unmatchedKeep }
     })
-    setShowAddGroup(false)
+    setActiveDialog(null)
   }
 
   // Discards whatever grouping (automatic or partially-manual) currently
@@ -434,7 +635,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
       }))
       setManualGrouping(true)
     }
-    setShowAddGroup(true)
+    setActiveDialog('addGroup')
   }
 
   // First switch into manual grouping wipes the current grouping, so confirm
@@ -445,7 +646,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
     if (manualGrouping) {
       startManualGrouping()
     } else {
-      setShowManualGroupingConfirm(true)
+      setActiveDialog('manualConfirm')
     }
   }
 
@@ -453,7 +654,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   // switching into manual grouping erases the automatic ones -- confirm
   // with the user before doing it.
   const requestAutomaticGrouping = () => {
-    setShowAutoGroupingConfirm(true)
+    setActiveDialog('autoConfirm')
   }
 
   // Every table must end up in a named group before moving on -- block the
@@ -581,20 +782,40 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   const back = () => setStep((s) => Math.max(1, s - 1))
 
   const stageIdx = stageIndexForStep(step)
-  const info = stepInfoFor(step)
 
-  // Which stage's substeps are expanded in the sidebar — defaults to
-  // whichever stage the user is currently in, but clicking another stage's
-  // header expands that one (and collapses the rest) without navigating,
-  // so the user can peek at a stage's substeps before jumping into one.
-  const [expandedStage, setExpandedStage] = useState(stageIdx)
-  useEffect(() => {
-    setExpandedStage(stageIdx)
-  }, [stageIdx])
+  // Once a file type is chosen, drop the generic "xlsx or PDF" copy so the
+  // header doesn't restate what the upload widget already says.
+  const info = (() => {
+    const base = stepInfoFor(step)
+    if (step !== 1 || uploadChoice !== 'xlsx') return base
+    return {
+      title: 'Select dataset and metadata files',
+      purpose: 'Upload the workbooks and their metadata tag files for this release.',
+      next: base.next,
+    }
+  })()
+
+  const handlePdfFile = async (file) => {
+    setPdfError('')
+    setPdfUploading(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/pdf/upload', withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: fd })))
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Upload failed' }))
+        throw new Error(err.detail || 'Upload failed')
+      }
+      const { job_id } = await res.json()
+      router.push(`/console/processing/${job_id}`)
+    } catch (e) {
+      setPdfError(e.message)
+      setPdfUploading(false)
+    }
+  }
 
   // A substep can only be jumped to once the user has actually reached it
-  // before — same rule as the old goStage, just applied per substep now
-  // that each one is individually clickable.
+  // before.
   const goToStep = (targetStep) => {
     if (targetStep <= maxStepReached) setStep(targetStep)
   }
@@ -646,84 +867,63 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   const mismatchedPreviewTables = visiblePreviewTables.filter((t) => t.id_title_mismatch)
   const unsavedMismatched = mismatchedPreviewTables.filter((t) => !savedIds.has(t._uid))
 
-  return (
-    <div className="console">
-      <aside className="console-stages">
-        <div className="console-stages-label">Console stages</div>
-        {STAGE_DEFS.map((s, i) => {
-          const expanded = i === expandedStage
-          return (
-            <div key={s.name} className="console-stage-block">
-              <div
-                className={`console-stage${i === stageIdx ? ' console-stage-active' : ''}${i < stageIdx ? ' console-stage-done' : ''}${expanded ? ' console-stage-expanded' : ''}`}
-                onClick={() => setExpandedStage(i)}
-              >
-                <div className="console-stage-mark">{i < stageIdx ? '✓' : i + 1}</div>
-                <div className="console-stage-text">
-                  <div className="console-stage-name">{s.name}</div>
-                  <div className="console-stage-sub">{s.sub}</div>
-                </div>
-              </div>
-              {expanded && (
-                <div className="console-substeps">
-                  {s.subs.map((sub) => {
-                    const active = sub.step === step
-                    const done = sub.step < step
-                    const reachable = sub.step <= maxStepReached
-                    return (
-                      <div
-                        key={sub.step}
-                        className={`console-substep${active ? ' console-substep-active' : ''}${done ? ' console-substep-done' : ''}${!reachable ? ' console-substep-disabled' : ''}`}
-                        onClick={() => reachable && goToStep(sub.step)}
-                      >
-                        <span className="console-substep-dot" />
-                        <span className="console-substep-label">{sub.label}</span>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </aside>
+  // Grouping step: one segmented "mode" derived from existing state, so the
+  // three old separate entry points (Edit / switch-to-manual / add-group)
+  // collapse into one toggle + a single contextual secondary action.
+  const groupingMode = manualGrouping ? 'manual' : 'automatic'
+  const dragEnabled = manualGrouping || editingGroups
 
-      <div className="console-main">
-        <div className="console-header-block">
+  return (
+    <div className="flex items-start gap-6">
+      <StageSidebar
+        stageIdx={stageIdx}
+        step={step}
+        maxStepReached={maxStepReached}
+        expandedStage={expandedStage}
+        setExpandedStage={setExpandedStage}
+        goToStep={goToStep}
+      />
+
+      <div className="flex min-w-0 flex-1 flex-col gap-[18px]">
+        {/* Page header — title / purpose stay above the content panel */}
+        <div className="flex flex-col">
           {step > 1 && step < 6 && (
-            <div className="console-back" onClick={back}>← {BACK_LABELS[step]}</div>
+            <div className="mb-3.5 cursor-pointer text-[15px] font-semibold text-teal" onClick={back}>← {BACK_LABELS[step]}</div>
           )}
-          <div className="console-header">
+          <div className="flex items-center justify-between gap-6">
             <div>
-              <div className="console-step-title">{info.title}</div>
-              <div className="console-step-sub">{info.sub}</div>
+              <div className="font-display text-[32px] font-medium leading-tight text-ink">{info.title}</div>
+              <div className="mt-1 text-[15px] text-ink-soft">{info.purpose}</div>
+              {info.next && <div className="mt-0.5 text-[13px] font-medium text-teal">{info.next}</div>}
             </div>
-            <div className="console-header-right">
-              {stageIdx === 0 && (step === 1 || step === 2) && <KydsSummaryCard variant="corner" />}
-            </div>
+            {stageIdx === 0 && (step === 1 || step === 2) && <KydsSummaryCard variant="corner" />}
           </div>
         </div>
 
+        {/* Shared content panel — choice cards, then tables / grouping / later steps */}
+        <div className="flex flex-col gap-5 rounded-xl border border-line bg-white p-5 shadow-sm sm:p-6">
         {step === 1 && (
-          <>
-            <BatchUpload onMatched={handleMatched} />
-            {/* Independent flow: PDF reports aren't grouped/matched against a
-                metadata workbook like xlsx datasets are (no NMDS/harmonization
-                step for this pipeline yet) -- it has its own upload ->
-                progress -> review loop entirely within this one component,
-                rather than advancing `step` through the xlsx wizard. */}
-            <PdfUpload />
-          </>
+          <div className="flex flex-col gap-6">
+            <UploadChoice
+              choice={uploadChoice}
+              onChoose={setUploadChoice}
+              onPdfFile={handlePdfFile}
+              pdfUploading={pdfUploading}
+              pdfError={pdfError}
+              onClearPdfError={() => setPdfError('')}
+            />
+            {uploadChoice === 'xlsx' && <BatchUpload onMatched={handleMatched} />}
+          </div>
         )}
 
         {step === 2 && previewTables.length > 0 && (
-          <div className="console-preview-step">
+          <div className="flex flex-col gap-5">
             {previewDatasets.length > 1 && (
-              <div className="console-preview-datasets">
-                <span className="console-preview-datasets-label">Dataset:</span>
+              <div className="flex flex-wrap items-center gap-2.5">
+                <span className="font-sans text-lg font-semibold text-[#8E9398]">Dataset:</span>
                 {previewDatasets.length > 2 ? (
                   <select
-                    className="console-preview-dataset-select"
+                    className="rounded-md border border-line px-3 py-1.5 text-sm"
                     value={effectiveDataset}
                     onChange={(e) => selectPreviewDataset(e.target.value)}
                   >
@@ -735,7 +935,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                   previewDatasets.map((name) => (
                     <div
                       key={name}
-                      className={`console-preview-dataset${name === effectiveDataset ? ' console-preview-dataset-active' : ''}`}
+                      className={`cursor-pointer rounded-full border px-3 py-1.5 text-sm ${name === effectiveDataset ? 'border-teal bg-teal text-white' : 'border-line text-ink hover:border-teal'}`}
                       onClick={() => selectPreviewDataset(name)}
                       title={name}
                     >
@@ -746,27 +946,32 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
               </div>
             )}
             {mismatchedPreviewTables.length > 0 && (
-              <div className={`console-preview-flag-banner${unsavedMismatched.length === 0 ? ' console-preview-flag-banner-resolved' : ''}`}>
+              <div className={`rounded-lg border px-4 py-3 text-sm font-medium ${unsavedMismatched.length === 0 ? 'border-green bg-[#f2f8f5] text-[#2f6b3f]' : 'border-[#d9822b] bg-[#fdf1e2] text-[#8a4a10]'}`}>
                 {unsavedMismatched.length > 0
                   ? `⚠ ${unsavedMismatched.length} of ${mismatchedPreviewTables.length} flagged table${mismatchedPreviewTables.length !== 1 ? 's' : ''} still need correcting & saving — open each orange tab below.`
                   : `✓ All ${mismatchedPreviewTables.length} flagged table${mismatchedPreviewTables.length !== 1 ? 's' : ''} saved.`}
               </div>
             )}
-            <div className="console-preview-tabs">
-              {visiblePreviewTables.map((t, i) => {
+            <div className="flex flex-wrap items-center gap-2.5">
+              {visiblePreviewTables.map((t) => {
                 const flagged = !!t.id_title_mismatch
                 const unsaved = flagged && !savedIds.has(t._uid)
                 const resolved = !unsaved
+                const active = t._uid === previewSelected?._uid
                 return (
                   <div
                     key={t._uid}
-                    className={`console-preview-tab${t._uid === previewSelected?._uid ? ' console-preview-tab-active' : ''}${unsaved ? ' console-preview-tab-flagged console-preview-tab-unreviewed' : ''}${resolved ? ' console-preview-tab-resolved' : ''}`}
+                    className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 ${
+                      active ? 'border-teal bg-teal' : unsaved ? 'border-[#d9822b] bg-[#fdf1e2] ring-1 ring-[#d9822b]' : resolved ? 'border-green bg-[#f2f8f5]' : 'border-line bg-white'
+                    }`}
                     onClick={() => selectPreviewTable(t._uid)}
                     title={flagged ? `${t.id} — Source Table ID / Title need confirmation` : `${t.id} — no validation errors`}
                   >
-                    <span className="console-preview-tab-badge">{unsaved ? '!' : '✓'}</span>
-                    <span className="console-preview-tab-id">{tableCode(t)}</span>
-                    <span className="console-preview-tab-meta">{t.row_count} rows</span>
+                    <span className={`flex h-4.5 w-4.5 items-center justify-center rounded-full text-[10px] font-bold ${
+                      active ? 'bg-white text-teal' : unsaved ? 'bg-[#d9822b] text-white' : 'bg-green text-white'
+                    }`}>{unsaved ? '!' : '✓'}</span>
+                    <span className={`font-sans text-xs font-medium ${active ? 'text-white' : 'text-ink'}`}>{tableCode(t)}</span>
+                    <span className={`text-xs ${active ? 'text-[#a9cfc9]' : 'text-[#8E9398]'}`}>{t.row_count} rows</span>
                   </div>
                 )
               })}
@@ -787,195 +992,175 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
         )}
 
         {step === 3 && matchResult && (
-          <div className="console-grouping-step">
-            <div className="console-grouping-step-header">
-              {manualGrouping ? (
-                <>
-                  {autoMatchResultRef.current && (
-                    <button className="console-secondary-btn" onClick={requestAutomaticGrouping}>Group automatically</button>
-                  )}
-                  <button className="console-secondary-btn" onClick={requestManualGrouping}>+ Add another group</button>
-                </>
-              ) : editingGroups ? (
-                <>
-                  {autoMatchResultRef.current && (
-                    <button className="console-secondary-btn" onClick={requestAutomaticGrouping}>Group automatically</button>
-                  )}
-                  <button className="console-secondary-btn" onClick={() => setShowAddGroup(true)}>+ Add group</button>
-                </>
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="inline-flex rounded-full border border-line bg-white p-0.5">
+                <button
+                  type="button"
+                  className={`rounded-full px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${groupingMode === 'automatic' ? 'bg-teal text-white' : 'text-ink-soft hover:text-ink'}`}
+                  onClick={() => groupingMode !== 'automatic' && requestAutomaticGrouping()}
+                >
+                  Automatic (recommended)
+                </button>
+                <button
+                  type="button"
+                  className={`rounded-full px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${groupingMode === 'manual' ? 'bg-teal text-white' : 'text-ink-soft hover:text-ink'}`}
+                  onClick={() => groupingMode !== 'manual' && requestManualGrouping()}
+                >
+                  Manual
+                </button>
+              </div>
+              {groupingMode === 'automatic' ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => (editingGroups ? finishEditingGroups() : setEditingGroups(true))}
+                >
+                  {editingGroups ? 'Done editing' : 'Edit groups'}
+                </Button>
               ) : (
-                <button className="console-secondary-btn" onClick={() => setEditingGroups(true)}>Edit</button>
+                <Button variant="secondary" size="sm" onClick={() => setActiveDialog('addGroup')}>+ Add another group</Button>
               )}
             </div>
-            {(manualGrouping || editingGroups) && (
-              <p className="console-group-manual-warning">
+
+            {dragEnabled && (
+              <p className="m-0 text-[13px] font-medium text-[#c9610f]">
                 ⚠ Every table must be assigned to a group with a group name before you continue.
               </p>
             )}
-            {showManualGroupingConfirm && (
-              <div className="push-overlay" role="dialog" aria-modal="true">
-                <div className="add-group-modal manual-grouping-confirm-modal">
-                  <div className="add-group-modal-head">
-                    <div className="add-group-modal-title">Switch to manual grouping?</div>
-                  </div>
-                  <p className="console-group-hint">
-                    The current grouping will be erased. You can get it back by pressing "Automatic grouping" again.
-                  </p>
-                  <div className="add-group-modal-actions">
-                    <button className="console-secondary-btn" onClick={() => setShowManualGroupingConfirm(false)}>Cancel</button>
-                    <button
-                      className="console-primary-btn"
-                      onClick={() => {
-                        setShowManualGroupingConfirm(false)
-                        startManualGrouping()
-                      }}
-                    >
-                      Continue
-                    </button>
-                  </div>
-                </div>
-              </div>
+
+            {activeDialog === 'manualConfirm' && (
+              <ConfirmDialog
+                title="Switch to manual grouping?"
+                body='The current grouping will be erased. You can get it back by pressing "Automatic grouping" again.'
+                onCancel={() => setActiveDialog(null)}
+                onContinue={() => { setActiveDialog(null); startManualGrouping() }}
+              />
             )}
-            {showAutoGroupingConfirm && (
-              <div className="push-overlay" role="dialog" aria-modal="true">
-                <div className="add-group-modal manual-grouping-confirm-modal">
-                  <div className="add-group-modal-head">
-                    <div className="add-group-modal-title">Switch to automatic grouping?</div>
-                  </div>
-                  <p className="console-group-hint">
-                    The current grouping will be erased and reverted to the automatic grouping.
-                  </p>
-                  <div className="add-group-modal-actions">
-                    <button className="console-secondary-btn" onClick={() => setShowAutoGroupingConfirm(false)}>Cancel</button>
-                    <button
-                      className="console-primary-btn"
-                      onClick={() => {
-                        setShowAutoGroupingConfirm(false)
-                        revertToAutomaticBatchGrouping()
-                      }}
-                    >
-                      Continue
-                    </button>
-                  </div>
-                </div>
-              </div>
+            {activeDialog === 'autoConfirm' && (
+              <ConfirmDialog
+                title="Switch to automatic grouping?"
+                body="The current grouping will be erased and reverted to the automatic grouping."
+                onCancel={() => setActiveDialog(null)}
+                onContinue={() => { setActiveDialog(null); revertToAutomaticBatchGrouping() }}
+              />
             )}
-            <div className="console-group-summary">
-              {(() => {
-                const dragEnabled = manualGrouping || editingGroups
-                return (
-                  <>
-                    {matchResult.groups.map((g, i) => (
-                      <div
-                        className={`console-group-card${dragEnabled && dragOverGroup === i ? ' console-group-card-drop-target' : ''}`}
-                        key={i}
-                        onDragOver={dragEnabled ? (e) => { e.preventDefault(); setDragOverGroup(i) } : undefined}
-                        onDragLeave={dragEnabled ? () => setDragOverGroup((d) => (d === i ? null : d)) : undefined}
-                        onDrop={dragEnabled ? (e) => {
-                          e.preventDefault()
-                          const tableId = e.dataTransfer.getData('text/plain')
-                          if (tableId) moveTable(tableId, i)
-                          setDragOverGroup(null)
-                        } : undefined}
-                      >
-                        <div className="console-group-card-head">
-                          <span className="console-group-name-label">Group name:</span>
-                          <GroupNameEditor name={g.file_name} onSave={(newName) => renameBatchGroup(i, newName)} />
-                          <span className="console-group-card-count">{g.matched_tables.length} table{g.matched_tables.length !== 1 ? 's' : ''}</span>
-                          {dragEnabled && (
-                            <button className="group-delete-btn" onClick={() => deleteBatchGroup(i)} title="Delete group">🗑</button>
-                          )}
-                        </div>
-                        <table className="console-group-table">
-                          <thead>
-                            <tr>
-                              <th>Dataset ID</th>
-                              <th>Table Title</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {g.matched_tables.map((mt) => (
-                              <tr
-                                key={mt.table.id}
-                                draggable={dragEnabled}
-                                onDragStart={dragEnabled ? (e) => { e.dataTransfer.setData('text/plain', mt.table.id) } : undefined}
-                                className={dragEnabled ? 'console-group-table-row-draggable' : undefined}
-                              >
-                                <td>{mt.table.id}</td>
-                                <td>{mt.table.title || '—'}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                        {dragEnabled && g.matched_tables.length === 0 && (
-                          <p className="console-group-drop-hint">Drag tables here</p>
-                        )}
-                      </div>
-                    ))}
-                    {(dragEnabled || matchResult.unmatched_tables.length > 0) && (
-                      <div
-                        className={`console-group-card console-group-card-warn${dragEnabled && dragOverGroup === 'unmatched' ? ' console-group-card-drop-target' : ''}`}
-                        onDragOver={dragEnabled ? (e) => { e.preventDefault(); setDragOverGroup('unmatched') } : undefined}
-                        onDragLeave={dragEnabled ? () => setDragOverGroup((d) => (d === 'unmatched' ? null : d)) : undefined}
-                        onDrop={dragEnabled ? (e) => {
-                          e.preventDefault()
-                          const tableId = e.dataTransfer.getData('text/plain')
-                          if (tableId) moveTable(tableId, 'unmatched')
-                          setDragOverGroup(null)
-                        } : undefined}
-                      >
-                        <div className="console-group-card-head">
-                          <span className="console-group-card-file">⚠ Unmatched tables</span>
-                          <span className="console-group-card-count">{matchResult.unmatched_tables.length}</span>
-                        </div>
-                        {dragEnabled && (
-                          <p className="console-group-drop-hint">Drag tables here to unassign, or onto a group above to assign</p>
-                        )}
-                        <table className="console-group-table">
-                          <thead>
-                            <tr>
-                              <th>Dataset ID</th>
-                              <th>Table Title</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {matchResult.unmatched_tables.map((u) => (
-                              <tr
-                                key={u.table.id}
-                                draggable={dragEnabled}
-                                onDragStart={dragEnabled ? (e) => { e.dataTransfer.setData('text/plain', u.table.id) } : undefined}
-                                className={dragEnabled ? 'console-group-table-row-draggable' : undefined}
-                              >
-                                <td>{u.table.id}</td>
-                                <td>{u.table.title || '—'}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+
+            {/* Edit mode gets a visually distinct region (dashed teal ring)
+                around the whole group-card list, so it's obvious at a
+                glance whether the page is in confirm-mode or edit-mode --
+                not just via each button's own disabled/enabled state. */}
+            <div className={`flex flex-col gap-3 rounded-xl p-1 ${dragEnabled ? 'ring-2 ring-dashed ring-teal/40' : ''}`}>
+              {matchResult.groups.map((g, i) => (
+                <div
+                  className={`flex flex-col gap-1.5 rounded-[10px] border bg-white p-4 transition-colors ${dragEnabled && dragOverGroup === i ? 'border-teal bg-[#f2f8f7]' : 'border-line'}`}
+                  key={i}
+                  onDragOver={dragEnabled ? (e) => { e.preventDefault(); setDragOverGroup(i) } : undefined}
+                  onDragLeave={dragEnabled ? () => setDragOverGroup((d) => (d === i ? null : d)) : undefined}
+                  onDrop={dragEnabled ? (e) => {
+                    e.preventDefault()
+                    const tableId = e.dataTransfer.getData('text/plain')
+                    if (tableId) moveTable(tableId, i)
+                    setDragOverGroup(null)
+                  } : undefined}
+                >
+                  <div className="flex items-center justify-between gap-2.5">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-ink-soft">Group name:</span>
+                    <GroupNameEditor name={g.file_name} onSave={(newName) => renameBatchGroup(i, newName)} />
+                    <span className="whitespace-nowrap rounded-full bg-cream px-2.5 py-0.5 text-xs text-ink-soft">{g.matched_tables.length} table{g.matched_tables.length !== 1 ? 's' : ''}</span>
+                    {dragEnabled && (
+                      <button className="rounded border border-line px-1.5 py-1 text-xs text-ink-soft hover:border-coral hover:bg-[#fdecec] hover:text-coral" onClick={() => deleteBatchGroup(i)} title="Delete group">🗑</button>
                     )}
-                  </>
-                )
-              })()}
-            </div>
-            <div className="console-step-actions">
-              {editingGroups ? (
-                <button className="console-primary-btn" onClick={finishEditingGroups}>Done editing</button>
-              ) : (
-                <button className="console-primary-btn" onClick={requestContinueToMetadata}>Continue to metadata →</button>
+                  </div>
+                  <table className="w-full border-collapse text-[13px]">
+                    <thead>
+                      <tr>
+                        <th className="border-b border-line py-1.5 text-left text-xs uppercase text-ink-soft">Dataset ID</th>
+                        <th className="border-b border-line py-1.5 text-left text-xs uppercase text-ink-soft">Table Title</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {g.matched_tables.map((mt) => (
+                        <tr
+                          key={mt.table.id}
+                          draggable={dragEnabled}
+                          onDragStart={dragEnabled ? (e) => { e.dataTransfer.setData('text/plain', mt.table.id) } : undefined}
+                          className={dragEnabled ? 'cursor-grab hover:bg-cream' : undefined}
+                        >
+                          <td className="border-b border-line py-1.5 font-bold text-teal">{mt.table.id}</td>
+                          <td className="border-b border-line py-1.5">{mt.table.title || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {dragEnabled && g.matched_tables.length === 0 && (
+                    <p className="m-0 text-xs italic text-ink-soft">Drag tables here</p>
+                  )}
+                </div>
+              ))}
+              {(dragEnabled || matchResult.unmatched_tables.length > 0) && (
+                <div
+                  className={`flex flex-col gap-1.5 rounded-[10px] border p-4 ${dragEnabled && dragOverGroup === 'unmatched' ? 'border-teal bg-[#f2f8f7]' : 'border-[#f3c98b] bg-[#fffaf1]'}`}
+                  onDragOver={dragEnabled ? (e) => { e.preventDefault(); setDragOverGroup('unmatched') } : undefined}
+                  onDragLeave={dragEnabled ? () => setDragOverGroup((d) => (d === 'unmatched' ? null : d)) : undefined}
+                  onDrop={dragEnabled ? (e) => {
+                    e.preventDefault()
+                    const tableId = e.dataTransfer.getData('text/plain')
+                    if (tableId) moveTable(tableId, 'unmatched')
+                    setDragOverGroup(null)
+                  } : undefined}
+                >
+                  <div className="flex items-center justify-between gap-2.5">
+                    <span className="text-sm font-semibold text-ink">⚠ Unmatched tables</span>
+                    <span className="whitespace-nowrap rounded-full bg-cream px-2.5 py-0.5 text-xs text-ink-soft">{matchResult.unmatched_tables.length}</span>
+                  </div>
+                  {dragEnabled && (
+                    <p className="m-0 text-xs italic text-ink-soft">Drag tables here to unassign, or onto a group above to assign</p>
+                  )}
+                  <table className="w-full border-collapse text-[13px]">
+                    <thead>
+                      <tr>
+                        <th className="border-b border-line py-1.5 text-left text-xs uppercase text-ink-soft">Dataset ID</th>
+                        <th className="border-b border-line py-1.5 text-left text-xs uppercase text-ink-soft">Table Title</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {matchResult.unmatched_tables.map((u) => (
+                        <tr
+                          key={u.table.id}
+                          draggable={dragEnabled}
+                          onDragStart={dragEnabled ? (e) => { e.dataTransfer.setData('text/plain', u.table.id) } : undefined}
+                          className={dragEnabled ? 'cursor-grab hover:bg-cream' : undefined}
+                        >
+                          <td className="border-b border-line py-1.5 font-bold text-teal">{u.table.id}</td>
+                          <td className="border-b border-line py-1.5">{u.table.title || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
+
+            <div className="flex items-center gap-4">
+              {editingGroups ? (
+                <Button variant="primary" onClick={finishEditingGroups}>Done editing</Button>
+              ) : (
+                <Button variant="primary" onClick={requestContinueToMetadata}>Continue to metadata →</Button>
+              )}
+            </div>
+
             {groupingToast && (
-              <div className="app-toast app-toast-warn" role="alert">
+              <div className="fixed right-6 top-6 z-[1200] flex animate-toast-in items-center gap-3 rounded-[10px] border border-[#c9610f] bg-[#e2711d] px-4 py-3 pl-4.5 font-sans text-sm font-medium leading-snug text-[#111] shadow-[0_8px_24px_rgba(226,113,29,0.22)]" role="alert">
                 <span>{groupingToast}</span>
-                <button type="button" className="app-toast-close" onClick={() => setGroupingToast(null)} aria-label="Dismiss">×</button>
+                <button type="button" className="p-0.5 text-lg leading-none text-[#111] opacity-70 hover:opacity-100" onClick={() => setGroupingToast(null)} aria-label="Dismiss">×</button>
               </div>
             )}
-            {showAddGroup && (
+            {activeDialog === 'addGroup' && (
               <AddGroupModal
                 tables={manualGrouping ? batchAllTables : matchResult.unmatched_tables.map((u) => u.table)}
                 onCreate={createBatchGroup}
-                onClose={() => setShowAddGroup(false)}
+                onClose={() => setActiveDialog(null)}
               />
             )}
           </div>
@@ -1020,6 +1205,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
             onUploadAnother={onUploadAnother}
           />
         )}
+        </div>
       </div>
     </div>
   )

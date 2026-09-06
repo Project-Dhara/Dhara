@@ -1,3 +1,5 @@
+'use client'
+
 import { useEffect, useState } from 'react'
 
 // Metadata entry, one card per table/metadata group. Field set mirrors what
@@ -43,43 +45,50 @@ export default function MetadataSheetGrid({
   const activeRow = rows[activeIndex]
 
   return (
-    <div className="meta-sheet">
-      <div className="meta-groups-section">
-        <div className="meta-groups-heading-row">
-          <h3 className="meta-groups-heading">Available Groups</h3>
-          <span className="meta-groups-count">
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <h3 className="m-0 font-sans text-[13px] font-bold uppercase tracking-wide text-ink">Available Groups</h3>
+          <span className="text-[13px] leading-snug text-ink-soft">
             {rows.length} metadata group{rows.length !== 1 ? 's' : ''} — select to review
           </span>
         </div>
-        <div className="meta-carousel-nav">
+        <div className="grid grid-cols-4 gap-x-4 gap-y-3.5 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
         {rows.map((row, ri) => (
           <button
             key={row.id}
             type="button"
-            className={`meta-carousel-tab${ri === activeIndex ? ' meta-carousel-tab-active' : ''}`}
+            className={`grid min-w-0 grid-cols-[18px_1fr] items-center gap-2 rounded-full border px-2.5 py-1.5 pl-2 font-sans text-[12.5px] font-medium transition-colors ${
+              ri === activeIndex
+                ? 'border-teal bg-sage text-ink'
+                : 'border-line bg-surface text-ink-soft hover:border-teal hover:text-ink'
+            }`}
             onClick={() => setActiveIndex(ri)}
             title={row.label}
           >
-            <span className="meta-carousel-tab-num">{ri + 1}</span>
-            <span className="meta-carousel-tab-label">{row.label}</span>
+            <span className={`inline-flex h-[18px] w-[18px] items-center justify-center rounded-full text-[10.5px] font-bold ${ri === activeIndex ? 'bg-teal text-white' : 'bg-[#ece4d6] text-ink-soft'}`}>{ri + 1}</span>
+            <span className="line-clamp-2 min-w-0 text-center leading-tight">{row.label}</span>
           </button>
         ))}
         </div>
       </div>
 
       {activeRow && (
-        <div className="meta-carousel-viewport">
-          <div className="meta-cards">
+        <div className="flex items-start">
+          <div className="min-w-0 flex-1">
             {(() => {
               const row = activeRow
               const ri = activeIndex
               return (
-            <div className="meta-card" key={row.id}>
-            <div className="meta-card-head">
-              <span className="meta-card-num">{ri + 1}</span>
-              <span className="meta-card-label" title={row.label}>{row.label}</span>
+            <div className="flex min-w-0 flex-col gap-3 [overflow-wrap:anywhere] rounded-[10px] border border-line bg-surface p-4 px-[18px]" key={row.id}>
+            <div className="flex items-baseline gap-2">
+              <span className="flex-none font-sans text-xs text-[#8E9398]">{ri + 1}</span>
+              <span className="text-[15px] font-semibold text-ink" title={row.label}>{row.label}</span>
               {row.manual && (
-                <span className="meta-card-manual-tag" title="No metadata was auto-mapped for this group — fill in the fields below by hand">
+                <span
+                  className="rounded-md border border-[#f0d6a3] bg-[#fdf0d8] px-2 py-0.5 font-sans text-[11.5px] font-semibold text-[#a15c00]"
+                  title="No metadata was auto-mapped for this group — fill in the fields below by hand"
+                >
                   Not auto-mapped — fill in manually
                 </span>
               )}
@@ -87,7 +96,9 @@ export default function MetadataSheetGrid({
 
             {primaryCol && (
               <input
-                className={`meta-primary-input${primaryCol.required && !(row.values[primaryCol.key] || '').trim() ? ' meta-field-missing' : ''}`}
+                className={`box-border h-[42px] w-full rounded-lg border px-3.5 font-sans text-[15px] font-medium text-ink placeholder:text-[#a49c8e] focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal ${
+                  primaryCol.required && !(row.values[primaryCol.key] || '').trim() ? 'border-[#e3b3ba] bg-[rgba(217,91,104,0.06)]' : 'border-[#ddd3c0] bg-cream'
+                }`}
                 type="text"
                 value={row.values[primaryCol.key] || ''}
                 placeholder={`${primaryCol.placeholder}${primaryCol.required ? ' *' : ''}`}
@@ -96,16 +107,20 @@ export default function MetadataSheetGrid({
             )}
 
             {badgeCols.length > 0 && (
-              <div className="meta-badge-row">
-                {badgeCols.map((c) => (
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-2.5">
+                {badgeCols.map((c) => {
+                  const missing = c.required && !(row.values[c.key] || '').trim()
+                  return (
                   <label
                     key={c.key}
-                    className={`meta-badge${c.required && !(row.values[c.key] || '').trim() ? ' meta-field-missing' : ''}${c.readOnly ? ' meta-badge-readonly' : ''}`}
+                    className={`flex w-full items-center gap-2 rounded-[10px] border py-1.5 pl-3 pr-2 transition-colors focus-within:border-teal hover:border-[#c9bda6] ${
+                      missing ? 'border-[#e3b3ba] bg-[rgba(217,91,104,0.08)]' : 'border-line bg-[#F7F3EA]'
+                    } ${c.readOnly ? 'items-center' : ''}`}
                   >
-                    <span className="meta-badge-label">{c.label}{c.required && ' *'}</span>
+                    <span className="flex-none self-center whitespace-nowrap font-sans text-[11px] tracking-wide text-[#8E9398]">{c.label}{c.required && ' *'}</span>
                     {c.readOnly ? (
                       <span
-                        className="meta-badge-input meta-badge-input-readonly"
+                        className="block flex-1 truncate rounded-lg border border-solid border-[#ddd3c0] bg-cream px-2.5 py-1 font-sans text-[12.5px] font-medium text-ink outline-none focus:whitespace-normal focus:[overflow-wrap:anywhere] focus:break-words"
                         title={row.values[c.key] || ''}
                         tabIndex={0}
                       >
@@ -113,14 +128,14 @@ export default function MetadataSheetGrid({
                       </span>
                     ) : c.type === 'date' ? (
                       <input
-                        className="meta-badge-input meta-badge-input-date"
+                        className="flex-1 rounded-lg border border-solid border-[#ddd3c0] bg-surface px-2.5 py-1 font-sans text-xs text-ink"
                         type="date"
                         value={row.values[c.key] || ''}
                         onChange={(e) => onChange(row.id, c.key, e.target.value)}
                       />
                     ) : (
                       <textarea
-                        className="meta-badge-input meta-badge-input-wrap"
+                        className="block flex-1 resize-none overflow-hidden truncate whitespace-nowrap rounded-lg border border-dashed border-[#cfc6b4] bg-surface px-2.5 py-1 font-sans text-[12.5px] font-medium leading-snug text-ink placeholder:font-normal placeholder:text-[#a49c8e] hover:border-teal focus:overflow-visible focus:whitespace-pre-wrap focus:text-clip focus:[overflow-wrap:anywhere] focus:break-words focus:border-solid focus:border-teal focus:outline-none focus:ring-[3px] focus:ring-teal/10"
                         rows={1}
                         value={row.values[c.key] || ''}
                         placeholder={c.placeholder}
@@ -133,17 +148,17 @@ export default function MetadataSheetGrid({
                       />
                     )}
                   </label>
-                ))}
+                )})}
               </div>
             )}
 
             {longCols.length > 0 && (
-              <div className="meta-long-fields">
+              <div className="flex flex-col gap-2.5">
                 {longCols.map((c) => (
-                  <label key={c.key} className="meta-long-field">
-                    <span className="meta-long-label">{c.label}</span>
+                  <label key={c.key} className="flex flex-col gap-1">
+                    <span className="font-sans text-[11px] font-semibold uppercase tracking-wide text-[#8E9398]">{c.label}</span>
                     <textarea
-                      className="meta-long-input"
+                      className="box-border min-h-[44px] w-full resize-y rounded-lg border border-line bg-cream px-3 py-2 font-sans text-[13.5px] leading-relaxed text-ink placeholder:text-[#a49c8e] focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal"
                       rows={2}
                       value={row.values[c.key] || ''}
                       placeholder={c.placeholder}
@@ -155,7 +170,7 @@ export default function MetadataSheetGrid({
             )}
 
             {renderGroupFooter && (
-              <div className="meta-card-group-footer">
+              <div>
                 {renderGroupFooter(row, ri)}
               </div>
             )}

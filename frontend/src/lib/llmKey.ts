@@ -7,7 +7,7 @@ const PROVIDER_STORAGE_KEY = 'dhara.llmProvider'
 export const LLM_KEY_HEADER = 'X-Llm-Api-Key'
 export const LLM_PROVIDER_HEADER = 'X-Llm-Provider'
 
-export function getLlmApiKey() {
+export function getLlmApiKey(): string {
   try {
     return localStorage.getItem(STORAGE_KEY) || ''
   } catch {
@@ -15,7 +15,7 @@ export function getLlmApiKey() {
   }
 }
 
-export function setLlmApiKey(key) {
+export function setLlmApiKey(key: string) {
   try {
     if (key) localStorage.setItem(STORAGE_KEY, key)
     else localStorage.removeItem(STORAGE_KEY)
@@ -24,7 +24,7 @@ export function setLlmApiKey(key) {
   }
 }
 
-export function getLlmProvider() {
+export function getLlmProvider(): string {
   try {
     return localStorage.getItem(PROVIDER_STORAGE_KEY) || ''
   } catch {
@@ -32,7 +32,7 @@ export function getLlmProvider() {
   }
 }
 
-export function setLlmProvider(provider) {
+export function setLlmProvider(provider: string) {
   try {
     if (provider) localStorage.setItem(PROVIDER_STORAGE_KEY, provider)
     else localStorage.removeItem(PROVIDER_STORAGE_KEY)
@@ -43,7 +43,7 @@ export function setLlmProvider(provider) {
 
 // Merge the saved key (and provider, if set) into a fetch() init object's
 // headers.
-export function withLlmKeyHeaders(init = {}) {
+export function withLlmKeyHeaders(init: RequestInit = {}): RequestInit {
   const key = getLlmApiKey()
   if (!key) return init
   const provider = getLlmProvider()

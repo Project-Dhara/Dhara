@@ -1,7 +1,10 @@
+'use client'
+
 import { useEffect, useState } from 'react'
-import { withAuthHeaders } from '../auth'
-import { withLlmKeyHeaders } from '../llmKey'
-import { STATISTICS_OPTIONS, getDatasetIdConfig } from '../settingsConfig'
+import { withAuthHeaders } from '../lib/auth'
+import { withLlmKeyHeaders } from '../lib/llmKey'
+import { STATISTICS_OPTIONS, getDatasetIdConfig } from '../lib/settingsConfig'
+import Button from './ui/Button'
 
 // The classified columns (name/concept/note + code list) come from the real
 // metadata-excel classification sheets, fetched below — see
@@ -374,41 +377,45 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
     }
   }
 
+  const saveBtnClass = 'h-11 rounded-lg border-0 px-5 text-[15px] font-semibold text-white transition-colors bg-teal hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]'
+  const cardClass = 'overflow-hidden rounded-[10px] border border-line bg-white'
+  const cardHeadClass = 'flex items-center gap-2.5 border-b border-line px-[18px] py-3 text-[15px] font-semibold text-ink'
+  const cardNoteClass = 'text-xs font-normal text-[#8E9398]'
+
   return (
-    <div className="classify-step">
-      <div className="classify-run-card">
+    <div className="flex max-w-[900px] flex-col gap-4">
+      <div className="flex items-center justify-between gap-6 rounded-[10px] border border-line bg-white px-[22px] py-[18px]">
         <div>
-          <div className="classify-run-eyebrow">{datasetLabel}</div>
-          <div className="classify-run-title">Classify columns and harmonise values</div>
-          <div className="classify-run-blurb">DHARA reads every column, proposes a standard concept and drafts code-list mappings for review.</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-[#8E9398]">{datasetLabel}</div>
+          <div className="text-base font-semibold text-ink">Classify columns and harmonise values</div>
+          <div className="text-sm text-ink-soft">DHARA reads every column, proposes a standard concept and drafts code-list mappings for review.</div>
         </div>
-        <button
-          className="classify-run-btn"
+        <Button
           disabled={classified}
           onClick={() => setClassified(true)}
         >
           {classified ? 'Classified' : 'Run classification'}
-        </button>
+        </Button>
       </div>
 
       {classified && loading && (
-        <div className="classify-card classcols-card">Loading classified columns…</div>
+        <div className={`${cardClass} p-[18px]`}>Loading classified columns…</div>
       )}
 
       {classified && !loading && loadError && (
-        <div className="classify-card classcols-card">Couldn't load classifications: {loadError}</div>
+        <div className={`${cardClass} p-[18px]`}>Couldn't load classifications: {loadError}</div>
       )}
 
       {classified && !loading && !loadError && classifiedColumns.length === 0 && (
-        <div className="classify-card classcols-card">No classification columns found for this dataset.</div>
+        <div className={`${cardClass} p-[18px]`}>No classification columns found for this dataset.</div>
       )}
 
       {classified && !loading && !loadError && classifiedColumns.length > 0 && (
         <>
-          <div className="classify-card classcols-card">
-            <div className="classify-card-head">
+          <div className={cardClass}>
+            <div className={cardHeadClass}>
               <span>Classified columns</span>
-              <span className="classify-card-note">
+              <span className={cardNoteClass}>
                 {classifiedColumns.length} columns · pick one to check its code list
                 {saving ? ' · saving…' : ''}
                 {fillAiError && !isOccupationColumn(selectedCol) ? ` · ${fillAiError}` : ''}
@@ -416,7 +423,7 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
               {!isOccupationColumn(selectedCol) && (
               <button
                 type="button"
-                className="classcols-fill-ai-btn"
+                className="ml-auto h-[34px] flex-none rounded-md border-0 bg-teal px-3.5 text-[13px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]"
                 disabled={fillAiLoading || !activeCodes.length}
                 onClick={fillDefinitionsWithAi}
               >
@@ -425,15 +432,17 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
               )}
             </div>
 
-            <div className="classcols-chips">
+            <div className="flex flex-wrap gap-2.5 border-b border-line p-4 px-[18px]">
               {classifiedColumns.map((c) => (
                 <div
                   key={`${c._metadataId || ''}:${c.name}`}
-                  className={`classcols-chip${c.name === selectedCol ? ' classcols-chip-active' : ''}`}
+                  className={`flex min-w-[140px] cursor-pointer flex-col gap-[3px] rounded-lg border px-3.5 py-2.5 transition-colors hover:border-[#c9bda6] ${
+                    c.name === selectedCol ? 'border-[#b9cfa9] bg-sage' : 'border-line bg-white'
+                  }`}
                   onClick={() => setSelectedCol(c.name)}
                 >
-                  <div className="classcols-chip-name">{c.name}</div>
-                  <div className="classcols-chip-count">
+                  <div className="text-[15px] font-semibold text-ink">{c.name}</div>
+                  <div className="text-[12.5px] text-ink-soft">
                     {c.codes.length} codes{c.aliasNames?.length ? ` · +${c.aliasNames.length} same list` : ''}
                   </div>
                 </div>
@@ -442,12 +451,12 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
 
             {activeColumn && (
               <>
-                <div className="classcols-detail-head">
+                <div className="flex items-baseline justify-between gap-4 px-[18px] pb-3 pt-[18px]">
                   <div>
-                    <span className="classcols-detail-name">{activeColumn.name}</span>
-                    <span className="classcols-detail-concept">{activeColumn.concept}</span>
+                    <span className="text-xl font-bold text-ink">{activeColumn.name}</span>
+                    <span className="ml-2.5 text-sm text-ink-soft">{activeColumn.concept}</span>
                   </div>
-                  <div className="classcols-detail-meta">
+                  <div className="whitespace-nowrap text-[13px] text-ink-soft">
                     {activeCodes.length} values
                     {activeColumn.aliasNames?.length
                       ? ` · also ${activeColumn.aliasNames.join(', ')}`
@@ -455,21 +464,21 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
                   </div>
                 </div>
 
-                <div className="classcols-table">
-                  <div className="classcols-table-head">
+                <div className="mx-[18px] mb-4 overflow-hidden rounded-lg border border-[#cfc6b4]">
+                  <div className="grid grid-cols-[1fr_1.1fr_1.6fr] items-center gap-3.5 border-b border-[#d7cdb9] bg-[#F4EFE3] px-4 py-2.5 font-sans text-[11.5px] uppercase tracking-wide text-[#8E9398]">
                     <div>Code</div><div>Value</div><div>Definition</div>
                   </div>
                   {activeCodes.map((row, i) => (
-                    <div className="classcols-row" key={i}>
+                    <div className="grid grid-cols-[1fr_1.1fr_1.6fr] items-center gap-3.5 border-b border-[#f1ebdf] bg-white px-4 py-2.5 last:border-b-0" key={i}>
                       <input
-                        className="classcols-input"
+                        className="box-border h-[38px] rounded-md border border-[#ddd3c0] bg-cream px-3 font-sans text-sm text-ink focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal"
                         type="text"
                         value={row.code}
                         onChange={(e) => setCodeField(i, 'code', e.target.value)}
                       />
-                      <div className="classcols-value">{row.value}</div>
+                      <div className="text-sm font-semibold text-ink">{row.value}</div>
                       <input
-                        className="classcols-input"
+                        className="box-border h-[38px] rounded-md border border-[#ddd3c0] bg-cream px-3 font-sans text-sm text-ink focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal"
                         type="text"
                         value={row.definition}
                         onChange={(e) => setCodeField(i, 'definition', e.target.value)}
@@ -478,23 +487,23 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
                   ))}
                 </div>
 
-                <div className="classcols-footer">
-                  <span className="classcols-footer-hint">Code and definition can be edited. Values come from the data and stay fixed.</span>
-                  <button className="classcols-save-btn" disabled={!columnDirty} onClick={saveColumnCodes}>Save changes</button>
+                <div className="flex items-center justify-between gap-4 px-[18px] pb-[18px] pt-3.5">
+                  <span className="text-sm text-ink-soft">Code and definition can be edited. Values come from the data and stay fixed.</span>
+                  <button className={saveBtnClass} disabled={!columnDirty} onClick={saveColumnCodes}>Save changes</button>
                 </div>
 
                 {isOccupationColumn(activeColumn.name) && (
-                  <div className="classcols-nco">
-                    <div className="classcols-nco-head">
+                  <div className="border-t border-line px-[18px] pb-[18px]">
+                    <div className="flex items-start justify-between gap-4 pb-3 pt-4">
                       <div>
-                        <div className="classcols-nco-title">NCO 2015 code suggestion</div>
-                        <div className="classcols-nco-blurb">
+                        <div className="text-[15px] font-bold text-ink">NCO 2015 code suggestion</div>
+                        <div className="mt-1 max-w-[520px] text-[13px] leading-snug text-ink-soft">
                           Fills Code and Definition above from the suggested NCO code and title. Harmonisation still asks you to verify those codes before they are saved.
                         </div>
                       </div>
                       <button
                         type="button"
-                        className="classcols-save-btn"
+                        className={saveBtnClass}
                         disabled={ncoLoading || activeCodes.length === 0}
                         onClick={() => {
                           const values = activeCodes.map((r) => r.value || r.code).filter(Boolean)
@@ -550,23 +559,23 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
                         {ncoLoading ? 'Matching…' : 'Suggest NCO codes'}
                       </button>
                     </div>
-                    {ncoError && <div className="classcols-nco-error">{ncoError}</div>}
+                    {ncoError && <div className="mb-2.5 text-[13px] text-[#b91c1c]">{ncoError}</div>}
                     {ncoMatches && (
-                      <div className="classcols-table classcols-nco-table">
-                        <div className="classcols-table-head classcols-nco-head-row">
+                      <div className="overflow-hidden rounded-lg border border-[#cfc6b4]">
+                        <div className="grid grid-cols-[1.2fr_0.7fr_0.8fr_1.4fr] items-start gap-3.5 border-b border-[#d7cdb9] bg-[#F4EFE3] px-4 py-2.5 font-sans text-[11.5px] uppercase tracking-wide text-[#8E9398]">
                           <div>Value</div><div>Level</div><div>Suggested code</div><div>Title</div>
                         </div>
                         {activeCodes.map((row) => {
                           const m = ncoMatches[row.value]
                           return (
-                            <div className="classcols-row classcols-nco-head-row" key={row.value || row.code}>
-                              <div className="classcols-value">{row.value}</div>
-                              <div className="classcols-value">{m ? m.level : '—'}</div>
-                              <div className="classcols-value">{m ? m.code : '—'}</div>
+                            <div className="grid grid-cols-[1.2fr_0.7fr_0.8fr_1.4fr] items-start gap-3.5 border-b border-[#f1ebdf] bg-white px-4 py-2.5 last:border-b-0" key={row.value || row.code}>
+                              <div className="text-sm font-semibold text-ink">{row.value}</div>
+                              <div className="text-sm font-semibold text-ink">{m ? m.level : '—'}</div>
+                              <div className="text-sm font-semibold text-ink">{m ? m.code : '—'}</div>
                               <div>
-                                <div className="classcols-value">{m ? m.title : '—'}</div>
+                                <div className="text-sm font-semibold text-ink">{m ? m.title : '—'}</div>
                                 {m && (
-                                  <div className="classcols-nco-meta">
+                                  <div className="mt-0.5 text-xs text-ink-soft">
                                     {m.confidence} confidence
                                     {m.needs_manual_review ? ' · review' : ''}
                                     {m.codes?.length > 1 ? ' · both valid' : ''}
@@ -584,10 +593,10 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
             )}
           </div>
 
-          <div className="classify-card">
-            <div className="classify-card-head">
+          <div className={cardClass}>
+            <div className={cardHeadClass}>
               <span>Harmonisation</span>
-              <span className="classify-card-note">
+              <span className={cardNoteClass}>
                 {classifiedColumns.filter((c) => columnMapped(c.name)).length} of {classifiedColumns.length} lists mapped
                 {harmoniseEntries.length
                   ? ` · ${harmoniseEntries.length} other column${harmoniseEntries.length === 1 ? '' : 's'} to verify`
@@ -595,10 +604,10 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
               </span>
             </div>
             {harmoniseEntries.length === 0 && (
-              <div className="classify-rule">
-                <div className="classify-rule-head" style={{ cursor: 'default' }}>
-                  <div className="classify-rule-text">
-                    <div className="classify-rule-detail">No other classification columns besides the chips above.</div>
+              <div className="border-b border-[#f1ebdf] last:border-b-0">
+                <div className="flex items-center gap-3 px-[18px] py-3.5" style={{ cursor: 'default' }}>
+                  <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
+                    <div className="text-[13px] text-ink-soft">No other classification columns besides the chips above.</div>
                   </div>
                 </div>
               </div>
@@ -627,25 +636,27 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
                 ? `${reviewCount} needs review`
                 : `${mappedCount} of ${rows.length} mapped`
               return (
-                <div className="classify-rule" key={id}>
-                  <div className="classify-rule-head" onClick={() => setOpenRule(open ? null : id)}>
-                    <span className={`classify-rule-dot${done && !pendingVerify ? ' classify-rule-dot-done' : ''}`} />
-                    <div className="classify-rule-text">
-                      <div className="classify-rule-title">{name}</div>
-                      <div className="classify-rule-detail">{detail}</div>
+                <div className="border-b border-[#f1ebdf] last:border-b-0" key={id}>
+                  <div className="flex cursor-pointer items-center gap-3 px-[18px] py-[13px] transition-colors hover:bg-[#FBF7EF]" onClick={() => setOpenRule(open ? null : id)}>
+                    <span className={`h-2 w-2 flex-none rounded-full ${done && !pendingVerify ? 'bg-green' : 'bg-[rgba(242,194,48,0.7)]'}`} />
+                    <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
+                      <div className="text-sm font-semibold text-ink">{name}</div>
+                      <div className="text-[13px] text-ink-soft">{detail}</div>
                     </div>
-                    <span className={`classify-rule-status${done && !pendingVerify ? ' classify-rule-status-done' : ''}`}>
+                    <span className={`whitespace-nowrap text-xs font-semibold ${done && !pendingVerify ? 'text-[#3d7a3d]' : 'text-[#9a7413]'}`}>
                       {status}
                     </span>
-                    <span className="classify-rule-count">{countLabel}</span>
-                    <span className={`classify-rule-chev${open ? ' classify-rule-chev-open' : ''}`}>▾</span>
+                    <span className="whitespace-nowrap text-xs text-[#8E9398]">{countLabel}</span>
+                    <span className={`text-[#8E9398] transition-transform duration-300 ${open ? 'rotate-180' : ''}`}>▾</span>
                   </div>
-                  <div className={`classify-rule-body-wrap${open ? ' classify-rule-body-wrap-open' : ''}`}>
-                    <div className="classify-rule-body">
-                      <div className="classify-rule-actions">
+                  <div className="grid transition-[grid-template-rows] duration-300 ease-in-out" style={{ gridTemplateRows: open ? '1fr' : '0fr' }}>
+                    <div
+                      className={`min-h-0 overflow-hidden px-[18px] pb-4 transition-[opacity,transform] duration-300 ease-in-out ${open ? 'pointer-events-auto translate-y-0 opacity-100' : 'pointer-events-none -translate-y-1.5 opacity-0'}`}
+                    >
+                      <div className="flex items-center gap-2 pb-2.5">
                         <button
                           type="button"
-                          className="classify-skip-btn"
+                          className="flex h-8 items-center rounded-[5px] border border-[#ddd3c0] bg-white px-3 text-[13px] font-semibold text-ink-soft"
                           onClick={() => setRuleState((prev) => ({ ...prev, [id]: prev[id] === 'skip' ? undefined : 'skip' }))}
                         >
                           {skipped ? 'Unskip' : 'Skip this column'}
@@ -653,7 +664,7 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
                         {needsVerify ? (
                           <button
                             type="button"
-                            className="classcols-save-btn"
+                            className={`${saveBtnClass} h-11 !text-sm`}
                             disabled={verified && !harmDirty[id]}
                             onClick={() => {
                               persistHarmoniseEntry(entry, rows)
@@ -666,7 +677,7 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
                         ) : (
                           <button
                             type="button"
-                            className="classcols-save-btn"
+                            className={`${saveBtnClass} h-11 !text-sm`}
                             disabled={!rowsDirty}
                             onClick={() => persistHarmoniseEntry(entry, rows)}
                           >
@@ -674,23 +685,23 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
                           </button>
                         )}
                       </div>
-                      <p className="classify-harm-hint">
+                      <p className="m-0 mb-2.5 text-[13px] leading-tight text-ink-soft">
                         Value in file comes from the data and cannot be changed. Code and definition are editable.
                       </p>
-                      <div className="classify-map-table classify-map-table-review">
-                        <div className="classify-map-head classify-map-head-review">
+                      <div className="overflow-hidden rounded-lg border border-[#cfc6b4]">
+                        <div className="grid grid-cols-[38px_1.2fr_0.7fr_1.4fr_64px] items-stretch border-b border-[#cfc6b4] bg-[#F4EFE3] [&>div]:border-l [&>div]:border-[#e0d7c4] [&>div]:px-3 [&>div]:py-2 [&>div]:text-[11px] [&>div]:uppercase [&>div]:tracking-wide [&>div]:text-[#6E7378] [&>div:first-child]:border-l-0 [&>div:first-child]:text-center [&>div:last-child]:px-1 [&>div:last-child]:text-center">
                           <div>#</div>
                           <div>
                             Value in file
-                            <span className="classify-map-col-hint">Fixed</span>
+                            <span className="mt-0.5 block text-[10px] font-semibold tracking-wide text-[#c36637]">Fixed</span>
                           </div>
                           <div>
                             Code
-                            <span className="classify-map-col-hint classify-map-col-hint-edit">Editable</span>
+                            <span className="mt-0.5 block text-[10px] font-semibold tracking-wide text-[#3d7a3d]">Editable</span>
                           </div>
                           <div>
                             Definition
-                            <span className="classify-map-col-hint classify-map-col-hint-edit">Editable</span>
+                            <span className="mt-0.5 block text-[10px] font-semibold tracking-wide text-[#3d7a3d]">Editable</span>
                           </div>
                           <div>Match</div>
                         </div>
@@ -699,12 +710,12 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
                           const filled = rowMapped(row)
                           const rowReview = Boolean(m?.needs_manual_review) && !verified
                           return (
-                            <div className="classify-map-row classify-map-head-review" key={row.value || i}>
-                              <div className="classify-map-n">{i + 1}</div>
-                              <div className="classify-map-source" title="From the data — not editable">
+                            <div className="grid grid-cols-[38px_1.2fr_0.7fr_1.4fr_64px] items-stretch border-b border-[#f1ebdf] last:border-b-0" key={row.value || i}>
+                              <div className="flex items-center justify-center self-stretch bg-[#FBF7EF] text-[11px] text-[#a49c8e]">{i + 1}</div>
+                              <div className="flex cursor-default flex-col justify-center gap-0.5 border-l border-[#f1ebdf] bg-[#FBF7EF] px-3 py-2" title="From the data — not editable">
                                 <div>{row.value}</div>
                                 {m && (
-                                  <div className="classify-map-source-meta">
+                                  <div className="text-[11.5px] text-[#a49c8e]">
                                     {m.level}
                                     {rowReview ? ' · review' : ''}
                                     {m.codes?.length > 1 ? ' · both valid' : ''}
@@ -712,7 +723,7 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
                                 )}
                               </div>
                               <input
-                                className="classify-map-input"
+                                className="box-border h-full min-h-[40px] w-full border-0 border-l border-[#f1ebdf] bg-white px-3 py-2 font-sans text-[13px] text-ink placeholder:text-[#c2b8a6] focus:relative focus:z-[1] focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal"
                                 type="text"
                                 value={row.code}
                                 placeholder="Edit code"
@@ -720,14 +731,14 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
                                 onChange={(e) => setHarmField(entry, i, 'code', e.target.value)}
                               />
                               <input
-                                className="classify-map-input"
+                                className="box-border h-full min-h-[40px] w-full border-0 border-l border-[#f1ebdf] bg-white px-3 py-2 font-sans text-[13px] text-ink placeholder:text-[#c2b8a6] focus:relative focus:z-[1] focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal"
                                 type="text"
                                 value={row.definition}
                                 placeholder="Edit definition"
                                 title="Editable"
                                 onChange={(e) => setHarmField(entry, i, 'definition', e.target.value)}
                               />
-                              <div className={`classify-map-mark${rowReview ? ' classify-map-mark-review' : ''}`}>
+                              <div className={`flex items-center justify-center border-l border-[#f1ebdf] text-center text-sm leading-none ${rowReview ? 'text-[#9a7413]' : ''}`}>
                                 {rowReview ? '!' : filled ? '✓' : '—'}
                               </div>
                             </div>
@@ -741,27 +752,27 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
             })}
           </div>
 
-          <div className="classify-card classify-taxonomy-card">
-            <div className="classify-card-title">Catalogue placement</div>
-            <div className="classify-taxonomy-grid">
-              <div className="classify-field">
-                <label className="classify-label">Sector</label>
-                <select className="classify-select" value={taxonomy.sector} onChange={(e) => setTaxonomy((p) => ({ ...p, sector: e.target.value }))}>
+          <div className={`${cardClass} flex flex-col gap-4 p-[22px]`}>
+            <div className="text-[15px] font-semibold text-ink">Catalogue placement</div>
+            <div className="grid grid-cols-3 gap-3.5">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[13px] font-semibold text-ink">Sector</label>
+                <select className="h-10 rounded-md border border-[#ddd3c0] bg-white px-2.5 text-sm text-ink" value={taxonomy.sector} onChange={(e) => setTaxonomy((p) => ({ ...p, sector: e.target.value }))}>
                   {['Demography', 'Labour and Employment', 'Health', 'Agriculture'].map((o) => <option key={o}>{o}</option>)}
                 </select>
               </div>
-              <div className="classify-field">
-                <label className="classify-label">Theme</label>
-                <select className="classify-select" value={taxonomy.theme} onChange={(e) => {
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[13px] font-semibold text-ink">Theme</label>
+                <select className="h-10 rounded-md border border-[#ddd3c0] bg-white px-2.5 text-sm text-ink" value={taxonomy.theme} onChange={(e) => {
                   const theme = e.target.value
                   setTaxonomy((p) => ({ ...p, theme, product: delhiProductForTheme(theme) }))
                 }}>
                   {STATISTICS_OPTIONS.map((o) => <option key={o}>{o}</option>)}
                 </select>
               </div>
-              <div className="classify-field">
-                <label className="classify-label">Data product</label>
-                <select className="classify-select" value={taxonomy.product} onChange={(e) => setTaxonomy((p) => ({ ...p, product: e.target.value }))}>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[13px] font-semibold text-ink">Data product</label>
+                <select className="h-10 rounded-md border border-[#ddd3c0] bg-white px-2.5 text-sm text-ink" value={taxonomy.product} onChange={(e) => setTaxonomy((p) => ({ ...p, product: e.target.value }))}>
                   {STATISTICS_OPTIONS.map((o) => {
                     const product = delhiProductForTheme(o)
                     return <option key={product}>{product}</option>
@@ -773,11 +784,11 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
         </>
       )}
 
-      <div className="classify-continue-row">
-        <button className="console-primary-btn" disabled={!classReady || publishing} onClick={publishRelease}>
+      <div className="flex items-center gap-3.5">
+        <Button disabled={!classReady || publishing} onClick={publishRelease}>
           {publishing ? 'Continuing…' : 'Continue to publish →'}
-        </button>
-        <span className="classify-continue-hint">
+        </Button>
+        <span className="text-[13px] text-[#8E9398]">
           {publishError
             ? publishError
             : classified

@@ -1,3 +1,5 @@
+'use client'
+
 import { useRef, useState } from 'react'
 
 export default function FileUpload({
@@ -28,7 +30,10 @@ export default function FileUpload({
         disabled={loading}
       />
       <div
-        className={`file-drop${compact ? ' file-drop-compact' : ''}${dragging ? ' file-drop-drag' : ''}${loading ? ' file-drop-disabled' : ''}`}
+        className={`flex flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-[#c9bda6] bg-[#FFFCF6] px-4 cursor-pointer
+          ${compact ? 'h-[84px] max-w-none' : 'h-[84px] max-w-[420px]'}
+          ${dragging ? 'border-teal bg-sage' : ''}
+          ${loading ? 'opacity-60 cursor-not-allowed' : ''}`}
         onClick={() => !loading && inputRef.current.click()}
         onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
         onDragLeave={() => setDragging(false)}
@@ -38,8 +43,8 @@ export default function FileUpload({
           accept(e.dataTransfer.files[0])
         }}
       >
-        <div className="file-drop-title">{loading ? 'Processing…' : label}</div>
-        <div className="file-drop-hint">{selectedName || hint}</div>
+        <div className="text-center text-[15px] font-semibold text-teal">{loading ? 'Processing…' : label}</div>
+        <div className="text-center text-[13px] text-[#8E9398]">{selectedName || hint}</div>
       </div>
     </>
   )

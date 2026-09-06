@@ -1,4 +1,7 @@
+'use client'
+
 import { useState } from 'react'
+import Button from './ui/Button'
 
 // Stage 2.5 — Reconcile Source Table ID / Title mismatches (see backend/dhara_dry_run.ipynb).
 // A table lands here when the code-based and prompt-based validators disagree
@@ -145,46 +148,48 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
   }
 
   return (
-    <div className="console-grouping-step">
-      <div className="reconcile-title">Confirm Source Table Details</div>
+    <div className="flex flex-col gap-4">
+      <div className="mb-0.5 text-lg font-bold text-ink">Confirm Source Table Details</div>
       {scopedMismatched.length > 0 ? (
-        <div className="reconcile-hint">
+        <div className="text-[13px] leading-relaxed text-ink-soft">
           {scopedMismatched.length} table{scopedMismatched.length !== 1 ? 's' : ''} had disagreeing code-based and prompt-based
           validation of the Source Table ID / Table Title fields. Click a flagged table above to confirm or correct it before grouping.
           Any other table can be edited here too, if needed.
         </div>
       ) : (
-        <div className="reconcile-clean">✓ No Source Table ID / Title mismatches found — all extracted tables look consistent. You can still edit a table's details below if needed.</div>
+        <div className="rounded-[10px] border border-green bg-[#f2f8f5] px-4 py-3 text-sm text-ink">✓ No Source Table ID / Title mismatches found — all extracted tables look consistent. You can still edit a table's details below if needed.</div>
       )}
 
-      <div className="reconcile-list">
+      <div className="flex flex-col gap-3.5">
         {visible.map((t) => {
           const locked = lockedIds.has(t._uid)
           const showReason = t.id_title_mismatch && !isSaved(t)
           const { issues, idFlagged, titleFlagged } = showReason ? mismatchInfo(t) : {}
           return (
-            <div className={`reconcile-card${showReason ? ' reconcile-card-unedited' : ''}`} key={t._uid}>
-              <div className="reconcile-card-head">{t.id}</div>
+            <div className="flex flex-col gap-3 rounded-[10px] border border-line bg-white p-4 px-[18px]" key={t._uid}>
+              <div className="text-[13px] font-semibold text-ink">{t.id}</div>
 
               {showReason && issues.length > 0 && (
-                <ul className="reconcile-issues">
+                <ul className="m-0 ml-[18px] mt-1 list-disc p-0 text-[12.5px] text-ink-soft">
                   {issues.map((issue, i) => <li key={i}>{issue}</li>)}
                 </ul>
               )}
 
-              <div className="reconcile-fields">
-                <label className={`reconcile-field${showReason && idFlagged ? ' reconcile-field-bad' : ''}`}>
+              <div className="flex flex-wrap gap-4">
+                <label className={`flex flex-1 basis-[260px] flex-col gap-1 text-xs ${showReason && idFlagged ? 'font-semibold text-[#c0392b]' : 'text-ink-soft'}`}>
                   <span>Source Table ID{showReason && idFlagged ? ' — needs fixing' : ''}</span>
                   <input
+                    className={`rounded-lg border px-2.5 py-2 font-sans text-[13.5px] text-ink focus:border-teal focus:outline-none read-only:cursor-default read-only:bg-[#f4f1ea] read-only:text-ink-soft ${showReason && idFlagged ? 'border-2 border-[#c0392b]' : 'border-line'}`}
                     value={drafts[t._uid]?.table_id ?? ''}
                     onChange={(e) => updateDraft(t._uid, 'table_id', e.target.value)}
                     readOnly={locked}
                     spellCheck={false}
                   />
                 </label>
-                <label className={`reconcile-field${showReason && titleFlagged ? ' reconcile-field-bad' : ''}`}>
+                <label className={`flex flex-1 basis-[260px] flex-col gap-1 text-xs ${showReason && titleFlagged ? 'font-semibold text-[#c0392b]' : 'text-ink-soft'}`}>
                   <span>Table Title{showReason && titleFlagged ? ' — needs fixing' : ''}</span>
                   <input
+                    className={`rounded-lg border px-2.5 py-2 font-sans text-[13.5px] text-ink focus:border-teal focus:outline-none read-only:cursor-default read-only:bg-[#f4f1ea] read-only:text-ink-soft ${showReason && titleFlagged ? 'border-2 border-[#c0392b]' : 'border-line'}`}
                     value={drafts[t._uid]?.title ?? ''}
                     onChange={(e) => updateDraft(t._uid, 'title', e.target.value)}
                     readOnly={locked}
@@ -193,38 +198,40 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
                 </label>
               </div>
 
-              <div className="reconcile-card-actions">
-                <button
-                  className="console-secondary-btn reconcile-save-btn"
+              <div className="flex items-center gap-2.5">
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={() => saveDetails(t._uid)}
                   disabled={locked}
                 >
                   Save details
-                </button>
-                <button
-                  className="console-secondary-btn reconcile-edit-btn"
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={() => editDetails(t._uid)}
                   disabled={!locked}
                 >
                   Edit
-                </button>
-                {isSaved(t) && <span className="reconcile-saved-hint">✓ Saved</span>}
+                </Button>
+                {isSaved(t) && <span className="text-[12.5px] font-semibold text-green">✓ Saved</span>}
               </div>
             </div>
           )
         })}
       </div>
 
-      <div className="console-step-actions">
+      <div className="flex items-center gap-4">
         {allCorrected && (
-          <button className="console-primary-btn" onClick={handleContinue}>
+          <Button onClick={handleContinue}>
             {mismatched.length > 0 ? 'Apply corrections & continue →' : 'Continue →'}
-          </button>
+          </Button>
         )}
         {extraAction}
       </div>
       {!allCorrected && (
-        <div className="reconcile-blocked-hint">
+        <div className="mt-1.5 text-sm text-[#8a4b0f]">
           Correct and save all {mismatched.length} flagged table{mismatched.length !== 1 ? 's' : ''} above
           ({mismatched.length - mismatched.filter((t) => isSaved(t)).length} remaining) before continuing.
         </div>

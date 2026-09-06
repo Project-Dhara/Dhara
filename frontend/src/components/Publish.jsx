@@ -1,4 +1,7 @@
+'use client'
+
 import { useEffect, useState } from 'react'
+import Button from './ui/Button'
 
 // Confirmation screen after Continue to publish writes the release to
 // Postgres. API/MCP URLs here are still display placeholders.
@@ -40,20 +43,25 @@ export default function Publish({ datasetLabel, metadataId, hasKey, onGoSettings
     setTimeout(() => setCopied(null), 1500)
   }
 
+  const selectClass = 'h-[42px] rounded-md border border-[#ddd3c0] bg-white px-3 font-sans text-[15px] text-ink'
+  const fieldLabelClass = 'text-[13px] font-semibold text-ink'
+
   if (publishing) {
     return (
-      <div className="publish-loading">
-        <div className="publish-loading-ring">
-          <div className="publish-ring publish-ring-1" />
-          <div className="publish-ring publish-ring-2" />
-          <div className="publish-loading-check">✓</div>
+      <div className="flex min-h-[420px] flex-col items-center justify-center gap-[26px]">
+        <div className="relative flex h-[84px] w-[84px] items-center justify-center rounded-full bg-sage">
+          <div className="absolute -inset-3 animate-ping rounded-full border-2 border-green" />
+          <div className="absolute -inset-3 animate-ping rounded-full border-2 border-teal [animation-delay:400ms]" />
+          <div className="text-3xl font-bold text-[#3d7a3d]">✓</div>
         </div>
-        <div className="publish-loading-title">Publishing to the catalogue…</div>
-        <div className="publish-loading-sub">Almost there — this only takes a moment.</div>
-        <div className="publish-steps">
+        <div className="font-display text-[28px] font-medium text-ink">Publishing to the catalogue…</div>
+        <div className="text-[15px] text-ink-soft">Almost there — this only takes a moment.</div>
+        <div className="flex min-w-[320px] flex-col gap-2.5">
           {PUBLISH_STEPS.map((label, i) => (
-            <div className="publish-step-row" key={label}>
-              <span className={`publish-step-mark${i < doneSteps ? ' publish-step-mark-done' : ''}`}>{i < doneSteps ? '✓' : i + 1}</span>
+            <div className="flex items-center gap-2.5 text-sm text-ink" key={label}>
+              <span className={`flex h-[22px] w-[22px] flex-none items-center justify-center rounded-full text-xs font-semibold ${i < doneSteps ? 'bg-sage text-[#3d7a3d]' : 'bg-cream text-[#8E9398]'}`}>
+                {i < doneSteps ? '✓' : i + 1}
+              </span>
               <span>{label}</span>
             </div>
           ))}
@@ -63,87 +71,87 @@ export default function Publish({ datasetLabel, metadataId, hasKey, onGoSettings
   }
 
   return (
-    <div className="publish-done">
-      <div className="publish-done-banner">
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-5 rounded-[10px] bg-sage px-[22px] py-[18px]">
         <div>
-          <div className="publish-done-eyebrow">{datasetLabel}</div>
-          <div className="publish-done-title">Published to the catalogue</div>
-          <div className="publish-done-sub">This release is now discoverable via the API and MCP endpoint below.</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-[#4a5f3c]">{datasetLabel}</div>
+          <div className="text-[19px] font-semibold text-[#3d5230]">Published to the catalogue</div>
+          <div className="text-sm text-[#4a5f3c]">This release is now discoverable via the API and MCP endpoint below.</div>
         </div>
-        <button className="publish-open-cat-btn" onClick={onGoCatalogue}>Open in catalogue →</button>
+        <button className="flex h-10 items-center rounded-md border border-[#b9cfa9] bg-white px-4 text-sm font-semibold text-[#3d5230]" onClick={onGoCatalogue}>Open in catalogue →</button>
       </div>
 
-      <div className="publish-endpoints">
-        <div className="publish-endpoint-card">
-          <div className="publish-endpoint-head"><span className="publish-endpoint-dot" style={{ background: 'var(--green)' }} />API endpoint</div>
-          <div className="publish-endpoint-desc">Fetch the harmonised table as JSON or CSV.</div>
-          <div className="publish-code-row">
-            <div className="publish-code-box">{apiUrl}</div>
-            <button className="publish-copy-btn" onClick={() => copy('api', apiUrl)}>{copied === 'api' ? 'Copied' : 'Copy'}</button>
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-3.5">
+        <div className="flex min-w-0 flex-col gap-3 rounded-[10px] border border-line bg-white p-5">
+          <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-[#8E9398]"><span className="h-2 w-2 flex-none rounded-sm bg-green" />API endpoint</div>
+          <div className="text-sm leading-relaxed text-ink-soft">Fetch the harmonised table as JSON or CSV.</div>
+          <div className="flex items-center gap-2">
+            <div className="flex-1 truncate rounded-md border border-line bg-[#F7F3EA] px-2.5 py-2.5 text-[11.5px] text-ink">{apiUrl}</div>
+            <button className="flex h-[34px] flex-none items-center rounded-md border border-[#ddd3c0] bg-white px-3.5 text-[13px] font-semibold text-teal" onClick={() => copy('api', apiUrl)}>{copied === 'api' ? 'Copied' : 'Copy'}</button>
           </div>
-          <div className="publish-endpoint-foot">GET · token in Authorization header</div>
+          <div className="text-[11.5px] text-[#8E9398]">GET · token in Authorization header</div>
         </div>
 
-        <div className="publish-endpoint-card">
-          <div className="publish-endpoint-head"><span className="publish-endpoint-dot" style={{ background: 'var(--teal)' }} />MCP endpoint</div>
-          <div className="publish-endpoint-desc">Point an assistant at the catalogue and it can query this release.</div>
-          <div className="publish-code-row">
-            <div className="publish-code-box">{mcpUrl}</div>
-            <button className="publish-copy-btn" onClick={() => copy('mcp', mcpUrl)}>{copied === 'mcp' ? 'Copied' : 'Copy'}</button>
+        <div className="flex min-w-0 flex-col gap-3 rounded-[10px] border border-line bg-white p-5">
+          <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-[#8E9398]"><span className="h-2 w-2 flex-none rounded-sm bg-teal" />MCP endpoint</div>
+          <div className="text-sm leading-relaxed text-ink-soft">Point an assistant at the catalogue and it can query this release.</div>
+          <div className="flex items-center gap-2">
+            <div className="flex-1 truncate rounded-md border border-line bg-[#F7F3EA] px-2.5 py-2.5 text-[11.5px] text-ink">{mcpUrl}</div>
+            <button className="flex h-[34px] flex-none items-center rounded-md border border-[#ddd3c0] bg-white px-3.5 text-[13px] font-semibold text-teal" onClick={() => copy('mcp', mcpUrl)}>{copied === 'mcp' ? 'Copied' : 'Copy'}</button>
           </div>
-          <div className="publish-mcp-tools">
-            {MCP_TOOLS.map((t) => <span className="publish-mcp-chip" key={t}>{t}</span>)}
+          <div className="flex flex-wrap gap-1.5">
+            {MCP_TOOLS.map((t) => <span className="rounded-full border border-line bg-cream px-2.5 py-1 text-[11.5px] text-ink-soft" key={t}>{t}</span>)}
           </div>
         </div>
       </div>
 
-      <div className="publish-summary-card">
-        <div className="publish-summary-head">
-          <span className="publish-endpoint-dot" style={{ background: 'var(--yellow)' }} />
+      <div className="flex flex-col gap-3 rounded-[10px] border border-line bg-white px-[22px] py-5">
+        <div className="flex items-center gap-2.5 text-xs uppercase tracking-wide text-[#8E9398]">
+          <span className="h-2 w-2 flex-none rounded-sm bg-yellow" />
           <span>Metadata summary</span>
-          <span className="publish-summary-tag">{hasKey ? 'Model-generated' : 'Awaiting model key'}</span>
+          <span className="rounded-full bg-[rgba(242,194,48,0.28)] px-2.5 py-0.5 text-[11px] font-semibold normal-case tracking-normal text-[#6b5406]">{hasKey ? 'Model-generated' : 'Awaiting model key'}</span>
         </div>
         {hasKey ? (
-          <div className="publish-summary-text">
+          <div className="text-[14.5px] leading-relaxed text-ink [text-wrap:pretty]">
             Registered records for {datasetLabel}, harmonised to standard concepts and code lists during classification. Ready for downstream API and MCP consumption.
           </div>
         ) : (
-          <div className="publish-summary-empty">
+          <div className="flex items-center justify-between gap-5 rounded-lg border border-dashed border-[#ddd3c0] bg-cream px-4 py-3.5 text-sm text-ink-soft">
             <span>A written summary is generated from the metadata with your own model key. The dataset publishes without it.</span>
-            <button className="cat-key-btn" onClick={onGoSettings}>Add model key</button>
+            <Button variant="secondary" size="sm" onClick={onGoSettings}>Add model key</Button>
           </div>
         )}
       </div>
 
-      <div className="publish-release-card">
-        <div className="publish-release-head">Release details</div>
-        <div className="publish-release-grid">
-          <div className="classify-field">
-            <label className="classify-label">Access</label>
-            <select className="classify-select" value={access} onChange={(e) => setAccess(e.target.value)}>
+      <div className="flex flex-col gap-3.5 rounded-[10px] border border-line bg-white px-[22px] py-5">
+        <div className="text-[15px] font-semibold text-ink">Release details</div>
+        <div className="grid grid-cols-[1fr_1.4fr_0.6fr] gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label className={fieldLabelClass}>Access</label>
+            <select className={selectClass} value={access} onChange={(e) => setAccess(e.target.value)}>
               <option value="Public">Public</option>
               <option value="Restricted">Restricted — on request</option>
               <option value="Internal">Internal to department</option>
             </select>
           </div>
-          <div className="classify-field">
-            <label className="classify-label">Licence</label>
-            <select className="classify-select" value={licence} onChange={(e) => setLicence(e.target.value)}>
+          <div className="flex flex-col gap-1.5">
+            <label className={fieldLabelClass}>Licence</label>
+            <select className={selectClass} value={licence} onChange={(e) => setLicence(e.target.value)}>
               <option value="GODL — India">Government Open Data Licence — India</option>
               <option value="CC BY 4.0">CC BY 4.0</option>
               <option value="Departmental terms">Departmental terms</option>
             </select>
           </div>
-          <div className="classify-field">
-            <label className="classify-label">Version</label>
-            <input className="classify-select" type="text" value={version} onChange={(e) => setVersion(e.target.value)} />
+          <div className="flex flex-col gap-1.5">
+            <label className={fieldLabelClass}>Version</label>
+            <input className={selectClass} type="text" value={version} onChange={(e) => setVersion(e.target.value)} />
           </div>
         </div>
       </div>
 
-      <div className="publish-final-actions">
-        <button className="console-primary-btn" onClick={onGoDashboard}>Back to dashboard</button>
-        <button className="console-secondary-btn" onClick={onUploadAnother}>Upload another</button>
+      <div className="flex gap-3">
+        <Button onClick={onGoDashboard}>Back to dashboard</Button>
+        <Button variant="secondary" onClick={onUploadAnother}>Upload another</Button>
       </div>
     </div>
   )

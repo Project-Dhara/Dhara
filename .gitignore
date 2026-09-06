@@ -52,3 +52,10 @@ Thumbs.db
 backend/pre_reset_backup/
 SDA_India_2026.pdf
 SDA_INDIA_0.pdf
+
+# Next.js build output
+frontend/.next/
+frontend/out/
+frontend/.turbo/
+frontend/.vercel/
+frontend/.eslintcache
