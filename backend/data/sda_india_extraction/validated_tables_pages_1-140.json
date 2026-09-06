@@ -1,0 +1,6307 @@
+{
+  "80": {
+    "tables": [
+      {
+        "title": "Periodicity of Indicators",
+        "description": "Table showing the periodicity of indicators for each SDG from various years.",
+        "classification": {
+          "domain": {
+            "value": "Sustainable Development Goals",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "subject": {
+            "value": "SDG Indicators",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "entity": {
+            "value": "States and Union Territories",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "table_type": {
+            "value": "Frequency Table",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "geography": {
+            "value": "India",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "time_period": {
+            "value": "2015-2024",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "frequency": {
+            "value": "Annual",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "unit": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        },
+        "columns": [
+          {
+            "name": "GOAL",
+            "role": "identifier",
+            "concept": "Sustainable Development Goal",
+            "description": "The SDG number and description",
+            "data_type": "string",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "2015\u20132016",
+            "role": "measure",
+            "concept": "Indicator Count",
+            "description": "Count of indicators for the year",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "2016\u20132017",
+            "role": "measure",
+            "concept": "Indicator Count",
+            "description": "Count of indicators for the year",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "2016\u20132020",
+            "role": "measure",
+            "concept": "Indicator Count",
+            "description": "Count of indicators for the year",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "2017\u20132018",
+            "role": "measure",
+            "concept": "Indicator Count",
+            "description": "Count of indicators for the year",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "2018\u20132019",
+            "role": "measure",
+            "concept": "Indicator Count",
+            "description": "Count of indicators for the year",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "2018\u20132020",
+            "role": "measure",
+            "concept": "Indicator Count",
+            "description": "Count of indicators for the year",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "2019\u20132020",
+            "role": "measure",
+            "concept": "Indicator Count",
+            "description": "Count of indicators for the year",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "2019-2021",
+            "role": "measure",
+            "concept": "Indicator Count",
+            "description": "Count of indicators for the year",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "2020\u20132021",
+            "role": "measure",
+            "concept": "Indicator Count",
+            "description": "Count of indicators for the year",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "2021\u20132022",
+            "role": "measure",
+            "concept": "Indicator Count",
+            "description": "Count of indicators for the year",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "2022\u20132023",
+            "role": "measure",
+            "concept": "Indicator Count",
+            "description": "Count of indicators for the year",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "2023\u20132024",
+            "role": "measure",
+            "concept": "Indicator Count",
+            "description": "Count of indicators for the year",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        ],
+        "rows": [
+          [
+            "SDG 1",
+            null,
+            null,
+            3,
+            null,
+            2,
+            5
+          ],
+          [
+            "SDG 2",
+            null,
+            null,
+            4,
+            1,
+            1,
+            1,
+            7
+          ],
+          [
+            "SDG 3",
+            null,
+            null,
+            1,
+            1,
+            2,
+            1,
+            4,
+            2,
+            11
+          ],
+          [
+            "SDG 4",
+            null,
+            null,
+            1,
+            null,
+            10,
+            1,
+            12
+          ],
+          [
+            "SDG 5",
+            1,
+            null,
+            5,
+            null,
+            2,
+            1,
+            9
+          ],
+          [
+            "SDG 6",
+            null,
+            null,
+            3,
+            null,
+            null,
+            2,
+            2,
+            7
+          ],
+          [
+            "SDG 7",
+            null,
+            null,
+            1,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            "SDG 8",
+            null,
+            null,
+            1,
+            null,
+            5,
+            2,
+            8
+          ],
+          [
+            "SDG 9",
+            null,
+            null,
+            1,
+            null,
+            1,
+            4,
+            2,
+            8
+          ],
+          [
+            "SDG 10",
+            null,
+            null,
+            1,
+            null,
+            1,
+            1,
+            3,
+            null,
+            6
+          ],
+          [
+            "SDG 11",
+            null,
+            null,
+            1,
+            null,
+            1,
+            null,
+            1,
+            4,
+            7
+          ],
+          [
+            "SDG 12",
+            null,
+            null,
+            null,
+            1,
+            2,
+            1,
+            1,
+            5
+          ],
+          [
+            "SDG 13",
+            1,
+            null,
+            1,
+            1,
+            null,
+            null,
+            1,
+            null,
+            1,
+            1,
+            5
+          ],
+          [
+            "SDG 14",
+            null,
+            null,
+            null,
+            null,
+            null,
+            1,
+            null,
+            4,
+            5
+          ],
+          [
+            "SDG 15",
+            1,
+            null,
+            1,
+            null,
+            null,
+            4,
+            1,
+            null,
+            7
+          ],
+          [
+            "SDG 16",
+            null,
+            null,
+            null,
+            1,
+            null,
+            6,
+            2,
+            9
+          ],
+          [
+            "Grand Total",
+            2,
+            1,
+            1,
+            1,
+            3,
+            2,
+            2,
+            17,
+            3,
+            24,
+            32,
+            25,
+            113
+          ]
+        ],
+        "notes": [],
+        "uncertain_cells": [],
+        "semantic_status": "classified",
+        "extraction": {
+          "method": "pymupdf+llm",
+          "confidence": "llm_validated"
+        },
+        "page": 80,
+        "human_review_needed": false,
+        "human_review_reason": null
+      }
+    ]
+  },
+  "85": {
+    "tables": [
+      {
+        "title": "SDG GOAL-WISE PERFORMANCE (INDIA)",
+        "description": "The performance of different SDGs across various years",
+        "classification": {
+          "domain": {
+            "value": "Sustainable Development Goals",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "subject": {
+            "value": "Goal Performance Scores",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "entity": {
+            "value": "States and Union Territories",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "table_type": {
+            "value": "Performance Score Table",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "geography": {
+            "value": "India",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "time_period": {
+            "value": "2018-2024",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "frequency": {
+            "value": "Annual",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "unit": {
+            "value": "Score",
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        },
+        "columns": [
+          {
+            "name": "Year",
+            "role": "identifier",
+            "concept": "Year",
+            "description": "Years of performance scores",
+            "data_type": "string",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 1",
+            "role": "measure",
+            "concept": "Goal Performance Score",
+            "description": "Performance score for SDG 1",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 2",
+            "role": "measure",
+            "concept": "Goal Performance Score",
+            "description": "Performance score for SDG 2",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 3",
+            "role": "measure",
+            "concept": "Goal Performance Score",
+            "description": "Performance score for SDG 3",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 4",
+            "role": "measure",
+            "concept": "Goal Performance Score",
+            "description": "Performance score for SDG 4",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 5",
+            "role": "measure",
+            "concept": "Goal Performance Score",
+            "description": "Performance score for SDG 5",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 6",
+            "role": "measure",
+            "concept": "Goal Performance Score",
+            "description": "Performance score for SDG 6",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 7",
+            "role": "measure",
+            "concept": "Goal Performance Score",
+            "description": "Performance score for SDG 7",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 8",
+            "role": "measure",
+            "concept": "Goal Performance Score",
+            "description": "Performance score for SDG 8",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 9",
+            "role": "measure",
+            "concept": "Goal Performance Score",
+            "description": "Performance score for SDG 9",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 10",
+            "role": "measure",
+            "concept": "Goal Performance Score",
+            "description": "Performance score for SDG 10",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 11",
+            "role": "measure",
+            "concept": "Goal Performance Score",
+            "description": "Performance score for SDG 11",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 12",
+            "role": "measure",
+            "concept": "Goal Performance Score",
+            "description": "Performance score for SDG 12",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 13",
+            "role": "measure",
+            "concept": "Goal Performance Score",
+            "description": "Performance score for SDG 13",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 15",
+            "role": "measure",
+            "concept": "Goal Performance Score",
+            "description": "Performance score for SDG 15",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 16",
+            "role": "measure",
+            "concept": "Goal Performance Score",
+            "description": "Performance score for SDG 16",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        ],
+        "rows": [
+          [
+            "2020-21",
+            60,
+            35,
+            61,
+            58,
+            42,
+            88,
+            70,
+            64,
+            65,
+            64,
+            53,
+            55,
+            60,
+            66,
+            72
+          ],
+          [
+            "2019-20",
+            50,
+            35,
+            61,
+            58,
+            42,
+            88,
+            70,
+            64,
+            65,
+            64,
+            53,
+            55,
+            60,
+            66,
+            72
+          ],
+          [
+            "2018",
+            54,
+            48,
+            52,
+            58,
+            36,
+            63,
+            51,
+            65,
+            44,
+            71,
+            39,
+            90,
+            71
+          ],
+          [
+            "2023-24",
+            72,
+            52,
+            77,
+            61,
+            49,
+            89,
+            96,
+            68,
+            61,
+            65,
+            83,
+            78,
+            67,
+            75,
+            74
+          ]
+        ],
+        "notes": [
+          "State-wise Score Range for 2019-20 was 57\u201379.",
+          "UT Score Range for 2019-20 was 65\u201377.",
+          "New States/UT in the Front Runner Category includes several states."
+        ],
+        "uncertain_cells": [],
+        "semantic_status": "classified",
+        "extraction": {
+          "method": "pymupdf+llm",
+          "confidence": "llm_validated"
+        },
+        "page": 85,
+        "human_review_needed": false,
+        "human_review_reason": null
+      }
+    ]
+  },
+  "86": {
+    "tables": [
+      {
+        "title": "PERFORMANCE OF STATES AND UTs ON SDGs",
+        "description": "Performance scores and changes for various States and UTs in SDGs.",
+        "classification": {
+          "domain": {
+            "value": "Sustainable Development Goals",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "subject": {
+            "value": "State Performance on SDGs",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "entity": {
+            "value": "States and Union Territories",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "table_type": {
+            "value": "Performance Score Table",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "geography": {
+            "value": "India",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "time_period": {
+            "value": "2023",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "frequency": {
+            "value": "Annual",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "unit": {
+            "value": "Score",
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        },
+        "columns": [
+          {
+            "name": "State/UT",
+            "role": "identifier",
+            "concept": "State or Union Territory",
+            "description": "Name of the State or Union Territory",
+            "data_type": "string",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Score",
+            "role": "measure",
+            "concept": "Goal Performance Score",
+            "description": "SDG performance score for the State or UT",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Change",
+            "role": "measure",
+            "concept": "Change in Score",
+            "description": "Change in the score compared to the previous period",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        ],
+        "rows": [
+          [
+            "UTTARAKHAND",
+            79,
+            7
+          ],
+          [
+            "KERALA",
+            79,
+            4
+          ],
+          [
+            "TAMIL NADU",
+            78,
+            4
+          ],
+          [
+            "GOA",
+            77,
+            5
+          ],
+          [
+            "HIMACHAL PRADESH",
+            77,
+            3
+          ],
+          [
+            "PUNJAB",
+            76,
+            8
+          ],
+          [
+            "SIKKIM",
+            76,
+            5
+          ],
+          [
+            "KARNATAKA",
+            75,
+            3
+          ],
+          [
+            "GUJARAT",
+            74,
+            5
+          ],
+          [
+            "ANDHRA PRADESH",
+            74,
+            2
+          ],
+          [
+            "TELANGANA",
+            74,
+            5
+          ],
+          [
+            "MAHARASHTRA",
+            73,
+            3
+          ],
+          [
+            "MIZORAM",
+            72,
+            4
+          ],
+          [
+            "HARYANA",
+            72,
+            3
+          ],
+          [
+            "MANIPUR",
+            72,
+            3
+          ],
+          [
+            "TRIPURA",
+            71,
+            2
+          ],
+          [
+            "WEST BENGAL",
+            70,
+            4
+          ],
+          [
+            "RAJASTHAN",
+            67,
+            2
+          ],
+          [
+            "MADHYA PRADESH",
+            67,
+            2
+          ],
+          [
+            "UTTAR PRADESH",
+            67,
+            2
+          ],
+          [
+            "CHHATTISGARH",
+            67,
+            1
+          ],
+          [
+            "ODISHA",
+            66,
+            2
+          ],
+          [
+            "ASSAM",
+            65,
+            3
+          ],
+          [
+            "ARUNACHAL PRADESH",
+            65,
+            3
+          ],
+          [
+            "MEGHALAYA",
+            63,
+            2
+          ],
+          [
+            "NAGALAND",
+            63,
+            3
+          ],
+          [
+            "JHARKHAND",
+            62,
+            3
+          ],
+          [
+            "BIHAR",
+            57,
+            2
+          ],
+          [
+            "CHANDIGARH",
+            57,
+            0
+          ],
+          [
+            "JAMMU & KASHMIR",
+            54,
+            3
+          ],
+          [
+            "PUDUCHERRY",
+            54,
+            1
+          ],
+          [
+            "ANDAMAN & NICOBAR ISLANDS",
+            54,
+            0
+          ],
+          [
+            "DELHI",
+            53,
+            3
+          ],
+          [
+            "DADRA & NAGAR HAVELI & DAMAN & DIU",
+            51,
+            5
+          ],
+          [
+            "LAKSHADWEEP",
+            48,
+            1
+          ],
+          [
+            "LADAKH",
+            46,
+            1
+          ]
+        ],
+        "notes": [],
+        "uncertain_cells": [],
+        "semantic_status": "classified",
+        "extraction": {
+          "method": "pymupdf+llm",
+          "confidence": "llm_validated"
+        },
+        "page": 86,
+        "human_review_needed": false,
+        "human_review_reason": null
+      }
+    ]
+  },
+  "87": {
+    "tables": [
+      {
+        "title": null,
+        "description": null,
+        "classification": {
+          "domain": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "subject": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "entity": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "table_type": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "geography": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "time_period": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "frequency": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "unit": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        },
+        "columns": [
+          {
+            "name": "STATES",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 7",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 6",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 16",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 15",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 3",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 8",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 10",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 11",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 12",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 1",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 2",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 13",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 4",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 9",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 5",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Composite Score",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        ],
+        "rows": [
+          [
+            "Uttarakhand",
+            "100",
+            "94",
+            "81",
+            "94",
+            "84",
+            "80",
+            "69",
+            "89",
+            "86",
+            "83",
+            "66",
+            "71",
+            "73",
+            "62",
+            "56",
+            "79"
+          ],
+          [
+            "Kerala",
+            "100",
+            "87",
+            "82",
+            "88",
+            "80",
+            "74",
+            "71",
+            "84",
+            "53",
+            "81",
+            "84",
+            "80",
+            "82",
+            "69",
+            "66",
+            "79"
+          ],
+          [
+            "Tamil Nadu",
+            "100",
+            "90",
+            "78",
+            "72",
+            "77",
+            "81",
+            "76",
+            "81",
+            "78",
+            "92",
+            "75",
+            "81",
+            "76",
+            "67",
+            "53",
+            "78"
+          ],
+          [
+            "Goa",
+            "100",
+            "100",
+            "83",
+            "79",
+            "79",
+            "74",
+            "87",
+            "85",
+            "47",
+            "79",
+            "74",
+            "54",
+            "72",
+            "76",
+            "61",
+            "77"
+          ],
+          [
+            "Himachal Pradesh",
+            "100",
+            "99",
+            "85",
+            "78",
+            "83",
+            "88",
+            "80",
+            "77",
+            "78",
+            "71",
+            "51",
+            "62",
+            "77",
+            "59",
+            "62",
+            "77"
+          ],
+          [
+            "Punjab",
+            "100",
+            "74",
+            "81",
+            "65",
+            "79",
+            "68",
+            "77",
+            "94",
+            "76",
+            "84",
+            "83",
+            "66",
+            "75",
+            "69",
+            "47",
+            "76"
+          ],
+          [
+            "Sikkim",
+            "83",
+            "97",
+            "80",
+            "72",
+            "66",
+            "84",
+            "80",
+            "88",
+            "75",
+            "66",
+            "77",
+            "81",
+            "67",
+            "55",
+            "65",
+            "76"
+          ],
+          [
+            "Karnataka",
+            "100",
+            "90",
+            "81",
+            "70",
+            "80",
+            "86",
+            "69",
+            "85",
+            "85",
+            "73",
+            "56",
+            "73",
+            "63",
+            "62",
+            "51",
+            "75"
+          ],
+          [
+            "Gujarat",
+            "98",
+            "98",
+            "87",
+            "76",
+            "90",
+            "76",
+            "69",
+            "94",
+            "67",
+            "75",
+            "41",
+            "74",
+            "58",
+            "61",
+            "52",
+            "74"
+          ],
+          [
+            "Andhra Pradesh",
+            "100",
+            "91",
+            "79",
+            "77",
+            "78",
+            "69",
+            "67",
+            "85",
+            "93",
+            "86",
+            "67",
+            "70",
+            "52",
+            "49",
+            "51",
+            "74"
+          ],
+          [
+            "Telangana",
+            "100",
+            "90",
+            "67",
+            "82",
+            "73",
+            "84",
+            "65",
+            "86",
+            "75",
+            "91",
+            "58",
+            "59",
+            "64",
+            "60",
+            "49",
+            "74"
+          ],
+          [
+            "Maharashtra",
+            "100",
+            "93",
+            "76",
+            "68",
+            "84",
+            "73",
+            "66",
+            "98",
+            "77",
+            "69",
+            "45",
+            "73",
+            "67",
+            "58",
+            "53",
+            "73"
+          ],
+          [
+            "Mizoram",
+            "100",
+            "94",
+            "84",
+            "67",
+            "69",
+            "81",
+            "43",
+            "70",
+            "57",
+            "74",
+            "76",
+            "79",
+            "65",
+            "55",
+            "69",
+            "72"
+          ],
+          [
+            "Haryana",
+            "100",
+            "80",
+            "67",
+            "65",
+            "73",
+            "69",
+            "73",
+            "86",
+            "71",
+            "67",
+            "75",
+            "60",
+            "77",
+            "72",
+            "46",
+            "72"
+          ],
+          [
+            "Manipur",
+            "88",
+            "83",
+            "69",
+            "83",
+            "75",
+            "57",
+            "79",
+            "83",
+            "67",
+            "74",
+            "77",
+            "71",
+            "65",
+            "62",
+            "45",
+            "72"
+          ],
+          [
+            "Tripura",
+            "74",
+            "82",
+            "82",
+            "95",
+            "79",
+            "74",
+            "77",
+            "80",
+            "99",
+            "71",
+            "63",
+            "51",
+            "52",
+            "39",
+            "45",
+            "71"
+          ],
+          [
+            "West Bengal",
+            "100",
+            "86",
+            "82",
+            "91",
+            "79",
+            "63",
+            "70",
+            "54",
+            "94",
+            "63",
+            "56",
+            "44",
+            "60",
+            "66",
+            "45",
+            "70"
+          ],
+          [
+            "Rajasthan",
+            "100",
+            "60",
+            "70",
+            "54",
+            "73",
+            "65",
+            "49",
+            "75",
+            "89",
+            "82",
+            "64",
+            "62",
+            "63",
+            "53",
+            "52",
+            "67"
+          ],
+          [
+            "Madhya Pradesh",
+            "90",
+            "87",
+            "73",
+            "90",
+            "56",
+            "64",
+            "54",
+            "86",
+            "92",
+            "67",
+            "48",
+            "63",
+            "49",
+            "39",
+            "48",
+            "67"
+          ],
+          [
+            "Uttar Pradesh",
+            "100",
+            "92",
+            "77",
+            "70",
+            "61",
+            "60",
+            "66",
+            "82",
+            "85",
+            "57",
+            "50",
+            "52",
+            "54",
+            "53",
+            "42",
+            "67"
+          ],
+          [
+            "Chhattisgarh",
+            "87",
+            "93",
+            "71",
+            "78",
+            "56",
+            "67",
+            "72",
+            "79 74",
+            "95",
+            "70",
+            "40",
+            "47",
+            "63",
+            "39",
+            "51",
+            "67"
+          ],
+          [
+            "Odisha",
+            "84",
+            "88",
+            "62",
+            "76",
+            "73",
+            "75",
+            "64",
+            null,
+            "85",
+            "73",
+            "45",
+            "64",
+            "40",
+            "48",
+            "39",
+            "66"
+          ],
+          [
+            "Assam",
+            "100",
+            "85",
+            "67",
+            "91",
+            "60",
+            "63",
+            "68",
+            "59",
+            "75",
+            "75",
+            "47",
+            "59",
+            "41",
+            "44",
+            "42",
+            "65"
+          ],
+          [
+            "Arunachal Pradesh",
+            "74",
+            "85",
+            "63",
+            "80",
+            "70",
+            "75",
+            "67",
+            "46",
+            "90",
+            "49",
+            "81",
+            "61",
+            "52",
+            "28",
+            "54",
+            "65"
+          ],
+          [
+            "Meghalaya",
+            "62",
+            "80",
+            "66",
+            "71",
+            "71",
+            "57",
+            "77",
+            "42",
+            "76",
+            "63",
+            "52",
+            "80",
+            "40",
+            "44",
+            "58",
+            "63"
+          ],
+          [
+            "Nagaland",
+            "50",
+            "86",
+            "65",
+            "74",
+            "63",
+            "76",
+            "55",
+            "38",
+            "59",
+            "63",
+            "60",
+            "79",
+            "46",
+            "50",
+            "74",
+            "63"
+          ],
+          [
+            "Jharkhand",
+            "70",
+            "86",
+            "60",
+            "95",
+            "77",
+            "64",
+            "59",
+            "74",
+            "71",
+            "56",
+            "28",
+            "30",
+            "61",
+            "53",
+            "42",
+            "62"
+          ],
+          [
+            "Bihar",
+            "81",
+            "98",
+            "68",
+            "73",
+            "67",
+            "54",
+            "56",
+            "57",
+            "74",
+            "39",
+            "24",
+            "34",
+            "32",
+            "53",
+            "44",
+            "57"
+          ],
+          [
+            "UNION TERRITORIES",
+            "SDG 7",
+            "SDG 6",
+            "SDG 16",
+            "SDG 15",
+            "SDG 3",
+            "SDG 8",
+            "SDG 10",
+            "SDG 11",
+            "SDG 12",
+            "SDG 1",
+            "SDG 2",
+            "SDG 13",
+            "SDG 4",
+            "SDG 9",
+            "SDG 5",
+            "Composite Score"
+          ],
+          [
+            "Chandigarh",
+            "100",
+            "99",
+            "75",
+            "80",
+            "89",
+            "77",
+            "75",
+            "100",
+            "59",
+            "70",
+            "71",
+            "80",
+            "84",
+            "55",
+            "48",
+            "77"
+          ],
+          [
+            "Jammu and Kashmir",
+            "100",
+            "86",
+            "81",
+            "61",
+            "78",
+            "78",
+            "74",
+            "82",
+            "87",
+            "64",
+            "73",
+            "71",
+            "56",
+            "59",
+            "53",
+            "74"
+          ],
+          [
+            "Puducherry",
+            "100",
+            "98",
+            "79",
+            "76",
+            "65",
+            "67",
+            "80",
+            "72",
+            "60",
+            "58",
+            "84",
+            "48",
+            "76",
+            "76",
+            "64",
+            "74"
+          ],
+          [
+            "Andaman and Nicobar Islands",
+            "100",
+            "100",
+            "65",
+            "94",
+            "69",
+            "72",
+            "79",
+            "81",
+            "64",
+            "60",
+            "69",
+            "26",
+            "63",
+            "50",
+            "60",
+            "70"
+          ],
+          [
+            "Delhi",
+            "100",
+            "86",
+            "51",
+            "68",
+            "93",
+            "58",
+            "56",
+            "75",
+            "43",
+            "67",
+            "80",
+            "49",
+            "85",
+            "75",
+            "60",
+            "70"
+          ],
+          [
+            "Dadra and Nagar Haveli and Daman and Diu",
+            "52",
+            "73",
+            "80",
+            "99",
+            "70",
+            "73",
+            "71",
+            "89",
+            "76",
+            "89",
+            "22",
+            "38",
+            "67",
+            "55",
+            "41",
+            "66"
+          ],
+          [
+            "Lakshadweep",
+            "83",
+            "95",
+            "81",
+            "55",
+            "69",
+            "63",
+            "70",
+            "50",
+            "64",
+            "83",
+            "83",
+            "13",
+            "67",
+            "48",
+            "65",
+            "66"
+          ],
+          [
+            "Ladakh",
+            "100",
+            "95",
+            "90",
+            "42",
+            "67",
+            "86",
+            "49",
+            "33",
+            "50",
+            "79",
+            "57",
+            "63",
+            "53",
+            "43",
+            "63",
+            "65"
+          ],
+          [
+            "India",
+            "96",
+            "89",
+            "74",
+            "75",
+            "77",
+            "68",
+            "65",
+            "83",
+            "78",
+            "72",
+            "52",
+            "67",
+            "61",
+            "61",
+            "49",
+            "71"
+          ],
+          [
+            "Target",
+            "100",
+            "100",
+            "100",
+            "100",
+            "100",
+            "100",
+            "100",
+            "100",
+            "100",
+            "100",
+            "100",
+            "100",
+            "100",
+            "100",
+            "100",
+            "100"
+          ]
+        ],
+        "notes": [],
+        "uncertain_cells": [],
+        "semantic_status": "not_classified",
+        "human_review_needed": false,
+        "human_review_reason": null,
+        "extraction": {
+          "method": "pymupdf_lines_strict",
+          "confidence": "high"
+        },
+        "source": "auto_high_confidence",
+        "page": 87
+      }
+    ]
+  },
+  "96": {
+    "tables": [
+      {
+        "title": "TABLE 1.1: PERFORMANCE OF STATES AND UTs ON INDICATORS OF SDG 1",
+        "description": "Table showing performance indicators for various states under SDG 1.",
+        "classification": {
+          "domain": {
+            "value": "Sustainable Development Goals",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "subject": {
+            "value": "Indicators of Poverty and Health",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "entity": {
+            "value": "States and Union Territories",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "table_type": {
+            "value": "Indicator Performance Table",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "geography": {
+            "value": "India",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "time_period": {
+            "value": "2023",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "frequency": {
+            "value": "Annual",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "unit": {
+            "value": "Percentage",
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        },
+        "columns": [
+          {
+            "name": "S.No.",
+            "role": "identifier",
+            "concept": "Serial Number",
+            "description": "Serial Number of the entry",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "States/UTs",
+            "role": "identifier",
+            "concept": "State or Union Territory",
+            "description": "Names of the States and UTs",
+            "data_type": "string",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Head count ratio as per the Multidimensional Poverty Index (%)",
+            "role": "measure",
+            "concept": "Multidimensional Poverty Index",
+            "description": "Percentage of poverty within the State",
+            "data_type": "decimal",
+            "unit": "Percentage",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of households with any usual member covered by a health scheme or health insurance",
+            "role": "measure",
+            "concept": "Health Insurance Coverage",
+            "description": "Percentage of households with health scheme coverage",
+            "data_type": "decimal",
+            "unit": "Percentage",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Persons offered employment as a percentage of persons who demanded employment under MGNREGA",
+            "role": "measure",
+            "concept": "Employment Guarantee Act Employment Coverage",
+            "description": "Percentage of demand met under the Mahatma Gandhi National Rural Employment Guarantee Act",
+            "data_type": "decimal",
+            "unit": "Percentage",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of the population receiving social protection benefits under PMMVY",
+            "role": "measure",
+            "concept": "Social Protection Coverage",
+            "description": "Percentage of eligible population receiving benefits",
+            "data_type": "decimal",
+            "unit": "Percentage",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of households living in kachha houses",
+            "role": "measure",
+            "concept": "Housing Quality",
+            "description": "Percentage of households in kachha (temporary) housing",
+            "data_type": "decimal",
+            "unit": "Percentage",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 1 Index Score",
+            "role": "measure",
+            "concept": "SDG 1 Performance Score",
+            "description": "Overall performance score under SDG 1",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        ],
+        "rows": [
+          [
+            "1",
+            "Andhra Pradesh",
+            6.06,
+            80.2,
+            99.94,
+            54.04,
+            1.6,
+            86
+          ],
+          [
+            "2",
+            "Arunachal Pradesh",
+            13.76,
+            29.3,
+            99.87,
+            23.51,
+            28.6,
+            49
+          ],
+          [
+            "3",
+            "Assam",
+            19.35,
+            66.7,
+            99.92,
+            53.43,
+            2.9,
+            75
+          ],
+          [
+            "4",
+            "Bihar",
+            33.76,
+            17.4,
+            99.9,
+            20.9,
+            11.3,
+            39
+          ],
+          [
+            "5",
+            "Chhattisgarh",
+            16.37,
+            71.4,
+            99.98,
+            37.6,
+            11.7,
+            70
+          ],
+          [
+            "6",
+            "Goa",
+            0.84,
+            73.1,
+            99.69,
+            23.27,
+            0.4,
+            79
+          ],
+          [
+            "7",
+            "Gujarat",
+            11.66,
+            44.4,
+            99.74,
+            39.22,
+            1.7,
+            75
+          ],
+          [
+            "8",
+            "Haryana",
+            7.07,
+            25.7,
+            99.81,
+            13.47,
+            0.9,
+            67
+          ],
+          [
+            "9",
+            "Himachal Pradesh",
+            4.93,
+            38.9,
+            99.96,
+            21.81,
+            1.6,
+            71
+          ],
+          [
+            "10",
+            "Jharkhand",
+            28.81,
+            50.3,
+            99.96,
+            41.83,
+            9.8,
+            56
+          ],
+          [
+            "11",
+            "Karnataka",
+            7.58,
+            31.8,
+            97.4,
+            46.08,
+            2.6,
+            73
+          ],
+          [
+            "12",
+            "Kerala",
+            0.55,
+            57.8,
+            100,
+            50.4,
+            0.3,
+            81
+          ],
+          [
+            "13",
+            "Madhya Pradesh",
+            20.63,
+            38.1,
+            99.55,
+            61.44,
+            7.2,
+            67
+          ],
+          [
+            "14",
+            "Maharashtra",
+            7.81,
+            22.4,
+            99.76,
+            27.91,
+            1.7,
+            69
+          ],
+          [
+            "15",
+            "Manipur",
+            8.1,
+            16.4,
+            99.92,
+            62.4,
+            1.5,
+            74
+          ],
+          [
+            "16",
+            "Meghalaya",
+            27.79,
+            69,
+            99.97,
+            35.68,
+            4.6,
+            63
+          ],
+          [
+            "17",
+            "Mizoram",
+            5.3,
+            50.3,
+            100,
+            37.31,
+            4.8,
+            74
+          ],
+          [
+            "18",
+            "Nagaland",
+            15.43,
+            22,
+            99.62,
+            null,
+            null,
+            63
+          ],
+          [
+            "19",
+            "Odisha",
+            15.68,
+            47.9,
+            99.92,
+            null,
+            11.3,
+            73
+          ],
+          [
+            "20",
+            "Punjab",
+            4.75,
+            25.2,
+            99.92,
+            117.84,
+            1.1,
+            84
+          ],
+          [
+            "21",
+            "Rajasthan",
+            15.31,
+            87.8,
+            99.95,
+            46.08,
+            3.5,
+            82
+          ],
+          [
+            "22",
+            "Sikkim",
+            2.6,
+            28,
+            99.98,
+            9.19,
+            1.5,
+            66
+          ],
+          [
+            "23",
+            "Tamil Nadu",
+            2.2,
+            66.5,
+            100,
+            197.7,
+            2.1,
+            92
+          ],
+          [
+            "24",
+            "Telangana",
+            5.88,
+            69.2,
+            99.96,
+            null,
+            1.3,
+            91
+          ],
+          [
+            "25",
+            "Tripura",
+            13.11,
+            36.4,
+            99.99,
+            43.03,
+            6.4,
+            71
+          ],
+          [
+            "26",
+            "Uttar Pradesh",
+            22.93,
+            15.9,
+            99.98,
+            38.91,
+            5.7,
+            57
+          ],
+          [
+            "27",
+            "Uttarakhand",
+            9.67,
+            62.5,
+            99.88,
+            68.49,
+            4.2,
+            83
+          ],
+          [
+            "28",
+            "West Bengal",
+            11.89,
+            33.7,
+            99.59,
+            0,
+            4.3,
+            63
+          ],
+          [
+            "29",
+            "Andaman and Nicobar Islands",
+            2.3,
+            1.8,
+            98.99,
+            41.15,
+            null,
+            60
+          ]
+        ],
+        "notes": [],
+        "uncertain_cells": [],
+        "semantic_status": "classified",
+        "extraction": {
+          "method": "pymupdf+llm",
+          "confidence": "llm_validated"
+        },
+        "page": 96,
+        "human_review_needed": false,
+        "human_review_reason": null
+      }
+    ]
+  },
+  "98": {
+    "tables": [
+      {
+        "title": null,
+        "description": null,
+        "classification": {
+          "domain": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "subject": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "entity": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "table_type": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "geography": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "time_period": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "frequency": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "unit": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        },
+        "columns": [
+          {
+            "name": "Indicators",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Targets",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Justification of targets",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        ],
+        "rows": [
+          [
+            "Headcount ratio as per the Multidimensional Poverty Index (MPI) (%)",
+            "12.425",
+            "Global SDG target 1.2 aims to reduce at least by half the proportion of men, women and children of all ages living in poverty in all its dimensions, according to national definitions. According to NITI Aayog\u2019s National MPI: A Progress Review 2023, the incidence (headcount ratio) of multidimensional poverty in India was 24.85% for the year 2015\u20132016. Therefore, half of this value has been taken as the national target."
+          ],
+          [
+            "Percentage of households with any usual member covered by a health scheme or health insurance",
+            "100",
+            "This target corresponds to the global SDG target 1.3 which aims to implement nationally appropriate social protection systems and measures for all. Worldwide, the provision of some form of universal health coverage is regarded as a basic component of social security."
+          ],
+          [
+            "Persons offered employment as a percentage of persons who demanded employment under Mahatma Gandhi National Rural Employment Guarantee Act (MGNREGA)",
+            "100",
+            "The mandate of the MGNREGA is to provide at least 100 days of guaranteed wage employment during a financial year to every rural household whose adult members volunteer to do unskilled work at the time and place provided by a Programme Officer. Guaranteed employment through the MGNREGA is one of the social protection schemes which aim to cover all who demand employment."
+          ],
+          [
+            "Percentage of population (out of total eligible population) receiving social protection benefits under Pradhan Mantri Matru Vandana Yojana (PMMVY)",
+            "100",
+            "PMMVY is a maternity benefit programme implemented in all districts of the country since 2017 for the welfare of pregnant women and lactating mothers. It is aimed that all persons belonging to the eligible population under PMMVY benefit from the programme."
+          ],
+          [
+            "Percentage of households living in kachha houses",
+            "0",
+            "Global SDG target 1.4 aims to ensure that by 2030, all men and women, the poor and the vulnerable, have equal rights to economic resources, access to basic services, ownership and control over land and other forms of property. Therefore, the target has been set to zero percent implying that no household should reside in a kachha house which is a non-durable and temporary form of housing."
+          ]
+        ],
+        "notes": [],
+        "uncertain_cells": [],
+        "semantic_status": "not_classified",
+        "human_review_needed": false,
+        "human_review_reason": null,
+        "extraction": {
+          "method": "pymupdf_lines_strict",
+          "confidence": "high"
+        },
+        "source": "auto_high_confidence",
+        "page": 98
+      }
+    ]
+  },
+  "104": {
+    "tables": [
+      {
+        "title": "TABLE 2.1: PERFORMANCE OF STATES AND UTs ON INDICATORS OF SDG 2",
+        "description": "Indicators related to Food Security and Nutrition under SDG 2.",
+        "classification": {
+          "domain": {
+            "value": "Sustainable Development Goals",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "subject": {
+            "value": "Food Security and Nutrition Indicators",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "entity": {
+            "value": "States and Union Territories",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "table_type": {
+            "value": "Indicator Performance Table",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "geography": {
+            "value": "India",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "time_period": {
+            "value": "2023",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "frequency": {
+            "value": "Annual",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "unit": {
+            "value": "Percentage / kg/ha",
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        },
+        "columns": [
+          {
+            "name": "S.No.",
+            "role": "identifier",
+            "concept": "Serial Number",
+            "description": "Serial Number of the entry",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "States/UTs",
+            "role": "identifier",
+            "concept": "State or Union Territory",
+            "description": "Names of the States and UTs",
+            "data_type": "string",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of beneficiaries covered under NFSA, 2013",
+            "role": "measure",
+            "concept": "NFSA Coverage",
+            "description": "Percentage of beneficiaries covered by the National Food Security Act",
+            "data_type": "decimal",
+            "unit": "Percentage",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of children underweight",
+            "role": "measure",
+            "concept": "Child Underweight Rate",
+            "description": "Percentage of children under five who are underweight",
+            "data_type": "decimal",
+            "unit": "Percentage",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of children stunted",
+            "role": "measure",
+            "concept": "Child Stunting Rate",
+            "description": "Percentage of children under five who are stunted",
+            "data_type": "decimal",
+            "unit": "Percentage",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of pregnant women who are anaemic",
+            "role": "measure",
+            "concept": "Anaemia in Pregnant Women",
+            "description": "Percentage of pregnant women aged 15-49 years who are anaemic",
+            "data_type": "decimal",
+            "unit": "Percentage",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of women whose BMI is below 18.5",
+            "role": "measure",
+            "concept": "Low BMI in Women",
+            "description": "Percentage of women (aged 15-49 years) with BMI below 18.5",
+            "data_type": "decimal",
+            "unit": "Percentage",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Rice and wheat produced per unit area",
+            "role": "measure",
+            "concept": "Agricultural Productivity",
+            "description": "Rice and wheat produced per hectare",
+            "data_type": "decimal",
+            "unit": "kg/ha",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Gross Value Added in agriculture per worker",
+            "role": "measure",
+            "concept": "Agricultural Productivity",
+            "description": "Gross Value Added in constant prices per worker in agriculture",
+            "data_type": "decimal",
+            "unit": "lakhs/worker",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 2 Index Score",
+            "role": "measure",
+            "concept": "Performance Score SDG 2",
+            "description": "Overall performance score under SDG 2",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        ],
+        "rows": [
+          [
+            "1",
+            "Andhra Pradesh",
+            100,
+            29.6,
+            31.2,
+            53.7,
+            14.8,
+            3516.1,
+            1.5,
+            67
+          ],
+          [
+            "2",
+            "Arunachal Pradesh",
+            96.53,
+            15.4,
+            28,
+            27.9,
+            5.7,
+            1846.7,
+            1.97,
+            81
+          ],
+          [
+            "3",
+            "Assam",
+            99.71,
+            32.8,
+            35.3,
+            54.2,
+            17.7,
+            2078.49,
+            0.76,
+            47
+          ],
+          [
+            "4",
+            "Bihar",
+            100,
+            41,
+            42.9,
+            63.1,
+            25.6,
+            2480.14,
+            0.34,
+            24
+          ],
+          [
+            "5",
+            "Chhattisgarh",
+            100,
+            31.3,
+            34.6,
+            51.8,
+            23.1,
+            1933.78,
+            0.49,
+            40
+          ],
+          [
+            "6",
+            "Goa",
+            100,
+            24,
+            25.8,
+            41,
+            13.8,
+            2688.76,
+            5,
+            74
+          ],
+          [
+            "7",
+            "Gujarat",
+            91.84,
+            39.7,
+            39,
+            62.5,
+            25.2,
+            2794.96,
+            1.33,
+            41
+          ],
+          [
+            "8",
+            "Haryana",
+            100,
+            21.5,
+            27.5,
+            56.4,
+            15.1,
+            4240.36,
+            2.17,
+            75
+          ],
+          [
+            "9",
+            "Himachal Pradesh",
+            77.8,
+            25.5,
+            30.8,
+            42.2,
+            13.9,
+            1861.49,
+            0.76,
+            51
+          ],
+          [
+            "10",
+            "Jharkhand",
+            99.98,
+            39.4,
+            39.6,
+            56.8,
+            26.2,
+            2086.15,
+            0.38,
+            28
+          ],
+          [
+            "11",
+            "Karnataka",
+            100,
+            32.9,
+            35.4,
+            45.7,
+            17.2,
+            2867.66,
+            0.94,
+            56
+          ],
+          [
+            "12",
+            "Kerala",
+            100,
+            19.7,
+            23.4,
+            31.4,
+            10.1,
+            2882.2,
+            2.28,
+            84
+          ],
+          [
+            "13",
+            "Madhya Pradesh",
+            97.87,
+            33,
+            35.7,
+            52.8,
+            23,
+            2946.62,
+            0.92,
+            48
+          ],
+          [
+            "14",
+            "Maharashtra",
+            100,
+            36.1,
+            35.2,
+            45.7,
+            20.8,
+            1954.84,
+            null,
+            45
+          ],
+          [
+            "15",
+            "Manipur",
+            80.15,
+            13.3,
+            23,
+            32.4,
+            7.2,
+            2584.66,
+            null,
+            77
+          ],
+          [
+            "16",
+            "Meghalaya",
+            100,
+            26.6,
+            46.5,
+            45,
+            10.8,
+            2738.04,
+            0.64,
+            52
+          ],
+          [
+            "17",
+            "Mizoram",
+            96.67,
+            12.7,
+            28.9,
+            34,
+            5.3,
+            1737.4,
+            null,
+            76
+          ],
+          [
+            "18",
+            "Nagaland",
+            94.99,
+            26.9,
+            32.7,
+            22.2,
+            11.1,
+            1583.3,
+            0.68,
+            60
+          ],
+          [
+            "19",
+            "Odisha",
+            99.93,
+            29.7,
+            31,
+            61.8,
+            20.8,
+            2218.65,
+            0.6,
+            45
+          ],
+          [
+            "20",
+            "Punjab",
+            100,
+            16.9,
+            24.5,
+            51.7,
+            12.7,
+            4491.8,
+            2.76,
+            83
+          ],
+          [
+            "21",
+            "Rajasthan",
+            98.52,
+            27.6,
+            31.8,
+            46.3,
+            19.6,
+            3598.85,
+            1.09,
+            64
+          ],
+          [
+            "22",
+            "Sikkim",
+            93.78,
+            13.1,
+            22.3,
+            40.7,
+            5.8,
+            1849.83,
+            1.01,
+            77
+          ],
+          [
+            "23",
+            "Tamil Nadu",
+            99.84,
+            22,
+            25,
+            48.2,
+            12.6,
+            3564.23,
+            1.05,
+            75
+          ],
+          [
+            "24",
+            "Telangana",
+            99.96,
+            31.8,
+            33.1,
+            53.2,
+            18.8,
+            3392.62,
+            1.05,
+            58
+          ],
+          [
+            "25",
+            "Tripura",
+            97.65,
+            25.6,
+            32.3,
+            61.5,
+            16.2,
+            3080.7,
+            1.52,
+            63
+          ],
+          [
+            "26",
+            "Uttar Pradesh",
+            99.29,
+            32.1,
+            39.7,
+            45.9,
+            19,
+            3234.68,
+            0.73,
+            50
+          ],
+          [
+            "27",
+            "Uttarakhand",
+            100,
+            21,
+            27,
+            46.4,
+            13.9,
+            2857.33,
+            0.73,
+            66
+          ],
+          [
+            "28",
+            "West Bengal",
+            100,
+            32.2,
+            33.8,
+            62.3,
+            14.8,
+            2947.96,
+            1.02,
+            56
+          ],
+          [
+            "29",
+            "Andaman and Nicobar Islands",
+            96.21,
+            23.6,
+            22.5,
+            53.7,
+            9.4,
+            2451.15,
+            null,
+            69
+          ]
+        ],
+        "notes": [],
+        "uncertain_cells": [],
+        "semantic_status": "classified",
+        "extraction": {
+          "method": "pymupdf+llm",
+          "confidence": "llm_validated"
+        },
+        "page": 104,
+        "human_review_needed": false,
+        "human_review_reason": null
+      }
+    ]
+  },
+  "106": {
+    "tables": [
+      {
+        "title": null,
+        "description": null,
+        "classification": {
+          "domain": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "subject": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "entity": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "table_type": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "geography": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "time_period": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "frequency": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "unit": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        },
+        "columns": [
+          {
+            "name": "Indicators",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Targets",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Justification of targets",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        ],
+        "rows": [
+          [
+            "Percentage of beneficiaries covered under National Food Security Act (NFSA), 2013",
+            "100",
+            "NFSA, 2013 is a Government of India Act that aims to provide food and nutritional security by ensuring access to an adequate quantity of quality food at affordable prices. It is aimed that all persons belonging to the eligible population under NFSA, 2013, benefit from the Act."
+          ],
+          [
+            "Percentage of children under 5 years who are underweight",
+            "13.3",
+            "Global SDG target 2.2 aims to end all forms of malnutrition. The target has been fixed as the average of the top 3 best performing States from the base year (2015\u20132016)."
+          ],
+          [
+            "Percentage of children under 5 years who are stunted",
+            "23.7",
+            "The target for India has been set at 23.7 percent as per WHO\u2019s Global Nutrition Targets Tracking tool."
+          ],
+          [
+            "Percentage of pregnant women aged 15\u201349 years who are anaemic",
+            "25.2",
+            "The WHO targets a 50 percent reduction of anaemia in women of reproductive age by 2025 (Global Nutrition Targets 2025, Policy Brief Series). Hence, 50 percent reduction from base year (2015\u20132016) has been set as the target."
+          ],
+          [
+            "Percentage of women (aged 15\u201349 years) whose Body Mass Index is below 18.5",
+            "7.76",
+            "Global SDG target 2.2 aims to end all forms of malnutrition in women. Target has been fixed as the average of the top 3 best performing States from the base year (2015\u20132016)."
+          ],
+          [
+            "Rice and wheat produced per unit area (three-year average in kg/Ha)",
+            "5322.08",
+            "Global SDG target 2.3 aims to double the agricultural productivity by 2030. Hence, the target is to double the agricultural productivity from the base year (2015\u20132016)."
+          ],
+          [
+            "Gross Value Added (GVA) (constant prices) in agriculture per worker (in lakhs per worker)",
+            "1.22",
+            "Global SDG target 2.3 aims to double the agricultural productivity and incomes of small-scale food producers. Therefore, the target has been set to double the GVA in agriculture per worker from the base year (2015\u20132016) figures."
+          ]
+        ],
+        "notes": [],
+        "uncertain_cells": [],
+        "semantic_status": "not_classified",
+        "human_review_needed": false,
+        "human_review_reason": null,
+        "extraction": {
+          "method": "pymupdf_lines_strict",
+          "confidence": "high"
+        },
+        "source": "auto_high_confidence",
+        "page": 106
+      }
+    ]
+  },
+  "112": {
+    "tables": [
+      {
+        "title": "TABLE 3.1: PERFORMANCE OF STATES AND UTs ON INDICATORS OF SDG 3",
+        "description": "This table lists various health and social indicators for each state and union territory (UT) in India related to Sustainable Development Goal 3 (SDG 3).",
+        "classification": {
+          "domain": {
+            "value": "Health and Social Indicators",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "subject": {
+            "value": "Sustainable Development Goals",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "entity": {
+            "value": "States and UTs of India",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "table_type": {
+            "value": "Performance Evaluation",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "geography": {
+            "value": "India",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "time_period": {
+            "value": "2023-24",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "frequency": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "unit": {
+            "value": "Various units as specified",
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        },
+        "columns": [
+          {
+            "name": "S.No.",
+            "role": "identifier",
+            "concept": "Serial Number",
+            "description": "Serial number for each state/UT",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "States/UTs",
+            "role": "dimension",
+            "concept": "State or Union Territory",
+            "description": "Names of Indian states and union territories",
+            "data_type": "string",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Maternal Mortality Ratio",
+            "role": "measure",
+            "concept": "Maternal Mortality",
+            "description": "Maternal mortality ratio per 100,000 live births",
+            "data_type": "integer",
+            "unit": "per 100,000 live births",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Under-five Mortality Rate",
+            "role": "measure",
+            "concept": "Under-five Mortality",
+            "description": "Under-five mortality rate per 1,000 live births",
+            "data_type": "integer",
+            "unit": "per 1,000 live births",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of Children Fully Immunized",
+            "role": "measure",
+            "concept": "Immunization Rate",
+            "description": "Percentage of children aged 9-11 months fully immunized",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Tuberculosis Case Notification Rate",
+            "role": "measure",
+            "concept": "Tuberculosis Notification",
+            "description": "Tuberculosis case notification against target percentage",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "HIV Incidence",
+            "role": "measure",
+            "concept": "HIV Incidence",
+            "description": "HIV incidence rate per 1,000 uninfected population",
+            "data_type": "decimal",
+            "unit": "per 1,000 population",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Life Expectancy",
+            "role": "measure",
+            "concept": "Life Expectancy",
+            "description": "Life expectancy at birth",
+            "data_type": "decimal",
+            "unit": "years",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Suicide Rate",
+            "role": "measure",
+            "concept": "Suicide Rate",
+            "description": "Suicide rate per 100,000 population",
+            "data_type": "decimal",
+            "unit": "per 100,000 population",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Road Traffic Accident Death Rate",
+            "role": "measure",
+            "concept": "Traffic Accident Deaths",
+            "description": "Death rate due to road traffic accidents per 100,000 population",
+            "data_type": "decimal",
+            "unit": "per 100,000 population",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of Institutional Deliveries",
+            "role": "measure",
+            "concept": "Institutional Deliveries",
+            "description": "Percentage of institutional deliveries out of total deliveries",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Monthly Per Capita Out-of-Pocket Expenditure on Health",
+            "role": "measure",
+            "concept": "Health Expenditure",
+            "description": "Monthly out-of-pocket health expenditure as a share of monthly per capita consumption expenditure",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Health Worker Density",
+            "role": "measure",
+            "concept": "Health Worker Density",
+            "description": "Health worker density per 10,000 population",
+            "data_type": "decimal",
+            "unit": "per 10,000 population",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 3 Index Score",
+            "role": "measure",
+            "concept": "SDG Index Score",
+            "description": "Index score for SDG 3 indicators",
+            "data_type": "decimal",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        ],
+        "rows": [
+          [
+            "1",
+            "Andhra Pradesh",
+            "45",
+            "27",
+            "101.26",
+            "80.16",
+            "0.1",
+            "70.6",
+            "16.8",
+            "15.64",
+            "99.98",
+            "13.5",
+            "107.96",
+            "78"
+          ],
+          [
+            "2",
+            "Arunachal Pradesh",
+            "Null",
+            "Null",
+            "79.41",
+            "81.8",
+            "0.11",
+            "Null",
+            "9.6",
+            "9.8",
+            "93.9",
+            "17",
+            "70.52",
+            "70"
+          ],
+          [
+            "3",
+            "Assam",
+            "195",
+            "40",
+            "85.4",
+            "78.4",
+            "0.08",
+            "67.9",
+            "9.4",
+            "8.62",
+            "95.91",
+            "12.9",
+            "27.55",
+            "60"
+          ],
+          [
+            "4",
+            "Bihar",
+            "118",
+            "30",
+            "83.54",
+            "80.58",
+            "0.07",
+            "69.5",
+            "0.6",
+            "7.09",
+            "89.73",
+            "14.5",
+            "14.47",
+            "67"
+          ],
+          [
+            "5",
+            "Chhattisgarh",
+            "137",
+            "41",
+            "96.54",
+            "70.04",
+            "0.05",
+            "65.1",
+            "28.2",
+            "19.67",
+            "99.52",
+            "6.6",
+            "26.03",
+            "56"
+          ],
+          [
+            "6",
+            "Goa",
+            "Null",
+            "Null",
+            "91.26",
+            "87.13",
+            "0.07",
+            "Null",
+            "19.2",
+            "17.46",
+            "99.96",
+            "9",
+            "71.57",
+            "79"
+          ],
+          [
+            "7",
+            "Gujarat",
+            "57",
+            "24",
+            "95.95",
+            "101.27",
+            "0.03",
+            "70.5",
+            "12.7",
+            "10.76",
+            "99.94",
+            "9.5",
+            "55.56",
+            "90"
+          ],
+          [
+            "8",
+            "Haryana",
+            "110",
+            "33",
+            "91.71",
+            "80.68",
+            "0.07",
+            "69.9",
+            "12.6",
+            "17.45",
+            "97.87",
+            "10.4",
+            "46.8",
+            "73"
+          ],
+          [
+            "9",
+            "Himachal Pradesh",
+            "Null",
+            "24",
+            "84.87",
+            "97.51",
+            "0.02",
+            "73.5",
+            "8.7",
+            "13.15",
+            "95.45",
+            "14.4",
+            "84.73",
+            "83"
+          ],
+          [
+            "10",
+            "Jharkhand",
+            "56",
+            "27",
+            "97.28",
+            "81.89",
+            "0.03",
+            "69.6",
+            "5.6",
+            "9.96",
+            "99.4",
+            "11",
+            "6.4",
+            "77"
+          ],
+          [
+            "11",
+            "Karnataka",
+            "69",
+            "21",
+            "98.44",
+            "80.42",
+            "0.05",
+            "69.8",
+            "20.2",
+            "17.36",
+            "99.98",
+            "9.8",
+            "86.67",
+            "80"
+          ],
+          [
+            "12",
+            "Kerala",
+            "19",
+            "8",
+            "85.4",
+            "97.45",
+            "0.01",
+            "75",
+            "28.5",
+            "12.1",
+            "99.85",
+            "17",
+            "144.03",
+            "80"
+          ],
+          [
+            "13",
+            "Madhya Pradesh",
+            "173",
+            "51",
+            "93.19",
+            "76.04",
+            "0.02",
+            "67.4",
+            "17.9",
+            "16.2",
+            "98.48",
+            "12.2",
+            "36.72",
+            "56"
+          ],
+          [
+            "14",
+            "Maharashtra",
+            "33",
+            "18",
+            "101.04",
+            "86.71",
+            "0.04",
+            "72.9",
+            "18.1",
+            "12.52",
+            "99.66",
+            "14.5",
+            "69.93",
+            "84"
+          ],
+          [
+            "15",
+            "Manipur",
+            "Null",
+            "Null",
+            "82.93",
+            "85.13",
+            "0.27",
+            "Null",
+            "0.8",
+            "3.97",
+            "87.23",
+            "14.4",
+            "53.13",
+            "75"
+          ],
+          [
+            "16",
+            "Meghalaya",
+            "Null",
+            "Null",
+            "96.71",
+            "83.15",
+            "0.31",
+            "Null",
+            "6.4",
+            "4.87",
+            "71.27",
+            "10.7",
+            "35.41",
+            "71"
+          ],
+          [
+            "17",
+            "Mizoram",
+            "Null",
+            "Null",
+            "101.1",
+            "69.5",
+            "0.86",
+            "Null",
+            "12.4",
+            "6.75",
+            "90.69",
+            "9.9",
+            "60.78",
+            "69"
+          ],
+          [
+            "18",
+            "Nagaland",
+            "Null",
+            "Null",
+            "62.18",
+            "82.5",
+            "0.48",
+            "Null",
+            "2.2",
+            "0.99",
+            "85.19",
+            "7.9",
+            "8.76",
+            "63"
+          ],
+          [
+            "19",
+            "Odisha",
+            "119",
+            "39",
+            "82.02",
+            "92.88",
+            "0.04",
+            "70.3",
+            "13.3",
+            "11.87",
+            "99.29",
+            "13.1",
+            "50.02",
+            "73"
+          ],
+          [
+            "20",
+            "Punjab",
+            "105",
+            "22",
+            "93.96",
+            "78.79",
+            "0.07",
+            "72.5",
+            "8",
+            "15.32",
+            "99.49",
+            "13.5",
+            "77.83",
+            "79"
+          ],
+          [
+            "21",
+            "Rajasthan",
+            "113",
+            "40",
+            "76.63",
+            "94.18",
+            "0.03",
+            "69.4",
+            "6.6",
+            "13.8",
+            "99.59",
+            "11.8",
+            "56.13",
+            "73"
+          ],
+          [
+            "22",
+            "Sikkim",
+            "Null",
+            "Null",
+            "65.47",
+            "93",
+            "0.03",
+            "Null",
+            "43.1",
+            "14.33",
+            "99.46",
+            "Null",
+            "49.35",
+            "66"
+          ],
+          [
+            "23",
+            "Tamil Nadu",
+            "54",
+            "13",
+            "85.13",
+            "78.23",
+            "0.03",
+            "73.2",
+            "25.9",
+            "23.31",
+            "99.98",
+            "9.1",
+            "86.51",
+            "77"
+          ],
+          [
+            "24",
+            "Telangana",
+            "43",
+            "23",
+            "106.13",
+            "91.18",
+            "0.05",
+            "70",
+            "26.3",
+            "19.92",
+            "100",
+            "14.4",
+            "30.31",
+            "73"
+          ],
+          [
+            "25",
+            "Tripura",
+            "Null",
+            "Null",
+            "98",
+            "86.4",
+            "0.18",
+            "Null",
+            "17.3",
+            "5.85",
+            "98.21",
+            "14.2",
+            "38.14",
+            "79"
+          ],
+          [
+            "26",
+            "Uttar Pradesh",
+            "167",
+            "43",
+            "99.41",
+            "95.06",
+            "0.04",
+            "66",
+            "3.5",
+            "10.3",
+            "94.98",
+            "16.6",
+            "20.72",
+            "61"
+          ],
+          [
+            "27",
+            "Uttarakhand",
+            "103",
+            "26",
+            "93.72",
+            "98.4",
+            "0.05",
+            "70.6",
+            "7",
+            "9.02",
+            "93.64",
+            "12.5",
+            "51.77",
+            "84"
+          ],
+          [
+            "28",
+            "West Bengal",
+            "103",
+            "22",
+            "98.01",
+            "77.67",
+            "0.03",
+            "72.3",
+            "12.8",
+            "5.86",
+            "99.12",
+            "16.9",
+            "37.48",
+            "79"
+          ],
+          [
+            "29",
+            "Andaman and Nicobar Islands",
+            "Null",
+            "Null",
+            "79.79",
+            "100.75",
+            "0.04",
+            "Null",
+            "42.8",
+            "4.73",
+            "99.34",
+            "7",
+            "0",
+            "69"
+          ]
+        ],
+        "notes": [],
+        "uncertain_cells": [],
+        "semantic_status": "classified",
+        "extraction": {
+          "method": "pymupdf+llm",
+          "confidence": "llm_validated"
+        },
+        "page": 112,
+        "human_review_needed": false,
+        "human_review_reason": null
+      }
+    ]
+  },
+  "114": {
+    "tables": [
+      {
+        "title": null,
+        "description": null,
+        "classification": {
+          "domain": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "subject": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "entity": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "table_type": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "geography": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "time_period": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "frequency": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "unit": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        },
+        "columns": [
+          {
+            "name": "Indicators",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Targets",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Justification of targets",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        ],
+        "rows": [
+          [
+            "Maternal mortality ratio (per 100,000 live births)",
+            "70",
+            "Global SDG target 3.1 aims to reduce the maternal mortality ratio to less than 70 per 100,000 live births by 2030."
+          ],
+          [
+            "Under-5 mortality rate (per 1,000 live births)",
+            "25",
+            "Global SDG target 3.2 aims to reduce the under-5 mortality rate to at least 25 per 1,000 live births by 2030."
+          ],
+          [
+            "Percentage of children in the age group 9\u201311 months fully immunized",
+            "100",
+            "This target corresponds to the global SDG target 3.2 which aims to end preventable deaths of newborns and children under 5 years of age. 100 percent immunization coverage (BCG, measles, and 3 doses each of polio and DPT) is a prerequisite to achieving this global target."
+          ],
+          [
+            "Tuberculosis (TB) case notification against target in percentage",
+            "100",
+            "Global SDG target 3.3 aims to end the epidemic of tuberculosis by 2030. Notifica\u00ad tion of cases of infectious diseases is a critical step in controlling and preventing the spread of communicable diseases. Hence, the TB case notification against the annual target is set at 100 percent."
+          ],
+          [
+            "HIV incidence per 1,000 uninfected population",
+            "0",
+            "The target is aligned with the global SDG target 3.3 that aims to end the epidemic of AIDS by 2030."
+          ],
+          [
+            "Life expectancy",
+            "73.63",
+            "The aim is to enhance life expectancy (i.e., the average period that a person may expect to live) by ensuring healthy lives and promoting well-being for all at all ages. Hence, the target has been fixed as the average of the top 3 best performing States from the base year (2014\u20132018)."
+          ],
+          [
+            "Suicide rate (per 100,000 population)",
+            "3.5",
+            "Global SDG target 3.4 aims to reduce by one-third premature mortality from non-communicable diseases through prevention and treatment, and promote mental health and well-being, by 2030. Hence, the target has been set to reduce the suicide rate by a third from the base year (2015) figure."
+          ],
+          [
+            "Death rate due to road traffic accidents (per 100,000 population)",
+            "5.81",
+            "Global SDG target 3.6 aims to halve the number of global deaths and injuries from road traffic accidents. Hence, the target has been set to reduce road traffic accidents by half from the base year (2015) figure."
+          ],
+          [
+            "Percentage of institutional deliveries out of the total deliveries reported",
+            "100",
+            "This target corresponds to the global SDG target 3.7 which aims to ensure universal access to reproductive health-care services by 2030."
+          ],
+          [
+            "Monthly per capita out-of-pocket expenditure on health as a share of Monthly Per capita Consumption Expenditure (MPCE)",
+            "7.83",
+            "This target corresponds to the global SDG target 3.8 which aims to achieve universal health coverage, including financial risk protection and access to affordable essential medicines and vaccines for all. The target has been fixed as the average of the 3 best performing States."
+          ],
+          [
+            "Health worker density per 10,000 population",
+            "44.5",
+            "Global SDG target 3.c aims to substantially increase health financing and the recruitment, development, training and retention of the health workforce. The WHO, in its report \u201cMonitoring Health in the Sustainable Development Goals: 2017, World Health Organization, Regional Office for South East Asia\u201d, lays out a target to have a skilled health professionals density (physicians/nurses/midwives per 10,000 population) of 44.5."
+          ]
+        ],
+        "notes": [],
+        "uncertain_cells": [],
+        "semantic_status": "not_classified",
+        "human_review_needed": false,
+        "human_review_reason": null,
+        "extraction": {
+          "method": "pymupdf_lines_strict",
+          "confidence": "high"
+        },
+        "source": "auto_high_confidence",
+        "page": 114
+      }
+    ]
+  },
+  "120": {
+    "tables": [
+      {
+        "title": null,
+        "description": "This table contains educational indicators for states and union territories in India, focusing on enrollment rates and educational outcomes.",
+        "classification": {
+          "domain": {
+            "value": "Education",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "subject": {
+            "value": "Educational Performance Indicators",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "entity": {
+            "value": "States and UTs of India",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "table_type": {
+            "value": "Performance Evaluation",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "geography": {
+            "value": "India",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "time_period": {
+            "value": "2023-24",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "frequency": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "unit": {
+            "value": "%",
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        },
+        "columns": [
+          {
+            "name": "S.No.",
+            "role": "identifier",
+            "concept": "Serial Number",
+            "description": "Serial number for each state/UT",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "States/UTs",
+            "role": "dimension",
+            "concept": "State or Union Territory",
+            "description": "Names of Indian states and union territories",
+            "data_type": "string",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Adjusted Net Enrollment Rate (ANER)",
+            "role": "measure",
+            "concept": "Enrollment Rate in Elementary Education",
+            "description": "Adjusted net enrollment rate in elementary education (classes 1-8)",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Average Annual Dropout Rate",
+            "role": "measure",
+            "concept": "Dropout Rate",
+            "description": "Average annual dropout rate at secondary level (classes 9-10)",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Gross Enrollment Ratio (GER) in Higher Secondary",
+            "role": "measure",
+            "concept": "Higher Secondary Enrollment Ratio",
+            "description": "Gross enrollment ratio in higher secondary (classes 11-12)",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of Students Meeting Proficiency Level",
+            "role": "measure",
+            "concept": "Proficiency Level Achievement",
+            "description": "Percentage of students in grade VIII achieving minimum proficiency level",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "GER in Higher Education",
+            "role": "measure",
+            "concept": "Higher Education Enrollment Ratio",
+            "description": "Gross enrollment ratio in higher education (ages 18-23)",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of Persons with Disability Completing Secondary Education",
+            "role": "measure",
+            "concept": "Disability Education Completion",
+            "description": "Percentage of persons with disability who completed at least secondary education",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Gender Parity Index for Higher Education",
+            "role": "measure",
+            "concept": "Gender Equality in Education",
+            "description": "Gender parity index for higher education",
+            "data_type": "decimal",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Literate Population (15 years and above)",
+            "role": "measure",
+            "concept": "Literacy Rate",
+            "description": "Percentage of persons aged 15 and above who are literate",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of Schools with Basic Infrastructure",
+            "role": "measure",
+            "concept": "Basic Infrastructure in Schools",
+            "description": "Percentage of schools with access to electricity and drinking water",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of Schools with Computers",
+            "role": "measure",
+            "concept": "Computer Access in Schools",
+            "description": "Percentage of schools equipped with computers",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of Trained Teachers",
+            "role": "measure",
+            "concept": "Teacher Training Rate",
+            "description": "Percentage of trained teachers at secondary level",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Pupil Teacher Ratio",
+            "role": "measure",
+            "concept": "Education Resource Ratio",
+            "description": "Pupil teacher ratio at secondary level",
+            "data_type": "decimal",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 4 Index Score",
+            "role": "measure",
+            "concept": "SDG Index Score",
+            "description": "SDG 4 index score for educational performance",
+            "data_type": "decimal",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        ],
+        "rows": [
+          [
+            "1",
+            "Andhra Pradesh",
+            "96.9",
+            "16.3",
+            "56.7",
+            "73.5",
+            "36.5",
+            "15.4",
+            "0.93",
+            "68",
+            "98.8",
+            "51.6",
+            "82.5",
+            "11",
+            "52"
+          ],
+          [
+            "2",
+            "Arunachal Pradesh",
+            "100",
+            "11.7",
+            "53.7",
+            "74.5",
+            "36.5",
+            "10.3",
+            "0.9",
+            "80.6",
+            "61.67",
+            "34",
+            "91.2",
+            "11",
+            "52"
+          ],
+          [
+            "3",
+            "Assam",
+            "100",
+            "20.3",
+            "40.1",
+            "72",
+            "16.9",
+            "16.8",
+            "1.09",
+            "69.3",
+            "75.46",
+            "18.9",
+            "63.5",
+            "11",
+            "41"
+          ],
+          [
+            "4",
+            "Bihar",
+            "97",
+            "20.5",
+            "35.9",
+            "71.5",
+            "17.1",
+            "18.5",
+            "0.92",
+            "67.3",
+            "88.64",
+            "18.9",
+            "89.4",
+            "55",
+            "32"
+          ],
+          [
+            "5",
+            "Chhattisgarh",
+            "90.7",
+            "9.7",
+            "68.1",
+            "69.5",
+            "19.6",
+            "17.2",
+            "1.23",
+            "74.8",
+            "95.77",
+            "89.4",
+            "89.5",
+            "15",
+            "63"
+          ],
+          [
+            "6",
+            "Goa",
+            "86.9",
+            "9",
+            "73.7",
+            "78",
+            "35.8",
+            "32.4",
+            "0.99",
+            "94.4",
+            "100",
+            "55.3",
+            "98",
+            "9",
+            "72"
+          ],
+          [
+            "7",
+            "Gujarat",
+            "89",
+            "17.9",
+            "48.2",
+            "81",
+            "24",
+            "22.8",
+            "0.9",
+            "82.8",
+            "99.93",
+            "98",
+            "97.1",
+            "29",
+            "58"
+          ],
+          [
+            "8",
+            "Haryana",
+            "97.7",
+            "5.9",
+            "75.5",
+            "87",
+            "33.3",
+            "25.1",
+            "1.22",
+            "80.6",
+            "99.04",
+            "93.2",
+            "95.7",
+            "12",
+            "77"
+          ],
+          [
+            "9",
+            "Himachal Pradesh",
+            "100",
+            "1.5",
+            "94.1",
+            "79.5",
+            "43.1",
+            "25.6",
+            "1.33",
+            "86.5",
+            "98.64",
+            "40.5",
+            "97.1",
+            "6",
+            "77"
+          ],
+          [
+            "10",
+            "Jharkhand",
+            "94.4",
+            "9.3",
+            "46.4",
+            "74",
+            "18.6",
+            "16.9",
+            "1.01",
+            "74.6",
+            "94.03",
+            "85.2",
+            "94.9",
+            "35",
+            "61"
+          ],
+          [
+            "11",
+            "Karnataka",
+            "100",
+            "14.7",
+            "56.6",
+            "76",
+            "36.2",
+            "20.9",
+            "1.01",
+            "77.8",
+            "98.86",
+            "56.4",
+            "82.9",
+            "18",
+            "63"
+          ],
+          [
+            "12",
+            "Kerala",
+            "100",
+            "5.5",
+            "85",
+            "77",
+            "41.3",
+            "24.3",
+            "1.44",
+            "94.8",
+            "99.51",
+            "98.3",
+            "96.6",
+            "15",
+            "82"
+          ],
+          [
+            "13",
+            "Madhya Pradesh",
+            "81.5",
+            "10.1",
+            "51.3",
+            "81",
+            "28.9",
+            "17.2",
+            "0.94",
+            "72.6",
+            "76.26",
+            "26",
+            "89.9",
+            "23",
+            "49"
+          ],
+          [
+            "14",
+            "Maharashtra",
+            "100",
+            "10.7",
+            "71.5",
+            "78.5",
+            "35.3",
+            "25.7",
+            "0.9",
+            "85.1",
+            "94.61",
+            "81.4",
+            "98",
+            "21",
+            "67"
+          ],
+          [
+            "15",
+            "Manipur",
+            "100",
+            "1.3",
+            "69.9",
+            "81",
+            "35.4",
+            "28.9",
+            "1.01",
+            "88.6",
+            "66.04",
+            "37",
+            "77.4",
+            "9",
+            "65"
+          ],
+          [
+            "16",
+            "Meghalaya",
+            "100",
+            "21.7",
+            "46",
+            "60",
+            "25.4",
+            "12.3",
+            "1.24",
+            "94.3",
+            "20.53",
+            "18.3",
+            "62",
+            "12",
+            "40"
+          ],
+          [
+            "17",
+            "Mizoram",
+            "100",
+            "11.9",
+            "61.3",
+            "70",
+            "32.3",
+            "17.4",
+            "1.06",
+            "99.3",
+            "81.54",
+            "53.5",
+            "80.8",
+            "9",
+            "65"
+          ],
+          [
+            "18",
+            "Nagaland",
+            "80.3",
+            "17.5",
+            "35.8",
+            "76",
+            "18.8",
+            "11.9",
+            "1.28",
+            "94.4",
+            "55.85",
+            "57.4",
+            "67.7",
+            "10",
+            "46"
+          ],
+          [
+            "19",
+            "Odisha",
+            "93",
+            "27.3",
+            "43.6",
+            "77.5",
+            "22.1",
+            "13.8",
+            "0.88",
+            "75.6",
+            "83.57",
+            "26.4",
+            "95.6",
+            "18",
+            "40"
+          ],
+          [
+            "20",
+            "Punjab",
+            "99.2",
+            "17.2",
+            "82.1",
+            "91.5",
+            "27.4",
+            "23.4",
+            "1.19",
+            "81.4",
+            "99.98",
+            "99.6",
+            "97.7",
+            "11",
+            "75"
+          ],
+          [
+            "21",
+            "Rajasthan",
+            "93.7",
+            "7.7",
+            "70.4",
+            "85",
+            "28.6",
+            "14.9",
+            "0.97",
+            "68.3",
+            "86.78",
+            "52",
+            "97.4",
+            "11",
+            "63"
+          ],
+          [
+            "22",
+            "Sikkim",
+            "85.2",
+            "11.9",
+            "64.2",
+            "75",
+            "38.6",
+            "20.4",
+            "1.21",
+            "85.4",
+            "99.13",
+            "89.9",
+            "83.2",
+            "9",
+            "67"
+          ],
+          [
+            "23",
+            "Tamil Nadu",
+            "99.5",
+            "4.5",
+            "81.5",
+            "67",
+            "47",
+            "19.1",
+            "1.01",
+            "83.9",
+            "100",
+            "78.4",
+            "99.9",
+            "13",
+            "76"
+          ],
+          [
+            "24",
+            "Telangana",
+            "100",
+            "13.7",
+            "64.8",
+            "69.5",
+            "40",
+            "20.8",
+            "1.08",
+            "75.7",
+            "90.81",
+            "42.9",
+            "97.8",
+            "10",
+            "64"
+          ],
+          [
+            "25",
+            "Tripura",
+            "100",
+            "8.3",
+            "56.3",
+            "77",
+            "20.7",
+            "13.4",
+            "0.89",
+            "92.2",
+            "53.48",
+            "32.6",
+            "86.1",
+            "14",
+            "52"
+          ],
+          [
+            "26",
+            "Uttar Pradesh",
+            "94",
+            "9.7",
+            "50.7",
+            "68",
+            "24.1",
+            "17.8",
+            "1.02",
+            "72",
+            "89.43",
+            "27",
+            "88.4",
+            "27",
+            "54"
+          ],
+          [
+            "27",
+            "Uttarakhand",
+            "100",
+            "5",
+            "78.8",
+            "77.5",
+            "41.8",
+            "24.7",
+            "1.09",
+            "83.5",
+            "84.06",
+            "58.3",
+            "96.9",
+            "11",
+            "73"
+          ],
+          [
+            "28",
+            "West Bengal",
+            "100",
+            "18",
+            "62",
+            "77.5",
+            "26.3",
+            "16.6",
+            "1.03",
+            "80.6",
+            "97.06",
+            "18.4",
+            "97.2",
+            "17",
+            "60"
+          ],
+          [
+            "29",
+            "Andaman and Nicobar Islands",
+            "68.7",
+            "5",
+            "65.8",
+            "76.5",
+            "22.6",
+            "28.5",
+            "1.3",
+            "91.9",
+            "92.79",
+            "66.8",
+            "92.5",
+            "7",
+            "63"
+          ]
+        ],
+        "notes": [],
+        "uncertain_cells": [],
+        "semantic_status": "classified",
+        "extraction": {
+          "method": "pymupdf+llm",
+          "confidence": "llm_validated"
+        },
+        "page": 120,
+        "human_review_needed": false,
+        "human_review_reason": null
+      }
+    ]
+  },
+  "122": {
+    "tables": [
+      {
+        "title": null,
+        "description": null,
+        "classification": {
+          "domain": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "subject": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "entity": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "table_type": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "geography": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "time_period": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "frequency": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "unit": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        },
+        "columns": [
+          {
+            "name": "Indicators",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Targets",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Justification of targets",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        ],
+        "rows": [
+          [
+            "Adjusted Net Enrolment Rate (ANER) in elementary education (Class 1\u20138) (%)",
+            "100",
+            "This target corresponds to the global SDG target 4.1 which aims to ensure that all girls and boys complete free, equitable and quality primary and secondary education. The National Education Policy 2020 also aims to ensure universal access and afford the opportunity to all children of the country to obtain quality holistic education, including vocational education \u2013 from pre-school to Grade 12."
+          ],
+          [
+            "Average annual dropout rate at secondary level (Class 9\u201310)",
+            "7.67",
+            "This target corresponds to the global SDG target 4.1 which aims to ensure that all girls and boys complete free, equitable and quality primary and secondary education. The National Education Policy, 2020 aims to curtail drop-out rates and ensure universal access to education at all levels. Average of the top 3 best performing States from the base year (2015\u20132016) has been set as the target."
+          ],
+          [
+            "Gross Enrolment Ratio (GER) in higher secondary (Class 11\u201312) (%)",
+            "100",
+            "The National Education Policy, 2020 aims to ensure that all students have universal, free and compulsory access to high-quality and equitable schooling from early childhood care and education (age 3 years onwards) through higher secondary education (i.e., until Class 12)."
+          ],
+          [
+            "Percentage of students in Grade VIII achieving at least a minimum proficiency level in terms of nationally defined learning outcomes to be attained by the pupils at the end of the grade",
+            "100",
+            "This target corresponds to the global SDG target 4.1 which aims to ensure that all girls and boys complete free, equitable and quality primary and secondary education with relevant and effective learning outcomes."
+          ],
+          [
+            "Gross Enrolment Ratio in higher education (18\u201323 years)",
+            "50",
+            "The National Education Policy, 2020 aims for GER in higher education to reach 50 percent by 2035."
+          ],
+          [
+            "Percentage of persons with disability (15 years and above) who have completed at least secondary education",
+            "100",
+            "This target corresponds to global SDG target 4.5 which aims to ensure equal access to all levels of education for the vulnerable, including persons with disabilities by 2030."
+          ],
+          [
+            "Gender Parity Index (GPI) for higher education (18\u201323 years)",
+            "1",
+            "This target is aligned with the global SDG target 4.5 which aims to eliminate gender disparities in education."
+          ],
+          [
+            "Percentage of persons 15 years and above who are literate",
+            "100",
+            "This target is aligned with the global SDG target 4.6 which aims to ensure that all youth and a substantial proportion of adults, both men and women, achieve literacy and numeracy, by 2030."
+          ],
+          [
+            "Percentage of schools with access to basic infrastructure (electricity and drinking water \u2013 both)",
+            "100",
+            "The National Education Policy 2020 aims to provide effective and sufficient infrastructure so that all students have access to safe and engaging school education at all levels from pre-primary school to Grade 12. It aims to take special care to ensure that no school remains deficient in infrastructure support."
+          ],
+          [
+            "Percentage of schools with computers",
+            "100",
+            "The National Education Policy 2020 aims to ensure adequate resources (shared or otherwise), such as a library, science laboratories, computer laboratories, playgrounds, sports equipment and facilities, etc. for every school."
+          ],
+          [
+            "Percentage of trained teachers at secondary level (Class 9\u201310)",
+            "100",
+            "This target is aligned with global SDG target 4.c which aims to substantially increase the supply of qualified teachers."
+          ],
+          [
+            "Pupil\u2013Teacher Ratio (PTR) at secondary level (Class 9\u201310)",
+            "30",
+            "The National Education Policy 2020 proposes to ensure a PTR of under 30:1 at each level of school education."
+          ]
+        ],
+        "notes": [],
+        "uncertain_cells": [],
+        "semantic_status": "not_classified",
+        "human_review_needed": false,
+        "human_review_reason": null,
+        "extraction": {
+          "method": "pymupdf_lines_strict",
+          "confidence": "high"
+        },
+        "source": "auto_high_confidence",
+        "page": 122
+      }
+    ]
+  },
+  "128": {
+    "tables": [
+      {
+        "title": "TABLE 5.1: PERFORMANCE OF STATES AND UTs ON INDICATORS OF SDG 5",
+        "description": "This table lists various indicators related to gender and women's empowerment across states and union territories in India.",
+        "classification": {
+          "domain": {
+            "value": "Gender Equality",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "subject": {
+            "value": "Sustainable Development Goals",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "entity": {
+            "value": "States and UTs of India",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "table_type": {
+            "value": "Performance Evaluation",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "geography": {
+            "value": "India",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "time_period": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "frequency": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "unit": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        },
+        "columns": [
+          {
+            "name": "S.No.",
+            "role": "identifier",
+            "concept": "Serial Number",
+            "description": "Serial number for each state/UT",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "States/UTs",
+            "role": "dimension",
+            "concept": "State or Union Territory",
+            "description": "Names of Indian states and union territories",
+            "data_type": "string",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Sex Ratio at Birth",
+            "role": "measure",
+            "concept": "Sex Ratio",
+            "description": "Sex ratio at birth",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Female to Male Wage Ratio",
+            "role": "measure",
+            "concept": "Wage Ratio",
+            "description": "Ratio of female to male average wage/salary earnings received by regular wage/salaried employees",
+            "data_type": "decimal",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Spousal Violence Percentage",
+            "role": "measure",
+            "concept": "Spousal Violence",
+            "description": "Percentage of ever married women aged 18-49 years who have experienced spousal violence",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Female to Male Labour Force Participation Rate",
+            "role": "measure",
+            "concept": "Labour Force Participation",
+            "description": "Ratio of female to male labour force participation rate (ages 15-59)",
+            "data_type": "decimal",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Women in Managerial Positions",
+            "role": "measure",
+            "concept": "Women in Leadership",
+            "description": "Proportion of women in managerial positions per 1,000 persons",
+            "data_type": "decimal",
+            "unit": "per 1,000 persons",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Family Planning Demand Satisfaction",
+            "role": "measure",
+            "concept": "Family Planning Satisfaction",
+            "description": "Percentage of currently married women aged 15-49 years with satisfied demand for family planning services",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Female Operated Land Holdings",
+            "role": "measure",
+            "concept": "Operational Land Holdings",
+            "description": "Percentage of female operated operational land holdings",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Mobile Phone Ownership",
+            "role": "measure",
+            "concept": "Mobile Ownership",
+            "description": "Percentage of women aged 15-49 years who own a mobile phone they use",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Household Decision Participation",
+            "role": "measure",
+            "concept": "Decision Participation",
+            "description": "Percentage of currently married women aged 15-49 years participating in three household decisions",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 5 Index Score",
+            "role": "measure",
+            "concept": "SDG Index Score",
+            "description": "Index score for SDG 5 indicators",
+            "data_type": "decimal",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        ],
+        "rows": [
+          [
+            "1",
+            "Andhra Pradesh",
+            "934",
+            "0.72",
+            "29.9",
+            "0.62",
+            "182.36",
+            "93.5",
+            "30.09",
+            "48.9",
+            "84",
+            "51"
+          ],
+          [
+            "2",
+            "Arunachal Pradesh",
+            "979",
+            "0.65",
+            "24.9",
+            "0.76",
+            "Null",
+            "65.9",
+            "12.07",
+            "76.4",
+            "87",
+            "54"
+          ],
+          [
+            "3",
+            "Assam",
+            "964",
+            "0.64",
+            "32.2",
+            "0.22",
+            "215.05",
+            "63.2",
+            "1.67",
+            "57.2",
+            "92.1",
+            "42"
+          ],
+          [
+            "4",
+            "Bihar",
+            "908",
+            "0.85",
+            "40.1",
+            "0.31",
+            "266.67",
+            "64",
+            "14",
+            "51.4",
+            "86.5",
+            "44"
+          ],
+          [
+            "5",
+            "Chhattisgarh",
+            "960",
+            "0.64",
+            "20.1",
+            "0.74",
+            "182.93",
+            "81.1",
+            "13.79",
+            "40.7",
+            "92.7",
+            "51"
+          ],
+          [
+            "6",
+            "Goa",
+            "838",
+            "0.9",
+            "8.3",
+            "0.42",
+            "185.19",
+            "78.7",
+            "25.69",
+            "91.2",
+            "93.1",
+            "61"
+          ],
+          [
+            "7",
+            "Gujarat",
+            "955",
+            "0.62",
+            "13.9",
+            "0.53",
+            "209.55",
+            "70.9",
+            "16.49",
+            "48.8",
+            "92.2",
+            "52"
+          ],
+          [
+            "8",
+            "Haryana",
+            "893",
+            "0.81",
+            "17.9",
+            "0.3",
+            "205.69",
+            "75",
+            "14.76",
+            "50.4",
+            "87.5",
+            "46"
+          ],
+          [
+            "9",
+            "Himachal Pradesh",
+            "875",
+            "0.71",
+            "8.6",
+            "0.89",
+            "193.68",
+            "77.3",
+            "7.43",
+            "79.5",
+            "93.9",
+            "62"
+          ],
+          [
+            "10",
+            "Jharkhand",
+            "899",
+            "0.6",
+            "31.4",
+            "0.6",
+            "207.55",
+            "67.6",
+            "11.27",
+            "49",
+            "90.9",
+            "42"
+          ],
+          [
+            "11",
+            "Karnataka",
+            "978",
+            "0.76",
+            "44.4",
+            "0.53",
+            "216.2",
+            "90.7",
+            "20.07",
+            "61.8",
+            "82.7",
+            "51"
+          ],
+          [
+            "12",
+            "Kerala",
+            "951",
+            "0.8",
+            "9.8",
+            "0.53",
+            "166.67",
+            "72.2",
+            "22.98",
+            "86.6",
+            "94.1",
+            "66"
+          ],
+          [
+            "13",
+            "Madhya Pradesh",
+            "956",
+            "0.83",
+            "28",
+            "0.55",
+            "196.61",
+            "82.5",
+            "11.88",
+            "38.5",
+            "86",
+            "48"
+          ],
+          [
+            "14",
+            "Maharashtra",
+            "913",
+            "0.76",
+            "25.2",
+            "0.54",
+            "212.28",
+            "84.2",
+            "15.46",
+            "54.8",
+            "89.8",
+            "53"
+          ],
+          [
+            "15",
+            "Manipur",
+            "967",
+            "0.81",
+            "39.6",
+            "0.45",
+            "Null",
+            "24.7",
+            "6.8",
+            "72.2",
+            "94.8",
+            "45"
+          ],
+          [
+            "16",
+            "Meghalaya",
+            "989",
+            "0.86",
+            "15",
+            "0.78",
+            "95.24",
+            "41.4",
+            "34.32",
+            "67.5",
+            "92.3",
+            "58"
+          ],
+          [
+            "17",
+            "Mizoram",
+            "969",
+            "0.79",
+            "10.3",
+            "0.67",
+            "Null",
+            "61.4",
+            "11.78",
+            "82.3",
+            "98.8",
+            "69"
+          ],
+          [
+            "18",
+            "Nagaland",
+            "945",
+            "0.74",
+            "6.5",
+            "0.81",
+            "285.71",
+            "68.2",
+            "9.85",
+            "82.5",
+            "99.2",
+            "74"
+          ],
+          [
+            "19",
+            "Odisha",
+            "894",
+            "0.59",
+            "30.3",
+            "0.58",
+            "216.45",
+            "60",
+            "4.06",
+            "50.1",
+            "90.2",
+            "39"
+          ],
+          [
+            "20",
+            "Punjab",
+            "904",
+            "0.64",
+            "11.6",
+            "0.37",
+            "226.76",
+            "66",
+            "1.55",
+            "61.2",
+            "91.4",
+            "47"
+          ],
+          [
+            "21",
+            "Rajasthan",
+            "891",
+            "0.91",
+            "24.1",
+            "0.64",
+            "220.26",
+            "77.7",
+            "10.12",
+            "50.2",
+            "87.7",
+            "52"
+          ],
+          [
+            "22",
+            "Sikkim",
+            "969",
+            "0.82",
+            "12.4",
+            "0.84",
+            "Null",
+            "67.8",
+            "6.29",
+            "88.6",
+            "89.7",
+            "65"
+          ],
+          [
+            "23",
+            "Tamil Nadu",
+            "878",
+            "0.76",
+            "38.1",
+            "0.54",
+            "190.18",
+            "86.1",
+            "19.65",
+            "74.6",
+            "92.8",
+            "53"
+          ],
+          [
+            "24",
+            "Telangana",
+            "894",
+            "0.69",
+            "37.2",
+            "0.62",
+            "208.6",
+            "89.4",
+            "23",
+            "60",
+            "87.2",
+            "49"
+          ],
+          [
+            "25",
+            "Tripura",
+            "1028",
+            "0.63",
+            "20.7",
+            "0.48",
+            "Null",
+            "61.9",
+            "12.3",
+            "53.1",
+            "90.9",
+            "45"
+          ],
+          [
+            "26",
+            "Uttar Pradesh",
+            "941",
+            "0.85",
+            "34.9",
+            "0.39",
+            "192.92",
+            "59.1",
+            "7.65",
+            "46.5",
+            "87.5",
+            "42"
+          ],
+          [
+            "27",
+            "Uttarakhand",
+            "984",
+            "0.88",
+            "15.3",
+            "0.52",
+            "155.74",
+            "72.6",
+            "11.93",
+            "60.9",
+            "91",
+            "56"
+          ],
+          [
+            "28",
+            "West Bengal",
+            "973",
+            "0.65",
+            "26.9",
+            "0.42",
+            "218.57",
+            "74.6",
+            "3.17",
+            "50.1",
+            "88.9",
+            "45"
+          ]
+        ],
+        "notes": [],
+        "uncertain_cells": [],
+        "semantic_status": "classified",
+        "extraction": {
+          "method": "pymupdf+llm",
+          "confidence": "llm_validated"
+        },
+        "page": 128,
+        "human_review_needed": false,
+        "human_review_reason": null
+      }
+    ]
+  },
+  "130": {
+    "tables": [
+      {
+        "title": null,
+        "description": null,
+        "classification": {
+          "domain": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "subject": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "entity": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "table_type": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "geography": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "time_period": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "frequency": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "unit": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        },
+        "columns": [
+          {
+            "name": "Indicators",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Targets",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Justification of targets",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        ],
+        "rows": [
+          [
+            "Sex ratio at birth",
+            "950",
+            "The 2019 United Nations Population Fund (UNFPA) report on \u201cSex Ratio at Birth in India: Recent trends and patterns\u201d observes that in the absence of sex selection the sex ratio at birth is around 105 male births per 100 female births or around 950 female births per 1,000 male births."
+          ],
+          [
+            "Ratio of female to male average wage/ salary earnings received among regular wage/salaried employees",
+            "1",
+            "This target corresponds to global SDG target 5.1 that aims to end all forms of discrimination against women. The target value is set to eliminate the wage gap between men and women for work of equal value."
+          ],
+          [
+            "Percentage of ever married women aged 18\u201349 years who have ever experienced spousal violence (physical/sexual)",
+            "0",
+            "This target is aligned with the global SDG target 5.2 that aims to eliminate all forms of violence against women and girls in the public and private spheres."
+          ],
+          [
+            "Ratio of female to male Labour Force Participation Rate (LFPR) (15\u201359 years)",
+            "1",
+            "This target corresponds to the global SDG target 5.5 that aims to ensure women\u2019s full and effective participation and equal opportunities for leadership at all levels of decision-making in political, economic, and public life."
+          ],
+          [
+            "Proportion of women in managerial positions including women in the board of directors, in listed companies (per 1,000 persons)",
+            "245",
+            "This target corresponds to the global SDG target 5.5 that aims to ensure women\u2019s full and effective participation and equal opportunities for leadership at all levels of decision-making in political, economic, and public life. The target has been fixed as the average of the top 3 best performing States from the latest available base year (2018\u20132019)."
+          ],
+          [
+            "Percentage of currently married women aged 15\u201349 years who have their demand for family planning satisfied by any modern method",
+            "100",
+            "This target corresponds to the global SDG target 5.6 that aims to ensure universal access to sexual and reproductive health and reproductive rights."
+          ],
+          [
+            "Percentage of female operated operational land holdings",
+            "50",
+            "This target corresponds to the global SDG target 5.a that aims to undertake reforms to give women equal rights to economic resources, as well as access to ownership and control over land."
+          ],
+          [
+            "Percentage of women (aged 15\u201349 years) who own a mobile phone that they themselves use",
+            "80.63",
+            "This target corresponds to the global SDG target 5.b that aims to enhance the use of enabling technology, in particular information and communications technology, to promote the empowerment of women. The target has been fixed as the average of the top 3 best performing States from the base year (2015\u20132016)."
+          ],
+          [
+            "Percentage of currently married women (aged 15\u201349 years) who usually participate in three household decisions",
+            "100",
+            "This target corresponds to the global SDG target 5.c that aims to adopt and strengthen sound policies and enforceable legislation for the promotion of gender equality and the empowerment of all women and girls at all levels."
+          ]
+        ],
+        "notes": [],
+        "uncertain_cells": [],
+        "semantic_status": "not_classified",
+        "human_review_needed": false,
+        "human_review_reason": null,
+        "extraction": {
+          "method": "pymupdf_lines_strict",
+          "confidence": "high"
+        },
+        "source": "auto_high_confidence",
+        "page": 130
+      }
+    ]
+  },
+  "136": {
+    "tables": [
+      {
+        "title": "TABLE 6.1: PERFORMANCE OF STATES AND UTs ON INDICATORS OF SDG 6",
+        "description": "This table contains data on water supply, sanitation, and groundwater management in rural areas of various states and UTs in India.",
+        "classification": {
+          "domain": {
+            "value": "Water and Sanitation",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "subject": {
+            "value": "Sustainable Development Goals",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "entity": {
+            "value": "States and UTs of India",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "table_type": {
+            "value": "Performance Evaluation",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "geography": {
+            "value": "India",
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "time_period": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "frequency": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "unit": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        },
+        "columns": [
+          {
+            "name": "S.No.",
+            "role": "identifier",
+            "concept": "Serial Number",
+            "description": "Serial number for each state/UT",
+            "data_type": "integer",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "States/UTs",
+            "role": "dimension",
+            "concept": "State or Union Territory",
+            "description": "Names of Indian states and union territories",
+            "data_type": "string",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of Rural Households with Piped Water Supply",
+            "role": "measure",
+            "concept": "Piped Water Supply Access",
+            "description": "Percentage of rural households receiving safe and adequate drinking water through piped water supply",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of Rural Population with Improved Drinking Water Source",
+            "role": "measure",
+            "concept": "Improved Water Source Access",
+            "description": "Percentage of rural population having improved source of drinking water",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of Individual Toilets Constructed",
+            "role": "measure",
+            "concept": "Toilet Construction Rate",
+            "description": "Percentage of individual household toilets constructed against target under SBM(G)",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of Districts Verified as ODF",
+            "role": "measure",
+            "concept": "ODF District Rate",
+            "description": "Percentage of districts verified to be open defecation free (ODF)",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of Schools with Functional Girls' Toilet",
+            "role": "measure",
+            "concept": "Girls' Toilet Access",
+            "description": "Percentage of schools with functional girls' toilet facilities",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Stage of Ground Water Extraction",
+            "role": "measure",
+            "concept": "Groundwater Extraction Stage",
+            "description": "Stage of groundwater extraction (percentage)",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Percentage of Blocks Over-exploited",
+            "role": "measure",
+            "concept": "Over-exploited Blocks",
+            "description": "Percentage of blocks, mandals, or talukas over-exploited",
+            "data_type": "decimal",
+            "unit": "%",
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "SDG 6 Index Score",
+            "role": "measure",
+            "concept": "SDG Index Score",
+            "description": "Index score for SDG 6 indicators",
+            "data_type": "decimal",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        ],
+        "rows": [
+          [
+            "1",
+            "Andhra Pradesh",
+            "73.38",
+            "100",
+            "100",
+            "100",
+            "96.6",
+            "28.3",
+            "1.5",
+            "91"
+          ],
+          [
+            "2",
+            "Arunachal Pradesh",
+            "100",
+            "98.37",
+            "100",
+            "100",
+            "68.8",
+            "0.42",
+            "0",
+            "85"
+          ],
+          [
+            "3",
+            "Assam",
+            "76.87",
+            "93.17",
+            "100",
+            "100",
+            "82.6",
+            "12.54",
+            "0",
+            "85"
+          ],
+          [
+            "4",
+            "Bihar",
+            "96.42",
+            "99.96",
+            "100",
+            "100",
+            "97.6",
+            "44.76",
+            "1.5",
+            "98"
+          ],
+          [
+            "5",
+            "Chhattisgarh",
+            "77.94",
+            "100",
+            "100",
+            "100",
+            "97.9",
+            "47.17",
+            "0",
+            "93"
+          ],
+          [
+            "6",
+            "Goa",
+            "100",
+            "100",
+            "100",
+            "100",
+            "100",
+            "21.37",
+            "0",
+            "100"
+          ],
+          [
+            "7",
+            "Gujarat",
+            "100",
+            "100",
+            "100",
+            "100",
+            "98",
+            "51.68",
+            "9.13",
+            "98"
+          ],
+          [
+            "8",
+            "Haryana",
+            "100",
+            "100",
+            "100",
+            "100",
+            "97.6",
+            "135.74",
+            "61.54",
+            "80"
+          ],
+          [
+            "9",
+            "Himachal Pradesh",
+            "100",
+            "100",
+            "100",
+            "100",
+            "98.6",
+            "34.95",
+            "0",
+            "99"
+          ],
+          [
+            "10",
+            "Jharkhand",
+            "51.91",
+            "100",
+            "100",
+            "100",
+            "97.1",
+            "31.38",
+            "1.9",
+            "86"
+          ],
+          [
+            "11",
+            "Karnataka",
+            "75.79",
+            "100",
+            "100",
+            "100",
+            "97.9",
+            "66.26",
+            "18.8",
+            "90"
+          ],
+          [
+            "12",
+            "Kerala",
+            "52.46",
+            "99.5",
+            "100",
+            "100",
+            "99.5",
+            "54.55",
+            "0",
+            "87"
+          ],
+          [
+            "13",
+            "Madhya Pradesh",
+            "61.4",
+            "99.99",
+            "100",
+            "100",
+            "95.9",
+            "58.75",
+            "8.2",
+            "87"
+          ],
+          [
+            "14",
+            "Maharashtra",
+            "85.2",
+            "99.82",
+            "100",
+            "100",
+            "94.6",
+            "53.83",
+            "2.55",
+            "93"
+          ],
+          [
+            "15",
+            "Manipur",
+            "78.19",
+            "100",
+            "100",
+            "100",
+            "75.4",
+            "7.99",
+            "0",
+            "83"
+          ],
+          [
+            "16",
+            "Meghalaya",
+            "76.53",
+            "100",
+            "100",
+            "100",
+            "69.7",
+            "4.58",
+            "0",
+            "80"
+          ],
+          [
+            "17",
+            "Mizoram",
+            "100",
+            "100",
+            "100",
+            "100",
+            "86.9",
+            "3.7",
+            "0",
+            "94"
+          ],
+          [
+            "18",
+            "Nagaland",
+            "86.04",
+            "100",
+            "100",
+            "100",
+            "77.1",
+            "3.76",
+            "0",
+            "86"
+          ],
+          [
+            "19",
+            "Odisha",
+            "72.97",
+            "99.42",
+            "100",
+            "100",
+            "90.2",
+            "46.33",
+            "0",
+            "88"
+          ],
+          [
+            "20",
+            "Punjab",
+            "100",
+            "96.46",
+            "100",
+            "100",
+            "99.4",
+            "163.76",
+            "76.47",
+            "74"
+          ],
+          [
+            "21",
+            "Rajasthan",
+            "47.71",
+            "95.45",
+            "100",
+            "100",
+            "92.6",
+            "148.77",
+            "71.52",
+            "60"
+          ],
+          [
+            "22",
+            "Sikkim",
+            "88.56",
+            "100",
+            "100",
+            "100",
+            "99.2",
+            "5.54",
+            "0",
+            "97"
+          ],
+          [
+            "23",
+            "Tamil Nadu",
+            "81.87",
+            "100",
+            "100",
+            "100",
+            "99.6",
+            "73.91",
+            "31.95",
+            "90"
+          ],
+          [
+            "24",
+            "Telangana",
+            "100",
+            "100",
+            "100",
+            "100",
+            "78.8",
+            "38.65",
+            "1.8",
+            "90"
+          ],
+          [
+            "25",
+            "Tripura",
+            "78.91",
+            "96.46",
+            "100",
+            "100",
+            "74.6",
+            "9.92",
+            "0",
+            "82"
+          ],
+          [
+            "26",
+            "Uttar Pradesh",
+            "81.07",
+            "99.71",
+            "100",
+            "100",
+            "97.1",
+            "70.76",
+            "7.42",
+            "92"
+          ],
+          [
+            "27",
+            "Uttarakhand",
+            "93.83",
+            "100",
+            "100",
+            "100",
+            "90.8",
+            "51.69",
+            "0",
+            "94"
+          ],
+          [
+            "28",
+            "West Bengal",
+            "46.64",
+            "99.83",
+            "100",
+            "100",
+            "99.9",
+            "44.81",
+            "0",
+            "86"
+          ],
+          [
+            "29",
+            "Andaman and Nicobar Islands",
+            "100",
+            "100",
+            "100",
+            "100",
+            "99.5",
+            "1.37",
+            "0",
+            "100"
+          ]
+        ],
+        "notes": [],
+        "uncertain_cells": [],
+        "semantic_status": "classified",
+        "extraction": {
+          "method": "pymupdf+llm",
+          "confidence": "llm_validated"
+        },
+        "page": 136,
+        "human_review_needed": false,
+        "human_review_reason": null
+      }
+    ]
+  },
+  "138": {
+    "tables": [
+      {
+        "title": null,
+        "description": null,
+        "classification": {
+          "domain": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "subject": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "entity": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "table_type": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "geography": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "time_period": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "frequency": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          "unit": {
+            "value": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        },
+        "columns": [
+          {
+            "name": "Indicators",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Targets",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          },
+          {
+            "name": "Justification of targets",
+            "role": "unknown",
+            "concept": null,
+            "description": null,
+            "data_type": "unknown",
+            "unit": null,
+            "category": null,
+            "human_review_needed": false,
+            "human_review_reason": null
+          }
+        ],
+        "rows": [
+          [
+            "Percentage of rural household getting safe and adequate drinking water within premises through Piped Water Supply (PWS)",
+            "100",
+            "The Jal Jeevan Mission (JJM) aims to provide PWS to the entire rural population by 2024."
+          ],
+          [
+            "Percentage of rural population having improved source of drinking water",
+            "100",
+            "Global SDG target 6.1 aims to achieve universal and equitable access to safe and affordable drinking water for all by 2030."
+          ],
+          [
+            "Percentage of individual household toilets constructed against target [SBM(G)]",
+            "100",
+            "Global SDG target 6.2 aims to achieve access to adequate and equitable sanitation and hygiene for all and end open defecation by 2030. This is also in line with the objectives of the Government of India\u2019s Swachh Bharat Mission (Gramin) (SBM(G))."
+          ],
+          [
+            "Percentage of districts verified to be Open Defecation Free (ODF) (SBM(G))",
+            "100",
+            "Global SDG target 6.2 aims to achieve access to adequate and equitable sanitation and hygiene for all and end open defecation by 2030. This is also in line with the objectives of the Government of India\u2019s SBM(G)."
+          ],
+          [
+            "Percentage of schools with functional girls\u2019 toilet",
+            "100",
+            "Global SDG target 6.2 aims to achieve access to adequate and equitable sanitation and hygiene for all and end open defecation by 2030."
+          ],
+          [
+            "Stage of ground water extraction (%)",
+            "70",
+            "The report \u201cNational Compilation on Dynamic Ground Water Resources of India (2017)\u201d by the Central Ground Water Board, Ministry of Jal Shakti, categorizes stages of ground water extraction below 70 percent as \u201cSafe\u201d."
+          ],
+          [
+            "Percentage of blocks/mandals/ talukas over-exploited",
+            "0",
+            "This target corresponds to global SDG target 6.4 that aims to substantially increase water-use efficiency across all sectors and ensure sustainable withdrawals to address water scarcity and global SDG target 6.6 that aims to protect and restore water-related ecosystems."
+          ]
+        ],
+        "notes": [],
+        "uncertain_cells": [],
+        "semantic_status": "not_classified",
+        "human_review_needed": false,
+        "human_review_reason": null,
+        "extraction": {
+          "method": "pymupdf_lines_strict",
+          "confidence": "high"
+        },
+        "source": "auto_high_confidence",
+        "page": 138
+      }
+    ]
+  }
+}
