@@ -3,7 +3,10 @@ import os
 import pathlib
 import json as _json
 import asyncio
-from typing import Optional
+import threading
+import time
+import uuid
+from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -851,6 +854,167 @@ def _upload_original_sheet_to_gcs(file_bytes: bytes, source_file: str, sheet: st
     datasets.original_excel. Returns None when GCS is disabled."""
     safe_name = f"{source_file}__{sheet}".replace("/", "_")
     return _upload_bytes_to_gcs(file_bytes, f"original_sheets/{safe_name}.xlsx")
+
+
+# --- PDF extraction/classification pipeline (upload -> background job -> review) ---
+#
+# Unlike the xlsx batch-extract flow above, this can take several minutes
+# (pymupdf extraction + batched OpenAI reconstruction/classification -- see
+# sda_india_pdf_extraction.py), far longer than a synchronous request should
+# block for. There's no existing job-queue/background-task infra in this
+# backend to reuse, so this is a minimal in-memory job store: fine for a
+# single-process dev/demo deployment, not durable across a restart or
+# multiple server processes. A real deployment would move this to a proper
+# queue (Celery/RQ) and a persisted job table.
+import sda_india_pdf_extraction as _pdf_pipeline
+
+_pdf_jobs: Dict[str, Dict[str, Any]] = {}
+_pdf_jobs_lock = threading.Lock()
+_pdf_upload_dir = pathlib.Path(__file__).parent / "data" / "pdf_uploads"
+
+
+def _pdf_job_public(job: Dict[str, Any]) -> Dict[str, Any]:
+    """Status view of a job -- everything except the (potentially large)
+    result payload, which has its own endpoint."""
+    public = {k: v for k, v in job.items() if k not in ("result", "reviews")}
+    if job["status"] == "done" and job.get("result") is not None:
+        tables = [t for page in job["result"].values() for t in page.get("tables", [])]
+        public["table_count"] = len(tables)
+        public["needs_review_count"] = sum(1 for t in tables if t.get("human_review_needed"))
+    return public
+
+
+def _run_pdf_job(job_id: str, pdf_path: pathlib.Path, api_key: Optional[str]) -> None:
+    """Runs synchronously (called via asyncio.to_thread from the upload
+    endpoint) -- this thread just blocks for the pipeline's duration while
+    the event loop keeps serving other requests, including this job's own
+    status-polling requests from the frontend."""
+    def on_progress(stage: str, percent: int, message: str) -> None:
+        with _pdf_jobs_lock:
+            job = _pdf_jobs.get(job_id)
+            if job is not None:
+                job.update(status="running", stage=stage, percent=percent, message=message)
+
+    try:
+        result = _pdf_pipeline.run_pipeline(pdf_path, on_progress=on_progress, api_key=api_key)
+        with _pdf_jobs_lock:
+            job = _pdf_jobs.get(job_id)
+            if job is not None:
+                job.update(status="done", stage="done", percent=100, message="Complete", result=result)
+    except Exception as e:
+        print(f"PDF job {job_id} failed: {e}")
+        with _pdf_jobs_lock:
+            job = _pdf_jobs.get(job_id)
+            if job is not None:
+                job.update(status="error", message=f"Failed: {e}", error=str(e))
+    finally:
+        try:
+            pdf_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+@app.post("/api/pdf/upload")
+async def pdf_upload(request: Request, file: UploadFile = File(...), user_email: str = Depends(require_user)):
+    """Accepts one PDF, saves it, and starts background processing
+    (sda_india_pdf_extraction.run_pipeline) without blocking the response --
+    returns a job_id immediately for the frontend to poll via
+    GET /api/pdf/jobs/{job_id}."""
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "Only .pdf files are supported")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "Uploaded file is empty")
+
+    job_id = uuid.uuid4().hex
+    _pdf_upload_dir.mkdir(parents=True, exist_ok=True)
+    pdf_path = _pdf_upload_dir / f"{job_id}.pdf"
+    pdf_path.write_bytes(content)
+
+    # Same per-request LLM key convention as the rest of the app (see
+    # _extractor_for) -- falls back to the server's OPENAI_API_KEY env var
+    # (openai.OpenAI(api_key=None)) when the caller hasn't configured one.
+    api_key = request.headers.get(LLM_KEY_HEADER, "").strip() or None
+
+    with _pdf_jobs_lock:
+        _pdf_jobs[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "stage": "queued",
+            "percent": 0,
+            "message": "Queued",
+            "filename": file.filename,
+            "user_email": user_email,
+            "created_at": time.time(),
+            "result": None,
+            "error": None,
+            "reviews": {},
+        }
+
+    asyncio.create_task(asyncio.to_thread(_run_pdf_job, job_id, pdf_path, api_key))
+    return {"job_id": job_id}
+
+
+@app.get("/api/pdf/jobs")
+async def pdf_jobs_list(user_email: str = Depends(require_user)):
+    """Lists the caller's own PDF jobs, most recent first -- lets the
+    frontend recover an in-progress/finished job after a page refresh."""
+    with _pdf_jobs_lock:
+        mine = [_pdf_job_public(j) for j in _pdf_jobs.values() if j["user_email"] == user_email]
+    mine.sort(key=lambda j: j["created_at"], reverse=True)
+    return {"jobs": mine}
+
+
+@app.get("/api/pdf/jobs/{job_id}")
+async def pdf_job_status(job_id: str, user_email: str = Depends(require_user)):
+    with _pdf_jobs_lock:
+        job = _pdf_jobs.get(job_id)
+        if not job or job["user_email"] != user_email:
+            raise HTTPException(404, "Job not found")
+        return _pdf_job_public(job)
+
+
+@app.get("/api/pdf/jobs/{job_id}/result")
+async def pdf_job_result(job_id: str, user_email: str = Depends(require_user)):
+    """Flattens the pipeline's page-keyed output into one list of tables for
+    the review screen, each tagged with a stable table_id ("{page}-{index}")
+    and merged with any reviewer edits already saved via the PATCH endpoint
+    below. Table data (rows) is never modified by review -- only
+    classification/human_review_* fields are ever patched."""
+    with _pdf_jobs_lock:
+        job = _pdf_jobs.get(job_id)
+        if not job or job["user_email"] != user_email:
+            raise HTTPException(404, "Job not found")
+        if job["status"] != "done":
+            raise HTTPException(409, f"Job not finished yet (status={job['status']})")
+        reviews = dict(job.get("reviews") or {})
+        result = job["result"] or {}
+
+    tables = []
+    for page_num in sorted(result.keys(), key=int):
+        for idx, t in enumerate(result[page_num].get("tables", [])):
+            table_id = f"{page_num}-{idx}"
+            merged = {**t, **reviews.get(table_id, {}), "table_id": table_id}
+            tables.append(merged)
+    return {"job_id": job_id, "filename": job["filename"], "tables": tables}
+
+
+@app.patch("/api/pdf/jobs/{job_id}/tables/{table_id}")
+async def pdf_review_table(job_id: str, table_id: str, request: Request, user_email: str = Depends(require_user)):
+    """Saves a reviewer's edits to one table's classification/columns (human
+    review, not data correction -- see the module docstring in
+    sda_india_pdf_extraction.py). The payload is merged onto the original
+    table when /result is next fetched; nothing here touches extracted rows."""
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "Body must be a JSON object")
+    with _pdf_jobs_lock:
+        job = _pdf_jobs.get(job_id)
+        if not job or job["user_email"] != user_email:
+            raise HTTPException(404, "Job not found")
+        job.setdefault("reviews", {})[table_id] = {**job["reviews"].get(table_id, {}), **payload}
+    return {"ok": True}
 
 
 # --- Serve React frontend (production) ---

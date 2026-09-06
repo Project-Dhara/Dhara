@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import KydsSummaryCard from './KydsSummaryCard'
 import TableViewer from './TableViewer'
 import BatchUpload from './BatchUpload'
+import PdfUpload from './PdfUpload'
 import BatchReview from './BatchReview'
 import ReconcileIds from './ReconcileIds'
 import Classify from './Classify'
@@ -704,7 +705,15 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
         </div>
 
         {step === 1 && (
-          <BatchUpload onMatched={handleMatched} />
+          <>
+            <BatchUpload onMatched={handleMatched} />
+            {/* Independent flow: PDF reports aren't grouped/matched against a
+                metadata workbook like xlsx datasets are (no NMDS/harmonization
+                step for this pipeline yet) -- it has its own upload ->
+                progress -> review loop entirely within this one component,
+                rather than advancing `step` through the xlsx wizard. */}
+            <PdfUpload />
+          </>
         )}
 
         {step === 2 && previewTables.length > 0 && (
