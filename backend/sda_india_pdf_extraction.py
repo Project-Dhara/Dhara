@@ -8,6 +8,7 @@ import os
 import re
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -83,23 +84,57 @@ def chunk_list(lst: List[int], n_chunks: int, seed: int = 0) -> List[List[int]]:
 
 def extract_all_tables(pdf_path: Path, pages: List[int], n_workers: int = CPU_WORKERS,
                         progress_cb: Optional[Callable[[int, int], None]] = None) -> List[Dict[str, Any]]:
-    chunks = chunk_list(pages, n_workers)
-    all_tables: List[Dict[str, Any]] = []
-    if not chunks:
-        return all_tables
+    """Runs extract_pymupdf_chunk over `pages` across a process pool.
 
-    done_chunks = 0
-    with ProcessPoolExecutor(max_workers=len(chunks)) as pool:
-        futures = {pool.submit(extract_pymupdf_chunk, str(pdf_path), chunk): chunk for chunk in chunks}
-        for future in as_completed(futures):
-            chunk = futures[future]
-            try:
-                all_tables.extend(future.result())
-            except Exception as e:
-                log(f"[extract] chunk {chunk[0]}-{chunk[-1]} failed: {e}")
-            done_chunks += 1
-            if progress_cb:
-                progress_cb(done_chunks, len(chunks))
+    If a worker dies (e.g. OOM-killed), ProcessPoolExecutor marks *every*
+    pending/in-flight future as failed, not just the chunk that actually
+    crashed -- otherwise-healthy workers' results are lost too. So on a
+    BrokenProcessPool we retry just the pages that didn't complete, using
+    fewer workers (halving each time) to reduce the memory pressure that
+    likely caused the crash, instead of silently returning partial tables."""
+    total_pages = len(pages)
+    all_tables: List[Dict[str, Any]] = []
+    remaining = list(pages)
+    workers = max(1, n_workers)
+    attempt = 0
+    max_attempts = 4
+
+    while remaining and attempt < max_attempts:
+        attempt += 1
+        chunks = chunk_list(remaining, workers)
+        if not chunks:
+            break
+
+        pool_broke = False
+        with ProcessPoolExecutor(max_workers=len(chunks)) as pool:
+            futures = {pool.submit(extract_pymupdf_chunk, str(pdf_path), chunk): chunk for chunk in chunks}
+            for future in as_completed(futures):
+                chunk = futures[future]
+                try:
+                    all_tables.extend(future.result())
+                    remaining = [p for p in remaining if p not in chunk]
+                except BrokenProcessPool as e:
+                    pool_broke = True
+                    log(f"[extract] process pool crashed on chunk {chunk[0]}-{chunk[-1]} "
+                        f"(likely OOM): {e}")
+                except Exception as e:
+                    log(f"[extract] chunk {chunk[0]}-{chunk[-1]} failed: {e}")
+                    remaining = [p for p in remaining if p not in chunk]
+                if progress_cb:
+                    progress_cb(total_pages - len(remaining), total_pages)
+
+        if not remaining:
+            break
+        if not pool_broke:
+            # Per-chunk failures, not a pool crash -- retrying won't help.
+            break
+        if workers == 1:
+            log(f"[extract] process pool crashed with a single worker; giving up on "
+                f"{len(remaining)} remaining page(s)")
+            break
+        workers = max(1, workers // 2)
+        log(f"[extract] retrying {len(remaining)} remaining page(s) with {workers} worker(s)")
+
     return all_tables
 
 
@@ -681,7 +716,7 @@ def run_pipeline(pdf_path: Path, on_progress: Optional[Callable[[str, int, str],
     progress("extract", 10, f"Extracting tables from {len(text_pages)} page(s)")
     all_tables = extract_all_tables(
         pdf_path, text_pages,
-        progress_cb=lambda done, total: progress("extract", 10 + int(35 * done / total), f"Extracted {done}/{total} page chunk(s)"),
+        progress_cb=lambda done, total: progress("extract", 10 + int(35 * done / total), f"Extracted {done}/{total} page(s)"),
     )
     progress("extract", 45, f"{len(all_tables)} table candidate(s) found")
 
