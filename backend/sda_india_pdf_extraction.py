@@ -26,7 +26,7 @@ PDF_PATH = Path(__file__).parent.parent / "SDA_INDIA_0.pdf"
 OUTPUT_DIR = Path(__file__).parent / "data" / "sda_india_extraction"
 
 TEXT_MIN_CHARS = 20
-CPU_WORKERS = min(os.cpu_count() or 4, 8)
+CPU_WORKERS = 3
 OPENAI_MODEL = "gpt-4o-mini"
 OPENAI_WORKERS = 6
 BATCH_SIZE = 5
@@ -34,8 +34,8 @@ BATCH_SIZE = 5
 # "classification" block and per-column role/concept/description/data_type/
 # unit/category, not just title+columns+rows -- same single call per
 # page/batch, just a fatter response payload.
-MAX_TOKENS_PER_PAGE = 3500
-SINGLE_PAGE_MAX_TOKENS = 6000
+MAX_TOKENS_PER_PAGE = 5000
+SINGLE_PAGE_MAX_TOKENS = 7000
 RAW_TEXT_CHARS_PER_PAGE_BATCHED = 1500
 
 
@@ -192,15 +192,30 @@ TASK_A_RECONSTRUCTION_RULES = """TASK A -- RECONSTRUCT THE TABLE:
 - If candidates disagree on a cell and you can't tell which is right from the raw text, keep the
   pymupdf_lines_strict value (or any single consistent choice) and add a note in "uncertain_cells".
 - Flatten multi-row headers into single column names.
-- Preserve a title/description if one is visible in the raw text."""
+- Preserve a title/description if one is visible in the raw text.
+- SYMBOLIC / ICON CELLS (especially Direction / Trend / Change columns):
+  PDF extractors often emit private-use or icon-font glyphs for green/red trend arrows instead of real text.
+  ONLY when a Direction / Trend / Change column is already present in the candidates or clearly visible
+  as a table header in the raw text:
+    * Interpret upward / green / "increase" arrows as the cell value "up"
+    * Interpret downward / red / "decrease" arrows as the cell value "down"
+    * Write "up" or "down" in the reconstructed "rows" (never leave the raw arrow glyph / tofu / �).
+    * Every row MUST include that Direction/Trend cell — the rows array length must equal the columns
+      array length. Do not declare a Direction column and then omit that cell from the row.
+    * If you cannot tell whether an arrow is up or down, still put your best guess ("up" or "down") in the
+      cell, add a note in "uncertain_cells", and flag the column for human review (see Task B input_type).
+  Do NOT invent, append, or fill a Direction / Trend / Change column when none exists in the source
+  table. If the table has no such column, omit it entirely (do not invent up/down values)."""
 
 TASK_B_CLASSIFICATION_RULES = """TASK B -- UNDERSTAND THE TABLE (initial semantic classification only):
 After reconstructing a table, determine what it appears to mean, using the page text, table title, headers,
 extracted values, and any notes/footnotes as context.
 
 At table level, identify where possible: domain, subject, entity, table_type, geography, time_period,
-frequency, unit. Each of these is an object: {"value": ..., "human_review_needed": true|false,
-"human_review_reason": "..."|null} -- see the human_review_needed rules below.
+frequency, unit. Each of these is an object:
+  {"value": ..., "human_review_needed": true|false, "input_type": "dropdown"|"inputbox"|null,
+   "input_options": [...]|null, "human_review_reason": "..."|null}
+-- see the human_review_needed / input_type rules below.
 
 At column level, for each column identify:
 - "role": one of "identifier", "dimension", "measure", "attribute", "unknown"
@@ -209,38 +224,62 @@ At column level, for each column identify:
 - "data_type": one of "string", "integer", "decimal", "date", "boolean", "categorical", "unknown"
 - "unit": the unit of measurement if applicable, else null
 - "category": a sub-category/grouping value if applicable (e.g. a "Male" column's category is "Male"), else null
-- "human_review_needed": true|false, "human_review_reason": "..."|null -- see the rules below
+- "human_review_needed": true|false
+- "input_type": "dropdown" | "inputbox" | null  -- UI hint for how a human should correct this field/column
+- "input_options": array of allowed strings when input_type is "dropdown", else null
+- "human_review_reason": "..."|null -- see the rules below
 
 Examples:
-- "State" -> role: dimension, concept: State, data_type: categorical, human_review_needed: false, human_review_reason: null
-- "PHC ID" -> role: identifier, concept: Primary Health Centre, data_type: string, human_review_needed: false, human_review_reason: null
-- "Male" -> role: measure, concept: Population, category: Male, data_type: integer, human_review_needed: false, human_review_reason: null
-- "Total" -> role: measure, concept: Population, data_type: integer, human_review_needed: false, human_review_reason: null
+- "State" -> role: dimension, concept: State, data_type: categorical,
+  human_review_needed: false, input_type: null, input_options: null, human_review_reason: null
+- "PHC ID" -> role: identifier, concept: Primary Health Centre, data_type: string,
+  human_review_needed: false, input_type: null, input_options: null, human_review_reason: null
+- "Male" -> role: measure, concept: Population, category: Male, data_type: integer,
+  human_review_needed: false, input_type: null, input_options: null, human_review_reason: null
+- "Total" -> role: measure, concept: Population, data_type: integer,
+  human_review_needed: false, input_type: null, input_options: null, human_review_reason: null
 - "PHC" (ambiguous abbreviation, could mean several things) -> concept: Primary Health Centre (best guess),
-  human_review_needed: true, human_review_reason: "uncertain_concept"
+  human_review_needed: true, input_type: "inputbox", input_options: null,
+  human_review_reason: "uncertain_concept"
+- "Direction" / "Trend" (ONLY if that column is already in the source table; values shown as up/down
+  arrows in the PDF) -> role: attribute, concept: Direction,
+  data_type: categorical, rows use "up"|"down",
+  human_review_needed: true, input_type: "dropdown", input_options: ["up", "down"],
+  human_review_reason: "garbled_extracted_value"
+  (or "uncertain_extraction" if the arrow was ambiguous). Even when every arrow was confidently mapped,
+  still set human_review_needed: true and input_type: "dropdown" for Direction-like columns so a human
+  can confirm via dropdown rather than free-text. Never add this column when it is absent from the table.
 
-human_review_needed / human_review_reason rules (both for each classification field above, and for each column):
+human_review_needed / input_type / human_review_reason rules (both for each classification field above, and for each column):
 - Give your best semantic interpretation always -- never leave a field empty just because you're unsure;
   put your best guess in "value"/the column fields, and use human_review_needed to flag the uncertainty
   instead of refusing to answer.
 - Set human_review_needed=true ONLY when there is MEANINGFUL uncertainty or ambiguity a human should
   resolve -- e.g. a column name/abbreviation that could plausibly mean more than one thing, a table title
-  that doesn't clearly indicate its subject, or a role you genuinely can't determine (role: "unknown").
+  that doesn't clearly indicate its subject, a role you genuinely can't determine (role: "unknown"), OR a
+  Direction/Trend-like column whose values came from icon/arrow glyphs (always reviewable via dropdown).
+- When human_review_needed=true you MUST also set input_type:
+    * "dropdown" -- the correct value is one of a small fixed set (Direction/Trend -> ["up","down"];
+      yes/no; similar binary/ternary categorical choices). Always include "input_options" as that list.
+    * "inputbox" -- the human should type free text (ambiguous labels, garbled names, open concepts).
+      Set "input_options" to null.
+- When human_review_needed=false, set input_type: null and input_options: null.
 - Do NOT set human_review_needed=true just because an OPTIONAL field is simply not present in the source
   (e.g. frequency or unit legitimately don't apply to this table) -- in that case use value: null,
-  human_review_needed: false, human_review_reason: null. Missing-and-not-applicable is not the same as
-  uncertain-and-ambiguous.
+  human_review_needed: false, input_type: null, input_options: null, human_review_reason: null.
+  Missing-and-not-applicable is not the same as uncertain-and-ambiguous.
 - When human_review_needed=true, human_review_reason MUST be exactly one of these standardized values
   (do not invent your own wording):
     "uncertain_extraction"    -- the extracted value itself may be wrong, incomplete, or hard to read
     "conflicting_extraction"  -- two extraction candidates disagree and you had to pick one
     "garbled_extracted_value" -- the extracted text contains corrupted/mojibake/encoding-broken characters
+                                  OR icon-font arrow glyphs that were interpreted as up/down
     "uncertain_semantic_role" -- you cannot confidently tell what role this column/field plays
     "uncertain_concept"       -- the name/abbreviation could plausibly mean more than one real-world concept
     "ambiguous_column"        -- some other column-level ambiguity not covered by the above
 - When human_review_needed=false, human_review_reason MUST be null.
 - Also add a brief note in "notes" explaining the uncertainty (e.g. "column 'PHC' -- could be Primary Health
-  Centre or another facility type, please confirm").
+  Centre or another facility type, please confirm"; or "Direction column used arrow icons; mapped to up/down").
 - Do NOT hallucinate standards, codes, entities, units, or dates that aren't supported by the page.
 - Do NOT attempt harmonization, do NOT map to any external standard/code list (e.g. NMDS/LGD/NCO), and do NOT
   group this table with any other table. That happens in a later stage, not here."""
@@ -251,31 +290,34 @@ TABLE_SCHEMA_EXAMPLE = """{
       "title": "...",
       "description": "...",
       "classification": {
-        "domain": {"value": "...", "human_review_needed": false, "human_review_reason": null},
-        "subject": {"value": "...", "human_review_needed": false, "human_review_reason": null},
-        "entity": {"value": "...", "human_review_needed": false, "human_review_reason": null},
-        "table_type": {"value": "...", "human_review_needed": false, "human_review_reason": null},
-        "geography": {"value": "...", "human_review_needed": false, "human_review_reason": null},
-        "time_period": {"value": "...", "human_review_needed": false, "human_review_reason": null},
-        "frequency": {"value": null, "human_review_needed": false, "human_review_reason": null},
-        "unit": {"value": "...", "human_review_needed": false, "human_review_reason": null}
+        "domain": {"value": "...", "human_review_needed": false, "input_type": null, "input_options": null, "human_review_reason": null},
+        "subject": {"value": "...", "human_review_needed": false, "input_type": null, "input_options": null, "human_review_reason": null},
+        "entity": {"value": "...", "human_review_needed": false, "input_type": null, "input_options": null, "human_review_reason": null},
+        "table_type": {"value": "...", "human_review_needed": false, "input_type": null, "input_options": null, "human_review_reason": null},
+        "geography": {"value": "...", "human_review_needed": false, "input_type": null, "input_options": null, "human_review_reason": null},
+        "time_period": {"value": "...", "human_review_needed": false, "input_type": null, "input_options": null, "human_review_reason": null},
+        "frequency": {"value": null, "human_review_needed": false, "input_type": null, "input_options": null, "human_review_reason": null},
+        "unit": {"value": "...", "human_review_needed": false, "input_type": null, "input_options": null, "human_review_reason": null}
       },
       "columns": [
         {
           "name": "...", "role": "identifier | dimension | measure | attribute | unknown",
           "concept": "...", "description": "...",
           "data_type": "string | integer | decimal | date | boolean | categorical | unknown",
-          "unit": "...", "category": "...", "human_review_needed": false, "human_review_reason": null
+          "unit": "...", "category": "...",
+          "human_review_needed": false, "input_type": null, "input_options": null, "human_review_reason": null
         }
       ],
-      "rows": [["...", "..."]],
-      "notes": ["..."],
+      "rows": [["...", "..."], ["...", "..."]],
+      "notes": [],
       "uncertain_cells": ["row 3, col 'Total': pymupdf_lines_strict=120 vs pymupdf_text=170, kept lines_strict"]
     }
   ]
 }
 Do not include a top-level "human_review_needed" on the table object -- that final flag is computed
-deterministically from the field/column flags and uncertain_cells afterward, not by you."""
+deterministically from the field/column flags and uncertain_cells afterward, not by you.
+When human_review_needed is true, always pair it with input_type ("dropdown" or "inputbox") as shown above.
+Do not include a Direction/Trend column in columns/rows unless it is present in the source table."""
 
 
 CLASSIFICATION_FIELDS = ("domain", "subject", "entity", "table_type", "geography", "time_period", "frequency", "unit")
@@ -285,8 +327,14 @@ CLASSIFICATION_FIELDS = ("domain", "subject", "entity", "table_type", "geography
 # never coerced to this priority -- each keeps its own reason; this ordering
 # is only used to pick ONE reason for the table-level rollup when several
 # different reasons are present underneath it.
+#
+# ADDED: "column_alignment_mismatch" -- deterministic post-LLM check when
+# reconstructed cells clearly don't match their column (e.g. up/down under
+# States/UTs, S.No. glued to a name, measure columns mostly empty). Higher
+# priority than generic uncertain_extraction so the UI surfaces it first.
 REVIEW_REASONS = (
     "garbled_extracted_value",
+    "column_alignment_mismatch",
     "conflicting_extraction",
     "uncertain_extraction",
     "uncertain_semantic_role",
@@ -301,6 +349,15 @@ _REASON_PRIORITY = {reason: i for i, reason in enumerate(REVIEW_REASONS)}
 # described in the "garbled_extracted_value" case, not just any odd character.
 _GARBLED_RE = re.compile("[\ue000-\uf8ff\ufffd]|[\u00c0-\u00ff][\u0080-\u00bf]")
 
+# ADDED: tokens that belong in Direction/Trend columns, used to detect when
+# those values landed in the wrong column after LLM reconstruction.
+_DIRECTION_TOKENS = frozenset({"up", "down", "↑", "↓"})
+_NUMERIC_DATA_TYPES = frozenset({
+    "integer", "int", "decimal", "float", "double", "number", "numeric",
+    "percentage", "percent", "pct",
+})
+_EMPTY_TOKENS = frozenset({"", "null", "none", "na", "n/a", "-", "–", "—", "."})
+
 
 def _looks_garbled(value: Any) -> bool:
     return isinstance(value, str) and bool(_GARBLED_RE.search(value))
@@ -308,6 +365,351 @@ def _looks_garbled(value: Any) -> bool:
 
 def _rows_look_garbled(rows: List[List[Any]]) -> bool:
     return any(_looks_garbled(cell) for row in rows for cell in row)
+
+
+def _cell_is_empty(value: Any) -> bool:
+    if value is None:
+        return True
+    return str(value).strip().lower() in _EMPTY_TOKENS
+
+
+def _cell_is_numeric(value: Any) -> Optional[bool]:
+    """True/False for clearly numeric vs non-numeric; None if empty/placeholder."""
+    if _cell_is_empty(value):
+        return None
+    s = str(value).strip().replace(",", "").replace("%", "").strip()
+    if not s or s.lower() in _EMPTY_TOKENS:
+        return None
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
+def _column_structural_kind(col: Dict[str, Any]) -> str:
+    """ADDED: coarse structural kind for alignment checks (not semantic NMDS)."""
+    name = str(col.get("name") or "").lower()
+    concept = str(col.get("concept") or "").lower()
+    role = str(col.get("role") or "").lower()
+    dt = str(col.get("data_type") or "").lower()
+    blob = f"{name} {concept}"
+    if any(k in blob for k in ("direction", "trend", "change")):
+        return "direction"
+    if (
+        re.search(r"\bs\.?\s*no\.?\b", name)
+        or name in ("sno", "#", "sl.", "sl.no.", "sl no")
+        or "serial" in name
+    ):
+        return "serial"
+    if any(k in name for k in ("state", "states/uts", "states/ut", "u.t", "uts")) or concept in (
+        "state", "geography", "states/uts",
+    ):
+        return "geo"
+    if (
+        role == "measure"
+        or dt in _NUMERIC_DATA_TYPES
+        or any(k in name for k in ("percent", "percentage", "index score", "score", "kg/", "gva", "rate"))
+    ):
+        return "measure"
+    return "other"
+
+
+def _detect_column_alignment_issues(
+    columns: List[Dict[str, Any]], rows: List[List[Any]]
+) -> List[Dict[str, Any]]:
+    """ADDED: Deterministic structural check after LLM reconstruction.
+
+    Catches shifted grids like SDG state tables where Direction up/down lands
+    under States/UTs, S.No. is glued to the state name, and measure columns
+    are left empty. Returns a list of {col_index, name, detail} issues.
+    """
+    issues: List[Dict[str, Any]] = []
+    if not columns or not rows:
+        return issues
+
+    nrows = len(rows)
+    for idx, col in enumerate(columns):
+        kind = _column_structural_kind(col)
+        vals = [row[idx] if idx < len(row) else None for row in rows]
+        non_empty = [v for v in vals if not _cell_is_empty(v)]
+        name = col.get("name") or f"col_{idx}"
+        empty_rate = 1.0 - (len(non_empty) / nrows) if nrows else 0.0
+
+        if kind == "measure" and nrows >= 5:
+            if empty_rate >= 0.7:
+                issues.append({
+                    "col_index": idx, "name": name, "kind": kind,
+                    "detail": f"measure column mostly empty ({empty_rate:.0%} blank)",
+                })
+                continue
+            numeric_flags = [_cell_is_numeric(v) for v in non_empty]
+            judged = [f for f in numeric_flags if f is not None]
+            if judged and (sum(1 for f in judged if f) / len(judged)) < 0.5:
+                issues.append({
+                    "col_index": idx, "name": name, "kind": kind,
+                    "detail": "measure column values are mostly non-numeric",
+                })
+            direction_hits = sum(
+                1 for v in non_empty if str(v).strip().lower() in _DIRECTION_TOKENS
+            )
+            if non_empty and direction_hits / len(non_empty) >= 0.4:
+                issues.append({
+                    "col_index": idx, "name": name, "kind": kind,
+                    "detail": "measure column contains Direction up/down tokens",
+                })
+
+        elif kind == "geo" and non_empty:
+            direction_hits = sum(
+                1 for v in non_empty if str(v).strip().lower() in _DIRECTION_TOKENS
+            )
+            if direction_hits / len(non_empty) >= 0.4:
+                issues.append({
+                    "col_index": idx, "name": name, "kind": kind,
+                    "detail": "States/geo column filled with Direction up/down values",
+                })
+
+        elif kind == "serial" and non_empty:
+            # e.g. "1, Andhra Pradesh" -- serial number glued to the next field
+            glued = sum(
+                1 for v in non_empty
+                if isinstance(v, str) and re.match(r"^\d+\s*,\s*\S", v.strip())
+            )
+            if glued / len(non_empty) >= 0.3:
+                issues.append({
+                    "col_index": idx, "name": name, "kind": kind,
+                    "detail": "S.No./serial values look glued to the next column",
+                })
+
+    return issues
+
+
+def _measure_numeric_fill_ratio(columns: List[Dict[str, Any]], rows: List[List[Any]]) -> float:
+    """ADDED: share of non-empty measure cells that parse as numbers (0..1)."""
+    total = 0
+    ok = 0
+    for idx, col in enumerate(columns):
+        if _column_structural_kind(col) != "measure":
+            continue
+        for row in rows:
+            v = row[idx] if idx < len(row) else None
+            flag = _cell_is_numeric(v)
+            if flag is None:
+                continue
+            total += 1
+            if flag:
+                ok += 1
+    if total == 0:
+        return 0.0
+    return ok / total
+
+
+def _dataframe_numeric_fill_ratio(df: pd.DataFrame) -> float:
+    """ADDED: rough numeric density for a pymupdf candidate DataFrame."""
+    if df is None or df.empty:
+        return 0.0
+    total = 0
+    ok = 0
+    for col in df.columns:
+        for v in df[col].tolist():
+            flag = _cell_is_numeric(v)
+            if flag is None:
+                continue
+            total += 1
+            if flag:
+                ok += 1
+    if total == 0:
+        return 0.0
+    return ok / total
+
+
+def _best_lines_strict_candidate(candidates: Optional[List[Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
+    if not candidates:
+        return None
+    strict = [c for c in candidates if c.get("method") == "pymupdf_lines_strict" and c.get("df") is not None]
+    pool = strict or [c for c in candidates if c.get("df") is not None]
+    if not pool:
+        return None
+    return max(pool, key=lambda c: _dataframe_numeric_fill_ratio(c["df"]))
+
+
+def _is_direction_like_column(col: Dict[str, Any]) -> bool:
+    """ADDED: true when name/concept is Direction / Trend / Change."""
+    name = str(col.get("name") or "").lower()
+    concept = str(col.get("concept") or "").lower()
+    return any(k in name or k in concept for k in ("direction", "trend", "change"))
+
+
+def _candidate_evidences_direction_column(
+    candidates: Optional[List[Dict[str, Any]]],
+    page_text: str = "",
+) -> bool:
+    """ADDED: whether the source extraction (or page text headers) already
+    shows a Direction/Trend column. Used to refuse LLM-invented Direction cols."""
+    if candidates:
+        for cand in candidates:
+            df = cand.get("df")
+            if df is None or df.empty:
+                continue
+            for col in df.columns:
+                name = str(col).lower()
+                if any(k in name for k in ("direction", "trend", "change")):
+                    return True
+            # Icon-only Direction often lands as an unnamed last column of
+            # garbled glyphs / up-down tokens while other columns are numeric.
+            if df.shape[1] >= 2:
+                last_vals = df.iloc[:, -1].tolist()
+                non_empty = [v for v in last_vals if not _cell_is_empty(v)]
+                if non_empty:
+                    dir_like = sum(
+                        1 for v in non_empty
+                        if str(v).strip().lower() in _DIRECTION_TOKENS or _looks_garbled(v)
+                    )
+                    if dir_like / len(non_empty) >= 0.4:
+                        return True
+    # Header-looking cue in raw text (standalone / spaced like a column title).
+    if page_text and re.search(
+        r"(?i)(?:^|[\n\r\t|])\s*(direction|trend)\s*(?:$|[\n\r\t|])",
+        page_text,
+    ):
+        return True
+    return False
+
+
+def _strip_ungrounded_direction_columns(
+    table: Dict[str, Any],
+    candidates: Optional[List[Dict[str, Any]]] = None,
+    page_text: str = "",
+) -> Dict[str, Any]:
+    """ADDED: Remove Direction/Trend/Change columns the LLM invented when the
+    source table has no such column. Keep current up/down dropdown logic only
+    when Direction is evidenced by pymupdf candidates (or a clear header in
+    page text)."""
+    columns = table.get("columns") or []
+    dir_idxs = [i for i, c in enumerate(columns) if _is_direction_like_column(c)]
+    if not dir_idxs:
+        return table
+    if _candidate_evidences_direction_column(candidates, page_text):
+        return table
+
+    keep_idxs = [i for i in range(len(columns)) if i not in set(dir_idxs)]
+    table["columns"] = [columns[i] for i in keep_idxs]
+    table["rows"] = [
+        [row[i] if i < len(row) else None for i in keep_idxs]
+        for row in (table.get("rows") or [])
+    ]
+    notes = list(table.get("notes") or [])
+    note = (
+        "ADDED: removed Direction/Trend column(s) not present in the source "
+        "table (LLM must not invent this column)."
+    )
+    if note not in notes:
+        notes.append(note)
+    # Drop stale notes that claim Direction was mapped when we just removed it.
+    notes = [
+        n for n in notes
+        if not (isinstance(n, str) and "direction column" in n.lower() and "mapped" in n.lower())
+    ]
+    table["notes"] = notes
+    return table
+
+
+def _apply_column_alignment_guard(
+    table: Dict[str, Any],
+    candidates: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """ADDED: Post-LLM robustness pass for shifted/mismatched column grids.
+
+    1) Detect columns whose values don't match their declared kind.
+    2) Flag those columns + uncertain_cells with column_alignment_mismatch.
+    3) If the LLM grid looks severely misaligned and a pymupdf candidate has
+       clearly better numeric fill, fall back to that candidate's cells while
+       keeping the LLM title / description / classification when present.
+    """
+    columns = table.get("columns") or []
+    rows = table.get("rows") or []
+    issues = _detect_column_alignment_issues(columns, rows)
+    if not issues:
+        return table
+
+    issue_idxs = {i["col_index"] for i in issues}
+    for idx, col in enumerate(columns):
+        if idx not in issue_idxs:
+            continue
+        # Force review on the misaligned column so the UI highlights it.
+        col["human_review_needed"] = True
+        col["human_review_reason"] = "column_alignment_mismatch"
+        if col.get("input_type") is None:
+            col["input_type"] = "inputbox"
+            col["input_options"] = None
+
+    notes = list(table.get("notes") or [])
+    uncertain = list(table.get("uncertain_cells") or [])
+    for issue in issues:
+        note = (
+            f"column_alignment_mismatch: col {issue['col_index']} "
+            f"{issue['name']!r} -- {issue['detail']}"
+        )
+        if note not in uncertain:
+            uncertain.append(note)
+    summary = (
+        "ADDED guard: reconstructed table failed column-alignment checks "
+        f"({len(issues)} column(s)); values may be shifted across headers."
+    )
+    if summary not in notes:
+        notes.append(summary)
+
+    # Severe = geo got Direction tokens, serial glued, or 2+ measure failures.
+    severe = any(i["kind"] in ("geo", "serial") for i in issues) or sum(
+        1 for i in issues if i["kind"] == "measure"
+    ) >= 2
+
+    fallback_used = False
+    if severe and candidates:
+        cand = _best_lines_strict_candidate(candidates)
+        if cand is not None:
+            llm_fill = _measure_numeric_fill_ratio(columns, rows)
+            cand_fill = _dataframe_numeric_fill_ratio(cand["df"])
+            # Only replace cells when the candidate is clearly richer numerically.
+            if cand_fill >= 0.5 and cand_fill > llm_fill + 0.25:
+                fallback = table_dict_from_df(cand["df"])
+                # Keep LLM semantics; replace the broken grid from pymupdf.
+                table["columns"] = fallback["columns"]
+                table["rows"] = fallback["rows"]
+                # Re-run pad via kinds already matching fallback width.
+                table["extraction"] = {
+                    "method": f"pymupdf_fallback_after_llm<{cand.get('method')}>",
+                    "confidence": "alignment_guard_fallback",
+                }
+                fallback_note = (
+                    "ADDED guard: replaced LLM rows/columns with "
+                    f"{cand.get('method')} candidate after alignment mismatch "
+                    f"(candidate numeric fill {cand_fill:.0%} vs LLM {llm_fill:.0%})."
+                )
+                notes.append(fallback_note)
+                uncertain.append(fallback_note)
+                fallback_used = True
+                # Re-detect on fallback grid (usually clean); keep prior notes.
+                issues = _detect_column_alignment_issues(table["columns"], table["rows"])
+                if issues:
+                    for idx, col in enumerate(table["columns"]):
+                        if idx in {i["col_index"] for i in issues}:
+                            col["human_review_needed"] = True
+                            col["human_review_reason"] = "column_alignment_mismatch"
+                            if col.get("input_type") is None:
+                                col["input_type"] = "inputbox"
+
+    if not fallback_used:
+        # Ensure at least one column carries the reason for derive_* rollup.
+        if not any(c.get("human_review_reason") == "column_alignment_mismatch" for c in table["columns"]):
+            if table["columns"]:
+                table["columns"][0]["human_review_needed"] = True
+                table["columns"][0]["human_review_reason"] = "column_alignment_mismatch"
+                table["columns"][0]["input_type"] = table["columns"][0].get("input_type") or "inputbox"
+
+    table["notes"] = notes
+    table["uncertain_cells"] = uncertain
+    return table
 
 
 def _coerce_reason(raw: Any) -> Optional[str]:
@@ -323,6 +725,9 @@ def _coerce_reason(raw: Any) -> Optional[str]:
     s = raw.lower()
     if "garbl" in s or "corrupt" in s or "encoding" in s or "mojibake" in s:
         return "garbled_extracted_value"
+    # ADDED: map free-text alignment wording to the new standard reason.
+    if "align" in s or "mismatch" in s or "shifted" in s or "wrong column" in s:
+        return "column_alignment_mismatch"
     if "conflict" in s or "disagree" in s:
         return "conflicting_extraction"
     if "role" in s:
@@ -350,16 +755,43 @@ def _normalize_review_flag(human_review_needed: Any, human_review_reason: Any) -
     return True, reason
 
 
+def _normalize_input_ui(needed: bool, input_type: Any, input_options: Any) -> tuple[Optional[str], Optional[List[str]]]:
+    """Keeps LLM input_type / input_options only when review is needed."""
+    if not needed:
+        return None, None
+    kind = str(input_type or "").strip().lower()
+    if kind in ("dropdown", "select"):
+        opts = input_options if isinstance(input_options, list) else None
+        cleaned = [str(o) for o in (opts or []) if o is not None and str(o).strip()]
+        return "dropdown", cleaned or None
+    if kind in ("inputbox", "input", "text", "textbox"):
+        return "inputbox", None
+    return "inputbox", None
+
+
 def _normalize_field(field: Any) -> Dict[str, Any]:
     """Normalizes one classification field to {"value", "human_review_needed",
-    "human_review_reason"}. Tolerates the model returning a bare scalar
-    instead of the object shape (treated as the value, no review flag) or
-    omitting the field entirely (defaults null/false/null)."""
+    "input_type", "input_options", "human_review_reason"}. Tolerates the model
+    returning a bare scalar instead of the object shape (treated as the value,
+    no review flag) or omitting the field entirely (defaults null/false/null)."""
     if isinstance(field, dict):
         needed, reason = _normalize_review_flag(field.get("human_review_needed", False), field.get("human_review_reason"))
-        return {"value": field.get("value"), "human_review_needed": needed, "human_review_reason": reason}
+        input_type, input_options = _normalize_input_ui(needed, field.get("input_type"), field.get("input_options"))
+        return {
+            "value": field.get("value"),
+            "human_review_needed": needed,
+            "input_type": input_type,
+            "input_options": input_options,
+            "human_review_reason": reason,
+        }
     # Bare scalar (string/null) instead of the object shape -- keep the value.
-    return {"value": field, "human_review_needed": False, "human_review_reason": None}
+    return {
+        "value": field,
+        "human_review_needed": False,
+        "input_type": None,
+        "input_options": None,
+        "human_review_reason": None,
+    }
 
 
 def _normalize_table(table: Dict[str, Any]) -> Dict[str, Any]:
@@ -375,11 +807,23 @@ def _normalize_table(table: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(c, str):
             # Model ignored the object schema and returned a bare name -- keep
             # the name, mark everything else unknown rather than dropping it.
-            columns.append({"name": c, "role": "unknown", "concept": None, "description": None,
-                             "data_type": "unknown", "unit": None, "category": None,
-                             "human_review_needed": False, "human_review_reason": None})
+            columns.append({
+                "name": c, "role": "unknown", "concept": None, "description": None,
+                "data_type": "unknown", "unit": None, "category": None,
+                "human_review_needed": False, "input_type": None, "input_options": None,
+                "human_review_reason": None,
+            })
         elif isinstance(c, dict):
             needed, reason = _normalize_review_flag(c.get("human_review_needed", False), c.get("human_review_reason"))
+            input_type, input_options = _normalize_input_ui(needed, c.get("input_type"), c.get("input_options"))
+            # Direction-like columns: default to up/down dropdown when the model
+            # flagged review but omitted input_type / options.
+            name_l = str(c.get("name") or "").lower()
+            concept_l = str(c.get("concept") or "").lower()
+            if needed and input_type is None and any(
+                k in name_l or k in concept_l for k in ("direction", "trend", "change")
+            ):
+                input_type, input_options = "dropdown", ["up", "down"]
             columns.append({
                 "name": c.get("name", ""),
                 "role": c.get("role") or "unknown",
@@ -389,15 +833,31 @@ def _normalize_table(table: Dict[str, Any]) -> Dict[str, Any]:
                 "unit": c.get("unit"),
                 "category": c.get("category"),
                 "human_review_needed": needed,
+                "input_type": input_type,
+                "input_options": input_options,
                 "human_review_reason": reason,
             })
+
+    # Pad / trim every row to match column count. The model often declares a
+    # Direction/Trend column but omits that cell from each row array, which
+    # leaves the UI with a header and no bordered cells underneath.
+    ncols = len(columns)
+    rows: List[List[Any]] = []
+    for raw in table.get("rows") or []:
+        if not isinstance(raw, list):
+            rows.append([None] * ncols)
+            continue
+        row = list(raw[:ncols])
+        while len(row) < ncols:
+            row.append(None)
+        rows.append(row)
 
     return {
         "title": table.get("title"),
         "description": table.get("description"),
         "classification": {field: _normalize_field(cls.get(field)) for field in CLASSIFICATION_FIELDS},
         "columns": columns,
-        "rows": table.get("rows") or [],
+        "rows": rows,
         "notes": table.get("notes") or [],
         "uncertain_cells": table.get("uncertain_cells") or [],
     }
@@ -411,7 +871,8 @@ def derive_human_review_needed(table: Dict[str, Any]) -> tuple[bool, Optional[st
     Two different kinds of uncertainty feed into this, kept conceptually
     separate but both able to trigger the table-level flag:
       - data reconstruction uncertainty -> uncertain_cells non-empty, or a
-        row value that looks corrupted/mojibake (garbled_extracted_value)
+        row value that looks corrupted/mojibake (garbled_extracted_value),
+        or ADDED column_alignment_mismatch from the post-LLM grid guard
       - semantic classification uncertainty -> a classification field or
         column marked human_review_needed=true (each keeping its own
         reason), or a column whose role genuinely couldn't be determined
@@ -438,6 +899,9 @@ def derive_human_review_needed(table: Dict[str, Any]) -> tuple[bool, Optional[st
     uncertain_cells = table.get("uncertain_cells") or []
     rows = table.get("rows") or []
     if uncertain_cells:
+        if any("column_alignment_mismatch" in str(note) for note in uncertain_cells):
+            # ADDED: notes written by _apply_column_alignment_guard.
+            reasons_present.add("column_alignment_mismatch")
         if any(_looks_garbled(note) for note in uncertain_cells) or _rows_look_garbled(rows):
             reasons_present.add("garbled_extracted_value")
         elif any(" vs " in str(note) for note in uncertain_cells):
@@ -445,7 +909,7 @@ def derive_human_review_needed(table: Dict[str, Any]) -> tuple[bool, Optional[st
             # TASK_A_RECONSTRUCTION_RULES / uncertain_cells example) --
             # "row X, col Y: candidateA=... vs candidateB=...".
             reasons_present.add("conflicting_extraction")
-        else:
+        elif "column_alignment_mismatch" not in reasons_present:
             reasons_present.add("uncertain_extraction")
     elif _rows_look_garbled(rows):
         # Garbled values can show up even without an explicit uncertain_cells
@@ -470,16 +934,30 @@ def derive_human_review_needed(table: Dict[str, Any]) -> tuple[bool, Optional[st
     return True, reason
 
 
-def _stamp_llm_metadata(page_result: Dict[str, Any], page_num: int) -> Dict[str, Any]:
+def _stamp_llm_metadata(
+    page_result: Dict[str, Any],
+    page_num: int,
+    candidates: Optional[List[Dict[str, Any]]] = None,
+    page_text: str = "",
+) -> Dict[str, Any]:
     """Adds the pipeline-level bookkeeping fields (which extraction path
     produced this, whether it's been semantically classified, whether a
     human needs to review it and why, which page) that we already know
-    deterministically -- not something we trust the LLM to self-report."""
+    deterministically -- not something we trust the LLM to self-report.
+
+    ADDED: strips ungrounded Direction/Trend columns, then runs
+    _apply_column_alignment_guard, before derive_human_review_needed."""
     tables = []
     for t in page_result.get("tables", []):
         normalized = _normalize_table(t)
+        # ADDED: do not keep LLM-invented Direction columns when absent in source.
+        normalized = _strip_ungrounded_direction_columns(normalized, candidates, page_text)
+        # ADDED: structural alignment guard (detect + optional candidate fallback).
+        normalized = _apply_column_alignment_guard(normalized, candidates)
         normalized["semantic_status"] = "classified"
-        normalized["extraction"] = {"method": "pymupdf+llm", "confidence": "llm_validated"}
+        # Preserve fallback extraction stamp when the alignment guard replaced the grid.
+        if not (isinstance(normalized.get("extraction"), dict) and normalized["extraction"].get("confidence") == "alignment_guard_fallback"):
+            normalized["extraction"] = {"method": "pymupdf+llm", "confidence": "llm_validated"}
         normalized["page"] = page_num
         normalized["human_review_needed"], normalized["human_review_reason"] = derive_human_review_needed(normalized)
         tables.append(normalized)
@@ -563,7 +1041,7 @@ def build_batch_validation_prompt(pages: List[int], pages_grouped: Dict[int, Lis
     page_sections = []
     for page_num in pages:
         candidates = pages_grouped.get(page_num, [])
-        sections = [f"  --- {t['method']}, table {i + 1} ---\n{df_to_text(t['df'], max_rows=30)}" for i, t in enumerate(candidates)]
+        sections = [f"  --- {t['method']}, table {i + 1} ---\n{df_to_text(t['df'], max_rows=40)}" for i, t in enumerate(candidates)]
         text = page_text.get(page_num, "")[:RAW_TEXT_CHARS_PER_PAGE_BATCHED]
         page_sections.append(
             f"=== PAGE {page_num} ===\n"
@@ -612,7 +1090,18 @@ def validate_batch(client: openai.OpenAI, pages: List[int], pages_grouped: Dict[
         parsed = json.loads(cleaned)
 
     by_page = parsed.get("pages", {})
-    return {p: _stamp_llm_metadata(by_page.get(str(p), {"tables": []}), p) for p in pages}
+    # ADDED: pass per-page pymupdf candidates + page text into stamp so
+    # ungrounded Direction columns can be stripped and alignment guard can
+    # fall back when the LLM grid is shifted.
+    return {
+        p: _stamp_llm_metadata(
+            by_page.get(str(p), {"tables": []}),
+            p,
+            pages_grouped.get(p),
+            page_text.get(p, ""),
+        )
+        for p in pages
+    }
 
 
 def validate_all_pages_batched(pages_grouped: Dict[int, List[Dict[str, Any]]], page_text: Dict[int, str],
@@ -636,7 +1125,13 @@ def validate_all_pages_batched(pages_grouped: Dict[int, List[Dict[str, Any]]], p
                 for page_num in batch:
                     try:
                         result_single = validate_page(client, page_num, pages_grouped[page_num], page_text.get(page_num, ""))
-                        validated[page_num] = _stamp_llm_metadata(result_single, page_num)
+                        # ADDED: pass candidates + page text for Direction strip / alignment guard.
+                        validated[page_num] = _stamp_llm_metadata(
+                            result_single,
+                            page_num,
+                            pages_grouped.get(page_num),
+                            page_text.get(page_num, ""),
+                        )
                     except Exception as e2:
                         log(f"    page {page_num}: per-page fallback also failed ({e2})")
                 done_pages += len(batch)

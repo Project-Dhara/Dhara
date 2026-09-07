@@ -14,6 +14,7 @@ import Badge from './ui/Badge'
 import ErrorBanner from './ui/ErrorBanner'
 import { withAuthHeaders } from '../lib/auth'
 import { withLlmKeyHeaders } from '../lib/llmKey'
+import { StageSidebar, stageIndexForStep } from './ConsoleStages'
 
 // Short government table code for a tab button — e.g. "Table : D-12 & D-13"
 // → "D12, D13" — pulled from the source's own table-label row (`table.title`,
@@ -187,29 +188,6 @@ function ConfirmDialog({ title, body, onCancel, onContinue }) {
   )
 }
 
-const STAGE_DEFS = [
-  {
-    name: 'Dataset Inventory', firstStep: 1, sub: 'Files, preview, grouping',
-    subs: [
-      { step: 1, label: 'Files' },
-      { step: 2, label: 'Preview' },
-      { step: 3, label: 'Grouping' },
-    ],
-  },
-  {
-    name: 'Metadata Workspace', firstStep: 4, sub: 'Title, category, coverage',
-    subs: [{ step: 4, label: 'Metadata' }],
-  },
-  {
-    name: 'Transformation & Harmonisation', firstStep: 5, sub: 'Concepts and code maps',
-    subs: [{ step: 5, label: 'Classification & harmonisation' }],
-  },
-  {
-    name: 'Dataset Publication', firstStep: 6, sub: 'API, MCP, catalogue',
-    subs: [{ step: 6, label: 'Publish' }],
-  },
-]
-
 // Three-line header per step: name (orientation), a purpose sentence that's
 // now filled in for every step (previously blank for steps 2/3/4), and a
 // forward-looking cue -- "you are here, this is why, this is what happens
@@ -254,13 +232,6 @@ const BACK_LABELS = [
   '', 'Choose another method', 'Change files', 'Back to preview', 'Back to grouping', 'Back to metadata',
 ]
 
-function stageIndexForStep(step) {
-  if (step <= 3) return 0
-  if (step === 4) return 1
-  if (step === 5) return 2
-  return 3
-}
-
 // Serializable slice of the flow state, persisted so it survives a page
 // refresh or a detour to another screen — File objects can't survive either
 // (browsers won't let a File be reconstructed from storage), so
@@ -276,74 +247,6 @@ function loadPersisted() {
   } catch {
     return null
   }
-}
-
-// Left stage rail — permanent sidebar with expandable substeps, matching the
-// original console layout (horizontal top stepper stacked stage + Files/Preview/
-// Grouping under it and ate vertical space without helping later stages).
-function StageSidebar({ stageIdx, step, maxStepReached, expandedStage, setExpandedStage, goToStep }) {
-  return (
-    <aside className="flex w-[218px] flex-none flex-col gap-1 rounded-[10px] border border-line bg-white py-3">
-      <div className="px-4 pb-2.5 text-[11px] uppercase tracking-[0.07em] text-[#8E9398]">Console stages</div>
-      {STAGE_DEFS.map((s, i) => {
-        const expanded = i === expandedStage
-        const active = i === stageIdx
-        const done = i < stageIdx
-        return (
-          <div key={s.name} className="flex flex-col">
-            <button
-              type="button"
-              className="flex cursor-pointer items-start gap-2.5 px-4 py-2.5 text-left"
-              onClick={() => setExpandedStage(i)}
-            >
-              <span
-                className={`flex h-5 w-5 flex-none items-center justify-center rounded-full text-[11px] font-semibold ${
-                  active ? 'bg-teal text-white' : done ? 'bg-sage text-[#3d7a3d]' : 'bg-cream text-[#8E9398]'
-                }`}
-              >
-                {done ? '✓' : i + 1}
-              </span>
-              <span className="min-w-0">
-                <span className={`block text-[13.5px] font-semibold ${active ? 'text-ink' : 'text-ink-soft'}`}>{s.name}</span>
-                <span className="block text-[11.5px] text-[#8E9398]">{s.sub}</span>
-              </span>
-            </button>
-            {expanded && (
-              <div className="flex flex-col gap-0.5 py-0.5 pl-[46px] pr-4 pb-2">
-                {s.subs.map((sub) => {
-                  const subActive = sub.step === step
-                  const subDone = sub.step < step
-                  const reachable = sub.step <= maxStepReached
-                  return (
-                    <button
-                      key={sub.step}
-                      type="button"
-                      disabled={!reachable}
-                      onClick={() => reachable && goToStep(sub.step)}
-                      className={`flex items-center gap-2 py-[5px] text-left ${reachable ? 'cursor-pointer' : 'cursor-default'}`}
-                    >
-                      <span
-                        className={`h-1.5 w-1.5 flex-none rounded-full ${
-                          subActive ? 'bg-teal' : subDone ? 'bg-sage' : 'bg-line'
-                        }`}
-                      />
-                      <span
-                        className={`text-[12.5px] ${
-                          subActive ? 'font-semibold text-ink' : !reachable ? 'text-[#C7CBCE]' : subDone ? 'text-ink-soft' : 'text-[#8E9398]'
-                        }`}
-                      >
-                        {sub.label}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        )
-      })}
-    </aside>
-  )
 }
 
 // Step 1 file-type choice. XLSX reveals the workbook uploader in the same

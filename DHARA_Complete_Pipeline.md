@@ -100,7 +100,7 @@ The pipeline takes government data such as PDF/Excel, reconstructs usable tables
 
 ## 3. Current Status
 
-The current implementation has progressed through PDF extraction and the initial LLM-assisted reconstruction/semantic understanding stage.
+The current implementation has progressed through PDF extraction, LLM-assisted reconstruction/semantic understanding, and the human classification review UI with persistence. Excel and PDF share the same Console stages rail for Dataset Inventory (Files → Preview → Grouping).
 
 ### Implemented
 
@@ -117,19 +117,48 @@ The current implementation has progressed through PDF extraction and the initial
 ✓ Semantic uncertainty tracking
 ✓ human_review_needed flags
 ✓ Human-review reasons
+✓ PDF job API (upload, poll, result, table patch, soft-delete)
+✓ Job persistence under backend/data/pdf_jobs/
+✓ Processing progress UI (/console/processing/[jobId])
+✓ Shared Console stages rail (Excel + PDF)
+✓ Human classification review UI (/console/review/[jobId])
+✓ Review filters, sticky filter bar, scroll-to-top
+✓ Direction / dropdown cell editing where schema provides options
+✓ Soft-delete of tables from a job
+✓ Continue → Grouping placeholder (/console/pdf-next-steps/[jobId])
+✓ Extraction guards (ungrounded Direction strip, column-alignment flag)
 ```
 
 The current PDF pipeline uses PyMuPDF rather than Camelot/pdfplumber. The LLM stage performs both **table reconstruction** and **initial semantic understanding/classification** in one call.
 
+### Console stages (Dataset Inventory)
+
+Excel (`Console.jsx`) and PDF (`PdfConsoleLayout` + `ConsoleStages.jsx`) use the same stage definitions:
+
+```text
+1 Files     — upload / PDF processing
+2 Preview   — human table / classification review
+3 Grouping  — Excel: live; PDF: placeholder route only
+4–6         — Metadata / Harmonisation / Publish (locked until built)
+```
+
+PDF routes:
+
+```text
+/console                         → upload (Files)
+/console/processing/[jobId]      → extraction progress (Files)
+/console/review/[jobId]          → Preview (PdfReview)
+/console/pdf-next-steps/[jobId]  → Grouping placeholder (“coming soon”)
+```
+
 ### Next
 
 ```text
-→ Human classification review UI + persistence
 → Semantic chunking
 → Embedding generation
 → pgvector indexing
 → Similarity-based candidate retrieval
-→ Intelligent grouping
+→ Intelligent grouping (PDF path beyond placeholder)
 → Grouping human review
 → Harmonization
 → Transformation
@@ -317,9 +346,18 @@ It does not yet ask:
 
 > **Which official canonical standard/code should this map to?**
 
----
+### POC extraction guards (post-LLM)
 
-## 8. Stage 4 — Human Review of Classification
+After the LLM returns tables, the pipeline applies lightweight guards before review:
+
+```text
+Strip ungrounded Direction / Trend columns not present in source candidates
+Flag column_alignment_mismatch when reconstructed columns disagree with candidates
+Optional fallback to a pymupdf_lines_strict grid when alignment is severely broken
+BrokenProcessPool retry with worker halving on OOM during extract
+```
+
+These improve review quality without changing the Stage 4 human-approval contract.
 
 The LLM output is a proposal, not authoritative truth.
 
@@ -353,6 +391,37 @@ Table level
 Classification field level
 Column level
 ```
+
+### Implemented in the POC (Preview UI)
+
+This stage is live for PDF jobs in the frontend Preview step.
+
+```text
+Load   GET  /api/pdf/jobs/{job_id}/result
+Save   PATCH /api/pdf/jobs/{job_id}/tables/{table_id}
+Delete POST /api/pdf/jobs/{job_id}/tables/delete
+```
+
+`PdfReview` (`frontend/src/components/PdfReview.jsx`) provides:
+
+```text
+Expandable table cards with classification + column metadata edits
+Status / reason filters (needs review, no review, garbled, alignment, …)
+Sticky filter bar inside the content panel (AppShell scroll parent)
+Scroll-to-top on the review page
+Editable Direction / categorical cells when input_type = dropdown
+Numeric cells remain locked; garbled cells stay highlighted
+Soft-delete of selected tables (persisted deleted_table_ids)
+Continue → navigates to the Grouping placeholder for PDF
+```
+
+Processing progress before review (`/console/processing/[jobId]`) polls job status and maps backend percent bands to:
+
+```text
+classify → extract → classify_confidence → validate
+```
+
+(`validate` may show as skipped when no tables enter the LLM queue.)
 
 The reviewer edits incorrect AI interpretations and approves the result.
 
@@ -907,14 +976,22 @@ LLM reconstruction
 Initial classification
  ↓
 Human-review metadata
+ ↓
+Shared Console stages (Files / Preview / Grouping)
+ ↓
+Processing progress UI
+ ↓
+Human classification review UI
+ ↓
+Persist table edits + soft-delete (pdf_jobs)
+ ↓
+PDF Grouping placeholder route (not yet a grouping engine)
 ```
 
 ### NEXT
 
 ```text
-Human classification review
- ↓
-Persist approved semantic representation
+Persist approved semantic representation into PostgreSQL (beyond job JSON)
  ↓
 Semantic chunking
  ↓
@@ -924,7 +1001,7 @@ pgvector
  ↓
 Similarity retrieval
  ↓
-Grouping
+Grouping (full PDF path)
  ↓
 Human grouping review
 ```

@@ -861,24 +861,70 @@ def _upload_original_sheet_to_gcs(file_bytes: bytes, source_file: str, sheet: st
 # Unlike the xlsx batch-extract flow above, this can take several minutes
 # (pymupdf extraction + batched OpenAI reconstruction/classification -- see
 # sda_india_pdf_extraction.py), far longer than a synchronous request should
-# block for. There's no existing job-queue/background-task infra in this
-# backend to reuse, so this is a minimal in-memory job store: fine for a
-# single-process dev/demo deployment, not durable across a restart or
-# multiple server processes. A real deployment would move this to a proper
-# queue (Celery/RQ) and a persisted job table.
+# block for. Jobs live in memory and are also mirrored to data/pdf_jobs/ so a
+# uvicorn --reload keeps finished results available for review. A real
+# multi-process deployment would still want a proper queue + DB table.
 import sda_india_pdf_extraction as _pdf_pipeline
 
 _pdf_jobs: Dict[str, Dict[str, Any]] = {}
 _pdf_jobs_lock = threading.Lock()
 _pdf_upload_dir = pathlib.Path(__file__).parent / "data" / "pdf_uploads"
+# Job payloads (including finished results) are also written here so a
+# uvicorn --reload / container restart doesn't wipe in-progress review state.
+_pdf_jobs_dir = pathlib.Path(__file__).parent / "data" / "pdf_jobs"
+
+
+def _pdf_job_path(job_id: str) -> pathlib.Path:
+    return _pdf_jobs_dir / f"{job_id}.json"
+
+
+def _save_pdf_job(job: Dict[str, Any]) -> None:
+    """Atomic JSON write; best-effort (disk full shouldn't crash the pipeline)."""
+    try:
+        _pdf_jobs_dir.mkdir(parents=True, exist_ok=True)
+        path = _pdf_job_path(job["job_id"])
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(_json.dumps(job, default=str), encoding="utf-8")
+        tmp.replace(path)
+    except Exception as e:
+        print(f"Warning: could not persist PDF job {job.get('job_id')}: {e}", flush=True)
+
+
+def _load_pdf_job(job_id: str) -> Optional[Dict[str, Any]]:
+    path = _pdf_job_path(job_id)
+    if not path.is_file():
+        return None
+    try:
+        data = _json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
+    except Exception as e:
+        print(f"Warning: could not load PDF job {job_id}: {e}", flush=True)
+        return None
+
+
+def _get_pdf_job(job_id: str) -> Optional[Dict[str, Any]]:
+    """Prefer in-memory job; fall back to disk after a process restart."""
+    job = _pdf_jobs.get(job_id)
+    if job is not None:
+        return job
+    job = _load_pdf_job(job_id)
+    if job is not None:
+        _pdf_jobs[job_id] = job
+    return job
 
 
 def _pdf_job_public(job: Dict[str, Any]) -> Dict[str, Any]:
     """Status view of a job -- everything except the (potentially large)
     result payload, which has its own endpoint."""
-    public = {k: v for k, v in job.items() if k not in ("result", "reviews")}
+    public = {k: v for k, v in job.items() if k not in ("result", "reviews", "deleted_table_ids")}
     if job["status"] == "done" and job.get("result") is not None:
-        tables = [t for page in job["result"].values() for t in page.get("tables", [])]
+        deleted = set(job.get("deleted_table_ids") or [])
+        tables = []
+        for page_num, page in job["result"].items():
+            for idx, t in enumerate(page.get("tables", [])):
+                table_id = f"{page_num}-{idx}"
+                if table_id not in deleted:
+                    tables.append(t)
         public["table_count"] = len(tables)
         public["needs_review_count"] = sum(1 for t in tables if t.get("human_review_needed"))
     return public
@@ -901,12 +947,14 @@ def _run_pdf_job(job_id: str, pdf_path: pathlib.Path, api_key: Optional[str]) ->
             job = _pdf_jobs.get(job_id)
             if job is not None:
                 job.update(status="done", stage="done", percent=100, message="Complete", result=result)
+                _save_pdf_job(job)
     except Exception as e:
         print(f"PDF job {job_id} failed: {e}")
         with _pdf_jobs_lock:
             job = _pdf_jobs.get(job_id)
             if job is not None:
                 job.update(status="error", message=f"Failed: {e}", error=str(e))
+                _save_pdf_job(job)
     finally:
         try:
             pdf_path.unlink(missing_ok=True)
@@ -950,7 +998,9 @@ async def pdf_upload(request: Request, file: UploadFile = File(...), user_email:
             "result": None,
             "error": None,
             "reviews": {},
+            "deleted_table_ids": [],
         }
+        _save_pdf_job(_pdf_jobs[job_id])
 
     asyncio.create_task(asyncio.to_thread(_run_pdf_job, job_id, pdf_path, api_key))
     return {"job_id": job_id}
@@ -961,16 +1011,23 @@ async def pdf_jobs_list(user_email: str = Depends(require_user)):
     """Lists the caller's own PDF jobs, most recent first -- lets the
     frontend recover an in-progress/finished job after a page refresh."""
     with _pdf_jobs_lock:
-        mine = [_pdf_job_public(j) for j in _pdf_jobs.values() if j["user_email"] == user_email]
-    mine.sort(key=lambda j: j["created_at"], reverse=True)
+        if _pdf_jobs_dir.is_dir():
+            for path in _pdf_jobs_dir.glob("*.json"):
+                jid = path.stem
+                if jid not in _pdf_jobs:
+                    loaded = _load_pdf_job(jid)
+                    if loaded is not None:
+                        _pdf_jobs[jid] = loaded
+        mine = [_pdf_job_public(j) for j in _pdf_jobs.values() if j.get("user_email") == user_email]
+    mine.sort(key=lambda j: j.get("created_at") or 0, reverse=True)
     return {"jobs": mine}
 
 
 @app.get("/api/pdf/jobs/{job_id}")
 async def pdf_job_status(job_id: str, user_email: str = Depends(require_user)):
     with _pdf_jobs_lock:
-        job = _pdf_jobs.get(job_id)
-        if not job or job["user_email"] != user_email:
+        job = _get_pdf_job(job_id)
+        if not job or job.get("user_email") != user_email:
             raise HTTPException(404, "Job not found")
         return _pdf_job_public(job)
 
@@ -983,21 +1040,25 @@ async def pdf_job_result(job_id: str, user_email: str = Depends(require_user)):
     below. Table data (rows) is never modified by review -- only
     classification/human_review_* fields are ever patched."""
     with _pdf_jobs_lock:
-        job = _pdf_jobs.get(job_id)
-        if not job or job["user_email"] != user_email:
-            raise HTTPException(404, "Job not found")
+        job = _get_pdf_job(job_id)
+        if not job or job.get("user_email") != user_email:
+            raise HTTPException(404, "Job not found — it may have been cleared by a server restart. Please upload the PDF again.")
         if job["status"] != "done":
             raise HTTPException(409, f"Job not finished yet (status={job['status']})")
         reviews = dict(job.get("reviews") or {})
+        deleted = set(job.get("deleted_table_ids") or [])
         result = job["result"] or {}
+        filename = job["filename"]
 
     tables = []
-    for page_num in sorted(result.keys(), key=int):
+    for page_num in sorted(result.keys(), key=lambda k: int(k) if str(k).isdigit() else str(k)):
         for idx, t in enumerate(result[page_num].get("tables", [])):
             table_id = f"{page_num}-{idx}"
+            if table_id in deleted:
+                continue
             merged = {**t, **reviews.get(table_id, {}), "table_id": table_id}
             tables.append(merged)
-    return {"job_id": job_id, "filename": job["filename"], "tables": tables}
+    return {"job_id": job_id, "filename": filename, "tables": tables}
 
 
 @app.patch("/api/pdf/jobs/{job_id}/tables/{table_id}")
@@ -1010,11 +1071,42 @@ async def pdf_review_table(job_id: str, table_id: str, request: Request, user_em
     if not isinstance(payload, dict):
         raise HTTPException(400, "Body must be a JSON object")
     with _pdf_jobs_lock:
-        job = _pdf_jobs.get(job_id)
-        if not job or job["user_email"] != user_email:
+        job = _get_pdf_job(job_id)
+        if not job or job.get("user_email") != user_email:
             raise HTTPException(404, "Job not found")
         job.setdefault("reviews", {})[table_id] = {**job["reviews"].get(table_id, {}), **payload}
+        _save_pdf_job(job)
     return {"ok": True}
+
+
+@app.post("/api/pdf/jobs/{job_id}/tables/delete")
+async def pdf_delete_tables(job_id: str, request: Request, user_email: str = Depends(require_user)):
+    """Soft-deletes one or more extracted tables from a finished job.
+    table_id values stay stable (page-index), so deletions are recorded in
+    deleted_table_ids rather than reshuffling the result payload."""
+    payload = await request.json()
+    table_ids = payload.get("table_ids") if isinstance(payload, dict) else None
+    if not isinstance(table_ids, list) or not table_ids:
+        raise HTTPException(400, "Body must include a non-empty table_ids array")
+    ids = [str(tid) for tid in table_ids if tid is not None and str(tid).strip()]
+    if not ids:
+        raise HTTPException(400, "No valid table_ids provided")
+
+    with _pdf_jobs_lock:
+        job = _get_pdf_job(job_id)
+        if not job or job.get("user_email") != user_email:
+            raise HTTPException(404, "Job not found")
+        if job["status"] != "done":
+            raise HTTPException(409, f"Job not finished yet (status={job['status']})")
+        deleted = set(job.get("deleted_table_ids") or [])
+        deleted.update(ids)
+        job["deleted_table_ids"] = sorted(deleted)
+        reviews = job.get("reviews") or {}
+        for tid in ids:
+            reviews.pop(tid, None)
+        job["reviews"] = reviews
+        _save_pdf_job(job)
+    return {"ok": True, "deleted": ids, "deleted_count": len(ids)}
 
 
 # --- Serve React frontend (production) ---

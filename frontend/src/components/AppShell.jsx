@@ -87,11 +87,14 @@ export default function AppShell({ screen, user, onNavigate, onSignOut, children
       </nav>
 
       <div className="flex min-w-0 flex-1 flex-col bg-cream">
-        {/* has-[.cat-screen]: Catalogue.jsx manages its own internal scroll
-            region (a fixed-height table view) rather than the whole page
-            scrolling -- same special case the old CSS's :has() selector
-            handled. */}
-        <div className="min-h-0 flex-1 overflow-y-auto p-[30px] px-8 has-[.cat-screen]:flex has-[.cat-screen]:flex-col has-[.cat-screen]:overflow-hidden">{children}</div>
+        {/* Padding lives on an inner wrapper (not the scrollport) so position:sticky
+            children can stick flush to the top with no padding gap above them.
+            has-[.cat-screen]: Catalogue.jsx manages its own internal scroll. */}
+        <div className="min-h-0 flex-1 overflow-y-auto has-[.cat-screen]:flex has-[.cat-screen]:flex-col has-[.cat-screen]:overflow-hidden">
+          <div className="p-[30px] px-8 has-[.cat-screen]:flex has-[.cat-screen]:min-h-0 has-[.cat-screen]:flex-1 has-[.cat-screen]:flex-col has-[.cat-screen]:overflow-hidden">
+            {children}
+          </div>
+        </div>
       </div>
     </div>
   )

@@ -19,6 +19,7 @@ export default function PdfReviewPage() {
     return () => { cancelled = true }
   }, [jobId])
 
+  // Dataset Inventory → Preview (step 2). Files (1) stays reachable via the stage rail.
   return (
     <PdfReview
       jobId={jobId}

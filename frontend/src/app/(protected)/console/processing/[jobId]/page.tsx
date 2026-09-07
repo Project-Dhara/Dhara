@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import ProcessingStepper from '../../../../../components/ProcessingStepper'
+import PdfConsoleLayout from '../../../../../components/PdfConsoleLayout'
 import ErrorBanner from '../../../../../components/ui/ErrorBanner'
 import Button from '../../../../../components/ui/Button'
 import { withAuthHeaders } from '../../../../../lib/auth'
@@ -84,23 +85,28 @@ export default function PdfProcessingPage() {
 
   if (error) {
     return (
-      <div className="mx-auto flex max-w-xl flex-col gap-4 py-16">
-        <div className="font-display text-2xl font-medium text-ink">Something went wrong</div>
-        <ErrorBanner>{error}</ErrorBanner>
-        <Button variant="primary" className="self-start" onClick={() => router.push('/console')}>Upload a different PDF</Button>
-      </div>
+      <PdfConsoleLayout jobId={jobId} step={1} maxStepReached={1}>
+        <div className="mx-auto flex max-w-xl flex-col gap-4 py-8">
+          <div className="font-display text-2xl font-medium text-ink">Something went wrong</div>
+          <ErrorBanner>{error}</ErrorBanner>
+          <Button variant="primary" className="self-start" onClick={() => router.push('/console')}>Upload a different PDF</Button>
+        </div>
+      </PdfConsoleLayout>
     )
   }
 
+  // Still on Dataset Inventory → Files while extraction runs; Preview unlocks on review.
   return (
-    <div className="mx-auto flex max-w-xl flex-col gap-8 py-16">
-      <div>
-        <div className="font-display text-2xl font-medium text-ink">{job?.filename || 'Processing your document'}</div>
-        <div className="mt-1 text-sm text-ink-soft">
-          Processing your document — this can take a few minutes for large PDFs.
+    <PdfConsoleLayout jobId={jobId} step={1} maxStepReached={1}>
+      <div className="mx-auto flex max-w-xl flex-col gap-8 py-8">
+        <div>
+          <div className="font-display text-2xl font-medium text-ink">{job?.filename || 'Processing your document'}</div>
+          <div className="mt-1 text-sm text-ink-soft">
+            Processing your document — this can take a few minutes for large PDFs.
+          </div>
         </div>
+        <ProcessingStepper steps={buildSteps(job, sawValidateRef.current)} />
       </div>
-      <ProcessingStepper steps={buildSteps(job, sawValidateRef.current)} />
-    </div>
+    </PdfConsoleLayout>
   )
 }

@@ -1,4 +1,4 @@
-# Full stack: Postgres + FastAPI + Vite.
+# Full stack: Postgres + FastAPI + Next.js.
 #   docker compose up -d --build
 # Combined production image (root Dockerfile) on :8080:
 #   docker compose --profile prod up -d --build app postgres
@@ -57,7 +57,9 @@ services:
     volumes:
       - ./frontend:/app
       - frontend_node_modules:/app/node_modules
-    command: npm run dev
+    # Named volume can be empty/stale after package changes — install before
+    # starting Next, and bind 0.0.0.0 so host localhost:3000 can reach it.
+    command: sh -c "npm ci && npm run dev"
 
   app:
     profiles: ["prod"]
