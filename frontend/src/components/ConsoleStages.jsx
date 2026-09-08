@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { Check } from 'lucide-react'
 
 // Shared console stage rail — used by the Excel flow (Console.jsx) and the
 // PDF extraction pages (processing / review / next-steps) so both pipelines
@@ -56,7 +57,7 @@ export function StageSidebar({ stageIdx, step, maxStepReached, expandedStage, se
                   active ? 'bg-teal text-white' : done ? 'bg-sage text-[#3d7a3d]' : 'bg-cream text-[#8E9398]'
                 }`}
               >
-                {done ? '✓' : i + 1}
+                {done ? <Check className="h-3 w-3" strokeWidth={2.5} aria-hidden /> : i + 1}
               </span>
               <span className="min-w-0">
                 <span className={`block text-[13.5px] font-semibold ${active ? 'text-ink' : 'text-ink-soft'}`}>{s.name}</span>

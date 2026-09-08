@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { ArrowLeft, ArrowRight, AlertTriangle } from 'lucide-react'
 import { NMDS_TOPICS } from '../lib/nmdsConcepts'
 import FileUpload from './FileUpload'
 import Button from './ui/Button'
@@ -64,8 +65,13 @@ export default function NmdsConceptForm({
             )}
             {!parsing && !parseError && fileMismatch && (
               <div className="mt-1 text-[13.5px] font-medium text-[#8a4b0f]">
-                ⚠ Couldn't match {file.name} against the known NMDS concepts — double-check you've uploaded the
-                right file. You can still fill the fields in manually below.
+                <span className="inline-flex items-start gap-1.5">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" strokeWidth={2} aria-hidden />
+                  <span>
+                    Couldn&apos;t match {file.name} against the known NMDS concepts — double-check you&apos;ve uploaded the
+                    right file. You can still fill the fields in manually below.
+                  </span>
+                </span>
               </div>
             )}
           </div>
@@ -117,11 +123,22 @@ export default function NmdsConceptForm({
         </div>
 
         <div className="mt-1 flex justify-between gap-3 border-t border-line pt-1">
-          <Button variant="secondary" size="sm" onClick={goBack} disabled={saving}>
-            {isFirst ? '← Back to metadata' : '← Previous topic'}
+          <Button variant="secondary" size="sm" onClick={goBack} disabled={saving} className="inline-flex items-center gap-1.5">
+            <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+            {isFirst ? 'Back to metadata' : 'Previous topic'}
           </Button>
-          <Button size="sm" onClick={goNext} disabled={saving || (isLast && saveDisabled)}>
-            {isLast ? (saving ? 'Pushing…' : 'Save & continue to classification →') : 'Next topic →'}
+          <Button size="sm" onClick={goNext} disabled={saving || (isLast && saveDisabled)} className="inline-flex items-center gap-1.5">
+            {isLast ? (saving ? 'Pushing…' : (
+              <>
+                Save & continue to classification
+                <ArrowRight className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+              </>
+            )) : (
+              <>
+                Next topic
+                <ArrowRight className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+              </>
+            )}
           </Button>
         </div>
       </div>

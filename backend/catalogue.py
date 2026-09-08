@@ -162,6 +162,22 @@ def init_schema(conn):
         """)
     conn.commit()
 
+    # Stage 6 — pgvector embeddings store (ancillary to authoritative tables above).
+    try:
+        import vector_store as _vs
+        _vs.ensure_semantic_embeddings_table(conn)
+    except Exception as exc:
+        # Non-pgvector Postgres (e.g. managed DB without the extension) must
+        # not break catalogue init; surface via /api/health when available.
+        print(f"[catalogue.init_schema] pgvector setup skipped: {exc}")
+
+    # PDF pipeline authoritative tables (Preview → Grouping).
+    try:
+        import pdf_store as _pdf_store
+        _pdf_store.init_pdf_schema(conn)
+    except Exception as exc:
+        print(f"[catalogue.init_schema] pdf_store setup skipped: {exc}")
+
 
 NCO_2015_CSV_PATH = os.path.join(os.path.dirname(__file__), "data", "nco_2015_concordance.csv")
 

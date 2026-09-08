@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { AlertTriangle, ArrowLeft, ArrowRight, Check, Pencil, X } from 'lucide-react'
 import KydsSummaryCard from './KydsSummaryCard'
 import TableViewer from './TableViewer'
 import BatchUpload from './BatchUpload'
@@ -60,15 +61,21 @@ function GroupNameEditor({ name, onSave }) {
           autoFocus
           spellCheck={false}
         />
-        <button className="rounded bg-teal px-1.5 py-1 text-xs text-white hover:bg-teal-dark" onClick={saveEdit} title="Save">✓</button>
-        <button className="rounded border border-line px-1.5 py-1 text-xs text-ink-soft hover:bg-outer-bg" onClick={cancelEdit} title="Cancel">✕</button>
+        <button className="inline-flex items-center justify-center rounded bg-teal px-1.5 py-1 text-xs text-white hover:bg-teal-dark" onClick={saveEdit} title="Save" aria-label="Save">
+          <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
+        </button>
+        <button className="inline-flex items-center justify-center rounded border border-line px-1.5 py-1 text-xs text-ink-soft hover:bg-outer-bg" onClick={cancelEdit} title="Cancel" aria-label="Cancel">
+          <X className="h-3.5 w-3.5" strokeWidth={2} />
+        </button>
       </span>
     )
   }
   return (
     <span className="flex min-w-0 flex-1 items-center gap-1.5">
       <span className="text-sm font-semibold text-ink">{name}</span>
-      <button className="text-xs text-ink-soft hover:text-teal" onClick={startEdit} title="Edit group name">✎</button>
+      <button className="inline-flex h-6 w-6 items-center justify-center rounded text-ink-soft hover:bg-cream hover:text-teal" onClick={startEdit} title="Edit group name" aria-label="Edit group name">
+        <Pencil className="h-3.5 w-3.5" strokeWidth={1.75} />
+      </button>
     </span>
   )
 }
@@ -138,7 +145,9 @@ function AddGroupModal({ tables, onCreate, onClose }) {
     <ModalOverlay className="max-w-[560px]">
       <div className="flex items-center justify-between">
         <div className="text-[16px] font-bold text-ink">Add group manually</div>
-        <button className="rounded p-1 text-lg text-ink-soft hover:bg-cream hover:text-ink" onClick={onClose} aria-label="Close">×</button>
+        <button className="rounded p-1 text-ink-soft hover:bg-cream hover:text-ink" onClick={onClose} aria-label="Close">
+          <X className="h-5 w-5" strokeWidth={1.75} />
+        </button>
       </div>
 
       <label className="flex flex-col gap-1.5 text-[13px] text-ink-soft">
@@ -263,8 +272,9 @@ function UploadChoice({ choice, onChoose, onPdfFile, pdfUploading, pdfError, onC
 
   if (choice === 'xlsx') {
     return (
-      <button type="button" className="self-start text-[13px] font-semibold text-teal hover:text-teal-dark" onClick={() => onChoose(null)}>
-        ← Choose a different file type
+      <button type="button" className="inline-flex items-center gap-1.5 self-start text-[13px] font-semibold text-teal hover:text-teal-dark" onClick={() => onChoose(null)}>
+        <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+        Choose a different file type
       </button>
     )
   }
@@ -791,7 +801,10 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
         {/* Page header — title / purpose stay above the content panel */}
         <div className="flex flex-col">
           {step > 1 && step < 6 && (
-            <div className="mb-3.5 cursor-pointer text-[15px] font-semibold text-teal" onClick={back}>← {BACK_LABELS[step]}</div>
+            <div className="mb-3.5 inline-flex cursor-pointer items-center gap-1.5 text-[15px] font-semibold text-teal hover:text-teal-dark" onClick={back}>
+              <ArrowLeft className="h-4 w-4" strokeWidth={2} aria-hidden />
+              {BACK_LABELS[step]}
+            </div>
           )}
           <div className="flex items-center justify-between gap-6">
             <div>
@@ -851,8 +864,18 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
             {mismatchedPreviewTables.length > 0 && (
               <div className={`rounded-lg border px-4 py-3 text-sm font-medium ${unsavedMismatched.length === 0 ? 'border-green bg-[#f2f8f5] text-[#2f6b3f]' : 'border-[#d9822b] bg-[#fdf1e2] text-[#8a4a10]'}`}>
                 {unsavedMismatched.length > 0
-                  ? `⚠ ${unsavedMismatched.length} of ${mismatchedPreviewTables.length} flagged table${mismatchedPreviewTables.length !== 1 ? 's' : ''} still need correcting & saving — open each orange tab below.`
-                  : `✓ All ${mismatchedPreviewTables.length} flagged table${mismatchedPreviewTables.length !== 1 ? 's' : ''} saved.`}
+                  ? (
+                    <span className="inline-flex items-start gap-1.5">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" strokeWidth={2} aria-hidden />
+                      {unsavedMismatched.length} of {mismatchedPreviewTables.length} flagged table{mismatchedPreviewTables.length !== 1 ? 's' : ''} still need correcting & saving — open each orange tab below.
+                    </span>
+                  )
+                  : (
+                    <span className="inline-flex items-start gap-1.5">
+                      <Check className="mt-0.5 h-4 w-4 flex-none" strokeWidth={2.5} aria-hidden />
+                      All {mismatchedPreviewTables.length} flagged table{mismatchedPreviewTables.length !== 1 ? 's' : ''} saved.
+                    </span>
+                  )}
               </div>
             )}
             <div className="flex flex-wrap items-center gap-2.5">
@@ -870,9 +893,15 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                     onClick={() => selectPreviewTable(t._uid)}
                     title={flagged ? `${t.id} — Source Table ID / Title need confirmation` : `${t.id} — no validation errors`}
                   >
-                    <span className={`flex h-4.5 w-4.5 items-center justify-center rounded-full text-[10px] font-bold ${
+                    <span className={`flex h-4.5 w-4.5 items-center justify-center rounded-full ${
                       active ? 'bg-white text-teal' : unsaved ? 'bg-[#d9822b] text-white' : 'bg-green text-white'
-                    }`}>{unsaved ? '!' : '✓'}</span>
+                    }`}>
+                      {unsaved ? (
+                        <AlertTriangle className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
+                      ) : (
+                        <Check className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
+                      )}
+                    </span>
                     <span className={`font-sans text-xs font-medium ${active ? 'text-white' : 'text-ink'}`}>{tableCode(t)}</span>
                     <span className={`text-xs ${active ? 'text-[#a9cfc9]' : 'text-[#8E9398]'}`}>{t.row_count} rows</span>
                   </div>
@@ -928,7 +957,10 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
 
             {dragEnabled && (
               <p className="m-0 text-[13px] font-medium text-[#c9610f]">
-                ⚠ Every table must be assigned to a group with a group name before you continue.
+                <span className="inline-flex items-start gap-1.5">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" strokeWidth={2} aria-hidden />
+                  Every table must be assigned to a group with a group name before you continue.
+                </span>
               </p>
             )}
 
@@ -1014,7 +1046,10 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                   } : undefined}
                 >
                   <div className="flex items-center justify-between gap-2.5">
-                    <span className="text-sm font-semibold text-ink">⚠ Unmatched tables</span>
+                    <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink">
+                      <AlertTriangle className="h-4 w-4 text-[#c9610f]" strokeWidth={2} aria-hidden />
+                      Unmatched tables
+                    </span>
                     <span className="whitespace-nowrap rounded-full bg-cream px-2.5 py-0.5 text-xs text-ink-soft">{matchResult.unmatched_tables.length}</span>
                   </div>
                   {dragEnabled && (
@@ -1049,14 +1084,19 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
               {editingGroups ? (
                 <Button variant="primary" onClick={finishEditingGroups}>Done editing</Button>
               ) : (
-                <Button variant="primary" onClick={requestContinueToMetadata}>Continue to metadata →</Button>
+                <Button variant="primary" onClick={requestContinueToMetadata} className="inline-flex items-center gap-1.5">
+                  Continue to metadata
+                  <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
+                </Button>
               )}
             </div>
 
             {groupingToast && (
               <div className="fixed right-6 top-6 z-[1200] flex animate-toast-in items-center gap-3 rounded-[10px] border border-[#c9610f] bg-[#e2711d] px-4 py-3 pl-4.5 font-sans text-sm font-medium leading-snug text-[#111] shadow-[0_8px_24px_rgba(226,113,29,0.22)]" role="alert">
                 <span>{groupingToast}</span>
-                <button type="button" className="p-0.5 text-lg leading-none text-[#111] opacity-70 hover:opacity-100" onClick={() => setGroupingToast(null)} aria-label="Dismiss">×</button>
+                <button type="button" className="flex h-6 w-6 items-center justify-center rounded p-0.5 text-[#111] opacity-70 hover:opacity-100" onClick={() => setGroupingToast(null)} aria-label="Dismiss">
+                  <X className="h-4 w-4" strokeWidth={1.75} />
+                </button>
               </div>
             )}
             {activeDialog === 'addGroup' && (

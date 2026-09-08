@@ -1,5 +1,6 @@
 'use client'
 
+import { AlertTriangle, Check, Minus } from 'lucide-react'
 import ProgressBar from './ui/ProgressBar'
 
 // Purely presentational multi-step progress indicator. Takes a generic
@@ -11,7 +12,9 @@ import ProgressBar from './ui/ProgressBar'
 function StatusIcon({ status }) {
   if (status === 'done') {
     return (
-      <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-green text-white text-xs">✓</span>
+      <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-green text-white">
+        <Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />
+      </span>
     )
   }
   if (status === 'active') {
@@ -19,12 +22,16 @@ function StatusIcon({ status }) {
   }
   if (status === 'error') {
     return (
-      <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-coral text-white text-xs">!</span>
+      <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-coral text-white">
+        <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2.25} aria-hidden />
+      </span>
     )
   }
   if (status === 'skipped') {
     return (
-      <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full border border-line text-ink-soft text-xs">—</span>
+      <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full border border-line text-ink-soft">
+        <Minus className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+      </span>
     )
   }
   return <span className="h-6 w-6 flex-none rounded-full border-2 border-line" />

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { NMDS_TOPICS } from '../lib/nmdsConcepts'
 import Button from './ui/Button'
 
@@ -72,14 +73,22 @@ export default function NmdsConceptFields({ fields, onFieldChange, onSave }) {
             size="sm"
             onClick={() => setTopicIndex((i) => Math.max(0, i - 1))}
             disabled={isFirst}
+            className="inline-flex items-center gap-1.5"
           >
-            ← Previous topic
+            <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+            Previous topic
           </Button>
           <Button
             size="sm"
             onClick={goNext}
+            className="inline-flex items-center gap-1.5"
           >
-            {isLast ? 'Save' : 'Next topic →'}
+            {isLast ? 'Save' : (
+              <>
+                Next topic
+                <ArrowRight className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+              </>
+            )}
           </Button>
         </div>
       </div>

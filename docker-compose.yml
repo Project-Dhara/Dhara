@@ -4,7 +4,9 @@
 #   docker compose --profile prod up -d --build app postgres
 services:
   postgres:
-    image: postgres:16-alpine
+    # pgvector-enabled Postgres 16 — Stage 6 semantic retrieval (embeddings index).
+    # Authoritative metadata still lives in normal tables; vectors are ancillary.
+    image: pgvector/pgvector:pg16
     container_name: dhara-postgres
     restart: unless-stopped
     environment:
@@ -15,6 +17,7 @@ services:
       - "5432:5432"
     volumes:
       - dhara_pg_data:/var/lib/postgresql/data
+      - ./backend/db/init-pgvector.sql:/docker-entrypoint-initdb.d/01-pgvector.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dhara -d dhara"]
       interval: 5s

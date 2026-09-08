@@ -25,9 +25,9 @@ DHARA is a data-cataloguing tool: a user uploads raw Excel dataset workbooks plu
                                                                     └─────────────────────┘
 ```
 
-- **Dev**: `docker-compose.yml` runs 3 containers — `postgres` (16-alpine, :5432), `backend` (:8000, `uvicorn main:app --reload`), `frontend` (:5173, Vite dev server proxying `/api` to backend). `Makefile` wraps common commands (`make up/down/logs/psql/prod`).
+- **Dev**: `docker-compose.yml` runs 3 containers — `postgres` (`pgvector/pgvector:pg16`, :5432), `backend` (:8000, `uvicorn main:app --reload`), `frontend` (:3000, Next.js). `Makefile` wraps common commands (`make up/down/logs/psql/prod`).
 - **Prod**: a single root `Dockerfile`/`docker-compose` profile builds one image that serves the built frontend as static files from the same FastAPI process (`backend/main.py`, `StaticFiles` mount + SPA fallback), exposed on :8080.
-- **Database**: Postgres, connected via a `DATABASE_URL` env var (Neon-hosted in production).
+- **Database**: Postgres + **pgvector** (`CREATE EXTENSION vector`). Catalogue / auth tables remain the source of truth; `semantic_embeddings` holds ancillary vectors for similarity search (`backend/vector_store.py`). Connected via `DATABASE_URL` (Neon-hosted in production — enable the pgvector extension there too).
 
 ## 2. Backend Modules (`backend/`)
 
@@ -44,6 +44,9 @@ DHARA is a data-cataloguing tool: a user uploads raw Excel dataset workbooks plu
 | `validation.py` | Table ID / Title mismatch validators (rule-based + MEITY empanelled LLM) |
 | `table_export.py` | Exports one extracted table to a clean single-sheet .xlsx |
 | `original_sheet_export.py` | Re-exports the original sheet with formatting preserved |
+| `vector_store.py` | Stage 6 pgvector helpers: enable extension, `semantic_embeddings` DDL, upsert + cosine similarity search |
+| `pdf_store.py` | Authoritative `pdf_jobs` / `pdf_tables` / `pdf_table_groups` after Preview Continue |
+| `pdf_grouping.py` | Chunk + embed approved PDF tables; propose groups via similarity clustering |
 | `create_user.py` | Admin CLI to provision user accounts |
 
 ### Key API routes (`backend/main.py`)
@@ -76,6 +79,7 @@ All non-auth routes require a bearer JWT (`require_user` → `auth.email_from_re
 | `dataset_rows` | extracted table row data |
 | `kyds_entries` | "Know Your Dataset" survey responses |
 | `nco_2015_codes` | seeded from `backend/data/nco_2015_concordance.csv`, used by NCO matching |
+| `semantic_embeddings` | pgvector store: `chunk_text`, `embedding vector(1536)`, keyed by `object_type` / `object_id` / `chunk_kind` — retrieval only, not SoT |
 
 ## 4. Frontend (`frontend/src`)
 

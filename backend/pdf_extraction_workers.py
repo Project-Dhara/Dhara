@@ -57,10 +57,14 @@ def extract_pymupdf_chunk(pdf_path: str, pages: List[int]) -> List[Dict[str, Any
                     if not rows:
                         continue
                     df = pd.DataFrame(rows[1:], columns=rows[0]) if len(rows) > 1 else pd.DataFrame(rows)
+                    bb = tab.bbox
                     results.append({
                         "page": page_num,
                         "method": f"pymupdf_{strategy}",
                         "df": df,
+                        # Needed to detect side-by-side dual-column stacks and
+                        # to clip left/right halves without re-detecting.
+                        "bbox": [float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3])],
                     })
     finally:
         doc.close()

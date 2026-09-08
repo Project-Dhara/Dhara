@@ -145,20 +145,150 @@ def classify_page(candidates: List[Dict[str, Any]]) -> Tuple[str, str, Dict[str,
     return "high", "clean single-header table, passes all structural checks", info
 
 
-def table_dict_from_df(df: pd.DataFrame) -> Dict[str, Any]:
+# Running headers / chrome on SDA-style index PDFs that should never become
+# the table title (they sit above every page, not above one specific table).
+_TITLE_CHROME_RE = re.compile(
+    r"^(?:"
+    r"sdg\s+india\s+index|"
+    r"\d{4}\s*[-–—]\s*\d{2,4}|"  # 2023-24
+    r"page\s+\d+|"
+    r"goal\s+\d+(\.\d+)*|"
+    r"www\.|"
+    r"https?://"
+    r")$",
+    re.I,
+)
+# Explicit "TABLE 2.1: ..." captions — strongest signal when present.
+_TABLE_CAPTION_RE = re.compile(
+    r"^\s*(TABLE|FIG(?:URE)?|CHART)\s+\d+(?:\.\d+)*\s*[:.\-–—]?\s*(.+)$",
+    re.I,
+)
+
+
+def _normalize_title_line(line: str) -> str:
+    return re.sub(r"\s+", " ", (line or "").strip())
+
+
+def _is_chrome_title_line(line: str) -> bool:
+    s = _normalize_title_line(line)
+    if not s or len(s) < 3:
+        return True
+    if _TITLE_CHROME_RE.match(s):
+        return True
+    # Very long paragraph-like lines are body text, not headings.
+    if len(s) > 140:
+        return True
+    return False
+
+
+def _looks_like_heading(line: str) -> bool:
+    """Heuristic: short Title Case / ALL CAPS / few words, not a sentence."""
+    s = _normalize_title_line(line)
+    if _is_chrome_title_line(s):
+        return False
+    words = s.split()
+    if not (1 <= len(words) <= 12):
+        return False
+    # Reject lines that look like the table's own column header row.
+    if s.count("|") >= 2:
+        return False
+    # Prefer Title Case / ALL CAPS; allow mixed if short (e.g. "Target Justification").
+    letters = [c for c in s if c.isalpha()]
+    if not letters:
+        return False
+    upper_frac = sum(1 for c in letters if c.isupper()) / len(letters)
+    if upper_frac < 0.2 and not s[:1].isupper():
+        return False
+    return True
+
+
+def infer_title_from_page_text(
+    page_text: str,
+    columns: List[str],
+    page_num: Optional[int] = None,
+) -> Tuple[Optional[str], str]:
+    """
+    Infer a display title for an auto-accepted (no-LLM) table from the page's
+    plain text. The ruled-table extract only has cell/header values — section
+    headings like "Target Justification" live *above* the grid in the PDF, so
+    we recover them from page_text instead of calling an LLM.
+
+    Strategy (first match wins):
+      1. Explicit TABLE/FIGURE caption on the page (e.g. "TABLE 2.1: …").
+      2. Heading-like line immediately above the column-header cue in the text
+         (find first column name in page_text, walk upward, skip chrome).
+      3. Join the first few column names as a compact fallback.
+      4. "Page {n} table" last resort.
+
+    Returns (title, title_source) where title_source documents which branch
+    fired (for Preview/debugging; not an LLM decision).
+    """
+    col_names = [_normalize_title_line(c) for c in columns if _normalize_title_line(c)]
+    lines = [_normalize_title_line(ln) for ln in (page_text or "").splitlines()]
+    lines = [ln for ln in lines if ln]
+
+    # --- 1) Explicit TABLE / FIGURE caption anywhere on the page ---
+    for ln in lines:
+        m = _TABLE_CAPTION_RE.match(ln)
+        if m:
+            rest = _normalize_title_line(m.group(2))
+            # Keep the full caption including "TABLE 2.1: …" when informative.
+            title = ln if rest else ln
+            if not _is_chrome_title_line(title):
+                return title, "heuristic_table_caption"
+
+    # --- 2) Line above the column-header cue ("Indicators", etc.) ---
+    # Locate where the table header appears in the text stream, then take the
+    # nearest prior heading-like line (skips "SDG INDIA INDEX" / year chrome).
+    header_idx = None
+    col_lower = {c.lower() for c in col_names[:3] if c}
+    for i, ln in enumerate(lines):
+        low = ln.lower()
+        # Header row often appears as one line or consecutive short labels.
+        if col_lower and any(c in low for c in col_lower):
+            # Prefer a line that looks like several headers, or the first col alone.
+            hits = sum(1 for c in col_lower if c in low)
+            if hits >= 1:
+                header_idx = i
+                break
+    if header_idx is not None and header_idx > 0:
+        for j in range(header_idx - 1, max(-1, header_idx - 8), -1):
+            candidate = lines[j]
+            if _looks_like_heading(candidate):
+                # Avoid picking a column name itself as the title.
+                if candidate.lower() in col_lower:
+                    continue
+                return candidate, "heuristic_heading_above_table"
+
+    # --- 3) Column-name fallback ---
+    if col_names:
+        joined = " · ".join(col_names[:4])
+        if len(joined) <= 120:
+            return joined, "heuristic_column_names"
+
+    # --- 4) Last resort ---
+    if page_num is not None:
+        return f"Page {page_num} table", "heuristic_page_fallback"
+    return None, "heuristic_none"
+
+
+def table_dict_from_df(
+    df: pd.DataFrame,
+    *,
+    page_text: str = "",
+    page_num: Optional[int] = None,
+) -> Dict[str, Any]:
     """Build a validated-table-shaped dict directly from a clean DataFrame,
-    with no LLM involved. Title/description and all semantic classification
-    fields are left null -- this is the fast path specifically because it
-    skips the judgment calls (reading surrounding text for a title,
-    inferring what a column means) that require an LLM. Schema matches what
-    the LLM path produces (see build_validation_prompt/build_batch_
-    validation_prompt in sda_india_pdf_extraction.py) so downstream
-    consumers (frontend review) can treat both uniformly, keyed off
-    "semantic_status" to know whether classification has actually run."""
+    with no LLM involved. Semantic classification fields stay null (this path
+    skips meaning judgment). Title is filled by infer_title_from_page_text
+    when page_text is provided — the heading sits outside the ruled grid, so
+    a cheap text heuristic replaces an LLM title call. Schema matches the LLM
+    path so Preview can treat both uniformly via semantic_status."""
     cleaned = clean_dataframe_light(df)
+    col_names = [str(c) for c in cleaned.columns]
     columns = [
         {
-            "name": str(c),
+            "name": name,
             "role": "unknown",
             "concept": None,
             "description": None,
@@ -168,11 +298,13 @@ def table_dict_from_df(df: pd.DataFrame) -> Dict[str, Any]:
             "human_review_needed": False,
             "human_review_reason": None,
         }
-        for c in cleaned.columns
+        for name in col_names
     ]
+    title, title_source = infer_title_from_page_text(page_text, col_names, page_num=page_num)
     empty_field = {"value": None, "human_review_needed": False, "human_review_reason": None}
     return {
-        "title": None,
+        "title": title,
+        "title_source": title_source,
         "description": None,
         "classification": {
             "domain": dict(empty_field), "subject": dict(empty_field), "entity": dict(empty_field),

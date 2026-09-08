@@ -125,8 +125,15 @@ The current implementation has progressed through PDF extraction, LLM-assisted r
 ✓ Review filters, sticky filter bar, scroll-to-top
 ✓ Direction / dropdown cell editing where schema provides options
 ✓ Soft-delete of tables from a job
-✓ Continue → Grouping placeholder (/console/pdf-next-steps/[jobId])
+✓ Continue → Grouping (/console/grouping/[jobId])
 ✓ Extraction guards (ungrounded Direction strip, column-alignment flag)
+✓ pgvector-enabled Postgres (pgvector/pg16)
+✓ semantic_embeddings table + HNSW index (vector_store.py)
+✓ pdf_jobs / pdf_tables / pdf_table_groups in PostgreSQL (SoT after Preview)
+✓ Persist approved tables on Continue (POST …/persist-approved)
+✓ Semantic chunking + embed (table_summary / column_meaning)
+✓ pgvector similarity clustering → draft groups
+✓ PDF Grouping UI (drag-and-drop, automatic/manual) at /console/grouping/[jobId]
 ```
 
 The current PDF pipeline uses PyMuPDF rather than Camelot/pdfplumber. The LLM stage performs both **table reconstruction** and **initial semantic understanding/classification** in one call.
@@ -138,7 +145,7 @@ Excel (`Console.jsx`) and PDF (`PdfConsoleLayout` + `ConsoleStages.jsx`) use the
 ```text
 1 Files     — upload / PDF processing
 2 Preview   — human table / classification review
-3 Grouping  — Excel: live; PDF: placeholder route only
+3 Grouping  — PDF: pgvector propose + drag-and-drop (Excel: live title grouping)
 4–6         — Metadata / Harmonisation / Publish (locked until built)
 ```
 
@@ -148,18 +155,15 @@ PDF routes:
 /console                         → upload (Files)
 /console/processing/[jobId]      → extraction progress (Files)
 /console/review/[jobId]          → Preview (PdfReview)
-/console/pdf-next-steps/[jobId]  → Grouping placeholder (“coming soon”)
+/console/grouping/[jobId]         → Grouping (pgvector propose + human edit)
 ```
 
 ### Next
 
 ```text
-→ Semantic chunking
-→ Embedding generation
-→ pgvector indexing
-→ Similarity-based candidate retrieval
-→ Intelligent grouping (PDF path beyond placeholder)
-→ Grouping human review
+→ Persist approved semantic representation more deeply (beyond pdf_tables JSONB)
+→ LLM cluster confirmation (optional split/merge reasoning)
+→ Metadata workspace for PDF groups
 → Harmonization
 → Transformation
 → Final validation
@@ -523,6 +527,19 @@ PostgreSQL remains the source of truth.
 
 Initial architecture should avoid adding Elasticsearch/OpenSearch unless scale later requires it.
 
+### Implemented in the POC
+
+```text
+✓ Docker Postgres image: pgvector/pgvector:pg16
+✓ CREATE EXTENSION vector (init SQL + catalogue.init_schema)
+✓ semantic_embeddings table (chunk text + vector(1536) + object keys)
+✓ HNSW cosine index for nearest-neighbour search
+✓ backend/vector_store.py — upsert_embedding / similarity_search
+✓ GET /api/health reports pgvector readiness
+```
+
+Embeddings are keyed to authoritative objects (`object_type`=`pdf_table`, `object_id`=table UUID, `chunk_kind`, optional `job_id`) and never replace `pdf_tables` / catalogue rows as source of truth. PDF Preview → Continue indexes `table_summary` (+ column chunks) into this store for grouping.
+
 ---
 
 ## 11. Stage 7 — Intelligent Grouping
@@ -608,6 +625,18 @@ LLM reasoning
         ↓
 Human approval
 ```
+
+### Implemented in the POC (PDF)
+
+```text
+✓ POST /api/pdf/jobs/{id}/persist-approved → pdf_jobs + pdf_tables
+✓ Chunk table_summary (+ column_meaning) and upsert into semantic_embeddings
+✓ Propose groups via cosine-distance clustering (union-find)
+✓ GET/PUT /api/pdf/jobs/{id}/grouping + POST …/grouping/propose
+✓ PdfGrouping UI — Automatic / Manual, drag-and-drop, rename, save
+```
+
+JSON under `data/pdf_jobs/` remains the extraction/review working cache; after Continue, **PostgreSQL is SoT** for tables and groups. Optional LLM cluster confirmation is still future work.
 
 ---
 
@@ -983,27 +1012,23 @@ Processing progress UI
  ↓
 Human classification review UI
  ↓
-Persist table edits + soft-delete (pdf_jobs)
+Persist table edits + soft-delete (pdf_jobs JSON cache)
  ↓
-PDF Grouping placeholder route (not yet a grouping engine)
+Persist approved tables to PostgreSQL (pdf_tables)
+ ↓
+Semantic chunks + embeddings (semantic_embeddings)
+ ↓
+pgvector similarity grouping + human drag-and-drop UI
 ```
 
 ### NEXT
 
 ```text
-Persist approved semantic representation into PostgreSQL (beyond job JSON)
+LLM cluster confirmation (optional)
  ↓
-Semantic chunking
+Metadata workspace for PDF groups
  ↓
-Embedding generation
- ↓
-pgvector
- ↓
-Similarity retrieval
- ↓
-Grouping (full PDF path)
- ↓
-Human grouping review
+Human grouping refinements → catalogue metadata
 ```
 
 ### AFTER GROUPING

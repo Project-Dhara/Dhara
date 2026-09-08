@@ -22,7 +22,7 @@ export default function PdfConsoleLayout({ jobId, step, maxStepReached, children
       return
     }
     if (targetStep === 3) {
-      router.push(`/console/pdf-next-steps/${jobId}`)
+      router.push(`/console/grouping/${jobId}`)
     }
   }
 

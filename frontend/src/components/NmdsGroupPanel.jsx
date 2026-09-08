@@ -1,5 +1,6 @@
 'use client'
 
+import { AlertTriangle, X } from 'lucide-react'
 import FileUpload from './FileUpload'
 import NmdsConceptFields from './NmdsConceptFields'
 import Button from './ui/Button'
@@ -78,8 +79,13 @@ export default function NmdsGroupPanel({
           )}
           {!parsing && !parseError && fileMismatch && (
             <div className="mt-1 text-[13.5px] font-medium text-[#8a4b0f]">
-              ⚠ Couldn't match {file.name} against the known NMDS concepts — double-check you've uploaded the
-              right file. You can still fill the fields in manually below.
+              <span className="inline-flex items-start gap-1.5">
+                <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" strokeWidth={2} aria-hidden />
+                <span>
+                  Couldn&apos;t match {file.name} against the known NMDS concepts — double-check you&apos;ve uploaded the
+                  right file. You can still fill the fields in manually below.
+                </span>
+              </span>
             </div>
           )}
         </div>
@@ -107,8 +113,13 @@ export default function NmdsGroupPanel({
                 <div id="nmds-modal-title" className="text-2xl font-bold tracking-tight text-ink">{groupLabel}</div>
                 {fileMismatch && !parsing && (
                   <div className="mt-1.5 text-[13.5px] font-medium leading-relaxed text-[#8a4b0f]">
-                    ⚠ Couldn't match the uploaded file against the known NMDS concepts — fields below are empty.
-                    Kindly check the file or fill them in manually.
+                    <span className="inline-flex items-start gap-1.5">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" strokeWidth={2} aria-hidden />
+                      <span>
+                        Couldn&apos;t match the uploaded file against the known NMDS concepts — fields below are empty.
+                        Kindly check the file or fill them in manually.
+                      </span>
+                    </span>
                   </div>
                 )}
                 {parseError && (
@@ -120,7 +131,9 @@ export default function NmdsGroupPanel({
                   </div>
                 )}
               </div>
-              <button type="button" className="text-xl leading-none text-ink-soft hover:text-ink" onClick={onCloseModal} aria-label="Close">×</button>
+              <button type="button" className="flex h-8 w-8 items-center justify-center rounded-md text-ink-soft hover:bg-cream hover:text-ink" onClick={onCloseModal} aria-label="Close">
+                <X className="h-5 w-5" strokeWidth={1.75} />
+              </button>
             </div>
             <div className="flex flex-1 flex-col gap-[18px] overflow-y-auto px-6 pb-6 pt-[18px]">
               <NmdsConceptFields fields={fields} onFieldChange={onFieldChange} onSave={onCloseModal} />

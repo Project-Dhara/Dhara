@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useState } from 'react'
+import { ArrowRight, X } from 'lucide-react'
 import { withLlmKeyHeaders } from '../lib/llmKey'
 import { withAuthHeaders } from '../lib/auth'
 import Button from './ui/Button'
@@ -13,7 +14,9 @@ function FileList({ files, onRemove }) {
       {files.map((f, i) => (
         <li key={`${f.name}-${i}`} className="flex items-center justify-between gap-2 text-[13px]">
           <span className="break-all">{f.name}</span>
-          <button className="flex-none text-ink-soft hover:text-[#b91c1c]" onClick={() => onRemove(i)} title="Remove">✕</button>
+          <button className="flex h-6 w-6 flex-none items-center justify-center rounded text-ink-soft hover:bg-cream hover:text-[#b91c1c]" onClick={() => onRemove(i)} title="Remove" aria-label="Remove file">
+            <X className="h-3.5 w-3.5" strokeWidth={2} />
+          </button>
         </li>
       ))}
     </ul>
@@ -139,7 +142,12 @@ export default function BatchUpload({ onMatched }) {
           {busy && <span className="inline-block h-[13px] w-[13px] animate-spin rounded-full border-2 border-white/50 border-t-white" />}
           {stage === 'extracting' && 'Extracting & validating tables…'}
           {stage === 'matching' && 'Matching to metadata…'}
-          {(stage === 'idle' || stage === 'error') && 'Preview files →'}
+          {(stage === 'idle' || stage === 'error') && (
+            <span className="inline-flex items-center gap-1.5">
+              Preview files
+              <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
+            </span>
+          )}
         </Button>
         {!busy && <span className="text-xs text-[#8E9398]">{datasetFiles.length} dataset · {metadataFiles.length} metadata</span>}
       </div>

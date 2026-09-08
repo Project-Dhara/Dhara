@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { CheckCircle2, Clock } from 'lucide-react'
 import { METADATA_COLUMNS } from './MetadataSheetGrid'
 import {
   getDatasetIdConfig,
@@ -9,25 +10,6 @@ import {
   setMetadataRequiredFields as persistMetadataRequiredFields,
   STATISTICS_OPTIONS,
 } from '../lib/settingsConfig'
-
-// Static status glyphs for the standards list — signal "this is a status",
-// not a control, since the row itself has no click behavior.
-function CheckIcon({ className }) {
-  return (
-    <svg className={className} width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.4" />
-      <path d="M5 8.2l2 2 4-4.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-function ClockIcon({ className }) {
-  return (
-    <svg className={className} width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.4" />
-      <path d="M8 4.5V8l2.5 1.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
 
 const PROVIDERS = ['Anthropic', 'OpenAI', 'Self-hosted']
 const ROLES = ['Administrator', 'Data Steward', 'Data User']
@@ -215,7 +197,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
                 if (!field) return null
                 return (
                   <div className="flex cursor-default select-text items-start gap-3 border-b border-line bg-white px-4 py-3.5 last:border-b-0" key={key}>
-                    <CheckIcon className="mt-0.5 h-4 w-4 flex-none text-[#3d7a3d]" />
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-[#3d7a3d]" strokeWidth={1.75} />
                     <div className="flex flex-1 flex-col gap-0.5">
                       <div className="text-[15px] font-semibold text-ink">{field.title}</div>
                       <div className="text-[13px] text-ink-soft">{field.desc}</div>
@@ -295,7 +277,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
             <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-cream">
               {STANDARDS.map((s) => (
                 <div key={s.key} className="flex cursor-default select-text items-start gap-3 border-b border-line bg-white px-4 py-3.5 last:border-b-0">
-                  <CheckIcon className="mt-0.5 h-4 w-4 flex-none text-[#3d7a3d]" />
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-[#3d7a3d]" strokeWidth={1.75} />
                   <div className="flex flex-1 flex-col gap-0.5">
                     <div className="text-[15px] font-semibold text-ink">{s.name}</div>
                     <div className="text-[13px] text-ink-soft">{s.desc}</div>
@@ -305,7 +287,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
 
               {customStandards.map((s, i) => (
                 <div key={`${s.name}-${i}`} className="flex cursor-default select-text items-start gap-3 border-b border-line bg-white px-4 py-3.5 last:border-b-0">
-                  <CheckIcon className="mt-0.5 h-4 w-4 flex-none text-[#3d7a3d]" />
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-[#3d7a3d]" strokeWidth={1.75} />
                   <div className="flex flex-1 flex-col gap-0.5">
                     <div className="text-[15px] font-semibold text-ink">{s.name}</div>
                     <div className="text-[13px] text-ink-soft">Custom standard, uploaded by you.</div>
@@ -315,7 +297,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
 
               {pendingFile && (
                 <div className="flex cursor-default select-text items-start gap-3 border-b border-line bg-[#fffaf1] px-4 py-3.5 last:border-b-0">
-                  <ClockIcon className="mt-0.5 h-4 w-4 flex-none text-[#9a7413]" />
+                  <Clock className="mt-0.5 h-4 w-4 flex-none text-[#9a7413]" strokeWidth={1.75} />
                   <div className="flex flex-1 flex-col gap-0.5">
                     <div className="text-[15px] font-semibold text-ink">{pendingFile.name}</div>
                     <div className="text-[13px] text-ink-soft">Not yet saved — click "Save configuration" to add it below.</div>

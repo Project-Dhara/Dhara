@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { ArrowRight, Check } from 'lucide-react'
 import Button from './ui/Button'
 
 // Confirmation screen after Continue to publish writes the release to
@@ -52,7 +53,9 @@ export default function Publish({ datasetLabel, metadataId, hasKey, onGoSettings
         <div className="relative flex h-[84px] w-[84px] items-center justify-center rounded-full bg-sage">
           <div className="absolute -inset-3 animate-ping rounded-full border-2 border-green" />
           <div className="absolute -inset-3 animate-ping rounded-full border-2 border-teal [animation-delay:400ms]" />
-          <div className="text-3xl font-bold text-[#3d7a3d]">✓</div>
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#e6f0e6] text-[#3d7a3d]">
+            <Check className="h-6 w-6" strokeWidth={2.5} aria-hidden />
+          </div>
         </div>
         <div className="font-display text-[28px] font-medium text-ink">Publishing to the catalogue…</div>
         <div className="text-[15px] text-ink-soft">Almost there — this only takes a moment.</div>
@@ -60,7 +63,7 @@ export default function Publish({ datasetLabel, metadataId, hasKey, onGoSettings
           {PUBLISH_STEPS.map((label, i) => (
             <div className="flex items-center gap-2.5 text-sm text-ink" key={label}>
               <span className={`flex h-[22px] w-[22px] flex-none items-center justify-center rounded-full text-xs font-semibold ${i < doneSteps ? 'bg-sage text-[#3d7a3d]' : 'bg-cream text-[#8E9398]'}`}>
-                {i < doneSteps ? '✓' : i + 1}
+                {i < doneSteps ? <Check className="h-3 w-3" strokeWidth={2.5} aria-hidden /> : i + 1}
               </span>
               <span>{label}</span>
             </div>
@@ -78,7 +81,10 @@ export default function Publish({ datasetLabel, metadataId, hasKey, onGoSettings
           <div className="text-[19px] font-semibold text-[#3d5230]">Published to the catalogue</div>
           <div className="text-sm text-[#4a5f3c]">This release is now discoverable via the API and MCP endpoint below.</div>
         </div>
-        <button className="flex h-10 items-center rounded-md border border-[#b9cfa9] bg-white px-4 text-sm font-semibold text-[#3d5230]" onClick={onGoCatalogue}>Open in catalogue →</button>
+        <button className="inline-flex h-10 items-center gap-1.5 rounded-md border border-[#b9cfa9] bg-white px-4 text-sm font-semibold text-[#3d5230]" onClick={onGoCatalogue}>
+          Open in catalogue
+          <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
+        </button>
       </div>
 
       <div className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-3.5">

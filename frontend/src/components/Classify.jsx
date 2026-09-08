@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { AlertTriangle, ArrowRight, Check, ChevronDown, Minus } from 'lucide-react'
 import { withAuthHeaders } from '../lib/auth'
 import { withLlmKeyHeaders } from '../lib/llmKey'
 import { STATISTICS_OPTIONS, getDatasetIdConfig } from '../lib/settingsConfig'
@@ -647,7 +648,9 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
                       {status}
                     </span>
                     <span className="whitespace-nowrap text-xs text-[#8E9398]">{countLabel}</span>
-                    <span className={`text-[#8E9398] transition-transform duration-300 ${open ? 'rotate-180' : ''}`}>▾</span>
+                    <span className={`text-[#8E9398] transition-transform duration-300 ${open ? 'rotate-180' : ''}`}>
+                      <ChevronDown className="h-4 w-4" strokeWidth={2} aria-hidden />
+                    </span>
                   </div>
                   <div className="grid transition-[grid-template-rows] duration-300 ease-in-out" style={{ gridTemplateRows: open ? '1fr' : '0fr' }}>
                     <div
@@ -739,7 +742,13 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
                                 onChange={(e) => setHarmField(entry, i, 'definition', e.target.value)}
                               />
                               <div className={`flex items-center justify-center border-l border-[#f1ebdf] text-center text-sm leading-none ${rowReview ? 'text-[#9a7413]' : ''}`}>
-                                {rowReview ? '!' : filled ? '✓' : '—'}
+                                {rowReview ? (
+                                  <AlertTriangle className="h-3.5 w-3.5 text-[#c45c4a]" strokeWidth={2.25} aria-hidden />
+                                ) : filled ? (
+                                  <Check className="h-3.5 w-3.5 text-[#3d7a3d]" strokeWidth={2.5} aria-hidden />
+                                ) : (
+                                  <Minus className="h-3.5 w-3.5 text-ink-soft" strokeWidth={2} aria-hidden />
+                                )}
                               </div>
                             </div>
                           )
@@ -786,7 +795,12 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
 
       <div className="flex items-center gap-3.5">
         <Button disabled={!classReady || publishing} onClick={publishRelease}>
-          {publishing ? 'Continuing…' : 'Continue to publish →'}
+          {publishing ? 'Continuing…' : (
+            <span className="inline-flex items-center gap-1.5">
+              Continue to publish
+              <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
+            </span>
+          )}
         </Button>
         <span className="text-[13px] text-[#8E9398]">
           {publishError

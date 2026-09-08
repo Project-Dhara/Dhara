@@ -10,7 +10,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import openai
 import pandas as pd
@@ -152,12 +152,130 @@ def filter_candidate_pages(pages_grouped: Dict[int, List[Dict[str, Any]]]) -> Di
     }
 
 
-def split_by_confidence(pages_grouped: Dict[int, List[Dict[str, Any]]]):
+def _pick_dual_column_strict_half(cands: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """
+    Choose the ruled half to merge from a side's candidates.
+
+    A page can also contain an unrelated wide lines_strict table whose bbox
+    center falls in the left/right half. Prefer 3–5 column stacks (indicator
+    layout) with the most rows; never take the first lines_strict blindly.
+    """
+    strict = [
+        c
+        for c in cands
+        if "lines_strict" in str(c.get("method") or "")
+        and c.get("df") is not None
+        and not getattr(c["df"], "empty", True)
+    ]
+    scored: List[Tuple[int, Dict[str, Any]]] = []
+    for c in strict:
+        ncol = int(c["df"].shape[1])
+        nrow = int(c["df"].shape[0])
+        if 3 <= ncol <= 5 and nrow >= 5:
+            scored.append((nrow, c))
+    if scored:
+        return max(scored, key=lambda item: item[0])[1]
+    return None
+
+
+def resolve_dual_column_pages(
+    pdf_path: Path,
+    pages_grouped: Dict[int, List[Dict[str, Any]]],
+    page_text: Optional[Dict[int, str]] = None,
+) -> Dict[int, List[Dict[str, Any]]]:
+    """
+    Post-extract (no prompt / no change to find_tables strategies): when a page
+    is a dual newspaper-style stack (left + right ruled tables with the same
+    columns), vertically concatenate right under left into one candidate so
+    Preview / LLM see all rows — not only the left half.
+
+    Uses pdf_dual_column: prefer partitioning existing bbox candidates; if the
+    page title says "Performance by Indicators" but only one wide table was
+    found, fall back to mid-page clip re-detect for that page only.
+    """
+    import pdf_dual_column as _dual
+
+    page_text = page_text or {}
+    resolved: Dict[int, List[Dict[str, Any]]] = {}
+    for page_num, candidates in pages_grouped.items():
+        halves = _dual.try_dual_column_halves(
+            str(pdf_path),
+            page_num,
+            candidates,
+            page_text.get(page_num, ""),
+        )
+        if not halves:
+            resolved[page_num] = candidates
+            continue
+
+        left_cands, right_cands = halves
+        left_s = _pick_dual_column_strict_half(left_cands)
+        right_s = _pick_dual_column_strict_half(right_cands)
+        if left_s is None or right_s is None:
+            resolved[page_num] = candidates
+            continue
+
+        # Recover header-as-first-data-row on each half, then stack right under left.
+        left_df = _dual.coerce_indicator_half_df(left_s["df"])
+        right_df = _dual.coerce_indicator_half_df(right_s["df"])
+        if left_df is None or right_df is None or left_df.empty or right_df.empty:
+            resolved[page_num] = candidates
+            continue
+        # Mismatched widths / duplicate labels (e.g. a wide scorecard pulled in
+        # as one "half") must not reach pd.concat — that raises InvalidIndexError.
+        if int(left_df.shape[1]) != int(right_df.shape[1]):
+            log(
+                f"  page {page_num}: dual-column skip — column count mismatch "
+                f"({left_df.shape[1]} vs {right_df.shape[1]})"
+            )
+            resolved[page_num] = candidates
+            continue
+        left_df = left_df.reset_index(drop=True).copy()
+        right_df = right_df.reset_index(drop=True).copy()
+        # Force unique, aligned names so concat never reindexes on dup labels.
+        col_names = [str(c) if c is not None else f"Col_{i + 1}" for i, c in enumerate(left_df.columns)]
+        seen: Dict[str, int] = {}
+        unique_names: List[str] = []
+        for name in col_names:
+            n = seen.get(name, 0)
+            unique_names.append(name if n == 0 else f"{name}_{n + 1}")
+            seen[name] = n + 1
+        left_df.columns = unique_names
+        right_df.columns = unique_names
+        merged_df = pd.concat([left_df, right_df], ignore_index=True)
+        n_left, n_right = int(left_df.shape[0]), int(right_df.shape[0])
+        log(
+            f"  page {page_num}: dual-column merge — "
+            f"{n_left} left + {n_right} right → {int(merged_df.shape[0])} rows"
+        )
+        resolved[page_num] = [
+            {
+                "page": page_num,
+                "method": "pymupdf_lines_strict",
+                "df": merged_df,
+                "bbox": None,
+                "dual_column_merged": True,
+                "dual_column_halves": {"left_rows": n_left, "right_rows": n_right},
+            }
+        ]
+    return resolved
+
+
+def split_by_confidence(
+    pages_grouped: Dict[int, List[Dict[str, Any]]],
+    page_text: Optional[Dict[int, str]] = None,
+):
     """Runs the deterministic (no-LLM) classifier per page. Returns:
       high_results   -- {page_num: {"tables": [...]}} accepted directly, no LLM
       llm_pages      -- {page_num: candidates} still needing the OpenAI step
       reason_counts  -- {reason: count} for the "llm" bucket, for visibility into why
+
+    For high-confidence pages, titles are inferred from page_text (section
+    heading / TABLE caption above the ruled grid) — see
+    pdf_table_confidence.infer_title_from_page_text — so Preview does not
+    show a blank "Page N table" for auto-accepted tables.
     """
+    page_text = page_text or {}
     high_results: Dict[int, Dict[str, Any]] = {}
     llm_pages: Dict[int, List[Dict[str, Any]]] = {}
     reason_counts: Dict[str, int] = {}
@@ -166,7 +284,13 @@ def split_by_confidence(pages_grouped: Dict[int, List[Dict[str, Any]]]):
         bucket, reason, _info = classify_page(candidates)
         if bucket == "high":
             primary = next(c["df"] for c in candidates if c["method"] == "pymupdf_lines_strict")
-            table = table_dict_from_df(primary)
+            # Pass surrounding page text so we can recover the heading that
+            # pymupdf's table extract never includes inside the DataFrame.
+            table = table_dict_from_df(
+                primary,
+                page_text=page_text.get(page_num, ""),
+                page_num=page_num,
+            )
             table["page"] = page_num
             high_results[page_num] = {"tables": [table]}
         else:
@@ -1216,7 +1340,8 @@ def run_pipeline(pdf_path: Path, on_progress: Optional[Callable[[str, int, str],
     progress("extract", 45, f"{len(all_tables)} table candidate(s) found")
 
     pages_grouped = filter_candidate_pages(group_by_page(all_tables))
-    high_results, llm_pages, reason_counts = split_by_confidence(pages_grouped)
+    pages_grouped = resolve_dual_column_pages(pdf_path, pages_grouped, page_text)
+    high_results, llm_pages, reason_counts = split_by_confidence(pages_grouped, page_text)
     progress("classify_confidence", 55,
               f"{len(high_results)} page(s) auto-accepted, {len(llm_pages)} page(s) need AI validation")
 
@@ -1271,9 +1396,11 @@ def main():
     pages_grouped = filter_candidate_pages(pages_grouped)
     log(f"  {len(pages_grouped)} page(s) kept after requiring a lines_strict (ruled-border) hit -- drops likely false positives from the looser text strategy")
 
+    pages_grouped = resolve_dual_column_pages(PDF_PATH, pages_grouped, page_text)
+
     log("Stage 3: confidence-classifying pages (no LLM)")
     t0 = time.time()
-    high_results, llm_pages, reason_counts = split_by_confidence(pages_grouped)
+    high_results, llm_pages, reason_counts = split_by_confidence(pages_grouped, page_text)
     log(f"  {len(high_results)} page(s) auto-accepted (no LLM call), {len(llm_pages)} page(s) need OpenAI validation, in {time.time() - t0:.1f}s")
     for reason, count in sorted(reason_counts.items(), key=lambda kv: -kv[1]):
         log(f"    [llm bucket] {count}x: {reason}")

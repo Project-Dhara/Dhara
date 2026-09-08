@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { ArrowRight, Check } from 'lucide-react'
 import Button from './ui/Button'
 
 // Stage 2.5 — Reconcile Source Table ID / Title mismatches (see backend/dhara_dry_run.ipynb).
@@ -157,7 +158,12 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
           Any other table can be edited here too, if needed.
         </div>
       ) : (
-        <div className="rounded-[10px] border border-green bg-[#f2f8f5] px-4 py-3 text-sm text-ink">✓ No Source Table ID / Title mismatches found — all extracted tables look consistent. You can still edit a table's details below if needed.</div>
+        <div className="rounded-[10px] border border-green bg-[#f2f8f5] px-4 py-3 text-sm text-ink">
+          <span className="inline-flex items-start gap-1.5">
+            <Check className="mt-0.5 h-4 w-4 flex-none text-[#3d7a3d]" strokeWidth={2.5} aria-hidden />
+            No Source Table ID / Title mismatches found — all extracted tables look consistent. You can still edit a table&apos;s details below if needed.
+          </span>
+        </div>
       )}
 
       <div className="flex flex-col gap-3.5">
@@ -215,7 +221,12 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
                 >
                   Edit
                 </Button>
-                {isSaved(t) && <span className="text-[12.5px] font-semibold text-green">✓ Saved</span>}
+                {isSaved(t) && (
+                  <span className="inline-flex items-center gap-1 text-[12.5px] font-semibold text-green">
+                    <Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />
+                    Saved
+                  </span>
+                )}
               </div>
             </div>
           )
@@ -224,8 +235,9 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
 
       <div className="flex items-center gap-4">
         {allCorrected && (
-          <Button onClick={handleContinue}>
-            {mismatched.length > 0 ? 'Apply corrections & continue →' : 'Continue →'}
+          <Button onClick={handleContinue} className="inline-flex items-center gap-1.5">
+            {mismatched.length > 0 ? 'Apply corrections & continue' : 'Continue'}
+            <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
           </Button>
         )}
         {extraAction}

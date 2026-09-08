@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { AlertTriangle, ArrowRight, Check, Info, X } from 'lucide-react'
 import { withLlmKeyHeaders } from '../lib/llmKey'
 import { withAuthHeaders } from '../lib/auth'
 import { CLICK_THROUGH_ENABLED } from '../lib/clickThrough'
@@ -221,7 +222,9 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
     return (
       <div className="mx-auto flex max-w-[920px] flex-col gap-6">
         <div className="flex flex-col items-center gap-2.5 px-5 py-10 text-center">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#e6f7f3] text-4xl text-[#0a6e57]">✓</div>
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#e6f7f3] text-[#0a6e57]">
+            <Check className="h-8 w-8" strokeWidth={2.5} aria-hidden />
+          </div>
           <div className="text-base font-bold text-ink">
             {result.groups_pushed} metadata group{result.groups_pushed !== 1 ? 's' : ''} pushed
           </div>
@@ -229,7 +232,8 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
             size="sm"
             onClick={() => onDone(label, (result.results || []).map((r) => r.metadata_id).filter(Boolean))}
           >
-            Continue to classification →
+            Continue to classification
+            <ArrowRight className="ml-1.5 inline h-4 w-4" strokeWidth={2} aria-hidden />
           </Button>
         </div>
       </div>
@@ -310,7 +314,10 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
       {matchResult.unmatched_tables.length > 0 && (
         <div className="flex flex-col gap-2 rounded-[10px] border border-[#f3c98b] bg-[#fffaf1] p-4">
           <div className="flex items-center justify-between gap-2.5">
-            <span className="text-[13.5px] font-bold text-ink">⚠ Extracted tables with no metadata match ({matchResult.unmatched_tables.length})</span>
+            <span className="inline-flex items-center gap-1.5 text-[13.5px] font-bold text-ink">
+              <AlertTriangle className="h-4 w-4 text-[#c9610f]" strokeWidth={2} aria-hidden />
+              Extracted tables with no metadata match ({matchResult.unmatched_tables.length})
+            </span>
           </div>
           <p className="m-0 text-xs leading-relaxed text-ink-soft">
             Not included in the push below unless you assign them to a group manually.
@@ -350,7 +357,10 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
       {matchResult.unmatched_inventory.length > 0 && (
         <div className="flex flex-col gap-2 rounded-[10px] border border-line bg-[#F7F3EA] p-4">
           <div className="flex items-center justify-between gap-2.5">
-            <span className="text-[13.5px] font-bold text-ink">ℹ Metadata entries with no matching table ({matchResult.unmatched_inventory.length})</span>
+            <span className="inline-flex items-center gap-1.5 text-[13.5px] font-bold text-ink">
+              <Info className="h-4 w-4 text-teal" strokeWidth={2} aria-hidden />
+              Metadata entries with no matching table ({matchResult.unmatched_inventory.length})
+            </span>
           </div>
           <p className="m-0 text-xs leading-relaxed text-ink-soft">
             Cataloged in the metadata file but no uploaded dataset table matched them — likely missing from what was uploaded.
@@ -377,7 +387,12 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
       <div className="m-0 flex justify-end gap-2 border-0 p-0">
         <Button variant="secondary" onClick={onCancel} disabled={step === 'pushing'}>Cancel</Button>
         <Button disabled={totalMatched === 0 || step === 'pushing'} onClick={handlePush}>
-          {step === 'pushing' ? 'Saving…' : 'Save Metadata →'}
+          {step === 'pushing' ? 'Saving…' : (
+            <span className="inline-flex items-center gap-1.5">
+              Save Metadata
+              <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
+            </span>
+          )}
         </Button>
       </div>
 
@@ -389,7 +404,9 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
           role="alert"
         >
           <span>{toast.message}</span>
-          <button type="button" className="rounded px-0.5 text-lg leading-none text-current opacity-70 hover:opacity-100" onClick={() => setToast(null)} aria-label="Dismiss">×</button>
+          <button type="button" className="flex h-6 w-6 items-center justify-center rounded px-0.5 text-current opacity-70 hover:opacity-100" onClick={() => setToast(null)} aria-label="Dismiss">
+            <X className="h-4 w-4" strokeWidth={1.75} />
+          </button>
         </div>
       )}
     </div>

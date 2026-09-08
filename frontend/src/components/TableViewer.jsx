@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { Check, Download, Info, Loader2, X } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { withLlmKeyHeaders } from '../lib/llmKey'
 import { withAuthHeaders } from '../lib/auth'
@@ -182,8 +183,8 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
   }
 
   const idInfoIcon = (
-    <span className="group relative inline-flex h-4 w-4 flex-shrink-0 cursor-help items-center justify-center rounded-full border border-line bg-[#F4EFE3] font-serif text-[11px] font-bold italic text-ink-soft">
-      i
+    <span className="group relative inline-flex h-4 w-4 flex-shrink-0 cursor-help items-center justify-center rounded-full border border-line bg-[#F4EFE3] text-ink-soft">
+      <Info className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
       <span className="pointer-events-none absolute bottom-[calc(100%+8px)] left-1/2 z-20 w-60 -translate-x-1/2 translate-y-1 rounded-md bg-ink px-2.5 py-2 text-left text-xs font-medium leading-snug text-white opacity-0 shadow-lg transition-all after:absolute after:left-1/2 after:top-full after:-translate-x-1/2 after:border-[5px] after:border-transparent after:border-t-ink group-hover:translate-y-0 group-hover:opacity-100">
         {DATASET_ID_INFO}
       </span>
@@ -200,8 +201,12 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
         autoFocus
         spellCheck={false}
       />
-      <button className="rounded bg-teal px-2 py-[3px] text-[13px] font-bold text-white transition-colors hover:bg-teal-dark" onClick={saveEdit} title="Save">✓</button>
-      <button className="rounded border border-line px-2 py-[3px] text-[13px] text-ink-soft transition-colors hover:bg-[#F4EFE3] hover:text-ink" onClick={cancelEdit} title="Cancel">✕</button>
+      <button className="rounded bg-teal px-2 py-[3px] text-[13px] font-bold text-white transition-colors hover:bg-teal-dark" onClick={saveEdit} title="Save" aria-label="Save">
+        <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
+      </button>
+      <button className="rounded border border-line px-2 py-[3px] text-[13px] text-ink-soft transition-colors hover:bg-[#F4EFE3] hover:text-ink" onClick={cancelEdit} title="Cancel" aria-label="Cancel">
+        <X className="h-3.5 w-3.5" strokeWidth={2} />
+      </button>
     </>
   ) : (
     <button className="flex-shrink-0 whitespace-nowrap rounded border border-line bg-white px-2.5 py-[3px] text-[11px] font-semibold text-teal transition-colors hover:bg-[#F4EFE3] hover:border-teal" onClick={startEdit} title="Edit dataset ID">Edit ID</button>
@@ -238,15 +243,26 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
             <span className="rounded-full border border-line bg-[#FFFCF6] px-2.5 py-[3px] text-[11.5px] text-ink-soft">Sheet: {table.sheet}</span>
             <span className="rounded-full border border-line bg-[#FFFCF6] px-2.5 py-[3px] text-[11.5px] text-ink-soft">{table.row_count.toLocaleString()} rows</span>
             <span className="rounded-full border border-line bg-[#FFFCF6] px-2.5 py-[3px] text-[11.5px] text-ink-soft">{table.columns.length} columns</span>
-            <button className="ml-auto rounded-md bg-teal px-3.5 py-1.5 text-[12.5px] font-semibold text-white transition-colors hover:bg-teal-dark" onClick={() => downloadCSV(table)}>
-              ⬇ Download CSV
+            <button className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-teal px-3.5 py-1.5 text-[12.5px] font-semibold text-white transition-colors hover:bg-teal-dark" onClick={() => downloadCSV(table)}>
+              <Download className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+              Download CSV
             </button>
             <button
-              className="ml-2 whitespace-nowrap rounded-md bg-teal-deep px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#0b2f2e] disabled:cursor-default disabled:opacity-60"
+              className="ml-2 inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-teal-deep px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#0b2f2e] disabled:cursor-default disabled:opacity-60"
               onClick={() => downloadMetadataExcel(table, setMetaLoading)}
               disabled={metaLoading}
             >
-              {metaLoading ? '⏳ Analysing…' : '⬇ Download Classifications'}
+              {metaLoading ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} aria-hidden />
+                  Analysing…
+                </>
+              ) : (
+                <>
+                  <Download className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+                  Download Classifications
+                </>
+              )}
             </button>
           </div>
         </div>
@@ -302,13 +318,26 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
           {idInfoIcon}
           {editIdControl}
           <div className="ml-auto flex items-center gap-2">
-            <button className="rounded-md bg-teal px-3.5 py-1.5 text-[12.5px] font-semibold text-white transition-colors hover:bg-teal-dark" onClick={() => downloadCSV(table)}>Download CSV</button>
+            <button className="inline-flex items-center gap-1.5 rounded-md bg-teal px-3.5 py-1.5 text-[12.5px] font-semibold text-white transition-colors hover:bg-teal-dark" onClick={() => downloadCSV(table)}>
+              <Download className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+              Download CSV
+            </button>
             <button
-              className="whitespace-nowrap rounded-md bg-teal-deep px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#0b2f2e] disabled:cursor-default disabled:opacity-60"
+              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-teal-deep px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#0b2f2e] disabled:cursor-default disabled:opacity-60"
               onClick={() => downloadMetadataExcel(table, setMetaLoading)}
               disabled={metaLoading}
             >
-              {metaLoading ? 'Analysing…' : 'Download Classifications'}
+              {metaLoading ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} aria-hidden />
+                  Analysing…
+                </>
+              ) : (
+                <>
+                  <Download className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+                  Download Classifications
+                </>
+              )}
             </button>
           </div>
         </div>

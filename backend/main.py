@@ -1,4 +1,5 @@
 import concurrent.futures
+import io
 import os
 import pathlib
 import json as _json
@@ -6,12 +7,14 @@ import asyncio
 import threading
 import time
 import uuid
-from typing import Any, Dict, Optional
+import zipfile
+import re
+from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 load_dotenv()
@@ -27,7 +30,7 @@ from metadata_llm import (
     parse_llm_metadata_output,
 )
 from catalogue_matching import match_tables_to_metadata
-from table_export import table_to_excel_bytes
+from table_export import table_to_excel_bytes, safe_download_stem
 from original_sheet_export import extract_sheet_with_formatting_from_bytes
 from validation import validate_table_fields_code, validate_table_fields_llm
 
@@ -255,7 +258,19 @@ def _read_file(file: UploadFile) -> bytes:
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok"}
+    out = {"status": "ok", "pgvector": False}
+    try:
+        import vector_store as _vs
+        conn = _cat.get_connection()
+        try:
+            _cat.init_schema(conn)
+            out["pgvector"] = _vs.vector_extension_ready(conn)
+            out["embedding_dim"] = _vs.embedding_dim()
+        finally:
+            conn.close()
+    except Exception as exc:
+        out["pgvector_error"] = str(exc)
+    return out
 
 
 @app.post("/api/signup")
@@ -1107,6 +1122,408 @@ async def pdf_delete_tables(job_id: str, request: Request, user_email: str = Dep
         job["reviews"] = reviews
         _save_pdf_job(job)
     return {"ok": True, "deleted": ids, "deleted_count": len(ids)}
+
+
+def _normalize_pdf_header_name(name: Any) -> str:
+    return re.sub(r"\s+", " ", str(name or "").strip().lower())
+
+
+def _pdf_table_header_key(table: Dict[str, Any]) -> str:
+    """Stable fingerprint of column headers for cross-page merge eligibility."""
+    names: List[str] = []
+    for col in table.get("columns") or []:
+        if isinstance(col, dict):
+            names.append(_normalize_pdf_header_name(col.get("name")))
+        else:
+            names.append(_normalize_pdf_header_name(col))
+    return "|".join(names)
+
+
+def _parse_pdf_table_id(table_id: str) -> Tuple[str, int]:
+    parts = str(table_id).rsplit("-", 1)
+    if len(parts) != 2 or not parts[1].isdigit():
+        raise ValueError(f"Invalid table_id: {table_id}")
+    return parts[0], int(parts[1])
+
+
+def _pdf_table_sort_key(table_id: str) -> Tuple[Any, int]:
+    page_s, idx = _parse_pdf_table_id(table_id)
+    page_key: Any = int(page_s) if page_s.isdigit() else page_s
+    return page_key, idx
+
+
+@app.post("/api/pdf/jobs/{job_id}/tables/merge")
+async def pdf_merge_tables(job_id: str, request: Request, user_email: str = Depends(require_user)):
+    """
+    Concatenate rows from 2+ Preview tables that share the same column headers
+    (cross-page continuations of one logical table). Keeps the earliest table
+    as survivor, soft-deletes the rest. Does not change extraction prompts.
+    """
+    payload = await request.json()
+    table_ids = payload.get("table_ids") if isinstance(payload, dict) else None
+    if not isinstance(table_ids, list) or len(table_ids) < 2:
+        raise HTTPException(400, "Body must include table_ids with at least 2 ids")
+    ids = [str(tid) for tid in table_ids if tid is not None and str(tid).strip()]
+    # Preserve order but unique
+    seen = set()
+    ordered_ids: List[str] = []
+    for tid in ids:
+        if tid not in seen:
+            seen.add(tid)
+            ordered_ids.append(tid)
+    if len(ordered_ids) < 2:
+        raise HTTPException(400, "Select at least two distinct tables to merge")
+
+    with _pdf_jobs_lock:
+        job = _get_pdf_job(job_id)
+        if not job or job.get("user_email") != user_email:
+            raise HTTPException(404, "Job not found")
+        if job["status"] != "done":
+            raise HTTPException(409, f"Job not finished yet (status={job['status']})")
+
+        approved = {str(t["table_id"]): t for t in _pdf_tables_from_job(job)}
+        missing = [tid for tid in ordered_ids if tid not in approved]
+        if missing:
+            raise HTTPException(404, f"Table(s) not found or deleted: {', '.join(missing)}")
+
+        selected = [approved[tid] for tid in ordered_ids]
+        selected.sort(key=lambda t: _pdf_table_sort_key(str(t["table_id"])))
+
+        header_keys = {_pdf_table_header_key(t) for t in selected}
+        if len(header_keys) != 1 or not next(iter(header_keys)):
+            raise HTTPException(
+                400,
+                "Can only merge tables that share the same column headers",
+            )
+
+        survivor = selected[0]
+        survivors_id = str(survivor["table_id"])
+        merge_ids = [str(t["table_id"]) for t in selected[1:]]
+
+        # Concatenate rows in page order (already sorted).
+        merged_rows: List[Any] = []
+        for t in selected:
+            rows = t.get("rows") or []
+            if isinstance(rows, list):
+                merged_rows.extend(rows)
+
+        try:
+            page_s, idx = _parse_pdf_table_id(survivors_id)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+
+        result = job.setdefault("result", {})
+        page_entry = result.get(page_s)
+        if page_entry is None and page_s.isdigit():
+            page_entry = result.get(int(page_s))
+        if page_entry is None:
+            raise HTTPException(404, f"Survivor page {page_s} missing from job result")
+
+        tables_list = page_entry.get("tables") or []
+        if idx < 0 or idx >= len(tables_list):
+            raise HTTPException(404, f"Survivor table {survivors_id} missing from job result")
+
+        raw = tables_list[idx]
+        raw["rows"] = merged_rows
+        # Keep survivor columns; note provenance for Preview / debugging.
+        pages = []
+        for t in selected:
+            p = t.get("page")
+            if p is not None and p not in pages:
+                pages.append(p)
+        raw["merged_from_table_ids"] = [survivors_id, *merge_ids]
+        raw["merged_pages"] = pages
+        if pages:
+            # Prefer an existing title; annotate page span when helpful.
+            title = (raw.get("title") or survivor.get("title") or "").strip()
+            if title and len(pages) > 1:
+                if "page" not in title.lower():
+                    raw["title"] = f"{title} (pages {pages[0]}–{pages[-1]})"
+            elif not title and len(pages) > 1:
+                raw["title"] = f"Merged table (pages {pages[0]}–{pages[-1]})"
+
+        deleted = set(job.get("deleted_table_ids") or [])
+        deleted.update(merge_ids)
+        job["deleted_table_ids"] = sorted(deleted)
+
+        reviews = job.get("reviews") or {}
+        for tid in merge_ids:
+            reviews.pop(tid, None)
+        # Drop stale row-affecting review fields on survivor; keep classification edits.
+        if survivors_id in reviews:
+            reviews[survivors_id] = {
+                k: v for k, v in reviews[survivors_id].items() if k not in ("rows",)
+            }
+            if raw.get("title"):
+                reviews[survivors_id]["title"] = raw["title"]
+        job["reviews"] = reviews
+        _save_pdf_job(job)
+
+        # Return survivor as Preview would see it after merge.
+        out_tables = _pdf_tables_from_job(job)
+        survivor_out = next((t for t in out_tables if str(t.get("table_id")) == survivors_id), None)
+
+    return {
+        "ok": True,
+        "survivor_table_id": survivors_id,
+        "merged_table_ids": merge_ids,
+        "row_count": len(merged_rows),
+        "table": survivor_out,
+    }
+
+
+def _pdf_merged_tables_for_job(job: Dict[str, Any]) -> list:
+    """Approved (non-deleted) tables with review patches applied."""
+    return _pdf_tables_from_job(job)
+
+
+@app.get("/api/pdf/jobs/{job_id}/tables/{table_id}/download")
+async def pdf_download_table(job_id: str, table_id: str, user_email: str = Depends(require_user)):
+    """Download one extracted PDF table as a clean .xlsx workbook."""
+    with _pdf_jobs_lock:
+        job = _get_pdf_job(job_id)
+        if not job or job.get("user_email") != user_email:
+            raise HTTPException(404, "Job not found")
+        if job["status"] != "done":
+            raise HTTPException(409, f"Job not finished yet (status={job['status']})")
+        tables = _pdf_merged_tables_for_job(job)
+
+    table = next((t for t in tables if str(t.get("table_id")) == str(table_id)), None)
+    if not table:
+        raise HTTPException(404, "Table not found (it may have been deleted)")
+
+    xlsx = table_to_excel_bytes(table)
+    stem = safe_download_stem(table, fallback=f"table_{table_id}")
+    filename = f"{stem}.xlsx"
+    return Response(
+        content=xlsx,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _pdf_tables_zip_bytes(tables: list, job_name: str, job_id: str) -> tuple[bytes, str]:
+    """Build a ZIP of .xlsx files; returns (zip_bytes, download_filename)."""
+    buf = io.BytesIO()
+    used_names: set = set()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for t in tables:
+            tid = str(t.get("table_id") or "table")
+            stem = safe_download_stem(t, fallback=f"table_{tid}")
+            name = f"{stem}.xlsx"
+            if name in used_names:
+                name = f"{stem}_{tid}.xlsx"
+            used_names.add(name)
+            zf.writestr(name, table_to_excel_bytes(t))
+    zip_stem = safe_download_stem({"title": pathlib.Path(str(job_name)).stem}, fallback=job_id)
+    return buf.getvalue(), f"{zip_stem}_tables.zip"
+
+
+@app.get("/api/pdf/jobs/{job_id}/tables/download-zip")
+async def pdf_download_tables_zip(job_id: str, user_email: str = Depends(require_user)):
+    """Download all non-deleted tables for a PDF job as a .zip of .xlsx files."""
+    with _pdf_jobs_lock:
+        job = _get_pdf_job(job_id)
+        if not job or job.get("user_email") != user_email:
+            raise HTTPException(404, "Job not found")
+        if job["status"] != "done":
+            raise HTTPException(409, f"Job not finished yet (status={job['status']})")
+        tables = _pdf_merged_tables_for_job(job)
+        job_name = job.get("filename") or job_id
+
+    if not tables:
+        raise HTTPException(404, "No tables to download")
+
+    payload, filename = _pdf_tables_zip_bytes(tables, job_name, job_id)
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/pdf/jobs/{job_id}/tables/download-zip")
+async def pdf_download_tables_zip_selected(
+    job_id: str, request: Request, user_email: str = Depends(require_user)
+):
+    """Download selected tables as a ZIP. Body: { table_ids: string[] }.
+    If table_ids is omitted or empty, downloads all non-deleted tables."""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    raw_ids = body.get("table_ids") if isinstance(body, dict) else None
+    id_filter = None
+    if isinstance(raw_ids, list) and raw_ids:
+        id_filter = {str(tid) for tid in raw_ids if tid is not None and str(tid).strip()}
+
+    with _pdf_jobs_lock:
+        job = _get_pdf_job(job_id)
+        if not job or job.get("user_email") != user_email:
+            raise HTTPException(404, "Job not found")
+        if job["status"] != "done":
+            raise HTTPException(409, f"Job not finished yet (status={job['status']})")
+        tables = _pdf_merged_tables_for_job(job)
+        job_name = job.get("filename") or job_id
+
+    if id_filter is not None:
+        tables = [t for t in tables if str(t.get("table_id")) in id_filter]
+    if not tables:
+        raise HTTPException(404, "No matching tables to download")
+
+    payload, filename = _pdf_tables_zip_bytes(tables, job_name, job_id)
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _pdf_tables_from_job(job: Dict[str, Any]) -> list:
+    """Flatten JSON job result + reviews into the approved table list."""
+    reviews = dict(job.get("reviews") or {})
+    deleted = set(job.get("deleted_table_ids") or [])
+    result = job.get("result") or {}
+    tables = []
+    for page_num in sorted(result.keys(), key=lambda k: int(k) if str(k).isdigit() else str(k)):
+        for idx, t in enumerate(result[page_num].get("tables", [])):
+            table_id = f"{page_num}-{idx}"
+            if table_id in deleted:
+                continue
+            merged = {**t, **reviews.get(table_id, {}), "table_id": table_id, "page": t.get("page", page_num)}
+            tables.append(merged)
+    return tables
+
+
+@app.post("/api/pdf/jobs/{job_id}/persist-approved")
+async def pdf_persist_approved(job_id: str, request: Request, user_email: str = Depends(require_user)):
+    """
+    Continue from Preview: write approved tables to Postgres, embed summaries
+    into pgvector, and propose similarity-based groups.
+    """
+    import pdf_store
+    import pdf_grouping
+
+    api_key = request.headers.get(LLM_KEY_HEADER, "").strip() or None
+    with _pdf_jobs_lock:
+        job = _get_pdf_job(job_id)
+        if not job or job.get("user_email") != user_email:
+            raise HTTPException(404, "Job not found")
+        if job["status"] != "done":
+            raise HTTPException(409, f"Job not finished yet (status={job['status']})")
+        tables = _pdf_tables_from_job(job)
+        filename = job.get("filename")
+
+    conn = _cat.get_connection()
+    try:
+        _cat.init_schema(conn)
+        persisted = pdf_store.persist_approved_tables(
+            conn,
+            job_id=job_id,
+            user_email=user_email,
+            filename=filename,
+            tables=tables,
+        )
+        proposal = pdf_grouping.propose_groups(conn, job_id, api_key=api_key, reindex=True)
+        grouping = pdf_grouping.apply_proposal_to_db(conn, job_id, proposal)
+        return {
+            "ok": True,
+            "job_id": job_id,
+            "table_count": len(persisted),
+            "grouping": grouping,
+        }
+    finally:
+        conn.close()
+
+
+@app.get("/api/pdf/jobs/{job_id}/grouping")
+async def pdf_get_grouping(job_id: str, user_email: str = Depends(require_user)):
+    import pdf_store
+
+    conn = _cat.get_connection()
+    try:
+        _cat.init_schema(conn)
+        job_row = pdf_store.get_job(conn, job_id)
+        if not job_row or job_row.get("user_email") != user_email:
+            # Fall back: allow read if JSON job exists and belongs to user (not yet persisted)
+            with _pdf_jobs_lock:
+                job = _get_pdf_job(job_id)
+            if not job or job.get("user_email") != user_email:
+                raise HTTPException(404, "Job not found — continue from Preview to persist tables first.")
+            raise HTTPException(409, "Tables not persisted yet — click Continue on Preview.")
+        grouping = pdf_store.load_grouping(conn, job_id)
+        tables = pdf_store.list_active_tables(conn, job_id)
+        return {
+            "job_id": job_id,
+            "filename": job_row.get("filename"),
+            "grouping_status": job_row.get("grouping_status"),
+            "table_count": len(tables),
+            **grouping,
+        }
+    finally:
+        conn.close()
+
+
+@app.post("/api/pdf/jobs/{job_id}/grouping/propose")
+async def pdf_propose_grouping(job_id: str, request: Request, user_email: str = Depends(require_user)):
+    """Re-run automatic pgvector clustering and overwrite saved groups."""
+    import pdf_store
+    import pdf_grouping
+
+    api_key = request.headers.get(LLM_KEY_HEADER, "").strip() or None
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    reindex = bool(body.get("reindex")) if isinstance(body, dict) else False
+
+    conn = _cat.get_connection()
+    try:
+        _cat.init_schema(conn)
+        job_row = pdf_store.get_job(conn, job_id)
+        if not job_row or job_row.get("user_email") != user_email:
+            raise HTTPException(404, "Job not found — continue from Preview first.")
+        proposal = pdf_grouping.propose_groups(conn, job_id, api_key=api_key, reindex=reindex)
+        grouping = pdf_grouping.apply_proposal_to_db(conn, job_id, proposal)
+        return {"ok": True, "job_id": job_id, **grouping}
+    finally:
+        conn.close()
+
+
+@app.put("/api/pdf/jobs/{job_id}/grouping")
+async def pdf_save_grouping(job_id: str, request: Request, user_email: str = Depends(require_user)):
+    """Persist human-edited groups. Body: { groups: [{ name, table_ids: [uuid...] }] }."""
+    import pdf_store
+
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "Body must be a JSON object")
+    groups_in = payload.get("groups")
+    if not isinstance(groups_in, list):
+        raise HTTPException(400, "groups must be an array")
+
+    conn = _cat.get_connection()
+    try:
+        _cat.init_schema(conn)
+        job_row = pdf_store.get_job(conn, job_id)
+        if not job_row or job_row.get("user_email") != user_email:
+            raise HTTPException(404, "Job not found")
+        active = {t["id"] for t in pdf_store.list_active_tables(conn, job_id)}
+        normalized = []
+        for g in groups_in:
+            if not isinstance(g, dict):
+                continue
+            name = (g.get("name") or "").strip() or "Untitled group"
+            raw_ids = g.get("table_pks") or g.get("table_ids") or []
+            pks = [str(x) for x in raw_ids if str(x) in active]
+            if pks:
+                normalized.append({"name": name, "table_pks": pks})
+        pdf_store.save_grouping(conn, job_id=job_id, groups=normalized)
+        return {"ok": True, **pdf_store.load_grouping(conn, job_id)}
+    finally:
+        conn.close()
 
 
 # --- Serve React frontend (production) ---

@@ -1,5 +1,6 @@
 'use client'
 
+import { ArrowRight } from 'lucide-react'
 import Button from './ui/Button'
 
 // Mock dataset-readiness dashboard, ported from the mockup's hardcoded
@@ -74,7 +75,10 @@ export default function Dashboard({ onStartFlow }) {
                 {row.status}
               </span>
             </div>
-            <div className="text-right font-semibold text-teal">{row.action} →</div>
+            <div className="inline-flex items-center justify-end gap-1 font-semibold text-teal">
+              {row.action}
+              <ArrowRight className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+            </div>
           </div>
         ))}
       </div>

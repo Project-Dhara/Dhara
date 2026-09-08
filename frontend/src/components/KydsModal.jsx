@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { X } from 'lucide-react'
 
 const MODALITY_OPTIONS = [
   'Structured / tabular',
@@ -339,7 +340,9 @@ export default function KydsModal({ onSkip, onSave, initialForm = null, editing 
               {editing ? ' Update any fields below and save.' : ' You can skip this and continue — none of these fields are required.'}
             </div>
           </div>
-          <button type="button" className="absolute right-4 top-4 text-xl leading-none text-ink-soft hover:text-ink" onClick={onSkip} aria-label={editing ? 'Close' : 'Skip KYDS form'}>×</button>
+          <button type="button" className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-md text-ink-soft hover:bg-white/60 hover:text-ink" onClick={onSkip} aria-label={editing ? 'Close' : 'Skip KYDS form'}>
+            <X className="h-5 w-5" strokeWidth={1.75} />
+          </button>
         </div>
 
         <ScrollspyNav activeIndex={activeIndex} maxSeenIndex={maxSeenIndex} onJump={jumpTo} />

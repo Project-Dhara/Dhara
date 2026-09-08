@@ -5,6 +5,8 @@
 // Served from public/ (root-relative path) rather than imported as a module
 // -- Next's bundler wraps imported image modules in a {src,width,height}
 // object for next/image, which would break a plain <img src=...>.
+import { LayoutDashboard, Library, Settings, TerminalSquare } from 'lucide-react'
+
 export function DharaLogo({ compact }) {
   return (
     <img
@@ -26,9 +28,9 @@ export function TriBar({ className = '' }) {
 }
 
 const NAV_ITEMS = [
-  { key: 'dashboard', label: 'Dashboard' },
-  { key: 'console', label: 'Management Console' },
-  { key: 'catalogue', label: 'Catalogue' },
+  { key: 'dashboard', label: 'Dashboard', Icon: LayoutDashboard },
+  { key: 'console', label: 'Management Console', Icon: TerminalSquare },
+  { key: 'catalogue', label: 'Catalogue', Icon: Library },
 ]
 
 export default function AppShell({ screen, user, onNavigate, onSignOut, children }) {
@@ -51,26 +53,28 @@ export default function AppShell({ screen, user, onNavigate, onSignOut, children
           {NAV_ITEMS.map((item) => (
             <div
               key={item.key}
-              className={`cursor-pointer border-l-[3px] px-5 py-2.5 text-[15px] transition-colors ${
+              className={`flex cursor-pointer items-center gap-2.5 border-l-[3px] px-5 py-2.5 text-[15px] transition-colors ${
                 screen === item.key
                   ? 'border-teal bg-cream font-semibold text-ink'
                   : 'border-transparent text-ink-soft hover:bg-cream hover:text-ink'
               }`}
               onClick={() => onNavigate(item.key)}
             >
+              <item.Icon className="h-4 w-4 flex-none" strokeWidth={1.75} aria-hidden />
               {item.label}
             </div>
           ))}
         </div>
         <div className="mt-auto flex flex-col gap-3">
           <div
-            className={`cursor-pointer border-l-[3px] px-5 py-2.5 text-[15px] transition-colors ${
+            className={`flex cursor-pointer items-center gap-2.5 border-l-[3px] px-5 py-2.5 text-[15px] transition-colors ${
               screen === 'settings'
                 ? 'border-teal bg-cream font-semibold text-ink'
                 : 'border-transparent text-ink-soft hover:bg-cream hover:text-ink'
             }`}
             onClick={() => onNavigate('settings')}
           >
+            <Settings className="h-4 w-4 flex-none" strokeWidth={1.75} aria-hidden />
             Settings
           </div>
           <div className="mx-5 mt-1 flex items-center gap-2.5 border-t border-line pt-4">
