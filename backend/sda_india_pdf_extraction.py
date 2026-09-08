@@ -26,7 +26,7 @@ PDF_PATH = Path(__file__).parent.parent / "SDA_INDIA_0.pdf"
 OUTPUT_DIR = Path(__file__).parent / "data" / "sda_india_extraction"
 
 TEXT_MIN_CHARS = 20
-CPU_WORKERS = 3
+CPU_WORKERS = 3 #Changed from min(os.cpu_count() or 4, 8), since pc has only 8gb RAM.
 OPENAI_MODEL = "gpt-4o-mini"
 OPENAI_WORKERS = 6
 BATCH_SIZE = 5
