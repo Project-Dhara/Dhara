@@ -148,15 +148,24 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
     setLoadError('')
 
     const loadFromGroups = () => Promise.all(ids.map((id) =>
-      fetch(`/api/catalogue/metadata-groups/${id}/classifications`, withAuthHeaders())
+      fetch(`/api/catalogue/metadata-groups/${encodeURIComponent(id)}/classifications`, withAuthHeaders())
         .then(async (res) => {
           if (!res.ok) {
             const err = await res.json().catch(() => ({ detail: 'Failed to load classifications' }))
-            throw new Error(err.detail || 'Failed to load classifications')
+            const detail = err.detail
+            const msg = typeof detail === 'string'
+              ? detail
+              : (Array.isArray(detail) ? detail.map((d) => d.msg || d).join('; ') : 'Failed to load classifications')
+            throw new Error(msg)
           }
           return res.json()
         })
         .then((data) => (data.columns || []).map((c) => ({ ...c, _metadataId: id })))
+        .catch((e) => {
+          // One bad group should not blank the whole Classify step when others work.
+          console.warn('classifications load failed for', id, e)
+          return []
+        })
     )).then((perGroup) => perGroup.flat())
 
     const loadRecent = () =>
@@ -392,7 +401,7 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
           <div className="text-sm text-ink-soft">DHARA reads every column, proposes a standard concept and drafts code-list mappings for review.</div>
         </div>
         <Button
-          disabled={classified}
+          disabled={classified || loading}
           onClick={() => setClassified(true)}
         >
           {classified ? 'Classified' : 'Run classification'}

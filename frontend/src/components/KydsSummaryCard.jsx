@@ -81,6 +81,32 @@ export default function KydsSummaryCard({ variant = 'card' }) {
     )
   }
 
+  if (variant === 'corner') {
+    return (
+      <>
+        <div className="flex max-w-[280px] items-center gap-2 rounded-lg border border-line bg-white px-3 py-1.5">
+          <div className="min-w-0 flex-1">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-[#8E9398]">KYDS</div>
+            <div className="truncate text-[13px] font-semibold text-ink">
+              {kydsEntry.responses?.datasetName?.trim() || 'Untitled dataset'}
+            </div>
+          </div>
+          <Button variant="secondary" size="sm" onClick={() => setEditingKyds(true)}>
+            Edit
+          </Button>
+        </div>
+        {editingKyds && (
+          <KydsModal
+            editing
+            initialForm={kydsEntry?.responses}
+            onSkip={() => setEditingKyds(false)}
+            onSave={saveKydsEdit}
+          />
+        )}
+      </>
+    )
+  }
+
   return (
     <>
       <div className="flex items-center justify-between gap-4 rounded-lg border border-line bg-white px-4 py-3">

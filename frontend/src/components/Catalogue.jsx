@@ -7,7 +7,7 @@ const MCP_TOOLS = ['search_datasets', 'get_table', 'get_metadata']
 const TOOL_DESCS = {
   search_datasets: 'Find releases by keyword, geography or time period.',
   get_table: 'Return rows of a published table, with optional filters.',
-  get_metadata: 'Return the NMDS metadata record for a release.',
+  get_metadata: 'Return the metadata record for a release.',
 }
 const MCP_URL = 'https://catalogue.dhara.people+ai.org/mcp'
 
@@ -289,7 +289,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
                       }`}
                       onClick={() => setSummaryChip('nmds')}
                     >
-                      NMDS concept summary
+                      {sel.metadata_standard === 'sdg' ? 'SDG concept summary' : 'Concept summary'}
                     </button>
                   </div>
                   {summaryChip === 'ai' ? (
@@ -307,20 +307,21 @@ export default function Catalogue({ hasKey, onGoSettings }) {
                     </div>
                   ) : (sel.nmds_concepts || []).length === 0 ? (
                     <div className={`${metaCardClass} col-span-2`}>
-                      <div className={metaCardLabelClass}>NMDS concepts</div>
+                      <div className={metaCardLabelClass}>Concept metadata</div>
                       <div className="text-[15px] leading-relaxed text-ink-soft [text-wrap:pretty]">
-                        No NMDS concept details were saved with this release.
+                        No concept details were saved with this release.
                       </div>
                     </div>
                   ) : (
                     <div className="flex max-h-[420px] flex-col gap-2.5 overflow-auto pr-0.5">
                       {(sel.nmds_concepts || []).map((row) => (
-                        <div className={`${metaCardClass} col-span-2`} key={`${row.item_no}-${row.concept}`}>
-                          <div className="flex items-baseline gap-2 text-[13px] font-semibold text-ink">
+                        <div className={`${metaCardClass} col-span-2`} key={`${row.item_no}-${row.concept}-${row.code || ''}`}>
+                          <div className="flex flex-wrap items-baseline gap-2 text-[13px] font-semibold text-ink">
                             {row.item_no ? <span className="text-[11.5px] font-semibold tabular-nums text-teal">{row.item_no}</span> : null}
                             {row.concept}
+                            {row.code ? <span className="text-[11.5px] font-medium text-[#8E9398]">({row.code})</span> : null}
                           </div>
-                          <div className="text-sm leading-relaxed text-ink">{row.details}</div>
+                          <div className="whitespace-pre-wrap text-sm leading-relaxed text-ink">{row.details}</div>
                         </div>
                       ))}
                     </div>

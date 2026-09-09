@@ -3,6 +3,7 @@ import re
 import uuid
 import json
 from datetime import date
+from pathlib import Path
 
 import psycopg2
 import psycopg2.extras
@@ -26,6 +27,24 @@ STANDARD_CONCEPTS = [
 
 def get_connection():
     url = os.environ["DATABASE_URL"]
+    # Host-oriented .env often uses localhost; inside Compose that must be the
+    # postgres service (sql_extract rewrite covers SQL upload DSNs separately).
+    if Path("/.dockerenv").exists():
+        from urllib.parse import urlparse, urlunparse, quote_plus
+
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if host in ("localhost", "127.0.0.1", "::1", "host.docker.internal"):
+            userinfo = ""
+            if parsed.username is not None:
+                userinfo = quote_plus(parsed.username)
+                if parsed.password is not None:
+                    userinfo += ":" + quote_plus(parsed.password)
+                userinfo += "@"
+            port = parsed.port or 5432
+            url = urlunparse(
+                (parsed.scheme, f"{userinfo}postgres:{port}", parsed.path, parsed.params, parsed.query, parsed.fragment)
+            )
     return psycopg2.connect(url)
 
 
@@ -169,6 +188,12 @@ def init_schema(conn):
     except Exception as exc:
         # Non-pgvector Postgres (e.g. managed DB without the extension) must
         # not break catalogue init; surface via /api/health when available.
+        # Critical: roll back so the connection is usable for later queries
+        # (otherwise callers hit InFailedSqlTransaction).
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         print(f"[catalogue.init_schema] pgvector setup skipped: {exc}")
 
     # PDF pipeline authoritative tables (Preview → Grouping).
@@ -176,6 +201,10 @@ def init_schema(conn):
         import pdf_store as _pdf_store
         _pdf_store.init_pdf_schema(conn)
     except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         print(f"[catalogue.init_schema] pdf_store setup skipped: {exc}")
 
 
@@ -317,19 +346,74 @@ def _normalize_code_entry(entry):
 def get_metadata_group_classifications(conn, metadata_id):
     """Read metadata_groups.classifications for the Classify step, reshaped
     into the [{name, concept, note, codes}] array the frontend expects."""
-    with conn.cursor() as cur:
-        cur.execute("SELECT classifications FROM metadata_groups WHERE metadata_id = %s", (metadata_id,))
-        row = cur.fetchone()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT classifications FROM metadata_groups WHERE metadata_id = %s",
+                (metadata_id,),
+            )
+            row = cur.fetchone()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     if not row:
         return None
+
     classifications = row[0] or {}
+    if isinstance(classifications, str):
+        try:
+            classifications = json.loads(classifications) or {}
+        except Exception:
+            classifications = {}
+    if not isinstance(classifications, dict):
+        classifications = {}
+
     if not classifications:
-        classifications = _classifications_from_linked_datasets(conn, metadata_id)
-    return [
-        {"name": name, "concept": name, "note": "", "codes": [_normalize_code_entry(e) for e in codes]}
-        for name, codes in classifications.items()
-        if codes
-    ]
+        try:
+            classifications = _classifications_from_linked_datasets(conn, metadata_id) or {}
+        except Exception as exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            print(f"[catalogue] rebuild classifications failed for {metadata_id}: {exc}")
+            classifications = {}
+
+    columns = []
+    for name, codes in classifications.items():
+        norm = _normalize_classification_values(codes)
+        if not norm:
+            continue
+        columns.append({
+            "name": name,
+            "concept": name,
+            "note": "",
+            "codes": norm,
+        })
+    if not columns:
+        # Last resort: rebuild from linked dataset rows (SQL / no workbook).
+        try:
+            rebuilt = _classifications_from_linked_datasets(conn, metadata_id) or {}
+        except Exception as exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            print(f"[catalogue] linked-dataset rebuild failed for {metadata_id}: {exc}")
+            rebuilt = {}
+        for name, codes in rebuilt.items():
+            norm = _normalize_classification_values(codes)
+            if norm:
+                columns.append({
+                    "name": name,
+                    "concept": name,
+                    "note": "",
+                    "codes": norm,
+                })
+    return columns
 
 
 def get_definition_facts(conn, metadata_id):
@@ -388,7 +472,7 @@ def get_recent_classification_columns(conn, user_email, limit=12):
 
 
 def _nmds_concepts_as_list(raw):
-    """Normalise stored NMDS JSON (list of rows or {concept: details}) for the catalogue."""
+    """Normalise stored concept JSON (list of rows, {concept: details}, or wrapped {standard, concepts})."""
     if not raw:
         return []
     if isinstance(raw, str):
@@ -396,11 +480,13 @@ def _nmds_concepts_as_list(raw):
             raw = json.loads(raw)
         except json.JSONDecodeError:
             return []
+    if isinstance(raw, dict) and "concepts" in raw and isinstance(raw.get("concepts"), (list, dict)):
+        return _nmds_concepts_as_list(raw.get("concepts"))
     if isinstance(raw, dict):
         return [
-            {"item_no": "", "concept": k, "details": v or ""}
+            {"item_no": "", "concept": k, "code": "", "details": v or ""}
             for k, v in raw.items()
-            if str(v or "").strip()
+            if k != "standard" and str(v or "").strip()
         ]
     out = []
     for row in raw:
@@ -412,9 +498,21 @@ def _nmds_concepts_as_list(raw):
         out.append({
             "item_no": row.get("item_no") or "",
             "concept": row.get("concept") or "",
+            "code": row.get("code") or "",
             "details": details,
         })
     return out
+
+
+def _metadata_standard_from_concepts(raw):
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+    if isinstance(raw, dict) and raw.get("standard"):
+        return raw.get("standard")
+    return None
 
 
 def list_catalogue_datasets(conn):
@@ -483,6 +581,7 @@ def list_catalogue_datasets(conn):
             "access": "Public",
             "summary": summary,
             "nmds_concepts": nmds,
+            "metadata_standard": _metadata_standard_from_concepts(row.get("nmds_concepts")),
             "keywords": keywords,
             "facets": facets,
             "tags": tags[:16],
@@ -523,34 +622,93 @@ def _classifications_from_linked_datasets(conn, metadata_id):
     return _classifications_from_table_data([{"columns": cols, "rows": rows}])
 
 
+def _normalize_classification_values(vals) -> list:
+    """Coerce LLM / workbook / heuristic classification entries to a list of
+    {code, value, definition} dicts. Handles list[str], list[dict], a lone
+    string (must not iterate characters), and empty/invalid inputs."""
+    if vals is None:
+        return []
+    if isinstance(vals, str):
+        s = vals.strip()
+        return [{"code": s, "value": s, "definition": None}] if s else []
+    if isinstance(vals, dict):
+        # Single code-list entry shaped as a dict.
+        if any(k in vals for k in ("code", "value", "definition")):
+            return [_normalize_code_entry(vals)]
+        # Rare LLM shape: {"values": [...]}
+        if isinstance(vals.get("values"), list):
+            return _normalize_classification_values(vals.get("values"))
+        return []
+    if not isinstance(vals, (list, tuple)):
+        s = str(vals).strip()
+        return [{"code": s, "value": s, "definition": None}] if s else []
+
+    out = []
+    seen = set()
+    for v in vals:
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                continue
+            entry = {"code": s, "value": s, "definition": None}
+        else:
+            entry = _normalize_code_entry(v)
+        key = (str(entry.get("value") or entry.get("code") or "").strip().lower())
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(entry)
+    return out
+
+
 def _classifications_from_table_data(tables):
-    """Treat low-cardinality non-numeric columns as classification dimensions."""
+    """Treat low-cardinality non-numeric columns as classification dimensions.
+
+    Used for Excel without a classifications workbook and for SQL extracts,
+    where there is no metadata-excel code list."""
     merged = {}
     for table in tables or []:
-        columns = table.get("columns") or []
+        raw_columns = table.get("columns") or []
+        columns = []
+        for i, col in enumerate(raw_columns):
+            if isinstance(col, str):
+                columns.append(col)
+            elif isinstance(col, dict):
+                columns.append(str(col.get("name") or f"column_{i + 1}"))
+            else:
+                columns.append(f"column_{i + 1}")
         rows = table.get("rows") or []
         for col in columns:
             values, seen = [], set()
             for row in rows:
-                if not isinstance(row, dict):
+                if isinstance(row, dict):
+                    raw = row.get(col)
+                elif isinstance(row, (list, tuple)):
+                    # Positional rows (rare in Excel/SQL path) — skip; need names.
                     continue
-                raw = row.get(col)
+                else:
+                    continue
                 if raw is None or raw == "":
                     continue
-                s = str(raw).strip()
+                if isinstance(raw, bool):
+                    s = "true" if raw else "false"
+                else:
+                    s = str(raw).strip()
                 if not s:
                     continue
-                try:
-                    float(s.replace(",", ""))
+                # Skip pure numerics (measures), keep codes like "01" that are
+                # categorical when mixed with non-numeric — only skip if the
+                # whole string parses as a number AND has no alpha.
+                if re.fullmatch(r"[-+]?\d+(?:[.,]\d+)?", s.replace(",", "")):
                     continue
-                except ValueError:
-                    pass
                 key = s.lower()
                 if key in seen:
                     continue
                 seen.add(key)
                 values.append({"code": s, "value": s, "definition": None})
-            if 2 <= len(values) <= 40:
+                if len(values) > 80:
+                    break
+            if 2 <= len(values) <= 80:
                 name = re.sub(r"\s+", "_", str(col).strip()) or str(col)
                 if name not in merged:
                     merged[name] = values
@@ -565,9 +723,16 @@ def _classifications_from_table_data(tables):
 
 def _merge_real_classifications(llm_merged, real):
     """Real metadata-excel code lists win per column name; LLM/heuristic
-    guesses fill columns the workbook didn't cover."""
-    merged = dict(llm_merged or {})
-    merged.update(real or {})
+    guesses fill columns the workbook didn't cover. Values are normalized."""
+    merged = {
+        str(k): _normalize_classification_values(v)
+        for k, v in (llm_merged or {}).items()
+        if _normalize_classification_values(v)
+    }
+    for k, v in (real or {}).items():
+        norm = _normalize_classification_values(v)
+        if norm:
+            merged[str(k)] = norm
     return merged
 
 
@@ -652,8 +817,10 @@ def _make_dataset_id(table: dict, index: int) -> str:
     return f"DS-{index+1:03d}-{suffix}"
 
 
-def _extract_sl_no(row: dict, row_index: int) -> str:
+def _extract_sl_no(row, row_index: int) -> str:
     """Try to find the serial number value from a row dict."""
+    if not isinstance(row, dict):
+        return str(row_index + 1)
     for key in ("sl_no", "Sl. No.", "S.No.", "Sr.No.", "S.No", "SL NO", "Sl No"):
         if key in row:
             return str(row[key])
@@ -711,15 +878,36 @@ def push_to_catalogue(
 
             columns = table.get("columns", [])
             rows = table.get("rows", [])
+            # Ensure dict rows for storage / later classification rebuild.
+            normalized_rows = []
+            col_names = [
+                (c if isinstance(c, str) else str((c or {}).get("name") or f"column_{i + 1}"))
+                for i, c in enumerate(columns or [])
+            ]
+            for row in rows or []:
+                if isinstance(row, dict):
+                    normalized_rows.append(row)
+                elif isinstance(row, (list, tuple)):
+                    normalized_rows.append({
+                        col_names[j]: (row[j] if j < len(row) else None)
+                        for j in range(len(col_names))
+                    })
+            rows = normalized_rows
 
-            # Merge LLM guesses with metadata-excel code lists (ground truth)
-            # and a heuristic from the table values if both are empty.
+            # Table-derived classifications are the baseline (critical for SQL
+            # and Excel without a classifications workbook). LLM + metadata
+            # workbook lists overlay and win on conflicting keys.
+            table_cls = _classifications_from_table_data([{
+                "columns": col_names,
+                "rows": rows,
+            }])
             classifications = _merge_real_classifications(
-                enriched.get("classifications") or {},
-                meta_real_classifications,
+                table_cls,
+                _merge_real_classifications(
+                    enriched.get("classifications") or {},
+                    meta_real_classifications,
+                ),
             )
-            if not classifications:
-                classifications = _classifications_from_table_data([table])
             age_column_keys = enriched.get("age_column_keys") or {}
 
             cur.execute("""
@@ -799,11 +987,12 @@ def push_to_catalogue(
             metadata_id = f"AUTO-{re.sub(r'[^A-Z0-9]', '-', (meta_title or 'DATA').upper())[:20]}-{uuid.uuid4().hex[:6]}"
 
             group_classifications = _merge_real_classifications(
-                _merge_classifications(enriched_data),
-                meta_real_classifications,
+                _classifications_from_table_data(tables),
+                _merge_real_classifications(
+                    _merge_classifications(enriched_data),
+                    meta_real_classifications,
+                ),
             )
-            if not group_classifications:
-                group_classifications = _classifications_from_table_data(tables)
 
             # Build full_record to mirror DES catalogue JSON file structure
             full_record = {
@@ -919,9 +1108,15 @@ def _merge_classifications(enriched_data: list) -> dict:
     for enriched in enriched_data:
         cls = enriched.get("classifications") or {}
         for dim, vals in cls.items():
+            norm = _normalize_classification_values(vals)
+            if not norm:
+                continue
             if dim not in merged:
                 merged[dim] = []
-            for v in vals:
-                if v not in merged[dim]:
-                    merged[dim].append(v)
+            existing = {(e.get("value") or "").lower() for e in merged[dim]}
+            for entry in norm:
+                key = (entry.get("value") or "").lower()
+                if key and key not in existing:
+                    merged[dim].append(entry)
+                    existing.add(key)
     return merged

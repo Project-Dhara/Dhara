@@ -2,13 +2,14 @@
 
 import { useRouter } from 'next/navigation'
 import Dashboard from '../../../components/Dashboard'
+import { clearConsoleSession } from '../../../lib/consoleSession'
 
 export default function DashboardPage() {
   const router = useRouter()
   return (
     <Dashboard
       onStartFlow={() => {
-        try { sessionStorage.removeItem('dhara_console_state_v1') } catch { /* best-effort */ }
+        clearConsoleSession()
         router.push('/console')
       }}
     />

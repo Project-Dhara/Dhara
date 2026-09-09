@@ -9,7 +9,7 @@ import Button from './ui/Button'
 
 const PUBLISH_STEPS = [
   'Validating harmonised columns',
-  'Writing NMDS metadata record',
+  'Writing metadata record',
   'Registering API endpoint',
   'Registering MCP endpoint',
 ]

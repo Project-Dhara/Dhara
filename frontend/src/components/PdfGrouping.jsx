@@ -5,9 +5,74 @@ import { useRouter } from 'next/navigation'
 import { AlertTriangle, ArrowLeft, ArrowRight, Pencil, X } from 'lucide-react'
 import { withAuthHeaders } from '../lib/auth'
 import { withLlmKeyHeaders } from '../lib/llmKey'
+import { getMetadataStandard } from '../lib/settingsConfig'
+import { clearConsoleSession } from '../lib/consoleSession'
+import { useApp } from '../context/AppContext'
 import PdfConsoleLayout from './PdfConsoleLayout'
+import BatchReview from './BatchReview'
+import Classify from './Classify'
+import Publish from './Publish'
 import Button from './ui/Button'
 import ErrorBanner from './ui/ErrorBanner'
+
+const EMPTY_GROUP_METADATA = {
+  title: '', product: '', category: '', geography: '', frequency: '',
+  time_period: '', data_source: '', description: '', last_updated: '',
+  future_release: '', key_statistics: '', remarks: '',
+}
+
+function pdfPipelineStorageKey(jobId) {
+  return `dhara_pdf_pipeline_v1_${jobId}`
+}
+
+function loadPdfPipeline(jobId) {
+  try {
+    const raw = sessionStorage.getItem(pdfPipelineStorageKey(jobId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function savePdfPipeline(jobId, state) {
+  try {
+    sessionStorage.setItem(pdfPipelineStorageKey(jobId), JSON.stringify(state))
+  } catch {
+    // best-effort
+  }
+}
+
+function clearPdfPipeline(jobId) {
+  try {
+    sessionStorage.removeItem(pdfPipelineStorageKey(jobId))
+  } catch {
+    // best-effort
+  }
+}
+
+/** Shape PDF grouping groups into the catalogue matchResult used by Excel/SQL. */
+function pdfGroupsToCatalogueGroups(groups, sourceFile) {
+  return (groups || []).map((g, wi) => ({
+    workbook_index: wi,
+    file_name: g.name || `Group ${wi + 1}`,
+    metadata: { ...EMPTY_GROUP_METADATA },
+    concepts: [],
+    classifications: {},
+    matched_tables: (g.tables || []).map((t) => ({
+      table: {
+        ...t,
+        _uid: t.id || t.table_id,
+        source_file: sourceFile || t.source_file || 'pdf',
+        source_type: t.source_type || 'pdf',
+        sheet: t.sheet || t.title || t.table_id || 'data',
+      },
+      inventory_item: null,
+      confidence: 'pdf',
+    })),
+  }))
+}
 
 function GroupNameEditor({ name, onSave }) {
   const [editing, setEditing] = useState(false)
@@ -127,18 +192,30 @@ function toClientState(grouping) {
 
 export default function PdfGrouping({ jobId }) {
   const router = useRouter()
-  const [filename, setFilename] = useState('')
-  const [grouping, setGrouping] = useState({ groups: [], unmatched: [] })
-  const [method, setMethod] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const { keySaved } = useApp()
+  const persisted = loadPdfPipeline(jobId)
+
+  const [filename, setFilename] = useState(persisted?.filename ?? '')
+  const [grouping, setGrouping] = useState(() => persisted?.grouping || { groups: [], unmatched: [] })
+  const [method, setMethod] = useState(persisted?.method ?? null)
+  const [loading, setLoading] = useState(!persisted?.grouping)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [manualGrouping, setManualGrouping] = useState(false)
+  const [manualGrouping, setManualGrouping] = useState(persisted?.manualGrouping ?? false)
   const [editingGroups, setEditingGroups] = useState(false)
   const [dragOverGroup, setDragOverGroup] = useState(null)
   const [activeDialog, setActiveDialog] = useState(null)
-  const [autoSnapshot, setAutoSnapshot] = useState(null)
+  const [autoSnapshot, setAutoSnapshot] = useState(persisted?.autoSnapshot ?? null)
   const [toast, setToast] = useState(null)
+
+  // Same stage numbers as Excel Console after grouping.
+  const [pipelineStep, setPipelineStep] = useState(persisted?.pipelineStep ?? 3)
+  const [maxStepReached, setMaxStepReached] = useState(persisted?.maxStepReached ?? 3)
+  const [matchResult, setMatchResult] = useState(persisted?.matchResult ?? null)
+  const [metadataFilling, setMetadataFilling] = useState(false)
+  const [metaLabel, setMetaLabel] = useState(persisted?.metaLabel ?? '')
+  const [metadataId, setMetadataId] = useState(persisted?.metadataId ?? null)
+  const [metadataIds, setMetadataIds] = useState(persisted?.metadataIds ?? [])
 
   const groups = grouping.groups
   const unmatched = grouping.unmatched
@@ -152,10 +229,33 @@ export default function PdfGrouping({ jobId }) {
     if (data.filename) setFilename(data.filename)
   }, [])
 
+  // Survive Settings / remounts — same idea as Console.jsx sessionStorage.
+  useEffect(() => {
+    savePdfPipeline(jobId, {
+      filename,
+      grouping,
+      method,
+      manualGrouping,
+      autoSnapshot,
+      pipelineStep,
+      maxStepReached,
+      matchResult,
+      metaLabel,
+      metadataId,
+      metadataIds,
+    })
+  }, [
+    jobId, filename, grouping, method, manualGrouping, autoSnapshot,
+    pipelineStep, maxStepReached, matchResult, metaLabel, metadataId, metadataIds,
+  ])
+
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      setLoading(true)
+      // If we already restored a later pipeline step, keep that UI and only
+      // refresh grouping from the API in the background when we have none.
+      const hadPersistedPipeline = Boolean(persisted?.matchResult || (persisted?.pipelineStep ?? 3) > 3)
+      if (!hadPersistedPipeline) setLoading(true)
       setError('')
       try {
         const res = await fetch(`/api/pdf/jobs/${jobId}/grouping`, withAuthHeaders())
@@ -169,11 +269,13 @@ export default function PdfGrouping({ jobId }) {
             const body = await persistRes.json().catch(() => ({}))
             throw new Error(body.detail || 'Could not persist tables for grouping')
           }
-          const persisted = await persistRes.json()
+          const persistedJob = await persistRes.json()
           if (cancelled) return
-          applyGrouping(persisted.grouping || persisted)
-          setAutoSnapshot(toClientState(persisted.grouping || persisted))
-          setToast('Tables saved to Postgres and grouped by similarity.')
+          if (!persisted?.grouping) {
+            applyGrouping(persistedJob.grouping || persistedJob)
+            setAutoSnapshot(toClientState(persistedJob.grouping || persistedJob))
+            setToast('Tables saved to Postgres and grouped by similarity.')
+          }
           return
         }
         if (!res.ok) {
@@ -182,8 +284,13 @@ export default function PdfGrouping({ jobId }) {
         }
         const data = await res.json()
         if (cancelled) return
-        applyGrouping(data)
-        setAutoSnapshot(toClientState(data))
+        // Prefer in-progress local/persisted grouping edits over a stale API copy.
+        if (!persisted?.grouping) {
+          applyGrouping(data)
+          setAutoSnapshot(toClientState(data))
+        } else if (!autoSnapshot) {
+          setAutoSnapshot(toClientState(data))
+        }
       } catch (e) {
         if (!cancelled) setError(e.message || 'Failed to load grouping')
       } finally {
@@ -193,6 +300,8 @@ export default function PdfGrouping({ jobId }) {
     return () => {
       cancelled = true
     }
+  // Only re-fetch when the job changes — persisted is a mount-time snapshot.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, applyGrouping])
 
   useEffect(() => {
@@ -350,8 +459,12 @@ export default function PdfGrouping({ jobId }) {
       setToast('Create at least one group before continuing.')
       return
     }
+    if (metadataFilling || saving) return
+
     setSaving(true)
+    setMetadataFilling(true)
     setError('')
+    setToast(null)
     try {
       const res = await fetch(
         `/api/pdf/jobs/${jobId}/grouping`,
@@ -370,11 +483,128 @@ export default function PdfGrouping({ jobId }) {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.detail || 'Could not save grouping')
       }
-      setToast('Grouping saved. Metadata for PDF groups is coming next.')
+
+      const catalogueGroups = pdfGroupsToCatalogueGroups(groups, filename || 'pdf')
+      const fillRes = await fetch(
+        '/api/catalogue/fill-group-metadata',
+        withAuthHeaders(withLlmKeyHeaders({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ groups: catalogueGroups, standard: getMetadataStandard() }),
+        })),
+      )
+      if (!fillRes.ok) {
+        const err = await fillRes.json().catch(() => ({ detail: 'Metadata autofill failed' }))
+        const detail = typeof err.detail === 'string' ? err.detail : 'Metadata autofill failed'
+        setMatchResult({
+          groups: catalogueGroups,
+          unmatched_tables: [],
+          unmatched_inventory: [],
+          llm_autofill_skipped_no_key: false,
+          kyds_missing: false,
+          autofill_errors: [{ group: 'all', error: detail }],
+        })
+        setToast(`${detail} — fill metadata in manually below.`)
+        setPipelineStep(4)
+        setMaxStepReached((prev) => Math.max(prev, 4))
+        return
+      }
+      const data = await fillRes.json()
+      const autofillErrors = Array.isArray(data.autofill_errors) ? data.autofill_errors : []
+      const metaPatches = Array.isArray(data.group_metadata) ? data.group_metadata : null
+      const baseGroups = data.groups || catalogueGroups
+      const mergedGroups = catalogueGroups.map((g, i) => {
+        const patch = metaPatches
+          ? (metaPatches.find((p) => p.index === i) || metaPatches[i])
+          : null
+        if (patch?.filled && patch.metadata) {
+          return {
+            ...g,
+            file_name: patch.file_name || g.file_name,
+            metadata: { ...(g.metadata || {}), ...patch.metadata },
+            concept_metadata: patch.concept_metadata || g.concept_metadata,
+            catalogue_metadata: patch.catalogue_metadata || g.catalogue_metadata,
+          }
+        }
+        // Legacy: metadata from stripped groups response
+        const legacy = baseGroups[i]
+        if (legacy?.metadata && Object.keys(legacy.metadata).length) {
+          return {
+            ...g,
+            file_name: legacy.file_name || g.file_name,
+            metadata: { ...(g.metadata || {}), ...legacy.metadata },
+          }
+        }
+        return g
+      })
+      const filledCount = Number(data.autofill_filled_count) || mergedGroups.filter((g) => Object.values(g.metadata || {}).some((v) => String(v || '').trim())).length
+      setMatchResult({
+        groups: mergedGroups,
+        unmatched_tables: [],
+        unmatched_inventory: [],
+        llm_autofill_skipped_no_key: Boolean(data.llm_autofill_skipped_no_key),
+        kyds_missing: Boolean(data.kyds_missing),
+        autofill_errors: autofillErrors,
+        autofill_filled_count: filledCount,
+      })
+      if (data.kyds_missing) {
+        setToast('Fill in Know Your Dataset first so metadata can be auto-mapped — or fill fields manually on the next step.')
+      } else if (data.llm_autofill_skipped_no_key) {
+        setToast('Add an LLM API key in Settings to auto-fill metadata, or fill fields manually on the next step.')
+      } else if (autofillErrors.length > 0) {
+        const sample = autofillErrors[0]?.group || autofillErrors[0]?.error || 'unknown'
+        setToast(
+          filledCount > 0
+            ? `Auto-filled ${filledCount} group${filledCount !== 1 ? 's' : ''}; ${autofillErrors.length} need manual entry (${sample}).`
+            : `Auto-fill failed for ${autofillErrors.length} group${autofillErrors.length !== 1 ? 's' : ''}. Fill those groups in manually.`,
+        )
+      }
+      setPipelineStep(4)
+      setMaxStepReached((prev) => Math.max(prev, 4))
     } catch (e) {
-      setError(e.message || 'Save failed')
+      // Grouping may already be saved — still open metadata for manual entry when possible.
+      if (!matchResult) {
+        try {
+          const catalogueGroups = pdfGroupsToCatalogueGroups(groups, filename || 'pdf')
+          setMatchResult({
+            groups: catalogueGroups,
+            unmatched_tables: [],
+            unmatched_inventory: [],
+            autofill_errors: [{ group: 'all', error: e.message || 'Could not auto-fill metadata' }],
+          })
+          setPipelineStep(4)
+          setMaxStepReached((prev) => Math.max(prev, 4))
+          setToast(`${e.message || 'Could not auto-fill metadata'} — fill metadata in manually.`)
+          return
+        } catch (_) {
+          /* fall through */
+        }
+      }
+      setError(e.message || 'Could not continue to metadata')
+      setToast(e.message || 'Could not auto-fill metadata')
     } finally {
       setSaving(false)
+      setMetadataFilling(false)
+    }
+  }
+
+  const goToPipelineStep = (targetStep) => {
+    if (targetStep === 1) {
+      clearConsoleSession()
+      router.push('/console')
+      return
+    }
+    if (targetStep === 2) {
+      router.push(`/console/review/${jobId}`)
+      return
+    }
+    if (targetStep === 3) {
+      setPipelineStep(3)
+      return
+    }
+    if (targetStep >= 4 && targetStep <= maxStepReached) {
+      if (targetStep === 4 && !matchResult) return
+      setPipelineStep(targetStep)
     }
   }
 
@@ -383,7 +613,71 @@ export default function PdfGrouping({ jobId }) {
     : unmatched
 
   return (
-    <PdfConsoleLayout jobId={jobId} step={3} maxStepReached={3}>
+    <PdfConsoleLayout
+      jobId={jobId}
+      step={pipelineStep}
+      maxStepReached={maxStepReached}
+      onGoToStep={goToPipelineStep}
+    >
+      {pipelineStep === 4 && matchResult && (
+        <div className="flex flex-col gap-[18px]">
+          <div className="min-w-0">
+            <button
+              type="button"
+              className="mb-3.5 inline-flex items-center gap-1.5 text-[15px] font-semibold text-teal hover:text-teal-dark"
+              onClick={() => setPipelineStep(3)}
+            >
+              <ArrowLeft className="h-4 w-4" strokeWidth={2} aria-hidden />
+              Back to grouping
+            </button>
+            <div className="font-display text-[32px] font-medium leading-tight text-ink">Metadata</div>
+            <div className="mt-1 text-[15px] text-ink-soft">
+              Add catalogue metadata — title, category, coverage — for each group.
+            </div>
+          </div>
+          <BatchReview
+            matchResult={matchResult}
+            metadataFiles={[]}
+            onDone={(label, ids) => {
+              setMetaLabel(label || filename || 'PDF release')
+              setMetadataIds(ids || [])
+              setMetadataId((ids && ids[0]) || null)
+              setPipelineStep(5)
+              setMaxStepReached((prev) => Math.max(prev, 5))
+            }}
+            onCancel={() => setPipelineStep(3)}
+          />
+        </div>
+      )}
+
+      {pipelineStep === 5 && (
+        <Classify
+          metadataIds={metadataIds}
+          datasetLabel={metaLabel || filename || 'This dataset'}
+          onContinue={() => {
+            setPipelineStep(6)
+            setMaxStepReached((prev) => Math.max(prev, 6))
+          }}
+        />
+      )}
+
+      {pipelineStep === 6 && (
+        <Publish
+          datasetLabel={metaLabel || filename || 'This dataset'}
+          metadataId={metadataId}
+          hasKey={keySaved}
+          onGoSettings={() => router.push('/settings')}
+          onGoDashboard={() => router.push('/dashboard')}
+          onGoCatalogue={() => router.push('/catalogue')}
+          onUploadAnother={() => {
+            clearPdfPipeline(jobId)
+            clearConsoleSession()
+            router.push('/console')
+          }}
+        />
+      )}
+
+      {pipelineStep === 3 && (
       <div className="flex flex-col gap-[18px]">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
@@ -424,7 +718,7 @@ export default function PdfGrouping({ jobId }) {
                       groupingMode === 'automatic' ? 'bg-teal text-white' : 'text-ink-soft hover:text-ink'
                     }`}
                     onClick={() => groupingMode !== 'automatic' && requestAutomatic()}
-                    disabled={saving}
+                    disabled={saving || metadataFilling}
                   >
                     Automatic (recommended)
                   </button>
@@ -661,10 +955,18 @@ export default function PdfGrouping({ jobId }) {
                     Done editing
                   </Button>
                 ) : (
-                  <Button variant="primary" disabled={saving} onClick={saveAndContinue} className="inline-flex items-center gap-1.5">
-                    {saving ? 'Saving…' : (
+                  <Button
+                    variant="primary"
+                    disabled={saving || metadataFilling}
+                    onClick={saveAndContinue}
+                    className="inline-flex items-center gap-1.5"
+                  >
+                    {(saving || metadataFilling) && (
+                      <span className="inline-block h-[13px] w-[13px] animate-spin rounded-full border-2 border-white/50 border-t-white" />
+                    )}
+                    {metadataFilling ? 'Filling metadata…' : saving ? 'Saving…' : (
                       <>
-                        Save grouping
+                        Continue to metadata
                         <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
                       </>
                     )}
@@ -675,6 +977,7 @@ export default function PdfGrouping({ jobId }) {
           )}
         </div>
       </div>
+      )}
 
       {toast && (
         <div
@@ -693,7 +996,7 @@ export default function PdfGrouping({ jobId }) {
         </div>
       )}
 
-      {activeDialog === 'addGroup' && (
+      {pipelineStep === 3 && activeDialog === 'addGroup' && (
         <AddGroupModal
           tables={allTablesForModal}
           onCreate={createGroup}

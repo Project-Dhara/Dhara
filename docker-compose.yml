@@ -30,9 +30,21 @@ services:
       dockerfile: Dockerfile
     container_name: dhara-backend
     restart: unless-stopped
+    # Ensure host.docker.internal resolves (needed when SQL upload / DSNs use
+    # localhost — sql_extract rewrites those to host.docker.internal).
+    # Custom public DNS below can otherwise leave that name unresolvable.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Prefer Docker embedded DNS for Compose service names, then public
+    # resolvers for Neon / external hosts (ISP DNS often fails for those).
+    dns:
+      - 127.0.0.11
+      - 8.8.8.8
+      - 1.1.1.1
     ports:
       - "8000:8000"
     environment:
+      # Must win over backend/.env (which uses localhost for host-run backends).
       DATABASE_URL: postgresql://dhara:dhara_local_password@postgres:5432/dhara
       ENABLE_GCS: "false"
     env_file:
@@ -71,6 +83,12 @@ services:
       dockerfile: Dockerfile
     container_name: dhara-app
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    dns:
+      - 127.0.0.11
+      - 8.8.8.8
+      - 1.1.1.1
     ports:
       - "8080:8080"
     environment:

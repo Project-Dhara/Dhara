@@ -1,44 +1,84 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, ArrowRight, Check, Info, X } from 'lucide-react'
 import { withLlmKeyHeaders } from '../lib/llmKey'
 import { withAuthHeaders } from '../lib/auth'
 import { CLICK_THROUGH_ENABLED } from '../lib/clickThrough'
-import MetadataSheetGrid from './MetadataSheetGrid'
+import { getConceptStandardConfig } from '../lib/metadataConcepts'
+import { getMetadataStandard } from '../lib/settingsConfig'
+import MetadataSheetGrid, { METADATA_COLUMNS } from './MetadataSheetGrid'
 import NmdsGroupPanel from './NmdsGroupPanel'
 import Button from './ui/Button'
 import ErrorBanner from './ui/ErrorBanner'
-import { emptyNmdsFields, isNmdsFieldsComplete, nmdsFieldsToList, mergeNmdsConcepts, NMDS_CONCEPT_TEMPLATE } from '../lib/nmdsConcepts'
-
-const KNOWN_NMDS_CONCEPTS = new Set(NMDS_CONCEPT_TEMPLATE.filter((r) => !r.section).map((r) => r.concept))
 
 // A group whose auto-fill left every catalogue field blank (e.g. no metadata
 // workbook covered it) needs the same by-hand entry as the "no LLM key at
 // all" case -- just scoped to that one group instead of the whole page, so
 // the "Review auto-mapped" framing at the top doesn't mislead the user into
 // thinking this group's blank fields are the reviewed (correct) result.
-function isMetadataAutoMapped(metadata) {
-  return Object.entries(metadata || {}).some(([key, value]) => key !== 'title' && String(value || '').trim())
+function isMetadataAutoMapped(metadata, fieldKeys) {
+  const entries = Object.entries(metadata || {})
+  if (fieldKeys?.length) {
+    return fieldKeys.some((key) => String(metadata?.[key] || '').trim())
+  }
+  return entries.some(([key, value]) => key !== 'title' && String(value || '').trim())
 }
 
-function emptyNmdsGroupState() {
-  return { fields: emptyNmdsFields(), file: null, appliedFrom: null, appliedToAll: false, parsing: false, parseError: '', fileMismatch: false }
+function emptyConceptGroupState(emptyFields) {
+  return { fields: emptyFields(), file: null, appliedFrom: null, appliedToAll: false, parsing: false, parseError: '', fileMismatch: false }
 }
 
-function nmdsGroupLabel(group, groupIndex) {
-  return group?.metadata?.title || group?.file_name || `Group ${groupIndex + 1}`
+function conceptGroupLabel(group, groupIndex) {
+  return group?.metadata?.title || group?.metadata?.Indicator || group?.metadata?.Goal || group?.file_name || `Group ${groupIndex + 1}`
+}
+
+function seedConceptFieldsFromGroup(group, emptyFields, mergeConcepts) {
+  const base = emptyFields()
+  const conceptMeta = group?.concept_metadata
+  if (conceptMeta && typeof conceptMeta === 'object') {
+    for (const key of Object.keys(base)) {
+      if (conceptMeta[key]) base[key] = String(conceptMeta[key])
+    }
+  }
+  // SDG mode stores indicator fields directly on metadata for the sheet grid.
+  for (const key of Object.keys(base)) {
+    if (group?.metadata?.[key]) base[key] = String(group.metadata[key])
+  }
+  if (Array.isArray(group?.concepts) && group.concepts.length) {
+    return mergeConcepts(base, group.concepts)
+  }
+  return base
 }
 
 export default function BatchReview({ matchResult, metadataFiles, onDone, onCancel }) {
+  const conceptConfig = useMemo(() => getConceptStandardConfig(getMetadataStandard()), [])
+  const sheetColumns = conceptConfig.sheetColumns || METADATA_COLUMNS
+  const sheetFieldKeys = useMemo(() => sheetColumns.map((c) => c.key), [sheetColumns])
+
+  const {
+    shortName: standardName,
+    topics,
+    placeholders,
+    emptyFields,
+    isComplete,
+    fieldsToList,
+    mergeConcepts,
+    standard,
+    usesSdgSheet,
+  } = conceptConfig
+
   const [groups, setGroups] = useState(matchResult.groups)
   const [assignments, setAssignments] = useState({}) // unmatchedTableIndex -> groupIndex ('' = skip)
   const [step, setStep] = useState('review') // review | pushing | done | error
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
 
-  // One NMDS upload/fields state per metadata group, keyed by group index.
-  const [nmdsByGroup, setNmdsByGroup] = useState(() => groups.map(() => emptyNmdsGroupState()))
+  // One concept upload/fields state per metadata group, keyed by group index.
+  const [nmdsByGroup, setNmdsByGroup] = useState(() => groups.map((g) => ({
+    ...emptyConceptGroupState(emptyFields),
+    fields: seedConceptFieldsFromGroup(g, emptyFields, mergeConcepts),
+  })))
   const [nmdsModalGroup, setNmdsModalGroup] = useState(null) // group index whose fields modal is open, or null
   const [toast, setToast] = useState(null) // { type: 'warn' | 'success', message } | null
 
@@ -56,19 +96,22 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
   // so the metadata page reflects the current groups without a refresh.
   useEffect(() => {
     setGroups(matchResult.groups)
-    setNmdsByGroup(matchResult.groups.map(() => emptyNmdsGroupState()))
+    setNmdsByGroup(matchResult.groups.map((g) => ({
+      ...emptyConceptGroupState(emptyFields),
+      fields: seedConceptFieldsFromGroup(g, emptyFields, mergeConcepts),
+    })))
     setAssignments({})
-  }, [matchResult])
+  }, [matchResult, emptyFields, mergeConcepts])
 
   const patchNmdsGroup = (groupIndex, patch) => {
     setNmdsByGroup((prev) => prev.map((g, i) => (i === groupIndex ? { ...g, ...patch } : g)))
   }
 
   const applyNmdsToAll = (groupIndex) => {
-    const sourceState = nmdsByGroup[groupIndex] || emptyNmdsGroupState()
+    const sourceState = nmdsByGroup[groupIndex] || emptyConceptGroupState(emptyFields)
     const copy = { ...sourceState.fields }
     const appliedFrom = {
-      groupLabel: nmdsGroupLabel(groups[groupIndex], groupIndex),
+      groupLabel: conceptGroupLabel(groups[groupIndex], groupIndex),
       fileName: sourceState.file?.name || null,
     }
     setNmdsByGroup((prev) => prev.map((g, i) => (
@@ -85,11 +128,36 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
             parsing: false,
           }
     )))
-    setToast({ type: 'success', message: 'NMDS fields applied to all other groups.' })
+    if (usesSdgSheet) {
+      setGroups((prev) => prev.map((g, i) => (
+        i === groupIndex ? g : { ...g, metadata: { ...(g.metadata || {}), ...copy }, concept_metadata: { ...copy } }
+      )))
+    }
+    setToast({ type: 'success', message: `${standardName} fields applied to all other groups.` })
   }
 
   const updateMetadata = (groupIndex, metadata) => {
     setGroups((prev) => prev.map((g, i) => (i === groupIndex ? { ...g, metadata } : g)))
+    if (usesSdgSheet) {
+      const nextFields = { ...emptyFields() }
+      for (const key of Object.keys(nextFields)) {
+        if (metadata?.[key] != null) nextFields[key] = String(metadata[key])
+      }
+      patchNmdsGroup(groupIndex, { fields: nextFields })
+    }
+  }
+
+  const updateConceptField = (groupIndex, concept, value) => {
+    const current = nmdsByGroup[groupIndex] || emptyConceptGroupState(emptyFields)
+    const nextFields = { ...current.fields, [concept]: value }
+    patchNmdsGroup(groupIndex, { fields: nextFields })
+    if (usesSdgSheet) {
+      setGroups((prev) => prev.map((g, i) => (
+        i === groupIndex
+          ? { ...g, metadata: { ...(g.metadata || {}), [concept]: value }, concept_metadata: nextFields }
+          : g
+      )))
+    }
   }
 
   const assignedCount = Object.values(assignments).filter((v) => v !== '' && v !== undefined).length
@@ -98,13 +166,63 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
   // as the no-LLM-key case, just for a different reason (e.g. no metadata
   // workbook covered any group), so the heading doesn't claim a review of
   // an auto-mapping that never happened.
-  const noneAutoMapped = groups.length > 0 && groups.every((g) => !isMetadataAutoMapped(g.metadata))
-  const showFillInHeading = matchResult.llm_autofill_skipped_no_key || noneAutoMapped
+  const noneAutoMapped = groups.length > 0 && groups.every((g) => !isMetadataAutoMapped(g.metadata, usesSdgSheet ? sheetFieldKeys : null))
+  const someAutoMapped = groups.some((g) => isMetadataAutoMapped(g.metadata, usesSdgSheet ? sheetFieldKeys : null))
+  const autofillErrors = Array.isArray(matchResult.autofill_errors) ? matchResult.autofill_errors : []
+  const failedGroupIndexes = new Set(
+    autofillErrors.map((e) => e.index).filter((i) => Number.isInteger(i)),
+  )
+  const failedGroupNames = new Set(
+    autofillErrors.map((e) => String(e.group || '').trim().toLowerCase()).filter((n) => n && n !== 'all'),
+  )
+  const groupFailedAutofill = (g, gi) => {
+    if (failedGroupIndexes.has(gi)) return true
+    const name = String(g?.file_name || g?.metadata?.title || g?.metadata?.Indicator || '').trim().toLowerCase()
+    return Boolean(name && failedGroupNames.has(name))
+  }
+  // Only treat the whole page as "fill everything" when nothing was mapped.
+  // Partial autofill success should keep the review framing for filled groups.
+  const showFillInHeading = matchResult.llm_autofill_skipped_no_key || matchResult.kyds_missing || noneAutoMapped
+
+  const autofillReasonSummary = (() => {
+    if (matchResult.llm_autofill_skipped_no_key) {
+      return 'LLM key not configured — set an API key in Settings, or fill the fields below by hand.'
+    }
+    if (matchResult.kyds_missing) {
+      return 'Know Your Dataset is missing — fill KYDS first for better auto-mapping, or enter fields below by hand.'
+    }
+    if (autofillErrors.length > 0 && someAutoMapped) {
+      const sample = autofillErrors.slice(0, 3).map((e) => e.group || e.error).filter(Boolean)
+      const more = autofillErrors.length > 3 ? ` (+${autofillErrors.length - 3} more)` : ''
+      return `Auto-fill succeeded for other groups. Failed for ${autofillErrors.length}: ${sample.join(' · ')}${more}. Only those groups need manual entry (marked below).`
+    }
+    if (autofillErrors.length > 0) {
+      const sample = autofillErrors.slice(0, 3).map((e) => {
+        const group = e.group && e.group !== 'all' ? `${e.group}: ` : ''
+        return `${group}${e.error}`
+      })
+      const more = autofillErrors.length > 3 ? ` (+${autofillErrors.length - 3} more)` : ''
+      return `Auto-fill failed for ${autofillErrors.length} group${autofillErrors.length !== 1 ? 's' : ''}: ${sample.join(' · ')}${more}. You can still fill every field below manually.`
+    }
+    if (noneAutoMapped) {
+      return usesSdgSheet
+        ? 'No SDG indicator fields were auto-mapped for these groups. Fill them in manually below.'
+        : 'No catalogue fields were auto-mapped for these groups. Fill them in manually below.'
+    }
+    return null
+  })()
 
   const handleNmdsFileSelected = async (groupIndex, file) => {
     patchNmdsGroup(groupIndex, { file, appliedFrom: null, appliedToAll: false, parseError: '', fileMismatch: false })
     if (!file) {
-      patchNmdsGroup(groupIndex, { fields: emptyNmdsFields(), appliedFrom: null })
+      patchNmdsGroup(groupIndex, { fields: emptyFields(), appliedFrom: null })
+      if (usesSdgSheet) {
+        setGroups((prev) => prev.map((g, i) => (
+          i === groupIndex
+            ? { ...g, metadata: { ...(g.catalogue_metadata || {}) }, concept_metadata: emptyFields() }
+            : g
+        )))
+      }
       return
     }
 
@@ -119,38 +237,46 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
       }
       const { concepts } = await res.json()
       const rows = concepts || []
-      const matched = rows.filter((r) => r.concept && KNOWN_NMDS_CONCEPTS.has(r.concept) && r.details).length
-      // A wrong file most often has no "Concept Name" column at all, so the
-      // backend parses zero rows — that's just as much a mismatch signal as
-      // rows that parsed but mostly didn't match a known concept.
-      const mismatch = rows.length === 0 || matched / rows.length < 0.5
+      const mergePreview = mergeConcepts(emptyFields(), rows)
+      const filledFromFile = Object.values(mergePreview).filter((v) => String(v || '').trim()).length
+      const fieldCount = Object.keys(emptyFields()).length
+      // A wrong file most often has no matching concept/code rows at all.
+      const mismatch = rows.length === 0 || filledFromFile / Math.max(fieldCount, 1) < 0.5
       // Reset before merging so a re-upload doesn't carry over values left
       // behind by a previous (possibly wrong) file.
+      const merged = mergePreview
       patchNmdsGroup(groupIndex, {
         fileMismatch: mismatch,
-        fields: mergeNmdsConcepts(emptyNmdsFields(), concepts),
+        fields: merged,
       })
+      if (usesSdgSheet) {
+        setGroups((prev) => prev.map((g, i) => (
+          i === groupIndex
+            ? { ...g, metadata: { ...(g.metadata || {}), ...merged }, concept_metadata: merged }
+            : g
+        )))
+      }
     } catch (e) {
       patchNmdsGroup(groupIndex, { parseError: e.message })
     } finally {
       patchNmdsGroup(groupIndex, { parsing: false })
-      setNmdsModalGroup(groupIndex)
+      if (!usesSdgSheet) setNmdsModalGroup(groupIndex)
     }
   }
 
   const handleSaveGroup = (groupIndex) => {
-    const complete = isNmdsFieldsComplete(nmdsByGroup[groupIndex]?.fields || emptyNmdsFields())
+    const complete = isComplete(nmdsByGroup[groupIndex]?.fields || emptyFields())
     if (!complete) {
-      setToast({ type: 'warn', message: 'NMDS fields not filled. Fill all NMDS details for this group.' })
+      setToast({ type: 'warn', message: `${standardName} fields not filled. Fill all ${standardName} details for this group.` })
       return
     }
     setToast({ type: 'success', message: 'Group data saved.' })
   }
 
   const handlePush = async () => {
-    const allNmdsComplete = nmdsByGroup.every((g) => isNmdsFieldsComplete(g?.fields || emptyNmdsFields()))
-    if (!allNmdsComplete) {
-      setToast({ type: 'warn', message: 'NMDS fields not filled. Fill all NMDS details.' })
+    const allComplete = nmdsByGroup.every((g) => isComplete(g?.fields || emptyFields()))
+    if (!allComplete) {
+      setToast({ type: 'warn', message: `${standardName} fields not filled. Fill all ${standardName} details.` })
       return
     }
 
@@ -177,19 +303,40 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
           if (mt?.table?._uid) tablesByUid[mt.table._uid] = mt.table
         })
       })
-      matchResult.unmatched_tables.forEach((u) => {
+      ;(matchResult.unmatched_tables || []).forEach((u) => {
         if (u?.table?._uid) tablesByUid[u.table._uid] = u.table
       })
 
-      const finalGroups = groups.map((g, gi) => ({
-        ...g,
-        matched_tables: g.matched_tables.map((mt) => ({
-          ...mt,
-          table: tablesByUid[mt.table?._uid] || mt.table,
-        })),
-        nmds_concepts: nmdsFieldsToList(nmdsByGroup[gi]?.fields || emptyNmdsFields()),
-      }))
-      matchResult.unmatched_tables.forEach((u, idx) => {
+      const finalGroups = groups.map((g, gi) => {
+        const conceptFields = nmdsByGroup[gi]?.fields || emptyFields()
+        const conceptList = fieldsToList(conceptFields)
+        let metadata = g.metadata || {}
+        if (usesSdgSheet) {
+          const catalogue = g.catalogue_metadata || {}
+          metadata = {
+            ...catalogue,
+            title: catalogue.title || conceptFields.Indicator || conceptFields.Goal || g.file_name || '',
+            description: catalogue.description || conceptFields.Target || '',
+            data_source: catalogue.data_source || conceptFields['International organisations(s) responsible for global monitoring'] || '',
+            last_updated: catalogue.last_updated || conceptFields['Metadata update'] || '',
+            remarks: catalogue.remarks || conceptFields['Related indicators'] || '',
+          }
+        }
+        return {
+          ...g,
+          metadata,
+          matched_tables: g.matched_tables.map((mt) => ({
+            ...mt,
+            table: tablesByUid[mt.table?._uid] || mt.table,
+          })),
+          metadata_standard: standard,
+          nmds_concepts: {
+            standard,
+            concepts: conceptList,
+          },
+        }
+      })
+      ;(matchResult.unmatched_tables || []).forEach((u, idx) => {
         const target = assignments[idx]
         if (target !== undefined && target !== '') {
           finalGroups[Number(target)].matched_tables.push({
@@ -249,7 +396,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
               <h2 className="text-xl font-bold text-ink">Fill in Metadata</h2>
               <p className="m-0 text-[13px] leading-relaxed text-ink-soft">
                 {totalMatched} table{totalMatched !== 1 ? 's' : ''} matched across {groups.length} metadata group{groups.length !== 1 ? 's' : ''}.
-                Fields couldn't be auto-filled — please fill them in groupwise below, including the NMDS fields for each group. Your entries are kept as you move between groups. Nothing is pushed to the catalogue until you confirm below.
+                Please fill them in groupwise below, including the NMDS fields for each group. Your entries are kept as you move between groups. Nothing is pushed to the catalogue until you confirm below.
               </p>
             </>
           ) : (
@@ -266,31 +413,29 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
 
       {error && <ErrorBanner>{error}</ErrorBanner>}
 
-      {step === 'review' && matchResult.llm_autofill_skipped_no_key && (
+      {step === 'review' && autofillReasonSummary && (
         <div className="rounded-lg border border-[#f3c98b] bg-[#fffaf1] px-4 py-3 text-sm leading-relaxed text-[#8a5a12]">
-          <strong>LLM key not configured</strong> — metadata couldn't be auto-filled
-          from the dataset and your KYDS entry. Set an API key in Settings to enable
-          this next time, or fill the fields below in by hand.
+          <strong>Why auto-fill didn’t complete</strong>
+          <div className="mt-1 [overflow-wrap:anywhere]">{autofillReasonSummary}</div>
         </div>
       )}
 
       {step !== 'done' && (
         <MetadataSheetGrid
+          columns={sheetColumns}
           rows={groups.map((g, gi) => ({
             id: gi,
             label: g.file_name,
             values: g.metadata,
-            manual: !matchResult.llm_autofill_skipped_no_key && !isMetadataAutoMapped(g.metadata),
+            manual: groupFailedAutofill(g, gi) || (!isMetadataAutoMapped(g.metadata, usesSdgSheet ? sheetFieldKeys : null) && !matchResult.llm_autofill_skipped_no_key),
           }))}
           onChange={(gi, key, value) => updateMetadata(gi, { ...groups[gi].metadata, [key]: value })}
           renderGroupFooter={(row, gi) => {
-            const nmdsState = nmdsByGroup[gi] || emptyNmdsGroupState()
+            const nmdsState = nmdsByGroup[gi] || emptyConceptGroupState(emptyFields)
             return (
               <NmdsGroupPanel
                 fields={nmdsState.fields}
-                onFieldChange={(concept, value) =>
-                  patchNmdsGroup(gi, { fields: { ...nmdsState.fields, [concept]: value } })
-                }
+                onFieldChange={(concept, value) => updateConceptField(gi, concept, value)}
                 onFileSelected={(file) => handleNmdsFileSelected(gi, file)}
                 file={nmdsState.file}
                 appliedFrom={nmdsState.appliedFrom}
@@ -305,13 +450,18 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
                 canApplyToAll={groups.length > 1}
                 appliedToAll={!!nmdsState.appliedToAll}
                 onApplyToAll={() => applyNmdsToAll(gi)}
+                standardName={standardName}
+                topics={topics}
+                placeholders={placeholders}
+                fieldsToList={fieldsToList}
+                hideFieldEditor={usesSdgSheet}
               />
             )
           }}
         />
       )}
 
-      {matchResult.unmatched_tables.length > 0 && (
+      {matchResult.unmatched_tables?.length > 0 && (
         <div className="flex flex-col gap-2 rounded-[10px] border border-[#f3c98b] bg-[#fffaf1] p-4">
           <div className="flex items-center justify-between gap-2.5">
             <span className="inline-flex items-center gap-1.5 text-[13.5px] font-bold text-ink">
@@ -354,7 +504,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
         </div>
       )}
 
-      {matchResult.unmatched_inventory.length > 0 && (
+      {matchResult.unmatched_inventory?.length > 0 && (
         <div className="flex flex-col gap-2 rounded-[10px] border border-line bg-[#F7F3EA] p-4">
           <div className="flex items-center justify-between gap-2.5">
             <span className="inline-flex items-center gap-1.5 text-[13.5px] font-bold text-ink">

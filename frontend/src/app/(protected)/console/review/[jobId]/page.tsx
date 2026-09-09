@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import PdfReview from '../../../../../components/PdfReview'
 import { withAuthHeaders } from '../../../../../lib/auth'
+import { clearConsoleSession } from '../../../../../lib/consoleSession'
 
 export default function PdfReviewPage() {
   const { jobId } = useParams<{ jobId: string }>()
@@ -24,7 +25,10 @@ export default function PdfReviewPage() {
     <PdfReview
       jobId={jobId}
       filename={filename}
-      onDone={() => router.push('/console')}
+      onDone={() => {
+        clearConsoleSession()
+        router.push('/console')
+      }}
     />
   )
 }

@@ -8,8 +8,12 @@ import {
   setDatasetIdConfig as persistDatasetIdConfig,
   getMetadataRequiredFields,
   setMetadataRequiredFields as persistMetadataRequiredFields,
+  getMetadataStandard,
+  setMetadataStandard as persistMetadataStandard,
+  METADATA_STANDARD_OPTIONS,
   STATISTICS_OPTIONS,
 } from '../lib/settingsConfig'
+import { SDG_CONCEPT_TEMPLATE } from '../lib/sdgConcepts'
 
 const PROVIDERS = ['Anthropic', 'OpenAI', 'Self-hosted']
 const ROLES = ['Administrator', 'Data Steward', 'Data User']
@@ -57,6 +61,8 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
   const [savedDatasetIdConfig, setSavedDatasetIdConfig] = useState(getDatasetIdConfig)
   const [extraRequiredFields, setExtraRequiredFields] = useState(getMetadataRequiredFields)
   const [savedRequiredFields, setSavedRequiredFields] = useState(getMetadataRequiredFields)
+  const [metadataStandard, setMetadataStandard] = useState(getMetadataStandard)
+  const [savedMetadataStandard, setSavedMetadataStandard] = useState(getMetadataStandard)
   const [pickingFields, setPickingFields] = useState(false)
 
   const setDatasetIdField = (key) => (e) => setDatasetIdConfig((prev) => ({ ...prev, [key]: e.target.value }))
@@ -73,15 +79,19 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
 
   const datasetIdDirty = JSON.stringify(datasetIdConfig) !== JSON.stringify(savedDatasetIdConfig)
   const requiredFieldsDirty = JSON.stringify(extraRequiredFields) !== JSON.stringify(savedRequiredFields)
+  const metadataStandardDirty = metadataStandard !== savedMetadataStandard
+  const metadataConfigDirty = requiredFieldsDirty || metadataStandardDirty
 
   const saveDatasetIdConfig = () => {
     persistDatasetIdConfig(datasetIdConfig)
     setSavedDatasetIdConfig(datasetIdConfig)
   }
 
-  const saveMetadataRequiredFields = () => {
+  const saveMetadataConfig = () => {
     persistMetadataRequiredFields(extraRequiredFields)
     setSavedRequiredFields(extraRequiredFields)
+    persistMetadataStandard(metadataStandard)
+    setSavedMetadataStandard(metadataStandard)
   }
 
   const saveCustomStandard = () => {
@@ -95,7 +105,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
   const statusToneClass = { ok: 'text-[13px] text-[#3d7a3d]', warn: 'text-[13px] text-[#9a7413]', none: 'text-[13px] text-[#8E9398]' }
 
   return (
-    <div className="flex max-w-[720px] flex-col gap-[22px]">
+    <div className="flex w-full flex-col gap-[22px]">
       <div className="flex flex-col gap-1.5">
         <div className="font-display text-4xl font-medium text-ink">Settings</div>
       </div>
@@ -121,11 +131,11 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
       </div>
 
       <div className="flex flex-col gap-[18px] rounded-lg border border-line bg-white p-6">
-        <div className="flex flex-wrap gap-2">
+        <div className="flex gap-2">
           {CONFIG_TABS.map((t) => (
             <button
               key={t.key}
-              className={`h-9 rounded-full border px-[18px] text-sm font-semibold transition-colors ${
+              className={`h-9 min-w-0 flex-1 rounded-full border px-3 text-sm font-semibold transition-colors ${
                 activeTab === t.key ? 'border-teal bg-teal text-white' : 'border-line bg-cream text-ink-soft hover:bg-sage hover:text-ink'
               }`}
               onClick={() => setActiveTab(t.key)}
@@ -183,7 +193,45 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
 
         {activeTab === 'metadata' && (
           <>
-            <div className="-mt-2.5 text-sm text-ink-soft">Controls which metadata fields are required when a dataset is submitted.</div>
+            <div className="-mt-2.5 text-sm text-ink-soft">Choose the metadata standard and which fields are required when a dataset is submitted.</div>
+            <div className="flex max-w-md flex-col gap-1.5">
+              <label className={fieldLabelClass}>Metadata standard</label>
+              <select
+                className={inputClass}
+                value={metadataStandard}
+                onChange={(e) => setMetadataStandard(e.target.value)}
+              >
+                {METADATA_STANDARD_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              <div className="text-[13px] text-ink-soft">
+                Determines which metadata schema is used when filling dataset metadata.
+              </div>
+            </div>
+
+            {metadataStandard === 'sdg' ? (
+              <>
+                <div className="text-[13px] font-semibold text-ink">Indicator information (SDG_INDICATOR_INFO)</div>
+                <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-cream">
+                  {SDG_CONCEPT_TEMPLATE.filter((row) => !row.section).map((row) => (
+                    <div className="flex cursor-default select-text items-start gap-3 border-b border-line bg-white px-4 py-3.5 last:border-b-0" key={row.code}>
+                      <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-[#3d7a3d]" strokeWidth={1.75} />
+                      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                        <div className="text-[15px] font-semibold text-ink">
+                          {row.concept}{' '}
+                          <span className="text-[13px] font-medium text-[#8E9398]">({row.code})</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="text-[13px] text-ink-soft">
+                  These SDG indicator fields are filled in Batch Review and saved with each catalogue push.
+                </div>
+              </>
+            ) : (
+              <>
             <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-cream">
               {Object.keys(extraRequiredFields).length === 0 && (
                 <div className="flex cursor-default select-text items-start gap-3 border-b border-line bg-white px-4 py-3.5 last:border-b-0">
@@ -261,10 +309,12 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
                 </>
               )
             })()}
+              </>
+            )}
             <div className="flex items-center gap-3.5">
-              <button className="flex h-10 items-center rounded-md bg-teal px-[18px] text-[15px] font-semibold text-white transition-colors hover:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]" disabled={!requiredFieldsDirty} onClick={saveMetadataRequiredFields}>Save configuration</button>
-              <span className={requiredFieldsDirty ? statusToneClass.warn : statusToneClass.ok}>
-                {requiredFieldsDirty ? 'Unsaved changes' : 'Configuration saved'}
+              <button className="flex h-10 items-center rounded-md bg-teal px-[18px] text-[15px] font-semibold text-white transition-colors hover:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]" disabled={!metadataConfigDirty} onClick={saveMetadataConfig}>Save configuration</button>
+              <span className={metadataConfigDirty ? statusToneClass.warn : statusToneClass.ok}>
+                {metadataConfigDirty ? 'Unsaved changes' : 'Configuration saved'}
               </span>
             </div>
           </>

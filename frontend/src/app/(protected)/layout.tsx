@@ -7,6 +7,7 @@ import KydsModal from '../../components/KydsModal'
 import { useApp } from '../../context/AppContext'
 import { withAuthHeaders } from '../../lib/auth'
 import { notifyKydsChanged } from '../../lib/kydsEvents'
+import { getConsoleReturnPath, rememberConsoleReturnPath } from '../../lib/consoleSession'
 
 function screenForPathname(pathname: string) {
   if (pathname.startsWith('/console')) return 'console'
@@ -31,13 +32,25 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     if (authChecked && !loggedIn) router.replace('/login')
   }, [authChecked, loggedIn, router])
 
+  // Remember deep console routes (PDF processing / review / grouping) so
+  // AppShell → Console returns to the in-progress job after Settings.
+  useEffect(() => {
+    if (pathname) rememberConsoleReturnPath(pathname)
+  }, [pathname])
+
   if (!authChecked || !loggedIn) return null // brief, avoids a logged-out flash before the client-side check runs
 
   return (
     <AppShell
       screen={screenForPathname(pathname)}
       user={user}
-      onNavigate={(key: string) => router.push(PATH_FOR_SCREEN[key] || '/dashboard')}
+      onNavigate={(key: string) => {
+        if (key === 'console') {
+          router.push(getConsoleReturnPath() || '/console')
+          return
+        }
+        router.push(PATH_FOR_SCREEN[key] || '/dashboard')
+      }}
       onSignOut={() => { signOut(); router.push('/login') }}
     >
       {showKyds && (

@@ -4,6 +4,7 @@ import os
 import pathlib
 import json as _json
 import asyncio
+import base64
 import threading
 import time
 import uuid
@@ -25,14 +26,19 @@ import catalogue as _cat
 from metadata_excel import parse_metadata_workbook, parse_concept_file
 from metadata_llm import (
     METADATA_FIELDS,
+    SDG_METADATA_FIELDS,
     extract_excel_facts,
+    extract_facts_from_tables,
     generate_metadata_with_llm,
+    generate_sdg_metadata_with_llm,
     parse_llm_metadata_output,
+    parse_llm_sdg_metadata_output,
 )
 from catalogue_matching import match_tables_to_metadata
 from table_export import table_to_excel_bytes, safe_download_stem
 from original_sheet_export import extract_sheet_with_formatting_from_bytes
 from validation import validate_table_fields_code, validate_table_fields_llm
+from sql_extract import extract_tables_from_sql
 
 
 def _title_looks_like_column_headers(title: str, columns: list) -> bool:
@@ -151,17 +157,15 @@ def _validate_tables(tables: list) -> None:
         list(pool.map(_validate_table_id_title, tables))
 
 
-def _group_metadata_is_empty(metadata: Optional[dict]) -> bool:
-    return not any((metadata or {}).get(f) for f in METADATA_FIELDS)
+def _group_metadata_is_empty(metadata: Optional[dict], fields: Optional[list] = None) -> bool:
+    keys = fields if fields is not None else METADATA_FIELDS
+    return not any((metadata or {}).get(f) for f in keys)
 
 
-def _stringify_metadata_values(metadata: dict) -> dict:
-    """The LLM can return a structured value for a field like `key_statistics`
-    (see the notebook's own example output, a JSON object of headline
-    numbers) -- normalize every field to a plain string so it renders safely
-    in a text input/textarea on the frontend."""
+def _stringify_field_values(metadata: dict, fields: list) -> dict:
+    """Normalize LLM field values to plain strings for form inputs."""
     out = {}
-    for field in METADATA_FIELDS:
+    for field in fields:
         v = metadata.get(field)
         if v is None or v == "":
             out[field] = None
@@ -172,9 +176,25 @@ def _stringify_metadata_values(metadata: dict) -> dict:
     return out
 
 
+def _stringify_metadata_values(metadata: dict) -> dict:
+    """The LLM can return a structured value for a field like `key_statistics`
+    (see the notebook's own example output, a JSON object of headline
+    numbers) -- normalize every field to a plain string so it renders safely
+    in a text input/textarea on the frontend."""
+    return _stringify_field_values(metadata, METADATA_FIELDS)
+
+
+def _stringify_sdg_metadata_values(metadata: dict) -> dict:
+    return _stringify_field_values(metadata, SDG_METADATA_FIELDS)
+
+
 def _fill_empty_group_metadata(
-    groups: list, dataset_bytes_by_filename: dict, kyds_responses: Optional[dict], extractor: TableExtractor,
-) -> bool:
+    groups: list,
+    dataset_bytes_by_filename: dict,
+    kyds_responses: Optional[dict],
+    extractor: TableExtractor,
+    standard: str = "nmds",
+) -> tuple[bool, list[dict]]:
     """Stage 4 -- LLM metadata creation per group (mirrors the notebook's
     `generate_metadata_per_group`). Only groups with no metadata (i.e. not
     matched to a row in an uploaded metadata workbook) are touched; groups
@@ -182,56 +202,104 @@ def _fill_empty_group_metadata(
     per bullet 1 -- metadata-file entry stays the source of truth when the
     user provided one.
 
-    Excel facts are derived once per source file (no LLM involved) and, as
-    in the notebook, reused unchanged across every group from that file.
-    KYDS responses come from Postgres (see catalogue.get_latest_kyds_responses)
-    rather than a hardcoded payload.
+    When `standard` is `sdg`, fills UN SDG indicator fields instead of the
+    catalogue sheet fields. Catalogue values are still produced when possible
+    and stored on `catalogue_metadata` for push/display compatibility.
+
+    Facts come from either:
+      - uploaded Excel workbook bytes (`dataset_bytes_by_filename` + extract_excel_facts), or
+      - already-extracted in-memory tables (SQL / any source without workbook bytes)
+        via extract_facts_from_tables.
+    KYDS responses come from Postgres (see catalogue.get_latest_kyds_responses).
 
     `extractor` supplies the LLM call, built from the caller's own Settings
     key/provider (see `_extractor_for`) rather than a server-side env var.
 
-    Returns True when autofill was skipped specifically because no LLM key
-    is configured (as opposed to there being nothing to fill) -- callers use
-    this to tell the user why fields are still empty."""
-    if not kyds_responses or not dataset_bytes_by_filename:
-        return False
+    Returns `(skipped_no_key, errors)` where `errors` lists per-group failures
+    as `{group, error}` so the UI can explain why fields are still empty and
+    let the user fill them in manually.
+    """
+    if not kyds_responses:
+        return False, []
 
-    has_fillable_group = any(
-        _group_metadata_is_empty(g.get("metadata"))
-        and g.get("matched_tables")
-        and dataset_bytes_by_filename.get(g["matched_tables"][0]["table"].get("source_file"))
-        for g in groups
-    )
+    use_sdg = str(standard or "nmds").lower() == "sdg"
+
+    def _group_tables(g: dict) -> list:
+        matched = [mt["table"] for mt in g.get("matched_tables", []) if mt.get("table")]
+        if matched:
+            return matched
+        # PDF grouping shape uses a flat `tables` list until the client
+        # normalizes to matched_tables for BatchReview / batch-push.
+        return [t for t in (g.get("tables") or []) if isinstance(t, dict)]
+
+    def _is_empty(g: dict) -> bool:
+        if use_sdg:
+            # Prefer dedicated concept blob when present; otherwise treat
+            # metadata keyed by SDG labels as the fill target.
+            concept_meta = g.get("concept_metadata")
+            if isinstance(concept_meta, dict) and concept_meta:
+                return _group_metadata_is_empty(concept_meta, SDG_METADATA_FIELDS)
+            return _group_metadata_is_empty(g.get("metadata"), SDG_METADATA_FIELDS)
+        return _group_metadata_is_empty(g.get("metadata"), METADATA_FIELDS)
+
+    has_fillable_group = any(_is_empty(g) and _group_tables(g) for g in groups)
     if not has_fillable_group:
-        return False
+        return False, []
     if extractor.skip_llm:
-        return True
+        return True, []
 
     facts_cache: dict = {}
+    errors: list[dict] = []
 
-    for g in groups:
-        if not _group_metadata_is_empty(g.get("metadata")):
+    for gi, g in enumerate(groups):
+        if not _is_empty(g):
             continue
-        tables = [mt["table"] for mt in g.get("matched_tables", [])]
+        tables = _group_tables(g)
         if not tables:
             continue
-        source_file = tables[0].get("source_file")
-        content = dataset_bytes_by_filename.get(source_file)
-        if not content:
-            continue
-
-        if source_file not in facts_cache:
-            facts_cache[source_file] = extract_excel_facts(content, source_file)
+        group_label = g.get("file_name") or g.get("name") or "Untitled group"
+        source_file = tables[0].get("source_file") or group_label or "extracted"
+        content = (dataset_bytes_by_filename or {}).get(source_file)
 
         try:
-            llm_output = generate_metadata_with_llm(
-                facts_cache[source_file], kyds=kyds_responses, complete_fn=extractor._complete,
-            )
-            g["metadata"] = _stringify_metadata_values(parse_llm_metadata_output(llm_output))
-        except Exception as e:
-            print(f"Stage 4 LLM metadata generation failed for group {g.get('file_name')}: {e}")
+            if content:
+                if source_file not in facts_cache:
+                    facts_cache[source_file] = extract_excel_facts(content, source_file)
+                facts = facts_cache[source_file]
+            else:
+                cache_key = f"tables::{source_file}::{g.get('file_name')}"
+                if cache_key not in facts_cache:
+                    facts_cache[cache_key] = extract_facts_from_tables(tables, source_file)
+                facts = facts_cache[cache_key]
 
-    return False
+            if use_sdg:
+                llm_output = generate_sdg_metadata_with_llm(
+                    facts, kyds=kyds_responses, complete_fn=extractor._complete,
+                )
+                sdg_meta = _stringify_sdg_metadata_values(parse_llm_sdg_metadata_output(llm_output))
+                g["concept_metadata"] = sdg_meta
+                # Drive the metadata page grid from SDG fields when that
+                # standard is selected; keep any prior catalogue values aside.
+                prior = g.get("metadata") or {}
+                if any(prior.get(f) for f in METADATA_FIELDS):
+                    g["catalogue_metadata"] = {
+                        f: prior.get(f) for f in METADATA_FIELDS if prior.get(f)
+                    }
+                g["metadata"] = sdg_meta
+            else:
+                llm_output = generate_metadata_with_llm(
+                    facts, kyds=kyds_responses, complete_fn=extractor._complete,
+                )
+                g["metadata"] = _stringify_metadata_values(parse_llm_metadata_output(llm_output))
+            # Keep a display name when the client sent PDF-style groups.
+            if not g.get("file_name") and g.get("name"):
+                g["file_name"] = g["name"]
+        except Exception as e:
+            msg = str(e).strip() or e.__class__.__name__
+            print(f"Stage 4 LLM metadata generation failed for group {group_label}: {msg}")
+            errors.append({"index": gi, "group": group_label, "error": msg})
+
+    return False, errors
 
 
 def require_user(request: Request) -> str:
@@ -416,9 +484,8 @@ async def get_my_kyds(user_email: str = Depends(require_user)):
 
 @app.post("/api/catalogue/parse-concept-file")
 async def parse_concept_metadata_file(file: UploadFile = File(...), user_email: str = Depends(require_user)):
-    """Reads an NMDS concept metadata file -- either a standalone CSV or a
-    full metadata workbook's nmds_concept_meta_data sheet -- and returns the
-    concept rows used to prefill the NMDS concept metadata step."""
+    """Reads a concept metadata file (NMDS or SDG) — CSV or workbook sheet —
+    and returns concept rows used to prefill the concept metadata step."""
     if not file.filename.lower().endswith((".xlsx", ".xls", ".csv")):
         raise HTTPException(400, "Only .xlsx / .xls / .csv files are supported")
     content = await file.read()
@@ -496,6 +563,67 @@ async def batch_extract(request: Request, files: list[UploadFile] = File(...), u
     return {"tables": all_tables, "per_file": per_file, "table_count": len(all_tables)}
 
 
+@app.post("/api/catalogue/sql-extract")
+async def sql_extract(request: Request, user_email: str = Depends(require_user)):
+    """Connect to a user-supplied Postgres database and return Excel-shaped
+    tables for batch-match → review → publish.
+
+    Body (JSON):
+      database_url?  OR  host + database + user (+ password?, port?, sslmode?)
+      query?         optional — if omitted, auto-extract:
+                       DHARA catalogue DBs expand datasets from dataset_rows;
+                       otherwise every user table/view is extracted
+      title?, table_id?  (used only when query is provided)
+      row_limit?, max_tables?
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Expected a JSON body")
+    if not isinstance(body, dict):
+        raise HTTPException(400, "Expected a JSON object")
+
+    query = body.get("query")
+    query = str(query).strip() if query is not None and str(query).strip() else None
+
+    def _run():
+        return extract_tables_from_sql(
+            query=query,
+            database_url=body.get("database_url"),
+            host=body.get("host"),
+            port=body.get("port"),
+            database=body.get("database"),
+            user=body.get("user"),
+            password=body.get("password"),
+            sslmode=body.get("sslmode"),
+            title=body.get("title"),
+            table_id=body.get("table_id"),
+            row_limit=body.get("row_limit") or None,
+            max_tables=body.get("max_tables") or None,
+        )
+
+    try:
+        tables = await asyncio.to_thread(_run)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"SQL extraction error: {e}")
+
+    source = (tables[0].get("source_file") if tables else None) or "SQL database"
+    if query:
+        mode = "query"
+    elif tables and any(t.get("sheet") == "catalogue" for t in tables):
+        mode = "catalogue"
+    else:
+        mode = "auto"
+    return {
+        "tables": tables,
+        "per_file": [{"filename": source, "table_count": len(tables)}],
+        "table_count": len(tables),
+        "mode": mode,
+    }
+
+
 @app.post("/api/catalogue/batch-match")
 async def batch_match(
     request: Request,
@@ -506,16 +634,12 @@ async def batch_match(
 ):
     """Parses multiple metadata workbooks and matches them against a set of
     already-extracted tables. Returns a proposed mapping for review --
-    nothing is written to the database here. Metadata files are optional;
-    when omitted (or when a dataset simply isn't described in any uploaded
-    metadata workbook), that group's fields are auto-filled via Stage 4 LLM
-    metadata generation instead of being left empty, provided the original
-    dataset workbook was also sent (`dataset_files`) -- see
-    `_fill_empty_group_metadata`. Uses the caller's own LLM key/provider from
-    Settings (see `_extractor_for`); with no key configured, autofill is
-    skipped and the response flags this via `llm_autofill_skipped_no_key` so
-    the frontend can tell the user why fields are still empty."""
-    extractor = _extractor_for(request)
+    nothing is written to the database here. Metadata files are optional.
+
+    Stage 4 LLM metadata autofill (KYDS + table/Excel facts) runs later,
+    after the user finishes grouping — see `/api/catalogue/fill-group-metadata`.
+    `dataset_files` is accepted for backwards compatibility but no longer
+    triggers autofill here."""
     tables = _json.loads(tables_json)
 
     metadata_payloads = []
@@ -528,12 +652,6 @@ async def batch_match(
             content = await f.read()
             metadata_payloads.append((f.filename, content))
 
-    dataset_payloads = {}
-    if dataset_files:
-        for f in dataset_files:
-            if f and f.filename:
-                dataset_payloads[f.filename] = await f.read()
-
     def _run():
         workbooks = []
         for filename, content in metadata_payloads:
@@ -543,16 +661,6 @@ async def batch_match(
                 raise ValueError(f"{filename}: {e}")
         result = match_tables_to_metadata(tables, workbooks)
         result["llm_autofill_skipped_no_key"] = False
-
-        if dataset_payloads:
-            conn = _cat.get_connection()
-            _cat.init_schema(conn)
-            kyds_responses = _cat.get_latest_kyds_responses(conn, user_email)
-            conn.close()
-            result["llm_autofill_skipped_no_key"] = _fill_empty_group_metadata(
-                result["groups"], dataset_payloads, kyds_responses, extractor,
-            )
-
         return result
 
     try:
@@ -562,6 +670,119 @@ async def batch_match(
     except Exception as e:
         raise HTTPException(500, f"Matching error: {e}")
     return result
+
+
+@app.post("/api/catalogue/fill-group-metadata")
+async def fill_group_metadata(request: Request, user_email: str = Depends(require_user)):
+    """Stage 4 — after grouping is confirmed, fill empty catalogue metadata
+    on each group from KYDS + in-memory table facts (and optional Excel
+    workbook bytes if the client still has them).
+
+    Body (JSON):
+      groups (required) — same shape as batch-match `groups`
+      standard? — `nmds` (default) or `sdg` for SDG indicator fields
+      dataset_files_b64? — optional { filename: base64 } map of workbook bytes
+    """
+    extractor = _extractor_for(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Expected a JSON body")
+    if not isinstance(body, dict):
+        raise HTTPException(400, "Expected a JSON object")
+
+    groups = body.get("groups")
+    if not isinstance(groups, list):
+        raise HTTPException(400, "groups must be a list")
+
+    standard = str(body.get("standard") or "nmds").lower()
+    if standard not in ("nmds", "sdg"):
+        standard = "nmds"
+    use_sdg = standard == "sdg"
+
+    dataset_payloads: dict = {}
+    raw_files = body.get("dataset_files_b64") or {}
+    if isinstance(raw_files, dict):
+        for filename, b64 in raw_files.items():
+            if not filename or not b64:
+                continue
+            try:
+                dataset_payloads[str(filename)] = base64.b64decode(b64)
+            except Exception:
+                raise HTTPException(400, f"Invalid base64 for dataset file {filename}")
+
+    def _run():
+        # Deep-ish copy so we don't mutate the request body unexpectedly if
+        # the same object is reused; groups contain nested table dicts.
+        filled = _json.loads(_json.dumps(groups))
+        conn = _cat.get_connection()
+        _cat.init_schema(conn)
+        kyds_responses = _cat.get_latest_kyds_responses(conn, user_email)
+        conn.close()
+        skipped, errors = _fill_empty_group_metadata(
+            filled, dataset_payloads, kyds_responses, extractor, standard=standard,
+        )
+        return filled, skipped, bool(kyds_responses), errors
+
+    try:
+        filled_groups, skipped_no_key, has_kyds, autofill_errors = await asyncio.to_thread(_run)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Metadata fill error: {e}")
+
+    fill_fields = SDG_METADATA_FIELDS if use_sdg else METADATA_FIELDS
+
+    # Return a lightweight patch — not the full groups with embedded table
+    # rows — so a single failed LLM call can't blow up the response and the
+    # client can merge successful metadata onto the groups it already has.
+    group_metadata = [
+        {
+            "index": i,
+            "file_name": g.get("file_name") or g.get("name"),
+            "metadata": g.get("metadata") or {},
+            "concept_metadata": g.get("concept_metadata") or {},
+            "catalogue_metadata": g.get("catalogue_metadata") or {},
+            "filled": not _group_metadata_is_empty(
+                g.get("concept_metadata") if use_sdg and g.get("concept_metadata") else g.get("metadata"),
+                fill_fields,
+            ),
+        }
+        for i, g in enumerate(filled_groups)
+    ]
+
+    return {
+        "group_metadata": group_metadata,
+        "standard": standard,
+        # Back-compat: still include groups, but strip bulky row payloads so
+        # partial success survives large SQL catalogue extracts.
+        "groups": [
+            {
+                **{k: v for k, v in g.items() if k not in ("matched_tables", "tables")},
+                "matched_tables": [
+                    {
+                        **mt,
+                        "table": {
+                            **{
+                                tk: tv
+                                for tk, tv in (mt.get("table") or {}).items()
+                                if tk != "rows"
+                            },
+                            "rows": [],
+                            "row_count": (mt.get("table") or {}).get("row_count"),
+                        },
+                    }
+                    for mt in (g.get("matched_tables") or [])
+                ],
+            }
+            for g in filled_groups
+        ],
+        "llm_autofill_skipped_no_key": skipped_no_key,
+        "kyds_missing": not has_kyds,
+        "autofill_errors": autofill_errors,
+        "autofill_failed_count": len(autofill_errors),
+        "autofill_filled_count": sum(1 for item in group_metadata if item["filled"]),
+    }
 
 
 @app.post("/api/catalogue/batch-push")
@@ -700,10 +921,19 @@ async def get_classifications(metadata_id: str, user_email: str = Depends(requir
         try:
             _cat.init_schema(conn)
             return _cat.get_metadata_group_classifications(conn, metadata_id)
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
         finally:
             conn.close()
 
-    columns = await asyncio.to_thread(_run)
+    try:
+        columns = await asyncio.to_thread(_run)
+    except Exception as e:
+        raise HTTPException(500, f"Failed to load classifications: {e}")
     if columns is None:
         raise HTTPException(404, f"No metadata group found for {metadata_id}")
     return {"columns": columns}

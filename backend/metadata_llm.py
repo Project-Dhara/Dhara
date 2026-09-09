@@ -511,6 +511,75 @@ def extract_excel_facts(file_content: bytes, filename: str) -> Dict[str, Any]:
     return facts
 
 
+def extract_facts_from_tables(tables: List[Dict[str, Any]], source_label: str) -> Dict[str, Any]:
+    """Build the same fact shape as `extract_excel_facts`, from already-extracted
+    in-memory tables (e.g. SQL auto-extract). Used for Stage 4 metadata LLM
+    autofill when no workbook bytes are available."""
+    facts: Dict[str, Any] = {
+        "filename": source_label or "extracted tables",
+        "source_kind": "tables",
+        "sheets": [],
+    }
+    by_sheet: Dict[str, List[Dict[str, Any]]] = {}
+
+    for idx, table in enumerate(tables or []):
+        raw_cols = table.get("columns") or []
+        columns = [
+            (c if isinstance(c, str) else str((c or {}).get("name") or f"column_{i + 1}"))
+            for i, c in enumerate(raw_cols)
+        ]
+        raw_rows = table.get("rows") or []
+        rows: List[Dict[str, Any]] = []
+        for r in raw_rows:
+            if isinstance(r, dict):
+                rows.append({col: r.get(col) for col in columns})
+            elif isinstance(r, (list, tuple)):
+                rows.append({col: (r[i] if i < len(r) else None) for i, col in enumerate(columns)})
+            else:
+                continue
+
+        title = str(table.get("title") or table.get("table_id") or f"Table {idx + 1}").strip()
+        sheet_name = str(table.get("sheet") or "data").strip() or "data"
+        table_id = str(table.get("table_id") or "").strip()
+
+        text_bits = [title, table_id, " ".join(columns)]
+        for sample in rows[:20]:
+            text_bits.append(" ".join(str(v) for v in sample.values() if v is not None))
+        block_text = "\n".join(text_bits)
+
+        tbl_facts = {
+            "sheet_name": sheet_name,
+            "title_context": title,
+            "description": None,
+            "table_name": f"{sheet_name} / {title}",
+            "table_boundaries": {
+                "start_row": 0,
+                "end_row": max(0, len(rows) - 1),
+                "n_rows": len(rows),
+                "n_cols": len(columns),
+            },
+            "table_identifiers": _extract_table_codes(block_text),
+            "raw_header_rows": [columns],
+            "column_names": columns,
+            "multi_row_header": False,
+            "n_header_rows": 1,
+            "sample_rows": rows[:5],
+            "row_count": len(rows),
+            "periods": _extract_periods(block_text),
+            "geography": _extract_geography(block_text),
+            "units": _extract_units(block_text),
+            "categorical_dimensions": _extract_row_dimension_categories(columns, rows),
+            "block_index": idx,
+            "source_type": table.get("source_type") or "extracted",
+        }
+        by_sheet.setdefault(sheet_name, []).append(tbl_facts)
+
+    for sheet_name, tbls in by_sheet.items():
+        facts["sheets"].append({"sheet_name": sheet_name, "tables": tbls})
+
+    return facts
+
+
 def prepare_kyds_for_llm(kyds: Dict[str, Any]) -> Dict[str, Any]:
     """Trim the KYDS responses down to the fields relevant for metadata generation, to save tokens.
 
@@ -560,25 +629,30 @@ Generate the following metadata fields using the provided `excel_facts` and `dat
 
 Rules:
 
-* Use Excel facts as the primary source for information about the actual data.
+* Use Excel / source-table facts as the primary source for information about the actual data.
 * Use KYDS context to understand the dataset's purpose, collection method, granularity, frequency, format, and notes.
 * Do not invent or guess information. If a value cannot be determined, return `null`.
-* Prefer explicit Excel evidence over inference.
+* Prefer explicit evidence in the facts over inference.
 * Do not contradict explicit KYDS information.
 * Generate concise, catalogue-ready values.
-* `key_statistics` should contain only statistics that can be directly calculated or clearly identified from the provided Excel facts.
+* `key_statistics` should contain only statistics that can be directly calculated or clearly identified from the provided facts.
 * `last_updated` and `future_release` must be `null` unless explicitly supported by the inputs.
-* `product` should identify the dataset/product represented by the workbook, not the file format.
+* `product` should identify the dataset/product represented by the source, not the file format.
 * `remarks` should contain relevant caveats, limitations, or contextual notes supported by the inputs.
+* When `excel_facts.source_kind` is `"tables"` (e.g. SQL extract), treat table titles, column names, and sample rows as the workbook evidence.
 
-Return ONLY valid JSON format output for the fields mentioned above.
+Return ONLY a single valid JSON object for the fields listed above.
+Do not wrap it in markdown fences. Do not add commentary before or after the JSON.
+Use double quotes for all keys and string values. Use null (not None) for unknown fields.
+Escape any double quotes that appear inside string values.
 """  # TODO: prompt to be added
 
     kyds_llm = prepare_kyds_for_llm(kyds)
     user_content = {"excel_facts": excel_facts, "dataset_context": kyds_llm}
 
     prompt = f"{system_prompt}\n\n{json.dumps(user_content, default=str)}"
-    return complete_fn(prompt, 1500)
+    # Catalogue metadata can be verbose; under-tokenizing truncates JSON mid-string.
+    return complete_fn(prompt, 2500)
 
 
 METADATA_FIELDS = [
@@ -588,14 +662,195 @@ METADATA_FIELDS = [
 ]
 
 
+def _extract_json_object(text: str) -> str:
+    """Pull the first top-level `{...}` object out of an LLM reply."""
+    start = text.find("{")
+    if start < 0:
+        raise json.JSONDecodeError("No JSON object found", text, 0)
+    depth = 0
+    in_str = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    raise json.JSONDecodeError("Unbalanced JSON object", text, start)
+
+
+def _repair_json_text(text: str) -> str:
+    """Best-effort cleanup for common LLM JSON mistakes."""
+    cleaned = re.sub(r"```[a-zA-Z]*\n?", "", text or "").strip().rstrip("`").strip()
+    # Smart quotes → ASCII
+    cleaned = (
+        cleaned.replace("\u201c", '"')
+        .replace("\u201d", '"')
+        .replace("\u2018", "'")
+        .replace("\u2019", "'")
+    )
+    try:
+        cleaned = _extract_json_object(cleaned)
+    except json.JSONDecodeError:
+        pass
+    # Trailing commas before } or ]
+    cleaned = re.sub(r",\s*([}\]])", r"\1", cleaned)
+    return cleaned
+
+
 def parse_llm_metadata_output(llm_output: str) -> Dict[str, Any]:
     """
     Parse the JSON metadata object returned by generate_metadata_with_llm and
     normalize it to exactly METADATA_FIELDS (missing fields become None).
+    Tolerates markdown fences, leading prose, trailing commas, and smart quotes.
     """
-    text = re.sub(r"```[a-zA-Z]*\n?", "", llm_output).strip().rstrip("`")
-    parsed = json.loads(text)
-    return {field: parsed.get(field) for field in METADATA_FIELDS}
+    raw = (llm_output or "").strip()
+    if not raw:
+        raise ValueError("LLM returned an empty metadata response")
+
+    candidates = [raw, _repair_json_text(raw)]
+    last_err: Optional[Exception] = None
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                return {field: parsed.get(field) for field in METADATA_FIELDS}
+        except json.JSONDecodeError as e:
+            last_err = e
+            continue
+
+    # Last resort: slice from first { to last } after repair.
+    repaired = _repair_json_text(raw)
+    start, end = repaired.find("{"), repaired.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            parsed = json.loads(re.sub(r",\s*([}\]])", r"\1", repaired[start : end + 1]))
+            if isinstance(parsed, dict):
+                return {field: parsed.get(field) for field in METADATA_FIELDS}
+        except json.JSONDecodeError as e:
+            last_err = e
+
+    detail = str(last_err) if last_err else "invalid JSON"
+    raise ValueError(f"Could not parse metadata JSON from LLM ({detail})")
+
+
+# UN SDG indicator information fields (section 0) — keys are concept labels
+# matching frontend/src/lib/sdgConcepts.ts.
+SDG_METADATA_FIELDS = [
+    "Goal",
+    "Target",
+    "Indicator",
+    "Series",
+    "Metadata update",
+    "Related indicators",
+    "International organisations(s) responsible for global monitoring",
+]
+
+SDG_FIELD_CODES = {
+    "Goal": "SDG_GOAL",
+    "Target": "SDG_TARGET",
+    "Indicator": "SDG_INDICATOR",
+    "Series": "SDG_SERIES_DESCR",
+    "Metadata update": "META_LAST_UPDATE",
+    "Related indicators": "SDG_RELATED_INDICATORS",
+    "International organisations(s) responsible for global monitoring": "SDG_CUSTODIAN_AGENCIES",
+}
+
+
+def generate_sdg_metadata_with_llm(
+    excel_facts: Dict[str, Any],
+    *,
+    kyds: Dict[str, Any],
+    complete_fn: Callable[[str, int], str],
+) -> str:
+    """Populate SDG indicator metadata fields from table/Excel facts + KYDS."""
+    field_lines = "\n".join(
+        f'* "{name}" ({SDG_FIELD_CODES[name]})' for name in SDG_METADATA_FIELDS
+    )
+    system_prompt = f"""You are a metadata-generation assistant for UN Sustainable Development Goals (SDG) indicator metadata.
+
+Generate the following SDG indicator information fields using the provided `excel_facts` and `dataset_context` (KYDS):
+
+{field_lines}
+
+Rules:
+
+* Use Excel / source-table facts as the primary source for what the data measures.
+* Use KYDS context for purpose, department, frequency, and notes.
+* Map the dataset to the most relevant SDG Goal, Target, and Indicator when evidence supports it.
+* Write values in the UN SDG metadata style (e.g. "Goal 3: …", "Target 3.b: …", "Indicator 3.b.2: …").
+* "Series" may list one or more series codes/descriptions, one per line when multiple apply.
+* "Metadata update" should be an ISO date (YYYY-MM-DD) only when supported; otherwise null.
+* "Related indicators" and custodian organisation(s) only when supported by the inputs; otherwise null.
+* Do not invent unrelated SDG goals. If the SDG mapping cannot be determined, return null for Goal/Target/Indicator.
+* Prefer explicit evidence over guesswork.
+
+Return ONLY a single valid JSON object whose keys are exactly the field names listed above (human labels, not the codes).
+Do not wrap it in markdown fences. Do not add commentary before or after the JSON.
+Use double quotes for all keys and string values. Use null (not None) for unknown fields.
+Escape any double quotes that appear inside string values.
+"""
+    kyds_llm = prepare_kyds_for_llm(kyds)
+    user_content = {"excel_facts": excel_facts, "dataset_context": kyds_llm}
+    prompt = f"{system_prompt}\n\n{json.dumps(user_content, default=str)}"
+    return complete_fn(prompt, 3000)
+
+
+def parse_llm_sdg_metadata_output(llm_output: str) -> Dict[str, Any]:
+    """Parse LLM JSON into exactly SDG_METADATA_FIELDS (missing → None)."""
+    raw = (llm_output or "").strip()
+    if not raw:
+        raise ValueError("LLM returned an empty SDG metadata response")
+
+    candidates = [raw, _repair_json_text(raw)]
+    last_err: Optional[Exception] = None
+    parsed_obj: Optional[Dict[str, Any]] = None
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                parsed_obj = parsed
+                break
+        except json.JSONDecodeError as e:
+            last_err = e
+
+    if parsed_obj is None:
+        repaired = _repair_json_text(raw)
+        start, end = repaired.find("{"), repaired.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                parsed = json.loads(re.sub(r",\s*([}\]])", r"\1", repaired[start : end + 1]))
+                if isinstance(parsed, dict):
+                    parsed_obj = parsed
+            except json.JSONDecodeError as e:
+                last_err = e
+
+    if parsed_obj is None:
+        detail = str(last_err) if last_err else "invalid JSON"
+        raise ValueError(f"Could not parse SDG metadata JSON from LLM ({detail})")
+
+    # Accept either human labels or UN codes as keys.
+    code_to_label = {code.lower(): label for label, code in SDG_FIELD_CODES.items()}
+    label_lower = {label.lower(): label for label in SDG_METADATA_FIELDS}
+    out: Dict[str, Any] = {field: None for field in SDG_METADATA_FIELDS}
+    for key, value in parsed_obj.items():
+        k = str(key or "").strip()
+        label = label_lower.get(k.lower()) or code_to_label.get(k.lower())
+        if label:
+            out[label] = value
+    return out
 
 
 def fill_classification_definitions(

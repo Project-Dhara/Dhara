@@ -20,6 +20,7 @@ dhara-poc/
 │   ├── main.py                  API routes
 │   ├── auth.py                  JWT login / signup
 │   ├── extractor.py             Claude/LLM table extraction from Excel
+│   ├── sql_extract.py           Read-only Postgres SELECT → Excel-shaped table
 │   ├── sda_india_pdf_extraction.py  PDF table extraction pipeline
 │   ├── pdf_store.py / pdf_grouping.py / pdf_dual_column.py
 │   ├── catalogue.py / catalogue_matching.py
@@ -42,6 +43,11 @@ the same Postgres catalog and are browsable under **Catalogue**.
 **Excel (batch)** — upload dataset workbooks (+ metadata tag files). Tables are
 extracted, matched to metadata (exact ID → typo-tolerant → keyword
 disambiguation), reconciled, classified/harmonised, then published.
+
+**SQL (Postgres)** — paste a connection URL; **tables are auto-extracted**
+(DHARA catalogue DBs expand each `datasets` row from `dataset_rows.row_data`)
+(custom `SELECT` optional). Continues on the **same Excel review path**.
+See Console → “Connect a SQL database”.
 
 **PDF** — upload a report → extract tables → **Preview** (edit cells, merge
 cross-page tables, show-all-rows) → **Grouping** (similarity / review) → continue

@@ -6,6 +6,7 @@ import { AlertTriangle, ArrowLeft, ArrowRight, Check, Pencil, X } from 'lucide-r
 import KydsSummaryCard from './KydsSummaryCard'
 import TableViewer from './TableViewer'
 import BatchUpload from './BatchUpload'
+import SqlUpload from './SqlUpload'
 import BatchReview from './BatchReview'
 import ReconcileIds from './ReconcileIds'
 import Classify from './Classify'
@@ -15,6 +16,7 @@ import Badge from './ui/Badge'
 import ErrorBanner from './ui/ErrorBanner'
 import { withAuthHeaders } from '../lib/auth'
 import { withLlmKeyHeaders } from '../lib/llmKey'
+import { getMetadataStandard } from '../lib/settingsConfig'
 import { StageSidebar, stageIndexForStep } from './ConsoleStages'
 
 // Short government table code for a tab button — e.g. "Table : D-12 & D-13"
@@ -28,7 +30,18 @@ function tableCode(table) {
     const codes = [...new Set(matches.map((m) => `${m[1].toUpperCase()}${m[2]}`))]
     return codes.join(', ')
   }
-  return table.sheet || table.title || table.id
+  const sheet = String(table.sheet || '').trim()
+  const genericSheet = !sheet || /^(catalogue|query|table|view|data|base table)$/i.test(sheet)
+  if (!genericSheet) return sheet
+  const title = String(table.title || '').trim()
+  if (title) return title.length > 56 ? `${title.slice(0, 56)}…` : title
+  return table.table_id || table.id || 'Table'
+}
+
+function tablePickerLabel(table) {
+  const code = tableCode(table)
+  const rows = table.row_count != null ? `${table.row_count} rows` : ''
+  return rows ? `${code} — ${rows}` : code
 }
 
 // Inline-editable group name shown on the grouping page — lets the user
@@ -258,9 +271,8 @@ function loadPersisted() {
   }
 }
 
-// Step 1 file-type choice. XLSX reveals the workbook uploader in the same
-// content panel; PDF opens the file picker immediately and starts upload —
-// no second "drop a PDF" screen that restates the same choice.
+// Step 1 file-type choice. XLSX / SQL reveal their uploaders in the same
+// content panel; PDF opens the file picker immediately and starts upload.
 function UploadChoice({ choice, onChoose, onPdfFile, pdfUploading, pdfError, onClearPdfError }) {
   const pdfInputRef = useRef(null)
   const [pdfDragging, setPdfDragging] = useState(false)
@@ -270,11 +282,11 @@ function UploadChoice({ choice, onChoose, onPdfFile, pdfUploading, pdfError, onC
     onPdfFile(file)
   }
 
-  if (choice === 'xlsx') {
+  if (choice === 'xlsx' || choice === 'sql') {
     return (
       <button type="button" className="inline-flex items-center gap-1.5 self-start text-[13px] font-semibold text-teal hover:text-teal-dark" onClick={() => onChoose(null)}>
         <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
-        Choose a different file type
+        Choose a different source type
       </button>
     )
   }
@@ -292,7 +304,7 @@ function UploadChoice({ choice, onChoose, onPdfFile, pdfUploading, pdfError, onC
           e.target.value = ''
         }}
       />
-      <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-2">
+      <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-3">
         <button
           type="button"
           onClick={() => onChoose('xlsx')}
@@ -321,6 +333,15 @@ function UploadChoice({ choice, onChoose, onPdfFile, pdfUploading, pdfError, onC
           <div className="text-[13px] leading-snug text-ink-soft">
             {pdfUploading ? 'Starting extraction…' : 'Click or drop a PDF — tables are extracted and reviewed for accuracy.'}
           </div>
+        </button>
+        <button
+          type="button"
+          onClick={() => onChoose('sql')}
+          disabled={pdfUploading}
+          className="flex min-h-[112px] w-full flex-col items-start gap-2 rounded-xl border border-line bg-cream/40 p-5 text-left transition-colors hover:border-teal hover:bg-cream disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <div className="text-[16px] font-bold text-ink">Connect a SQL database</div>
+          <div className="text-[13px] leading-snug text-ink-soft">Auto-extract Postgres tables (optional custom query), then continue on the Excel review path.</div>
         </button>
       </div>
       {pdfError && (
@@ -353,6 +374,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   const [editingGroups, setEditingGroups] = useState(false)
   const [dragOverGroup, setDragOverGroup] = useState(null) // group index the dragged table is currently over, or null
   const [groupingToast, setGroupingToast] = useState(null)
+  const [metadataFilling, setMetadataFilling] = useState(false)
 
   useEffect(() => {
     if (!groupingToast) return undefined
@@ -573,13 +595,115 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   // Every table must end up in a named group before moving on -- block the
   // transition and warn instead of silently leaving tables unmatched,
   // whether they were left that way by manual grouping, editing, or drag-
-  // and-drop.
-  const requestContinueToMetadata = () => {
+  // and-drop. Stage 4 metadata autofill runs here (after grouping), not at
+  // extract/match time, so KYDS + table facts apply to the final groups.
+  const requestContinueToMetadata = async () => {
     if (matchResult?.unmatched_tables.length > 0) {
       setGroupingToast('All tables must be assigned to a group with a group name before continuing.')
       return
     }
-    setStep(4)
+    if (!matchResult?.groups?.length) {
+      setGroupingToast('Create at least one group before continuing to metadata.')
+      return
+    }
+    if (metadataFilling) return
+
+    setMetadataFilling(true)
+    setGroupingToast(null)
+    try {
+      const res = await fetch(
+        '/api/catalogue/fill-group-metadata',
+        withAuthHeaders(withLlmKeyHeaders({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ groups: matchResult.groups, standard: getMetadataStandard() }),
+        })),
+      )
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Metadata autofill failed' }))
+        const detail = typeof err.detail === 'string' ? err.detail : 'Metadata autofill failed'
+        // Still open the metadata step so the user can fill fields by hand.
+        setMatchResult((prev) => (prev ? {
+          ...prev,
+          llm_autofill_skipped_no_key: false,
+          kyds_missing: false,
+          autofill_errors: [{ group: 'all', error: detail }],
+        } : prev))
+        setGroupingToast(`${detail} — fill metadata in manually below.`)
+        setStep(4)
+        return
+      }
+      const data = await res.json()
+      const autofillErrors = Array.isArray(data.autofill_errors) ? data.autofill_errors : []
+      const metaPatches = Array.isArray(data.group_metadata) ? data.group_metadata : null
+      setMatchResult((prev) => {
+        if (!prev) return prev
+        let nextGroups = prev.groups
+        if (metaPatches) {
+          // Merge successful fills onto the groups we already have (keeps
+          // table rows intact; only blank groups stay blank on failure).
+          nextGroups = prev.groups.map((g, i) => {
+            const patch = metaPatches.find((p) => p.index === i) || metaPatches[i]
+            if (!patch) return g
+            const next = { ...g }
+            if (patch.file_name) next.file_name = patch.file_name
+            if (patch.filled && patch.metadata) {
+              next.metadata = { ...(g.metadata || {}), ...patch.metadata }
+            }
+            if (patch.concept_metadata && Object.keys(patch.concept_metadata).length) {
+              next.concept_metadata = { ...(g.concept_metadata || {}), ...patch.concept_metadata }
+            }
+            if (patch.catalogue_metadata && Object.keys(patch.catalogue_metadata).length) {
+              next.catalogue_metadata = { ...(g.catalogue_metadata || {}), ...patch.catalogue_metadata }
+            }
+            return next
+          })
+        } else if (Array.isArray(data.groups) && data.groups.length === prev.groups.length) {
+          // Legacy full-groups response: take metadata only, never replace tables.
+          nextGroups = prev.groups.map((g, i) => ({
+            ...g,
+            file_name: data.groups[i]?.file_name || g.file_name,
+            metadata: data.groups[i]?.metadata && Object.keys(data.groups[i].metadata).length
+              ? { ...(g.metadata || {}), ...data.groups[i].metadata }
+              : g.metadata,
+          }))
+        }
+        return {
+          ...prev,
+          groups: nextGroups,
+          llm_autofill_skipped_no_key: Boolean(data.llm_autofill_skipped_no_key),
+          kyds_missing: Boolean(data.kyds_missing),
+          autofill_errors: autofillErrors,
+          autofill_filled_count: Number(data.autofill_filled_count) || 0,
+        }
+      })
+      const filledCount = Number(data.autofill_filled_count) || 0
+      if (data.kyds_missing) {
+        setGroupingToast('Fill in Know Your Dataset first so metadata can be auto-mapped — or fill fields manually on the next step.')
+      } else if (data.llm_autofill_skipped_no_key) {
+        setGroupingToast('Add an LLM API key in Settings to auto-fill metadata, or fill fields manually on the next step.')
+      } else if (autofillErrors.length > 0) {
+        const sample = autofillErrors[0]?.group || autofillErrors[0]?.error || 'unknown'
+        setGroupingToast(
+          filledCount > 0
+            ? `Auto-filled ${filledCount} group${filledCount !== 1 ? 's' : ''}; ${autofillErrors.length} need manual entry (${sample}).`
+            : autofillErrors.length === 1
+              ? `Auto-fill failed for 1 group (${sample}). Fill that group in manually.`
+              : `Auto-fill failed for ${autofillErrors.length} groups. Fill those groups in manually.`,
+        )
+      }
+      setStep(4)
+    } catch (e) {
+      const detail = e.message || 'Could not auto-fill metadata'
+      setMatchResult((prev) => (prev ? {
+        ...prev,
+        autofill_errors: [{ group: 'all', error: detail }],
+      } : prev))
+      setGroupingToast(`${detail} — continuing so you can fill metadata manually.`)
+      setStep(4)
+    } finally {
+      setMetadataFilling(false)
+    }
   }
 
   // Applies { tableId: { table_id, title } } corrections onto the live
@@ -696,16 +820,25 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
 
   const stageIdx = stageIndexForStep(step)
 
-  // Once a file type is chosen, drop the generic "xlsx or PDF" copy so the
-  // header doesn't restate what the upload widget already says.
+  // Once a source type is chosen, tailor the step-1 header copy.
   const info = (() => {
     const base = stepInfoFor(step)
-    if (step !== 1 || uploadChoice !== 'xlsx') return base
-    return {
-      title: 'Select dataset and metadata files',
-      purpose: 'Upload the workbooks and their metadata tag files for this release.',
-      next: base.next,
+    if (step !== 1) return base
+    if (uploadChoice === 'xlsx') {
+      return {
+        title: 'Select dataset and metadata files',
+        purpose: 'Upload the workbooks and their metadata tag files for this release.',
+        next: base.next,
+      }
     }
+    if (uploadChoice === 'sql') {
+      return {
+        title: 'Connect a PostgreSQL database',
+        purpose: 'Paste a connection URL. Catalogue DBs expand each dataset; otherwise every table is extracted (custom SQL optional).',
+        next: base.next,
+      }
+    }
+    return base
   })()
 
   const handlePdfFile = async (file) => {
@@ -829,17 +962,18 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
               onClearPdfError={() => setPdfError('')}
             />
             {uploadChoice === 'xlsx' && <BatchUpload onMatched={handleMatched} />}
+            {uploadChoice === 'sql' && <SqlUpload onMatched={handleMatched} />}
           </div>
         )}
 
         {step === 2 && previewTables.length > 0 && (
           <div className="flex flex-col gap-5">
             {previewDatasets.length > 1 && (
-              <div className="flex flex-wrap items-center gap-2.5">
-                <span className="font-sans text-lg font-semibold text-[#8E9398]">Dataset:</span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-soft">Dataset</span>
                 {previewDatasets.length > 2 ? (
                   <select
-                    className="rounded-md border border-line px-3 py-1.5 text-sm"
+                    className="rounded-md border border-line bg-white px-3 py-1.5 text-[13px] text-ink outline-none focus:border-teal"
                     value={effectiveDataset}
                     onChange={(e) => selectPreviewDataset(e.target.value)}
                   >
@@ -867,7 +1001,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                   ? (
                     <span className="inline-flex items-start gap-1.5">
                       <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" strokeWidth={2} aria-hidden />
-                      {unsavedMismatched.length} of {mismatchedPreviewTables.length} flagged table{mismatchedPreviewTables.length !== 1 ? 's' : ''} still need correcting & saving — open each orange tab below.
+                      {unsavedMismatched.length} of {mismatchedPreviewTables.length} flagged table{mismatchedPreviewTables.length !== 1 ? 's' : ''} still need correcting & saving — open each flagged table below.
                     </span>
                   )
                   : (
@@ -878,36 +1012,63 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                   )}
               </div>
             )}
-            <div className="flex flex-wrap items-center gap-2.5">
-              {visiblePreviewTables.map((t) => {
-                const flagged = !!t.id_title_mismatch
-                const unsaved = flagged && !savedIds.has(t._uid)
-                const resolved = !unsaved
-                const active = t._uid === previewSelected?._uid
-                return (
-                  <div
-                    key={t._uid}
-                    className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 ${
-                      active ? 'border-teal bg-teal' : unsaved ? 'border-[#d9822b] bg-[#fdf1e2] ring-1 ring-[#d9822b]' : resolved ? 'border-green bg-[#f2f8f5]' : 'border-line bg-white'
-                    }`}
-                    onClick={() => selectPreviewTable(t._uid)}
-                    title={flagged ? `${t.id} — Source Table ID / Title need confirmation` : `${t.id} — no validation errors`}
-                  >
-                    <span className={`flex h-4.5 w-4.5 items-center justify-center rounded-full ${
-                      active ? 'bg-white text-teal' : unsaved ? 'bg-[#d9822b] text-white' : 'bg-green text-white'
-                    }`}>
-                      {unsaved ? (
-                        <AlertTriangle className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
-                      ) : (
-                        <Check className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
-                      )}
-                    </span>
-                    <span className={`font-sans text-xs font-medium ${active ? 'text-white' : 'text-ink'}`}>{tableCode(t)}</span>
-                    <span className={`text-xs ${active ? 'text-[#a9cfc9]' : 'text-[#8E9398]'}`}>{t.row_count} rows</span>
-                  </div>
-                )
-              })}
-            </div>
+            {visiblePreviewTables.length > 10 ? (
+              <label className="flex min-w-0 max-w-3xl flex-col gap-1.5">
+                <span className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-ink-soft">
+                  Table
+                  <span className="rounded bg-cream px-1.5 py-0.5 text-[10.5px] font-semibold normal-case tracking-normal text-[#8E9398]">
+                    {visiblePreviewTables.length}
+                  </span>
+                </span>
+                <select
+                  className="w-full rounded-md border border-line bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-teal"
+                  value={previewSelected?._uid || ''}
+                  onChange={(e) => selectPreviewTable(e.target.value)}
+                >
+                  {visiblePreviewTables.map((t) => {
+                    const flagged = !!t.id_title_mismatch
+                    const unsaved = flagged && !savedIds.has(t._uid)
+                    const mark = unsaved ? '⚠ ' : flagged ? '✓ ' : ''
+                    return (
+                      <option key={t._uid} value={t._uid}>
+                        {mark}{tablePickerLabel(t)}
+                      </option>
+                    )
+                  })}
+                </select>
+              </label>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2.5">
+                {visiblePreviewTables.map((t) => {
+                  const flagged = !!t.id_title_mismatch
+                  const unsaved = flagged && !savedIds.has(t._uid)
+                  const resolved = !unsaved
+                  const active = t._uid === previewSelected?._uid
+                  return (
+                    <div
+                      key={t._uid}
+                      className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 ${
+                        active ? 'border-teal bg-teal' : unsaved ? 'border-[#d9822b] bg-[#fdf1e2] ring-1 ring-[#d9822b]' : resolved ? 'border-green bg-[#f2f8f5]' : 'border-line bg-white'
+                      }`}
+                      onClick={() => selectPreviewTable(t._uid)}
+                      title={flagged ? `${t.id} — Source Table ID / Title need confirmation` : `${t.id} — no validation errors`}
+                    >
+                      <span className={`flex h-4.5 w-4.5 items-center justify-center rounded-full ${
+                        active ? 'bg-white text-teal' : unsaved ? 'bg-[#d9822b] text-white' : 'bg-green text-white'
+                      }`}>
+                        {unsaved ? (
+                          <AlertTriangle className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
+                        ) : (
+                          <Check className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
+                        )}
+                      </span>
+                      <span className={`font-sans text-xs font-medium ${active ? 'text-white' : 'text-ink'}`}>{tableCode(t)}</span>
+                      <span className={`text-xs ${active ? 'text-[#a9cfc9]' : 'text-[#8E9398]'}`}>{t.row_count} rows</span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
             {previewSelected && (
               <TableViewer table={previewSelected} compact />
             )}
@@ -1084,9 +1245,10 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
               {editingGroups ? (
                 <Button variant="primary" onClick={finishEditingGroups}>Done editing</Button>
               ) : (
-                <Button variant="primary" onClick={requestContinueToMetadata} className="inline-flex items-center gap-1.5">
-                  Continue to metadata
-                  <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
+                <Button variant="primary" onClick={requestContinueToMetadata} disabled={metadataFilling} className="inline-flex items-center gap-1.5">
+                  {metadataFilling && <span className="inline-block h-[13px] w-[13px] animate-spin rounded-full border-2 border-white/50 border-t-white" />}
+                  {metadataFilling ? 'Filling metadata…' : 'Continue to metadata'}
+                  {!metadataFilling && <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />}
                 </Button>
               )}
             </div>

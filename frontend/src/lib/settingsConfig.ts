@@ -1,7 +1,17 @@
 const DATASET_ID_KEY = 'dhara.datasetIdConfig'
 const METADATA_REQUIRED_KEY = 'dhara.metadataRequiredFields'
+const METADATA_STANDARD_KEY = 'dhara.metadataStandard'
 
 export const STATISTICS_OPTIONS = ['Vital Statistics', 'Labour Statistics', 'Industrial Statistics']
+
+export const METADATA_STANDARD_OPTIONS = [
+  { value: 'nmds', label: 'NMDS' },
+  { value: 'sdg', label: 'Sustainable Development Goals' },
+] as const
+
+export type MetadataStandard = (typeof METADATA_STANDARD_OPTIONS)[number]['value']
+
+export const DEFAULT_METADATA_STANDARD: MetadataStandard = 'nmds'
 
 export const DEFAULT_DATASET_ID_CONFIG = {
   prefix: 'DDI_DES_DEL',
@@ -51,4 +61,23 @@ export function getMetadataRequiredFields() {
 
 export function setMetadataRequiredFields(fields: unknown) {
   writeJson(METADATA_REQUIRED_KEY, fields)
+}
+
+function isMetadataStandard(value: unknown): value is MetadataStandard {
+  return METADATA_STANDARD_OPTIONS.some((opt) => opt.value === value)
+}
+
+export function getMetadataStandard(): MetadataStandard {
+  try {
+    const raw = localStorage.getItem(METADATA_STANDARD_KEY)
+    if (!raw) return DEFAULT_METADATA_STANDARD
+    const parsed = JSON.parse(raw)
+    return isMetadataStandard(parsed) ? parsed : DEFAULT_METADATA_STANDARD
+  } catch {
+    return DEFAULT_METADATA_STANDARD
+  }
+}
+
+export function setMetadataStandard(standard: MetadataStandard) {
+  writeJson(METADATA_STANDARD_KEY, standard)
 }

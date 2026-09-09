@@ -83,12 +83,17 @@ export default function NmdsConceptForm({
           const filled = t.items.filter((r) => (fields[r.concept] || '').trim()).length
           const active = i === topicIndex
           const done = filled === t.items.length
+          const unfilled = !done
           return (
             <button
               key={t.item_no}
               type="button"
               className={`grid min-w-0 grid-cols-[18px_1fr] items-center gap-2 rounded-full border px-2.5 py-1.5 pl-2 font-sans text-[12.5px] font-medium transition-colors ${
-                active ? 'border-teal bg-sage text-ink' : 'border-line bg-surface text-ink-soft hover:border-teal hover:text-ink'
+                active
+                  ? 'border-teal bg-sage text-ink'
+                  : unfilled
+                    ? 'border-[#e2711d] bg-surface text-ink-soft shadow-[0_0_0_1px_#e2711d] hover:text-ink'
+                    : 'border-line bg-surface text-ink-soft hover:border-teal hover:text-ink'
               }`}
               onClick={() => setTopicIndex(i)}
             >

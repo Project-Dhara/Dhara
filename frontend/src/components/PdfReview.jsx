@@ -21,6 +21,7 @@ import { isGarbled } from '../lib/garbled'
 import Badge from './ui/Badge'
 import Button from './ui/Button'
 import ErrorBanner from './ui/ErrorBanner'
+import KydsSummaryCard from './KydsSummaryCard'
 import PdfConsoleLayout from './PdfConsoleLayout'
 import ProcessingStepper from './ProcessingStepper'
 
@@ -1348,7 +1349,8 @@ export default function PdfReview({ jobId, filename, onDone }) {
             </span>
           </div>
         </div>
-        <div className="flex flex-none items-center gap-2.5">
+        <div className="flex flex-none flex-wrap items-center justify-end gap-2.5">
+          <KydsSummaryCard variant="corner" />
           <Button variant="primary" disabled={continuing} onClick={continueToGrouping} className="inline-flex items-center gap-1.5">
             {continuing ? 'Saving…' : (
               <>

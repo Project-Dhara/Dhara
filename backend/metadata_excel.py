@@ -107,28 +107,62 @@ def parse_inventory(wb) -> list:
 def _concepts_from_dicts(dicts: list) -> list:
     out = []
     for r in dicts:
-        concept = r.get("Concept Name")
-        if not concept:
+        # Support NMDS headers and SDG / UN-style variants.
+        concept = (
+            r.get("Concept Name")
+            or r.get("Concept")
+            or r.get("Field")
+            or r.get("Name")
+        )
+        code = r.get("Code") or r.get("SDG Code") or r.get("Field Code") or ""
+        details = (
+            r.get("Details (Summary)")
+            or r.get("Details")
+            or r.get("Summary")
+            or r.get("Value")
+            or r.get("Description")
+        )
+        if not concept and not code:
             continue
-        out.append({
-            "item_no": r.get("Item No"),
-            "concept": str(concept).strip(),
-            "details": r.get("Details (Summary)"),
-        })
+        row = {
+            "item_no": r.get("Item No") or r.get("Item") or r.get("No") or "",
+            "concept": str(concept).strip() if concept else "",
+            "details": details,
+        }
+        if code:
+            row["code"] = str(code).strip()
+        out.append(row)
     return out
 
 
 def parse_concepts(wb) -> list:
-    sheet_name = next((n for n in wb.sheetnames if n.lower() == "nmds_concept_meta_data"), None)
+    preferred = (
+        "nmds_concept_meta_data",
+        "sdg_concept_meta_data",
+        "sdg_indicator_meta_data",
+        "sdg_metadata",
+    )
+    sheet_name = next((n for n in wb.sheetnames if n.lower() in preferred), None)
+    if not sheet_name:
+        # Soft match: any sheet whose name mentions concept/sdg metadata.
+        sheet_name = next(
+            (
+                n for n in wb.sheetnames
+                if "concept" in n.lower() or (n.lower().startswith("sdg") and "meta" in n.lower())
+            ),
+            None,
+        )
     if not sheet_name:
         return []
     return _concepts_from_dicts(_rows_to_dicts(_rows(wb[sheet_name])))
 
 
 def parse_concepts_from_csv(file_bytes: bytes) -> list:
-    """Parses a standalone NMDS concept metadata CSV (Item No, Concept Name,
-    Details (Summary) columns), same shape as the nmds_concept_meta_data
-    sheet inside a full metadata workbook."""
+    """Parses a standalone concept metadata CSV (NMDS or SDG).
+
+    Accepts Item No / Concept Name / Details columns, plus optional Code
+    (and common aliases used in UN SDG exports).
+    """
     text = file_bytes.decode("utf-8-sig", errors="replace")
     rows = [row for row in csv.reader(StringIO(text)) if any(c.strip() for c in row)]
     if len(rows) < 2:
@@ -142,10 +176,7 @@ def parse_concepts_from_csv(file_bytes: bytes) -> list:
 
 
 def parse_concept_file(file_bytes: bytes, filename: str) -> list:
-    """Parses either a standalone NMDS concept metadata CSV, or a full
-    metadata workbook's nmds_concept_meta_data sheet (falling back to the
-    active sheet when a dedicated concept-only workbook has no sheet by
-    that name)."""
+    """Parses a concept metadata CSV or workbook sheet (NMDS or SDG)."""
     if filename.lower().endswith(".csv"):
         return parse_concepts_from_csv(file_bytes)
 
@@ -157,7 +188,12 @@ def parse_concept_file(file_bytes: bytes, filename: str) -> list:
 
 
 def parse_classifications(wb) -> dict:
-    skip = FIXED_SHEETS | {"nmds_concept_meta_data"}
+    skip = FIXED_SHEETS | {
+        "nmds_concept_meta_data",
+        "sdg_concept_meta_data",
+        "sdg_indicator_meta_data",
+        "sdg_metadata",
+    }
     classifications = {}
     for name in wb.sheetnames:
         if name.lower() in skip:

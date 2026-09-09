@@ -8,7 +8,8 @@ import { useEffect, useState } from 'react'
 // Short categorical fields render as compact editable badges; focused fields
 // expand to show wrapped content. Free-text fields get their own full-width row.
 export const METADATA_COLUMNS = [
-  { key: 'product', label: 'Product', type: 'badge', placeholder: 'e.g. Population_Data', readOnly: true },
+  { key: 'title', label: 'Title', type: 'primary', placeholder: 'Dataset / table title', required: true },
+  { key: 'product', label: 'Product', type: 'badge', placeholder: 'e.g. Population_Data' },
   { key: 'category', label: 'Category', type: 'badge', placeholder: 'e.g. Demographics' },
   { key: 'geography', label: 'Geography', type: 'badge', placeholder: 'e.g. India' },
   { key: 'frequency', label: 'Frequency', type: 'badge', placeholder: 'e.g. Annually' },
@@ -156,10 +157,14 @@ export default function MetadataSheetGrid({
               <div className="flex flex-col gap-2.5">
                 {longCols.map((c) => (
                   <label key={c.key} className="flex flex-col gap-1">
-                    <span className="font-sans text-[11px] font-semibold uppercase tracking-wide text-[#8E9398]">{c.label}</span>
+                    <span className="font-sans text-[11px] font-semibold uppercase tracking-wide text-[#8E9398]">
+                      {c.label}
+                      {c.code ? <span className="ml-1 font-medium normal-case tracking-normal">({c.code})</span> : null}
+                      {c.required ? ' *' : ''}
+                    </span>
                     <textarea
                       className="box-border min-h-[44px] w-full resize-y rounded-lg border border-line bg-cream px-3 py-2 font-sans text-[13.5px] leading-relaxed text-ink placeholder:text-[#a49c8e] focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal"
-                      rows={2}
+                      rows={3}
                       value={row.values[c.key] || ''}
                       placeholder={c.placeholder}
                       onChange={(e) => onChange(row.id, c.key, e.target.value)}

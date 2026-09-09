@@ -261,11 +261,11 @@ function ScrollspyNav({ activeIndex, maxSeenIndex, onJump }) {
             title={label}
           >
             <span
-              className={`h-1.5 w-full rounded-full transition-colors ${
-                isCurrent ? 'bg-teal' : visited ? 'bg-teal/50' : 'bg-line'
-              } ${isCurrent ? 'ring-2 ring-teal/30' : ''}`}
+              className={`h-1.5 w-full rounded-full transition-[background-color,box-shadow] duration-200 ${
+                isCurrent ? 'bg-teal ring-2 ring-teal/30' : visited ? 'bg-teal/50' : 'bg-line'
+              }`}
             />
-            <span className={`text-center text-[10px] font-semibold leading-tight ${isCurrent ? 'text-teal' : 'text-ink-soft'}`}>
+            <span className={`text-center text-[10px] font-semibold leading-tight transition-colors duration-200 ${isCurrent ? 'text-teal' : 'text-ink-soft'}`}>
               {label}
             </span>
           </button>
@@ -283,33 +283,81 @@ export default function KydsModal({ onSkip, onSave, initialForm = null, editing 
 
   const bodyRef = useRef(null)
   const sectionRefs = useRef([])
+  const jumpingRef = useRef(false)
+  const jumpClearTimer = useRef(null)
   const [activeIndex, setActiveIndex] = useState(0)
   const [maxSeenIndex, setMaxSeenIndex] = useState(0)
 
+  // Scrollspy: activate the last section whose top has crossed a line near
+  // the top of the scrollport. IntersectionObserver was inconsistent because
+  // tall sections stay "intersecting" long after you've moved into the next.
   useEffect(() => {
     const bodyEl = bodyRef.current
     if (!bodyEl) return undefined
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries.filter((e) => e.isIntersecting)
-        if (visible.length === 0) return
-        // Prefer the topmost intersecting section as "current".
-        visible.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)
-        const idx = sectionRefs.current.indexOf(visible[0].target)
-        if (idx !== -1) {
-          setActiveIndex(idx)
-          setMaxSeenIndex((prev) => Math.max(prev, idx))
-        }
-      },
-      { root: bodyEl, threshold: [0, 0.5] }
-    )
-    sectionRefs.current.forEach((el) => el && observer.observe(el))
-    return () => observer.disconnect()
+
+    const ACTIVATION_OFFSET = 56
+
+    const syncActiveFromScroll = () => {
+      if (jumpingRef.current) return
+      const sections = sectionRefs.current
+      if (!sections.length) return
+
+      const rootTop = bodyEl.getBoundingClientRect().top
+      const marker = rootTop + ACTIVATION_OFFSET
+      let next = 0
+      for (let i = 0; i < sections.length; i++) {
+        const el = sections[i]
+        if (!el) continue
+        if (el.getBoundingClientRect().top <= marker) next = i
+      }
+
+      // At the bottom, pin the last section so Notes lights up reliably.
+      const atBottom = bodyEl.scrollTop + bodyEl.clientHeight >= bodyEl.scrollHeight - 4
+      if (atBottom) {
+        const last = sections.length - 1
+        if (last >= 0) next = last
+      }
+
+      setActiveIndex((prev) => (prev === next ? prev : next))
+      setMaxSeenIndex((prev) => (next > prev ? next : prev))
+    }
+
+    bodyEl.addEventListener('scroll', syncActiveFromScroll, { passive: true })
+    // Layout may settle after first paint (fonts / checkboxes).
+    const raf = requestAnimationFrame(syncActiveFromScroll)
+    return () => {
+      cancelAnimationFrame(raf)
+      bodyEl.removeEventListener('scroll', syncActiveFromScroll)
+    }
   }, [])
 
   const jumpTo = (i) => {
-    sectionRefs.current[i]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    const bodyEl = bodyRef.current
+    const section = sectionRefs.current[i]
+    if (!bodyEl || !section) return
+
+    jumpingRef.current = true
+    setActiveIndex(i)
+    setMaxSeenIndex((prev) => Math.max(prev, i))
+
+    const delta = section.getBoundingClientRect().top - bodyEl.getBoundingClientRect().top
+    const target = Math.max(0, bodyEl.scrollTop + delta - 12)
+    bodyEl.scrollTo({ top: target, behavior: 'smooth' })
+
+    const unlock = () => {
+      if (!jumpingRef.current) return
+      jumpingRef.current = false
+      jumpClearTimer.current = null
+    }
+    if (jumpClearTimer.current) clearTimeout(jumpClearTimer.current)
+    bodyEl.addEventListener('scrollend', unlock, { once: true })
+    // Fallback when scrollend is unsupported or the scroll is a no-op.
+    jumpClearTimer.current = setTimeout(unlock, 450)
   }
+
+  useEffect(() => () => {
+    if (jumpClearTimer.current) clearTimeout(jumpClearTimer.current)
+  }, [])
 
   const setList = (key) => (value) => {
     setForm((prev) => ({ ...prev, [key]: toggleIn(prev[key], value) }))
@@ -347,7 +395,7 @@ export default function KydsModal({ onSkip, onSave, initialForm = null, editing 
 
         <ScrollspyNav activeIndex={activeIndex} maxSeenIndex={maxSeenIndex} onJump={jumpTo} />
 
-        <div ref={bodyRef} className="flex flex-1 flex-col gap-[18px] overflow-y-auto px-6 pb-6 pt-[18px]">
+        <div ref={bodyRef} className="flex flex-1 flex-col gap-[18px] overflow-y-auto scroll-smooth px-6 pb-6 pt-[18px]">
           <section {...sectionProps(0)}>
             <div className="flex items-center gap-2.5">
               <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-teal text-xs font-bold text-white">0</span>
