@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowRight, X } from 'lucide-react'
 import { withLlmKeyHeaders } from '../lib/llmKey'
 import { withAuthHeaders } from '../lib/auth'
@@ -23,9 +23,17 @@ function FileList({ files, onRemove }) {
   )
 }
 
-export default function BatchUpload({ onMatched }) {
+export default function BatchUpload({
+  onMatched,
+  onWorking,
+  onError,
+  initialDatasetFiles = [],
+  metadataFiles: controlledMetadataFiles,
+  onMetadataFilesChange,
+  hideMetadataSection = false,
+}) {
   const [datasetFiles, setDatasetFiles] = useState([])
-  const [metadataFiles, setMetadataFiles] = useState([])
+  const [internalMetadataFiles, setInternalMetadataFiles] = useState([])
   const [stage, setStage] = useState('idle') // idle | extracting | matching | error
   const [error, setError] = useState('')
   // A single shared hidden input, routed by `pendingTarget`, sidesteps a
@@ -33,6 +41,21 @@ export default function BatchUpload({ onMatched }) {
   // elements on the page stops firing onChange after the first one is used.
   const fileInputRef = useRef()
   const pendingTarget = useRef(null) // 'dataset' | 'metadata'
+  const metadataControlled = controlledMetadataFiles != null
+  const metadataFiles = metadataControlled ? controlledMetadataFiles : internalMetadataFiles
+  const setMetadataFiles = metadataControlled ? onMetadataFilesChange : setInternalMetadataFiles
+
+  useEffect(() => {
+    if (!initialDatasetFiles.length) return
+    setDatasetFiles((prev) => {
+      const next = [...prev]
+      initialDatasetFiles.forEach((file) => {
+        const exists = next.some((f) => f.name === file.name && f.size === file.size)
+        if (!exists) next.push(file)
+      })
+      return next
+    })
+  }, [initialDatasetFiles])
 
   const excelOnly = (fileList) => Array.from(fileList).filter((f) => /\.(xlsx|xls)$/i.test(f.name))
 
@@ -45,7 +68,7 @@ export default function BatchUpload({ onMatched }) {
     const files = excelOnly(fileList)
     if (pendingTarget.current === 'dataset') {
       setDatasetFiles((prev) => [...prev, ...files])
-    } else if (pendingTarget.current === 'metadata') {
+    } else if (pendingTarget.current === 'metadata' && setMetadataFiles) {
       setMetadataFiles((prev) => [...prev, ...files])
     }
   }
@@ -59,6 +82,7 @@ export default function BatchUpload({ onMatched }) {
   const runMatch = async () => {
     setError('')
     setStage('extracting')
+    onWorking?.()
     try {
       const extractFd = new FormData()
       datasetFiles.forEach((f) => extractFd.append('files', f))
@@ -89,6 +113,7 @@ export default function BatchUpload({ onMatched }) {
     } catch (e) {
       setError(e.message)
       setStage('error')
+      onError?.(e)
     }
   }
 
@@ -103,7 +128,7 @@ export default function BatchUpload({ onMatched }) {
         onChange={(e) => { handleFilesChosen(e.target.files); e.target.value = '' }}
       />
 
-      <div className="grid w-full grid-cols-1 gap-5 sm:grid-cols-2">
+      <div className={`grid w-full grid-cols-1 gap-5 ${hideMetadataSection ? '' : 'sm:grid-cols-2'}`}>
         <div className="flex min-w-0 flex-col gap-2.5">
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-sm bg-green" />
@@ -119,20 +144,22 @@ export default function BatchUpload({ onMatched }) {
           <FileList files={datasetFiles} onRemove={removeDataset} />
         </div>
 
-        <div className="flex min-w-0 flex-col gap-2.5">
-          <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-sm bg-yellow" />
-            <span className="text-xs font-bold uppercase tracking-wide text-ink">Metadata files</span>
+        {!hideMetadataSection && (
+          <div className="flex min-w-0 flex-col gap-2.5">
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-sm bg-yellow" />
+              <span className="text-xs font-bold uppercase tracking-wide text-ink">Metadata files</span>
+            </div>
+            <div
+              className={`flex h-[84px] cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-[#c9bda6] bg-[#FFFCF6] ${busy ? 'cursor-not-allowed opacity-60' : ''}`}
+              onClick={() => !busy && openPicker('metadata')}
+            >
+              <div className="text-[15px] font-semibold text-teal">Add metadata files</div>
+              <div className="text-[13px] text-[#8E9398]">XLSX tag files</div>
+            </div>
+            <FileList files={metadataFiles} onRemove={removeMetadata} />
           </div>
-          <div
-            className={`flex h-[84px] cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-[#c9bda6] bg-[#FFFCF6] ${busy ? 'cursor-not-allowed opacity-60' : ''}`}
-            onClick={() => !busy && openPicker('metadata')}
-          >
-            <div className="text-[15px] font-semibold text-teal">Add metadata files</div>
-            <div className="text-[13px] text-[#8E9398]">XLSX tag files</div>
-          </div>
-          <FileList files={metadataFiles} onRemove={removeMetadata} />
-        </div>
+        )}
       </div>
 
       {error && <ErrorBanner>{error}</ErrorBanner>}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { AlertTriangle, ArrowLeft, ArrowRight, Pencil, X } from 'lucide-react'
 import { withAuthHeaders } from '../lib/auth'
@@ -12,8 +12,10 @@ import PdfConsoleLayout from './PdfConsoleLayout'
 import BatchReview from './BatchReview'
 import Classify from './Classify'
 import Publish from './Publish'
+import ConsoleStatusPlaceholder from './ConsoleStatusPlaceholder'
 import Button from './ui/Button'
 import ErrorBanner from './ui/ErrorBanner'
+import { STATUS_TRANSITIONS } from '../lib/consoleStatusTransitions'
 
 const EMPTY_GROUP_METADATA = {
   title: '', product: '', category: '', geography: '', frequency: '',
@@ -216,6 +218,8 @@ export default function PdfGrouping({ jobId }) {
   const [metaLabel, setMetaLabel] = useState(persisted?.metaLabel ?? '')
   const [metadataId, setMetadataId] = useState(persisted?.metadataId ?? null)
   const [metadataIds, setMetadataIds] = useState(persisted?.metadataIds ?? [])
+  const [statusPage, setStatusPage] = useState(null)
+  const continueOkRef = useRef(false)
 
   const groups = grouping.groups
   const unmatched = grouping.unmatched
@@ -459,133 +463,153 @@ export default function PdfGrouping({ jobId }) {
       setToast('Create at least one group before continuing.')
       return
     }
-    if (metadataFilling || saving) return
+    if (metadataFilling || saving || statusPage) return
 
     setSaving(true)
     setMetadataFilling(true)
     setError('')
     setToast(null)
-    try {
-      const res = await fetch(
-        `/api/pdf/jobs/${jobId}/grouping`,
-        withAuthHeaders({
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            groups: groups.map((g) => ({
-              name: g.name,
-              table_pks: (g.tables || []).map((t) => t.id),
-            })),
-          }),
-        }),
-      )
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.detail || 'Could not save grouping')
-      }
 
-      const catalogueGroups = pdfGroupsToCatalogueGroups(groups, filename || 'pdf')
-      const fillRes = await fetch(
-        '/api/catalogue/fill-group-metadata',
-        withAuthHeaders(withLlmKeyHeaders({
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ groups: catalogueGroups, standard: getMetadataStandard() }),
-        })),
-      )
-      if (!fillRes.ok) {
-        const err = await fillRes.json().catch(() => ({ detail: 'Metadata autofill failed' }))
-        const detail = typeof err.detail === 'string' ? err.detail : 'Metadata autofill failed'
-        setMatchResult({
-          groups: catalogueGroups,
-          unmatched_tables: [],
-          unmatched_inventory: [],
-          llm_autofill_skipped_no_key: false,
-          kyds_missing: false,
-          autofill_errors: [{ group: 'all', error: detail }],
-        })
-        setToast(`${detail} — fill metadata in manually below.`)
-        setPipelineStep(4)
-        setMaxStepReached((prev) => Math.max(prev, 4))
-        return
-      }
-      const data = await fillRes.json()
-      const autofillErrors = Array.isArray(data.autofill_errors) ? data.autofill_errors : []
-      const metaPatches = Array.isArray(data.group_metadata) ? data.group_metadata : null
-      const baseGroups = data.groups || catalogueGroups
-      const mergedGroups = catalogueGroups.map((g, i) => {
-        const patch = metaPatches
-          ? (metaPatches.find((p) => p.index === i) || metaPatches[i])
-          : null
-        if (patch?.filled && patch.metadata) {
-          return {
-            ...g,
-            file_name: patch.file_name || g.file_name,
-            metadata: { ...(g.metadata || {}), ...patch.metadata },
-            concept_metadata: patch.concept_metadata || g.concept_metadata,
-            catalogue_metadata: patch.catalogue_metadata || g.catalogue_metadata,
-          }
-        }
-        // Legacy: metadata from stripped groups response
-        const legacy = baseGroups[i]
-        if (legacy?.metadata && Object.keys(legacy.metadata).length) {
-          return {
-            ...g,
-            file_name: legacy.file_name || g.file_name,
-            metadata: { ...(g.metadata || {}), ...legacy.metadata },
-          }
-        }
-        return g
-      })
-      const filledCount = Number(data.autofill_filled_count) || mergedGroups.filter((g) => Object.values(g.metadata || {}).some((v) => String(v || '').trim())).length
-      setMatchResult({
-        groups: mergedGroups,
-        unmatched_tables: [],
-        unmatched_inventory: [],
-        llm_autofill_skipped_no_key: Boolean(data.llm_autofill_skipped_no_key),
-        kyds_missing: Boolean(data.kyds_missing),
-        autofill_errors: autofillErrors,
-        autofill_filled_count: filledCount,
-      })
-      if (data.kyds_missing) {
-        setToast('Fill in Know Your Dataset first so metadata can be auto-mapped — or fill fields manually on the next step.')
-      } else if (data.llm_autofill_skipped_no_key) {
-        setToast('Add an LLM API key in Settings to auto-fill metadata, or fill fields manually on the next step.')
-      } else if (autofillErrors.length > 0) {
-        const sample = autofillErrors[0]?.group || autofillErrors[0]?.error || 'unknown'
-        setToast(
-          filledCount > 0
-            ? `Auto-filled ${filledCount} group${filledCount !== 1 ? 's' : ''}; ${autofillErrors.length} need manual entry (${sample}).`
-            : `Auto-fill failed for ${autofillErrors.length} group${autofillErrors.length !== 1 ? 's' : ''}. Fill those groups in manually.`,
+    const fillWork = async () => {
+      try {
+        const res = await fetch(
+          `/api/pdf/jobs/${jobId}/grouping`,
+          withAuthHeaders({
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              groups: groups.map((g) => ({
+                name: g.name,
+                table_pks: (g.tables || []).map((t) => t.id),
+              })),
+            }),
+          }),
         )
-      }
-      setPipelineStep(4)
-      setMaxStepReached((prev) => Math.max(prev, 4))
-    } catch (e) {
-      // Grouping may already be saved — still open metadata for manual entry when possible.
-      if (!matchResult) {
-        try {
-          const catalogueGroups = pdfGroupsToCatalogueGroups(groups, filename || 'pdf')
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          throw new Error(body.detail || 'Could not save grouping')
+        }
+
+        const catalogueGroups = pdfGroupsToCatalogueGroups(groups, filename || 'pdf')
+        const fillRes = await fetch(
+          '/api/catalogue/fill-group-metadata',
+          withAuthHeaders(withLlmKeyHeaders({
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ groups: catalogueGroups, standard: getMetadataStandard() }),
+          })),
+        )
+        if (!fillRes.ok) {
+          const err = await fillRes.json().catch(() => ({ detail: 'Metadata autofill failed' }))
+          const detail = typeof err.detail === 'string' ? err.detail : 'Metadata autofill failed'
           setMatchResult({
             groups: catalogueGroups,
             unmatched_tables: [],
             unmatched_inventory: [],
-            autofill_errors: [{ group: 'all', error: e.message || 'Could not auto-fill metadata' }],
+            llm_autofill_skipped_no_key: false,
+            kyds_missing: false,
+            autofill_errors: [{ group: 'all', error: detail }],
           })
+          setToast(`${detail} — fill metadata in manually below.`)
+          return
+        }
+        const data = await fillRes.json()
+        const autofillErrors = Array.isArray(data.autofill_errors) ? data.autofill_errors : []
+        const metaPatches = Array.isArray(data.group_metadata) ? data.group_metadata : null
+        const baseGroups = data.groups || catalogueGroups
+        const mergedGroups = catalogueGroups.map((g, i) => {
+          const patch = metaPatches
+            ? (metaPatches.find((p) => p.index === i) || metaPatches[i])
+            : null
+          if (patch?.filled && patch.metadata) {
+            return {
+              ...g,
+              file_name: patch.file_name || g.file_name,
+              metadata: { ...(g.metadata || {}), ...patch.metadata },
+              concept_metadata: patch.concept_metadata || g.concept_metadata,
+              catalogue_metadata: patch.catalogue_metadata || g.catalogue_metadata,
+            }
+          }
+          const legacy = baseGroups[i]
+          if (legacy?.metadata && Object.keys(legacy.metadata).length) {
+            return {
+              ...g,
+              file_name: legacy.file_name || g.file_name,
+              metadata: { ...(g.metadata || {}), ...legacy.metadata },
+            }
+          }
+          return g
+        })
+        const filledCount = Number(data.autofill_filled_count) || mergedGroups.filter((g) => Object.values(g.metadata || {}).some((v) => String(v || '').trim())).length
+        setMatchResult({
+          groups: mergedGroups,
+          unmatched_tables: [],
+          unmatched_inventory: [],
+          llm_autofill_skipped_no_key: Boolean(data.llm_autofill_skipped_no_key),
+          kyds_missing: Boolean(data.kyds_missing),
+          autofill_errors: autofillErrors,
+          autofill_filled_count: filledCount,
+        })
+        if (data.kyds_missing) {
+          setToast('Fill in Know Your Dataset first so metadata can be auto-mapped — or fill fields manually on the next step.')
+        } else if (data.llm_autofill_skipped_no_key) {
+          setToast('Add an LLM API key in Settings to auto-fill metadata, or fill fields manually on the next step.')
+        } else if (autofillErrors.length > 0) {
+          const sample = autofillErrors[0]?.group || autofillErrors[0]?.error || 'unknown'
+          setToast(
+            filledCount > 0
+              ? `Auto-filled ${filledCount} group${filledCount !== 1 ? 's' : ''}; ${autofillErrors.length} need manual entry (${sample}).`
+              : `Auto-fill failed for ${autofillErrors.length} group${autofillErrors.length !== 1 ? 's' : ''}. Fill those groups in manually.`,
+          )
+        }
+      } catch (e) {
+        if (!matchResult) {
+          try {
+            const catalogueGroups = pdfGroupsToCatalogueGroups(groups, filename || 'pdf')
+            setMatchResult({
+              groups: catalogueGroups,
+              unmatched_tables: [],
+              unmatched_inventory: [],
+              autofill_errors: [{ group: 'all', error: e.message || 'Could not auto-fill metadata' }],
+            })
+            setToast(`${e.message || 'Could not auto-fill metadata'} — fill metadata in manually.`)
+            return
+          } catch (_) {
+            /* fall through */
+          }
+        }
+        setError(e.message || 'Could not continue to metadata')
+        setToast(e.message || 'Could not auto-fill metadata')
+        throw e
+      } finally {
+        setSaving(false)
+        setMetadataFilling(false)
+      }
+    }
+
+    continueOkRef.current = false
+    const trackedFillWork = async () => {
+      try {
+        await fillWork()
+        // fillWork returns normally when metadata is ready (or manual-fill path set matchResult)
+        continueOkRef.current = true
+      } catch (_) {
+        continueOkRef.current = false
+      }
+    }
+
+    setStatusPage({
+      ...STATUS_TRANSITIONS.groupingToMetadata,
+      key: 'groupingToMetadata',
+      work: trackedFillWork,
+      after: () => {
+        setStatusPage(null)
+        if (continueOkRef.current) {
           setPipelineStep(4)
           setMaxStepReached((prev) => Math.max(prev, 4))
-          setToast(`${e.message || 'Could not auto-fill metadata'} — fill metadata in manually.`)
-          return
-        } catch (_) {
-          /* fall through */
         }
-      }
-      setError(e.message || 'Could not continue to metadata')
-      setToast(e.message || 'Could not auto-fill metadata')
-    } finally {
-      setSaving(false)
-      setMetadataFilling(false)
-    }
+      },
+    })
   }
 
   const goToPipelineStep = (targetStep) => {
@@ -611,6 +635,28 @@ export default function PdfGrouping({ jobId }) {
   const allTablesForModal = manualGrouping
     ? [...groups.flatMap((g) => g.tables || []), ...unmatched]
     : unmatched
+
+  if (statusPage) {
+    return (
+      <PdfConsoleLayout
+        jobId={jobId}
+        step={pipelineStep}
+        maxStepReached={maxStepReached}
+        onGoToStep={goToPipelineStep}
+      >
+        <div className="rounded-xl border border-line bg-white p-5 shadow-sm sm:p-6">
+          <ConsoleStatusPlaceholder
+            key={statusPage.key}
+            title={statusPage.title}
+            subtitle={statusPage.subtitle}
+            steps={statusPage.steps}
+            work={statusPage.work || null}
+            onComplete={statusPage.after}
+          />
+        </div>
+      </PdfConsoleLayout>
+    )
+  }
 
   return (
     <PdfConsoleLayout
@@ -642,8 +688,15 @@ export default function PdfGrouping({ jobId }) {
               setMetaLabel(label || filename || 'PDF release')
               setMetadataIds(ids || [])
               setMetadataId((ids && ids[0]) || null)
-              setPipelineStep(5)
-              setMaxStepReached((prev) => Math.max(prev, 5))
+              setStatusPage({
+                ...STATUS_TRANSITIONS.metadataToClassify,
+                key: 'metadataToClassify',
+                after: () => {
+                  setStatusPage(null)
+                  setPipelineStep(5)
+                  setMaxStepReached((prev) => Math.max(prev, 5))
+                },
+              })
             }}
             onCancel={() => setPipelineStep(3)}
           />
@@ -655,8 +708,15 @@ export default function PdfGrouping({ jobId }) {
           metadataIds={metadataIds}
           datasetLabel={metaLabel || filename || 'This dataset'}
           onContinue={() => {
-            setPipelineStep(6)
-            setMaxStepReached((prev) => Math.max(prev, 6))
+            setStatusPage({
+              ...STATUS_TRANSITIONS.classifyToPublish,
+              key: 'classifyToPublish',
+              after: () => {
+                setStatusPage(null)
+                setPipelineStep(6)
+                setMaxStepReached((prev) => Math.max(prev, 6))
+              },
+            })
           }}
         />
       )}

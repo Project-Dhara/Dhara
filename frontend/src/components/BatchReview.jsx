@@ -9,8 +9,10 @@ import { getConceptStandardConfig } from '../lib/metadataConcepts'
 import { getMetadataStandard } from '../lib/settingsConfig'
 import MetadataSheetGrid, { METADATA_COLUMNS } from './MetadataSheetGrid'
 import NmdsGroupPanel from './NmdsGroupPanel'
+import ConsoleStatusPlaceholder from './ConsoleStatusPlaceholder'
 import Button from './ui/Button'
 import ErrorBanner from './ui/ErrorBanner'
+import { STATUS_TRANSITIONS } from '../lib/consoleStatusTransitions'
 
 // A group whose auto-fill left every catalogue field blank (e.g. no metadata
 // workbook covered it) needs the same by-hand entry as the "no LLM key at
@@ -362,6 +364,18 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
       setError(e.message)
       setStep('error')
     }
+  }
+
+  if (step === 'pushing') {
+    return (
+      <ConsoleStatusPlaceholder
+        title={STATUS_TRANSITIONS.metadataToClassify.title}
+        subtitle={STATUS_TRANSITIONS.metadataToClassify.subtitle}
+        steps={STATUS_TRANSITIONS.metadataToClassify.steps}
+        msPerStep={1200}
+        onComplete={() => {}}
+      />
+    )
   }
 
   if (step === 'done' && result) {

@@ -14,6 +14,8 @@ import Publish from './Publish'
 import Button from './ui/Button'
 import Badge from './ui/Badge'
 import ErrorBanner from './ui/ErrorBanner'
+import ConsoleStatusPlaceholder from './ConsoleStatusPlaceholder'
+import { STATUS_TRANSITIONS } from '../lib/consoleStatusTransitions'
 import { withAuthHeaders } from '../lib/auth'
 import { withLlmKeyHeaders } from '../lib/llmKey'
 import { getMetadataStandard } from '../lib/settingsConfig'
@@ -219,7 +221,7 @@ function stepInfoFor(step) {
     null,
     {
       title: 'Select dataset and metadata files',
-      purpose: 'Upload the workbooks and their metadata tag files for this release, or a PDF report instead.',
+      purpose: 'Upload dataset files (PDF, XLSX, or SQL) and optional metadata tag workbooks for this release.',
       next: 'Next: preview the extracted tables.',
     },
     {
@@ -271,78 +273,200 @@ function loadPersisted() {
   }
 }
 
-// Step 1 file-type choice. XLSX / SQL reveal their uploaders in the same
-// content panel; PDF opens the file picker immediately and starts upload.
-function UploadChoice({ choice, onChoose, onPdfFile, pdfUploading, pdfError, onClearPdfError }) {
-  const pdfInputRef = useRef(null)
-  const [pdfDragging, setPdfDragging] = useState(false)
+function MetadataFileList({ files, onRemove }) {
+  if (files.length === 0) return null
+  return (
+    <ul className="mt-3 flex w-full list-none flex-col gap-1.5 text-left">
+      {files.map((f, i) => (
+        <li key={`${f.name}-${i}`} className="flex items-center justify-between gap-2 rounded-md bg-white/80 px-2.5 py-1.5 text-[12.5px] text-ink">
+          <span className="min-w-0 truncate">{f.name}</span>
+          <button
+            type="button"
+            className="flex h-6 w-6 flex-none items-center justify-center rounded text-ink-soft hover:bg-cream hover:text-[#b91c1c]"
+            onClick={(e) => {
+              e.stopPropagation()
+              onRemove(i)
+            }}
+            title="Remove"
+            aria-label="Remove file"
+          >
+            <X className="h-3.5 w-3.5" strokeWidth={2} />
+          </button>
+        </li>
+      ))}
+    </ul>
+  )
+}
 
-  const takePdf = (file) => {
-    if (!file || !/\.pdf$/i.test(file.name) || pdfUploading) return
-    onPdfFile(file)
+// Step 1: two equal cards — dataset (PDF / XLSX / SQL tabs) and metadata tag files.
+function UploadChoice({
+  choice,
+  onChoose,
+  onDatasetFile,
+  onPdfFile,
+  pdfUploading,
+  pdfError,
+  onClearPdfError,
+  metadataFiles,
+  onMetadataFilesAdd,
+  onMetadataFileRemove,
+  sqlPanel,
+}) {
+  const datasetInputRef = useRef(null)
+  const metadataInputRef = useRef(null)
+  const [datasetDragging, setDatasetDragging] = useState(false)
+  const [metadataDragging, setMetadataDragging] = useState(false)
+
+  const routeDatasetFile = (file) => {
+    if (!file || pdfUploading) return
+    if (/\.pdf$/i.test(file.name)) {
+      onPdfFile(file)
+      return
+    }
+    if (/\.(xlsx|xls)$/i.test(file.name)) {
+      onDatasetFile('xlsx', file)
+      return
+    }
   }
 
-  if (choice === 'xlsx' || choice === 'sql') {
-    return (
-      <button type="button" className="inline-flex items-center gap-1.5 self-start text-[13px] font-semibold text-teal hover:text-teal-dark" onClick={() => onChoose(null)}>
-        <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
-        Choose a different source type
-      </button>
-    )
+  const takeMetadataFiles = (fileList) => {
+    const files = Array.from(fileList || []).filter((f) => /\.(xlsx|xls)$/i.test(f.name))
+    if (files.length) onMetadataFilesAdd(files)
   }
+
+  const fileTab = choice !== 'sql'
+  const dropZoneClass = (dragging) =>
+    `flex min-h-[168px] flex-1 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-5 py-6 text-center transition-colors ${
+      dragging
+        ? 'border-teal bg-sage'
+        : 'border-[#d4c9b4] bg-[#FFFCF6] hover:border-teal hover:bg-cream'
+    }`
 
   return (
     <div className="flex flex-col gap-4">
       <input
-        ref={pdfInputRef}
+        ref={datasetInputRef}
         type="file"
-        accept=".pdf"
+        accept=".pdf,.xlsx,.xls"
         className="hidden"
         disabled={pdfUploading}
         onChange={(e) => {
-          takePdf(e.target.files?.[0])
+          routeDatasetFile(e.target.files?.[0])
           e.target.value = ''
         }}
       />
-      <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-3">
-        <button
-          type="button"
-          onClick={() => onChoose('xlsx')}
-          disabled={pdfUploading}
-          className="flex min-h-[112px] w-full flex-col items-start gap-2 rounded-xl border border-line bg-cream/40 p-5 text-left transition-colors hover:border-teal hover:bg-cream disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <div className="text-[16px] font-bold text-ink">Upload data workbooks (.xlsx)</div>
-          <div className="text-[13px] leading-snug text-ink-soft">Matched against metadata tag files and grouped automatically.</div>
-        </button>
-        <button
-          type="button"
-          disabled={pdfUploading}
-          onClick={() => !pdfUploading && pdfInputRef.current?.click()}
-          onDragOver={(e) => { e.preventDefault(); setPdfDragging(true) }}
-          onDragLeave={() => setPdfDragging(false)}
-          onDrop={(e) => {
-            e.preventDefault()
-            setPdfDragging(false)
-            takePdf(e.dataTransfer.files?.[0])
-          }}
-          className={`flex min-h-[112px] w-full flex-col items-start gap-2 rounded-xl border border-dashed bg-cream/40 p-5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-            pdfDragging ? 'border-teal bg-sage' : 'border-line hover:border-teal hover:bg-cream'
-          }`}
-        >
-          <div className="text-[16px] font-bold text-ink">{pdfUploading ? 'Uploading PDF…' : 'Upload PDF reports'}</div>
-          <div className="text-[13px] leading-snug text-ink-soft">
-            {pdfUploading ? 'Starting extraction…' : 'Click or drop a PDF — tables are extracted and reviewed for accuracy.'}
+      <input
+        ref={metadataInputRef}
+        type="file"
+        accept=".xlsx,.xls"
+        multiple
+        className="hidden"
+        disabled={pdfUploading}
+        onChange={(e) => {
+          takeMetadataFiles(e.target.files)
+          e.target.value = ''
+        }}
+      />
+      <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-2 sm:items-stretch">
+        <div className="flex min-h-[240px] w-full flex-col overflow-hidden rounded-xl border border-line bg-white shadow-sm">
+          <div
+            className="grid h-[45px] grid-cols-2 border-b border-line bg-cream/50"
+            role="tablist"
+            aria-label="Dataset source"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={fileTab}
+              disabled={pdfUploading}
+              className={`relative px-3 text-[13px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                fileTab
+                  ? 'bg-white text-teal after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-teal'
+                  : 'text-ink-soft hover:bg-cream hover:text-ink'
+              }`}
+              onClick={() => choice === 'sql' && onChoose(null)}
+            >
+              File upload
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={!fileTab}
+              disabled={pdfUploading}
+              className={`relative px-3 text-[13px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                !fileTab
+                  ? 'bg-white text-teal after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-teal'
+                  : 'text-ink-soft hover:bg-cream hover:text-ink'
+              }`}
+              onClick={() => fileTab && onChoose('sql')}
+            >
+              Connect SQL database
+            </button>
           </div>
-        </button>
-        <button
-          type="button"
-          onClick={() => onChoose('sql')}
-          disabled={pdfUploading}
-          className="flex min-h-[112px] w-full flex-col items-start gap-2 rounded-xl border border-line bg-cream/40 p-5 text-left transition-colors hover:border-teal hover:bg-cream disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <div className="text-[16px] font-bold text-ink">Connect a SQL database</div>
-          <div className="text-[13px] leading-snug text-ink-soft">Auto-extract Postgres tables (optional custom query), then continue on the Excel review path.</div>
-        </button>
+          {fileTab ? (
+            <div className="flex flex-1 flex-col p-3">
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => !pdfUploading && datasetInputRef.current?.click()}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); !pdfUploading && datasetInputRef.current?.click() } }}
+                onDragOver={(e) => { e.preventDefault(); setDatasetDragging(true) }}
+                onDragLeave={() => setDatasetDragging(false)}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  setDatasetDragging(false)
+                  routeDatasetFile(e.dataTransfer.files?.[0])
+                }}
+                className={`${dropZoneClass(datasetDragging)} ${pdfUploading ? 'pointer-events-none opacity-60' : ''}`}
+              >
+                <div className="text-[16px] font-bold text-ink">
+                  {pdfUploading ? 'Uploading PDF…' : 'Upload dataset files'}
+                </div>
+                <div className="max-w-[280px] text-[13px] leading-snug text-ink-soft">
+                  {pdfUploading
+                    ? 'Starting extraction…'
+                    : 'Click or drop PDF reports or XLSX workbooks — the matching pipeline runs automatically.'}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-1 flex-col bg-white p-5">
+              {sqlPanel}
+            </div>
+          )}
+        </div>
+
+        <div className="flex min-h-[240px] w-full flex-col overflow-hidden rounded-xl border border-line bg-white shadow-sm">
+          <div className="flex h-[45px] items-center justify-center border-b border-line bg-cream/50 px-3">
+            <span className="text-[13px] font-semibold text-ink-soft">Metadata (optional)</span>
+          </div>
+          <div className="flex flex-1 flex-col p-3">
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => !pdfUploading && metadataInputRef.current?.click()}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); !pdfUploading && metadataInputRef.current?.click() } }}
+              onDragOver={(e) => { e.preventDefault(); setMetadataDragging(true) }}
+              onDragLeave={() => setMetadataDragging(false)}
+              onDrop={(e) => {
+                e.preventDefault()
+                setMetadataDragging(false)
+                takeMetadataFiles(e.dataTransfer.files)
+              }}
+              className={`${dropZoneClass(metadataDragging)} ${pdfUploading ? 'pointer-events-none opacity-60' : ''}`}
+            >
+              <div className="text-[16px] font-bold text-ink">Upload metadata tag files</div>
+              <div className="max-w-[280px] text-[13px] leading-snug text-ink-soft">
+                Optional XLSX metadata workbooks — matched against your dataset tables during grouping.
+              </div>
+              {metadataFiles.length > 0 && (
+                <div className="w-full max-w-[280px]">
+                  <MetadataFileList files={metadataFiles} onRemove={onMetadataFileRemove} />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
       {pdfError && (
         <div className="flex flex-col gap-2">
@@ -359,8 +483,15 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
 
   const [step, setStep] = useState(persisted?.step ?? 1)
   const [uploadChoice, setUploadChoice] = useState(null)
+  const [step1MetadataFiles, setStep1MetadataFiles] = useState([])
+  const [pendingDatasetFiles, setPendingDatasetFiles] = useState([])
   const [pdfUploading, setPdfUploading] = useState(false)
   const [pdfError, setPdfError] = useState('')
+  // Full-page status between stages (same look as PDF processing).
+  // { key, title, subtitle, steps, work?, after }
+  const [statusPage, setStatusPage] = useState(null)
+  const pendingMatchRef = useRef(null)
+  const matchResolveRef = useRef(null)
   const router = useRouter()
 
   // Consolidates the three previously-independent dialog booleans
@@ -606,104 +737,110 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
       setGroupingToast('Create at least one group before continuing to metadata.')
       return
     }
-    if (metadataFilling) return
+    if (metadataFilling || statusPage) return
 
     setMetadataFilling(true)
     setGroupingToast(null)
-    try {
-      const res = await fetch(
-        '/api/catalogue/fill-group-metadata',
-        withAuthHeaders(withLlmKeyHeaders({
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ groups: matchResult.groups, standard: getMetadataStandard() }),
-        })),
-      )
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: 'Metadata autofill failed' }))
-        const detail = typeof err.detail === 'string' ? err.detail : 'Metadata autofill failed'
-        // Still open the metadata step so the user can fill fields by hand.
+
+    const fillWork = async () => {
+      try {
+        const res = await fetch(
+          '/api/catalogue/fill-group-metadata',
+          withAuthHeaders(withLlmKeyHeaders({
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ groups: matchResult.groups, standard: getMetadataStandard() }),
+          })),
+        )
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: 'Metadata autofill failed' }))
+          const detail = typeof err.detail === 'string' ? err.detail : 'Metadata autofill failed'
+          setMatchResult((prev) => (prev ? {
+            ...prev,
+            llm_autofill_skipped_no_key: false,
+            kyds_missing: false,
+            autofill_errors: [{ group: 'all', error: detail }],
+          } : prev))
+          setGroupingToast(`${detail} — fill metadata in manually below.`)
+          return
+        }
+        const data = await res.json()
+        const autofillErrors = Array.isArray(data.autofill_errors) ? data.autofill_errors : []
+        const metaPatches = Array.isArray(data.group_metadata) ? data.group_metadata : null
+        setMatchResult((prev) => {
+          if (!prev) return prev
+          let nextGroups = prev.groups
+          if (metaPatches) {
+            nextGroups = prev.groups.map((g, i) => {
+              const patch = metaPatches.find((p) => p.index === i) || metaPatches[i]
+              if (!patch) return g
+              const next = { ...g }
+              if (patch.file_name) next.file_name = patch.file_name
+              if (patch.filled && patch.metadata) {
+                next.metadata = { ...(g.metadata || {}), ...patch.metadata }
+              }
+              if (patch.concept_metadata && Object.keys(patch.concept_metadata).length) {
+                next.concept_metadata = { ...(g.concept_metadata || {}), ...patch.concept_metadata }
+              }
+              if (patch.catalogue_metadata && Object.keys(patch.catalogue_metadata).length) {
+                next.catalogue_metadata = { ...(g.catalogue_metadata || {}), ...patch.catalogue_metadata }
+              }
+              return next
+            })
+          } else if (Array.isArray(data.groups) && data.groups.length === prev.groups.length) {
+            nextGroups = prev.groups.map((g, i) => ({
+              ...g,
+              file_name: data.groups[i]?.file_name || g.file_name,
+              metadata: data.groups[i]?.metadata && Object.keys(data.groups[i].metadata).length
+                ? { ...(g.metadata || {}), ...data.groups[i].metadata }
+                : g.metadata,
+            }))
+          }
+          return {
+            ...prev,
+            groups: nextGroups,
+            llm_autofill_skipped_no_key: Boolean(data.llm_autofill_skipped_no_key),
+            kyds_missing: Boolean(data.kyds_missing),
+            autofill_errors: autofillErrors,
+            autofill_filled_count: Number(data.autofill_filled_count) || 0,
+          }
+        })
+        const filledCount = Number(data.autofill_filled_count) || 0
+        if (data.kyds_missing) {
+          setGroupingToast('Fill in Know Your Dataset first so metadata can be auto-mapped — or fill fields manually on the next step.')
+        } else if (data.llm_autofill_skipped_no_key) {
+          setGroupingToast('Add an LLM API key in Settings to auto-fill metadata, or fill fields manually on the next step.')
+        } else if (autofillErrors.length > 0) {
+          const sample = autofillErrors[0]?.group || autofillErrors[0]?.error || 'unknown'
+          setGroupingToast(
+            filledCount > 0
+              ? `Auto-filled ${filledCount} group${filledCount !== 1 ? 's' : ''}; ${autofillErrors.length} need manual entry (${sample}).`
+              : autofillErrors.length === 1
+                ? `Auto-fill failed for 1 group (${sample}). Fill that group in manually.`
+                : `Auto-fill failed for ${autofillErrors.length} groups. Fill those groups in manually.`,
+          )
+        }
+      } catch (e) {
+        const detail = e.message || 'Could not auto-fill metadata'
         setMatchResult((prev) => (prev ? {
           ...prev,
-          llm_autofill_skipped_no_key: false,
-          kyds_missing: false,
           autofill_errors: [{ group: 'all', error: detail }],
         } : prev))
-        setGroupingToast(`${detail} — fill metadata in manually below.`)
-        setStep(4)
-        return
+        setGroupingToast(`${detail} — continuing so you can fill metadata manually.`)
+      } finally {
+        setMetadataFilling(false)
       }
-      const data = await res.json()
-      const autofillErrors = Array.isArray(data.autofill_errors) ? data.autofill_errors : []
-      const metaPatches = Array.isArray(data.group_metadata) ? data.group_metadata : null
-      setMatchResult((prev) => {
-        if (!prev) return prev
-        let nextGroups = prev.groups
-        if (metaPatches) {
-          // Merge successful fills onto the groups we already have (keeps
-          // table rows intact; only blank groups stay blank on failure).
-          nextGroups = prev.groups.map((g, i) => {
-            const patch = metaPatches.find((p) => p.index === i) || metaPatches[i]
-            if (!patch) return g
-            const next = { ...g }
-            if (patch.file_name) next.file_name = patch.file_name
-            if (patch.filled && patch.metadata) {
-              next.metadata = { ...(g.metadata || {}), ...patch.metadata }
-            }
-            if (patch.concept_metadata && Object.keys(patch.concept_metadata).length) {
-              next.concept_metadata = { ...(g.concept_metadata || {}), ...patch.concept_metadata }
-            }
-            if (patch.catalogue_metadata && Object.keys(patch.catalogue_metadata).length) {
-              next.catalogue_metadata = { ...(g.catalogue_metadata || {}), ...patch.catalogue_metadata }
-            }
-            return next
-          })
-        } else if (Array.isArray(data.groups) && data.groups.length === prev.groups.length) {
-          // Legacy full-groups response: take metadata only, never replace tables.
-          nextGroups = prev.groups.map((g, i) => ({
-            ...g,
-            file_name: data.groups[i]?.file_name || g.file_name,
-            metadata: data.groups[i]?.metadata && Object.keys(data.groups[i].metadata).length
-              ? { ...(g.metadata || {}), ...data.groups[i].metadata }
-              : g.metadata,
-          }))
-        }
-        return {
-          ...prev,
-          groups: nextGroups,
-          llm_autofill_skipped_no_key: Boolean(data.llm_autofill_skipped_no_key),
-          kyds_missing: Boolean(data.kyds_missing),
-          autofill_errors: autofillErrors,
-          autofill_filled_count: Number(data.autofill_filled_count) || 0,
-        }
-      })
-      const filledCount = Number(data.autofill_filled_count) || 0
-      if (data.kyds_missing) {
-        setGroupingToast('Fill in Know Your Dataset first so metadata can be auto-mapped — or fill fields manually on the next step.')
-      } else if (data.llm_autofill_skipped_no_key) {
-        setGroupingToast('Add an LLM API key in Settings to auto-fill metadata, or fill fields manually on the next step.')
-      } else if (autofillErrors.length > 0) {
-        const sample = autofillErrors[0]?.group || autofillErrors[0]?.error || 'unknown'
-        setGroupingToast(
-          filledCount > 0
-            ? `Auto-filled ${filledCount} group${filledCount !== 1 ? 's' : ''}; ${autofillErrors.length} need manual entry (${sample}).`
-            : autofillErrors.length === 1
-              ? `Auto-fill failed for 1 group (${sample}). Fill that group in manually.`
-              : `Auto-fill failed for ${autofillErrors.length} groups. Fill those groups in manually.`,
-        )
-      }
-      setStep(4)
-    } catch (e) {
-      const detail = e.message || 'Could not auto-fill metadata'
-      setMatchResult((prev) => (prev ? {
-        ...prev,
-        autofill_errors: [{ group: 'all', error: detail }],
-      } : prev))
-      setGroupingToast(`${detail} — continuing so you can fill metadata manually.`)
-      setStep(4)
-    } finally {
-      setMetadataFilling(false)
     }
+
+    setStatusPage({
+      ...STATUS_TRANSITIONS.groupingToMetadata,
+      key: 'groupingToMetadata',
+      work: fillWork,
+      after: () => {
+        setStatusPage(null)
+        setStep(4)
+      },
+    })
   }
 
   // Applies { tableId: { table_id, title } } corrections onto the live
@@ -793,14 +930,45 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
     patchTables(corrections)
     setManualGrouping(false)
     setEditingGroups(false)
-    setStep(3)
+    setStatusPage({
+      ...STATUS_TRANSITIONS.previewToGrouping,
+      key: 'previewToGrouping',
+      after: () => {
+        setStatusPage(null)
+        setStep(3)
+      },
+    })
   }
 
   const publishFromClassify = () => {
-    setStep(6)
+    setStatusPage({
+      ...STATUS_TRANSITIONS.classifyToPublish,
+      key: 'classifyToPublish',
+      after: () => {
+        setStatusPage(null)
+        setStep(6)
+      },
+    })
   }
 
-  const handleMatched = (data) => {
+  const beginFilesToPreviewStatus = () => {
+    pendingMatchRef.current = null
+    const waitForMatch = new Promise((resolve) => {
+      matchResolveRef.current = resolve
+    })
+    setStatusPage({
+      ...STATUS_TRANSITIONS.filesToPreview,
+      key: 'filesToPreview',
+      work: () => waitForMatch,
+      after: () => {
+        const data = pendingMatchRef.current
+        setStatusPage(null)
+        if (data) finishMatched(data)
+      },
+    })
+  }
+
+  const finishMatched = (data) => {
     setMetadataFiles(data.metadataFiles)
     setMatchResult(data)
     autoMatchResultRef.current = data
@@ -814,6 +982,17 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
     setMetadataStarted(false)
     setMaxStepReached(2)
     setStep(2)
+  }
+
+  const handleMatched = (data) => {
+    pendingMatchRef.current = data
+    if (matchResolveRef.current) {
+      matchResolveRef.current()
+      matchResolveRef.current = null
+    } else {
+      // No status page running (e.g. restored path) — go straight to preview.
+      finishMatched(data)
+    }
   }
 
   const back = () => setStep((s) => Math.max(1, s - 1))
@@ -840,6 +1019,29 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
     }
     return base
   })()
+
+  const handleDatasetFile = (type, file) => {
+    if (type === 'xlsx' && file) {
+      setPendingDatasetFiles((prev) => {
+        const exists = prev.some((f) => f.name === file.name && f.size === file.size)
+        return exists ? prev : [...prev, file]
+      })
+      setUploadChoice('xlsx')
+    }
+  }
+
+  const addStep1MetadataFiles = (files) => {
+    setStep1MetadataFiles((prev) => [...prev, ...files])
+  }
+
+  const removeStep1MetadataFile = (index) => {
+    setStep1MetadataFiles((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const resetUploadChoice = () => {
+    setUploadChoice(null)
+    setPendingDatasetFiles([])
+  }
 
   const handlePdfFile = async (file) => {
     setPdfError('')
@@ -932,6 +1134,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
 
       <div className="flex min-w-0 flex-1 flex-col gap-[18px]">
         {/* Page header — title / purpose stay above the content panel */}
+        {!statusPage && (
         <div className="flex flex-col">
           {step > 1 && step < 6 && (
             <div className="mb-3.5 inline-flex cursor-pointer items-center gap-1.5 text-[15px] font-semibold text-teal hover:text-teal-dark" onClick={back}>
@@ -948,21 +1151,75 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
             {stageIdx === 0 && (step === 1 || step === 2) && <KydsSummaryCard variant="corner" />}
           </div>
         </div>
+        )}
 
         {/* Shared content panel — choice cards, then tables / grouping / later steps */}
         <div className="flex flex-col gap-5 rounded-xl border border-line bg-white p-5 shadow-sm sm:p-6">
+        {statusPage && (
+          <ConsoleStatusPlaceholder
+            key={statusPage.key}
+            title={statusPage.title}
+            subtitle={statusPage.subtitle}
+            steps={statusPage.steps}
+            work={statusPage.work || null}
+            msPerStep={statusPage.msPerStep || 850}
+            onComplete={statusPage.after}
+          />
+        )}
+        <div style={{ display: statusPage ? 'none' : undefined }}>
         {step === 1 && (
           <div className="flex flex-col gap-6">
             <UploadChoice
               choice={uploadChoice}
               onChoose={setUploadChoice}
+              onDatasetFile={handleDatasetFile}
               onPdfFile={handlePdfFile}
               pdfUploading={pdfUploading}
               pdfError={pdfError}
               onClearPdfError={() => setPdfError('')}
+              metadataFiles={step1MetadataFiles}
+              onMetadataFilesAdd={addStep1MetadataFiles}
+              onMetadataFileRemove={removeStep1MetadataFile}
+              sqlPanel={(
+                <SqlUpload
+                  onMatched={handleMatched}
+                  onWorking={beginFilesToPreviewStatus}
+                  onError={() => {
+                    setStatusPage(null)
+                    matchResolveRef.current = null
+                    pendingMatchRef.current = null
+                  }}
+                  metadataFiles={step1MetadataFiles}
+                  onMetadataFilesChange={setStep1MetadataFiles}
+                  hideMetadataSection
+                />
+              )}
             />
-            {uploadChoice === 'xlsx' && <BatchUpload onMatched={handleMatched} />}
-            {uploadChoice === 'sql' && <SqlUpload onMatched={handleMatched} />}
+            {uploadChoice === 'xlsx' && (
+              <>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 self-start text-[13px] font-semibold text-teal hover:text-teal-dark"
+                  onClick={resetUploadChoice}
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+                  Back to file upload
+                </button>
+                <BatchUpload
+                  onMatched={handleMatched}
+                  onWorking={beginFilesToPreviewStatus}
+                  onError={() => {
+                    setStatusPage(null)
+                    matchResolveRef.current = null
+                    pendingMatchRef.current = null
+                  }}
+                  initialDatasetFiles={pendingDatasetFiles}
+                  metadataFiles={step1MetadataFiles}
+                  onMetadataFilesChange={setStep1MetadataFiles}
+                  hideMetadataSection
+                />
+              </>
+            )}
           </div>
         )}
 
@@ -1284,7 +1541,15 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                 setMetadataIds(ids || [])
                 setMetadataId((ids && ids[0]) || null)
                 setPendingGroups(null)
-                setStep(5)
+                setStatusPage({
+                  ...STATUS_TRANSITIONS.metadataToClassify,
+                  key: 'metadataToClassify',
+                  msPerStep: 550,
+                  after: () => {
+                    setStatusPage(null)
+                    setStep(5)
+                  },
+                })
               }}
               onCancel={() => setStep(3)}
             />
@@ -1310,6 +1575,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
             onUploadAnother={onUploadAnother}
           />
         )}
+        </div>
         </div>
       </div>
     </div>

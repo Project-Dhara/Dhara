@@ -37,14 +37,24 @@ const emptyConn = {
  * SQL → Excel-shaped extract → same batch-match / Console steps as BatchUpload.
  * Default: auto-extract every user table/view. Optional custom SELECT.
  */
-export default function SqlUpload({ onMatched }) {
+export default function SqlUpload({
+  onMatched,
+  onWorking,
+  onError,
+  metadataFiles: controlledMetadataFiles,
+  onMetadataFilesChange,
+  hideMetadataSection = false,
+}) {
   const [connMode, setConnMode] = useState('url') // url | fields
   const [conn, setConn] = useState(emptyConn)
   const [query, setQuery] = useState('')
   const [title, setTitle] = useState('')
   const [tableId, setTableId] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
-  const [metadataFiles, setMetadataFiles] = useState([])
+  const [internalMetadataFiles, setInternalMetadataFiles] = useState([])
+  const metadataControlled = controlledMetadataFiles != null
+  const metadataFiles = metadataControlled ? controlledMetadataFiles : internalMetadataFiles
+  const setMetadataFiles = metadataControlled ? onMetadataFilesChange : setInternalMetadataFiles
   const [stage, setStage] = useState('idle') // idle | extracting | matching | error
   const [error, setError] = useState('')
   const fileInputRef = useRef()
@@ -63,6 +73,7 @@ export default function SqlUpload({ onMatched }) {
   const run = async () => {
     setError('')
     setStage('extracting')
+    onWorking?.()
     try {
       const body = {}
       if (hasQuery) {
@@ -111,6 +122,7 @@ export default function SqlUpload({ onMatched }) {
     } catch (e) {
       setError(e.message || 'Something went wrong')
       setStage('error')
+      onError?.(e)
     }
   }
 
@@ -230,32 +242,34 @@ export default function SqlUpload({ onMatched }) {
         )}
       </div>
 
-      <div className="flex min-w-0 flex-col gap-2.5">
-        <div className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-sm bg-yellow" />
-          <span className="text-xs font-bold uppercase tracking-wide text-ink">Metadata files (optional)</span>
+      {!hideMetadataSection && (
+        <div className="flex min-w-0 flex-col gap-2.5">
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-sm bg-yellow" />
+            <span className="text-xs font-bold uppercase tracking-wide text-ink">Metadata files (optional)</span>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              const files = Array.from(e.target.files || []).filter((f) => /\.(xlsx|xls)$/i.test(f.name))
+              setMetadataFiles((prev) => [...prev, ...files])
+              e.target.value = ''
+            }}
+          />
+          <div
+            className={`flex h-[72px] cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-[#c9bda6] bg-[#FFFCF6] ${busy ? 'cursor-not-allowed opacity-60' : ''}`}
+            onClick={() => !busy && fileInputRef.current?.click()}
+          >
+            <div className="text-[14px] font-semibold text-teal">Add metadata tag files</div>
+            <div className="text-[12.5px] text-[#8E9398]">Optional — same as Excel flow</div>
+          </div>
+          <FileList files={metadataFiles} onRemove={(i) => setMetadataFiles((prev) => prev.filter((_, idx) => idx !== i))} />
         </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".xlsx,.xls"
-          multiple
-          className="hidden"
-          onChange={(e) => {
-            const files = Array.from(e.target.files || []).filter((f) => /\.(xlsx|xls)$/i.test(f.name))
-            setMetadataFiles((prev) => [...prev, ...files])
-            e.target.value = ''
-          }}
-        />
-        <div
-          className={`flex h-[72px] cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-[#c9bda6] bg-[#FFFCF6] ${busy ? 'cursor-not-allowed opacity-60' : ''}`}
-          onClick={() => !busy && fileInputRef.current?.click()}
-        >
-          <div className="text-[14px] font-semibold text-teal">Add metadata tag files</div>
-          <div className="text-[12.5px] text-[#8E9398]">Optional — same as Excel flow</div>
-        </div>
-        <FileList files={metadataFiles} onRemove={(i) => setMetadataFiles((prev) => prev.filter((_, idx) => idx !== i))} />
-      </div>
+      )}
 
       {error && <ErrorBanner>{error}</ErrorBanner>}
 
