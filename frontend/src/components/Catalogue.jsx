@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { Check, Copy, FileText, Plug, Tags, Terminal } from 'lucide-react'
 import { withAuthHeaders } from '../lib/auth'
 
 const MCP_TOOLS = ['search_datasets', 'get_table', 'get_metadata']
@@ -12,6 +13,7 @@ const TOOL_DESCS = {
 const MCP_URL = 'https://catalogue.dhara.people+ai.org/mcp'
 
 const TABS = ['summary', 'metadata', 'api', 'mcp']
+const TAB_ICONS = { summary: FileText, metadata: Tags, api: Terminal, mcp: Plug }
 
 function labelFacet(key) {
   return String(key).replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
@@ -32,11 +34,11 @@ function keywordChips(sel) {
   )]
 }
 
-const metaCardClass = 'flex min-w-0 flex-col gap-1.5 rounded-lg border border-[#f0e7d6] bg-cream p-3 px-3.5'
+const metaCardClass = 'flex min-w-0 flex-col gap-1.5 rounded-lg border border-outer-bg bg-cream p-3 px-3.5 transition-colors duration-200'
 const metaCardLabelClass = 'text-[10.5px] uppercase tracking-wide text-[#8E9398]'
 const tagListClass = 'flex flex-wrap gap-1.5 pt-0.5'
-const tagChipClass = 'rounded-full border border-line bg-cream px-2.5 py-1 text-[11.5px] text-ink-soft'
-const copyBtnClass = 'flex h-[34px] flex-none items-center rounded-full border border-teal bg-white px-3.5 text-[13px] font-semibold text-teal transition-colors hover:bg-sage'
+const tagChipClass = 'rounded-full border border-line bg-cream px-2.5 py-1 text-[11.5px] text-ink-soft transition-colors duration-200 hover:border-teal hover:text-teal-deep'
+const copyBtnClass = 'flex h-[34px] flex-none items-center gap-1.5 rounded-full border border-teal bg-white px-3.5 text-[13px] font-semibold text-teal shadow-sm transition-all duration-200 hover:-translate-y-px hover:bg-sage hover:shadow'
 
 function MetaCard({ label, value, wide }) {
   const empty = isEmptyMeta(value)
@@ -54,12 +56,12 @@ function EndpointCard({ label, url, copied, copyLabel, onCopy, hint, children })
   return (
     <div className="flex flex-col gap-3">
       {hint && <p className="m-0 text-sm leading-relaxed text-ink-soft">{hint}</p>}
-      <div className={`${metaCardClass} col-span-2 gap-2.5`}>
+      <div className={`${metaCardClass} col-span-2 gap-2.5 border-l-[3px] border-l-teal-deep`}>
         <div className={metaCardLabelClass}>{label}</div>
         <div className="flex min-w-0 items-center gap-2.5">
-          <code className="min-w-0 flex-1 break-all font-mono text-[12.5px] leading-snug text-ink">{url}</code>
+          <code className="min-w-0 flex-1 break-all rounded-md bg-white/70 px-2.5 py-1.5 font-mono text-[12.5px] leading-snug text-teal-deep">{url}</code>
           <button type="button" className={copyBtnClass} onClick={onCopy}>
-            {copied === copyLabel ? 'Copied' : 'Copy'}
+            {copied === copyLabel ? (<><Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden /> Copied</>) : (<><Copy className="h-3.5 w-3.5" strokeWidth={2} aria-hidden /> Copy</>)}
           </button>
         </div>
       </div>
@@ -139,8 +141,8 @@ export default function Catalogue({ hasKey, onGoSettings }) {
     <div className="cat-screen flex flex-1 min-h-0 flex-col gap-3.5 overflow-hidden">
       <div className="flex items-end justify-between gap-6">
         <div>
-          <div className="font-display text-[32px] font-medium leading-tight text-ink">Catalogue</div>
-          <div className="text-[15px] text-ink-soft">Published releases, their summaries and the endpoints that serve them.</div>
+          <div className="font-display text-[26px] font-medium leading-tight tracking-tight text-ink">Catalogue</div>
+          <div className="text-[14.5px] text-ink-soft">Published releases, their summaries and the endpoints that serve them.</div>
         </div>
         <button
           className="h-10 rounded-full border border-teal bg-white px-4 text-[13px] font-semibold text-teal transition-colors hover:bg-sage"
@@ -151,27 +153,29 @@ export default function Catalogue({ hasKey, onGoSettings }) {
       </div>
 
       {mcpOpen && (
-        <div className="flex items-center gap-4 rounded-[10px] bg-teal-deep px-5 py-4">
+        <div className="selection-invert flex items-center gap-4 rounded-xl bg-gradient-to-br from-teal-deep to-[#0c2f2d] px-5 py-4 ring-1 ring-inset ring-white/[.06]">
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             <div className="text-[15px] font-semibold text-cream">Catalogue MCP endpoint</div>
-            <div className="text-xs text-[#a8bdb3]">{MCP_URL}</div>
+            <div className="font-mono text-xs text-[#a8bdb3]">{MCP_URL}</div>
           </div>
           <div className="flex flex-wrap gap-1.5">
-            {MCP_TOOLS.map((t) => <span className="rounded-full bg-white/[.12] px-2.5 py-[5px] text-xs text-cream" key={t}>{t}</span>)}
+            {MCP_TOOLS.map((t) => <span className="rounded-full bg-white/[.12] px-2.5 py-[5px] text-xs text-cream ring-1 ring-inset ring-white/10" key={t}>{t}</span>)}
           </div>
-          <button className={copyBtnClass} onClick={() => copy('mcp', MCP_URL)}>{copied === 'mcp' ? 'Copied' : 'Copy'}</button>
+          <button className={copyBtnClass} onClick={() => copy('mcp', MCP_URL)}>
+            {copied === 'mcp' ? (<><Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden /> Copied</>) : (<><Copy className="h-3.5 w-3.5" strokeWidth={2} aria-hidden /> Copy</>)}
+          </button>
         </div>
       )}
 
       <div className="flex items-center gap-2.5">
         <input
-          className="h-11 min-w-0 flex-1 rounded-md border border-[#ddd3c0] bg-white px-3.5 font-sans text-[15px] text-ink"
+          className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-surface px-3.5 font-sans text-[15px] text-ink transition-shadow focus:border-teal focus:shadow-focus-ring focus:outline-none"
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search by dataset id, title, geography…"
         />
-        <select className="h-11 rounded-md border border-[#ddd3c0] bg-white px-2.5 text-sm text-ink" value={filter} onChange={(e) => setFilter(e.target.value)}>
+        <select className="h-11 rounded-xl border border-line bg-surface px-2.5 text-sm text-ink transition-shadow focus:border-teal focus:shadow-focus-ring focus:outline-none" value={filter} onChange={(e) => setFilter(e.target.value)}>
           {facetOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       </div>
@@ -187,12 +191,14 @@ export default function Catalogue({ hasKey, onGoSettings }) {
             )}
           </div>
           <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-0.5">
-            {error && <div className="rounded-[10px] border border-dashed border-[#ddd3c0] bg-white p-5 text-sm text-[#8E9398]">{error}</div>}
+            {error && <div className="rounded-[10px] border border-dashed border-line bg-white p-5 text-sm text-[#8E9398]">{error}</div>}
             {!error && !loading && list.map((d) => (
               <div
                 key={d.id}
-                className={`flex cursor-pointer flex-col gap-1.5 rounded-lg border p-3 ${
-                  d.id === sel?.id ? 'border-teal bg-sage shadow-[inset_0_0_0_1px_#176B6B]' : 'border-line bg-white hover:border-teal hover:bg-cream'
+                className={`flex cursor-pointer flex-col gap-1.5 rounded-lg border p-3 transition-all ${
+                  d.id === sel?.id
+                    ? 'border-teal bg-sage shadow-[inset_0_0_0_1px_#176B6B]'
+                    : 'border-line bg-white hover:-translate-y-px hover:border-teal hover:bg-cream hover:shadow-sm'
                 }`}
                 onClick={() => { setSelId(d.id); setTab('summary'); setSummaryChip('ai'); setApiPreviewOpen(false); setMcpPreviewOpen(false) }}
               >
@@ -207,7 +213,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
               </div>
             ))}
             {!error && !loading && list.length === 0 && (
-              <div className="rounded-[10px] border border-dashed border-[#ddd3c0] bg-white p-5 text-sm text-[#8E9398]">
+              <div className="rounded-[10px] border border-dashed border-line bg-white p-5 text-sm text-[#8E9398]">
                 {datasets.length === 0
                   ? 'No published datasets yet. Finish classification and continue to publish.'
                   : 'Nothing matches that search.'}
@@ -251,32 +257,42 @@ export default function Catalogue({ hasKey, onGoSettings }) {
               </div>
             </div>
 
-            <div className="flex items-center gap-1 px-[22px] pt-2.5">
-              {TABS.map((t) => (
-                <div
-                  key={t}
-                  className={`cursor-pointer border-b-2 px-3 py-2 text-[13.5px] font-semibold ${
-                    tab === t ? 'border-teal text-teal' : 'border-transparent text-ink-soft'
-                  }`}
-                  onClick={() => {
-                    setTab(t)
-                    if (t !== 'api') setApiPreviewOpen(false)
-                    if (t !== 'mcp') setMcpPreviewOpen(false)
-                  }}
-                >
-                  {t[0].toUpperCase() + t.slice(1)}
-                </div>
-              ))}
+            <div className="flex items-center gap-1 px-[22px] pt-2.5" role="tablist" aria-label="Catalogue views">
+              {TABS.map((t) => {
+                const TabIcon = TAB_ICONS[t]
+                return (
+                  <div
+                    key={t}
+                    role="tab"
+                    aria-selected={tab === t}
+                    className={`dhara-tab flex cursor-pointer items-center gap-1.5 rounded-t-lg border-b-2 px-3 py-2 text-[13.5px] font-semibold ${
+                      tab === t
+                        ? 'border-teal-deep bg-teal-deep text-cream'
+                        : 'border-transparent text-ink-soft hover:bg-teal-deep hover:text-cream'
+                    }`}
+                    onClick={() => {
+                      setTab(t)
+                      if (t !== 'api') setApiPreviewOpen(false)
+                      if (t !== 'mcp') setMcpPreviewOpen(false)
+                    }}
+                  >
+                    <TabIcon className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+                    {t[0].toUpperCase() + t.slice(1)}
+                  </div>
+                )
+              })}
             </div>
 
-            <div className="flex flex-col gap-3.5 px-[22px] pb-[22px] pt-[18px]">
+            <div key={tab} className="dhara-tab-panel flex flex-col gap-3.5 px-[22px] pb-[22px] pt-[18px]" role="tabpanel">
               {tab === 'summary' && (
                 <div className="flex flex-col gap-3">
                   <div className="flex items-stretch gap-2" role="tablist" aria-label="Summary type">
                     <button
                       type="button"
-                      className={`flex h-8 flex-1 items-center justify-center rounded-full border font-sans text-[12.5px] font-semibold transition-colors ${
-                        summaryChip === 'ai' ? 'border-teal bg-sage text-ink' : 'border-line bg-white text-ink-soft hover:border-teal hover:text-ink'
+                      className={`dhara-tab flex h-8 flex-1 items-center justify-center rounded-full border font-sans text-[12.5px] font-semibold ${
+                        summaryChip === 'ai'
+                          ? 'border-teal-deep bg-teal-deep text-cream'
+                          : 'border-line bg-white text-ink-soft hover:border-teal-deep hover:bg-teal-deep hover:text-cream'
                       }`}
                       onClick={() => setSummaryChip('ai')}
                     >
@@ -284,8 +300,10 @@ export default function Catalogue({ hasKey, onGoSettings }) {
                     </button>
                     <button
                       type="button"
-                      className={`flex h-8 flex-1 items-center justify-center rounded-full border font-sans text-[12.5px] font-semibold transition-colors ${
-                        summaryChip === 'nmds' ? 'border-teal bg-sage text-ink' : 'border-line bg-white text-ink-soft hover:border-teal hover:text-ink'
+                      className={`dhara-tab flex h-8 flex-1 items-center justify-center rounded-full border font-sans text-[12.5px] font-semibold ${
+                        summaryChip === 'nmds'
+                          ? 'border-teal-deep bg-teal-deep text-cream'
+                          : 'border-line bg-white text-ink-soft hover:border-teal-deep hover:bg-teal-deep hover:text-cream'
                       }`}
                       onClick={() => setSummaryChip('nmds')}
                     >
@@ -293,7 +311,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
                     </button>
                   </div>
                   {summaryChip === 'ai' ? (
-                    <div className={`${metaCardClass} col-span-2`}>
+                    <div key="ai-summary" className={`dhara-tab-panel ${metaCardClass} col-span-2`}>
                       <div className={metaCardLabelClass}>Narrative</div>
                       <div className="text-[15px] leading-relaxed text-ink [text-wrap:pretty]">{sel.summary}</div>
                       {!hasKey && (
@@ -306,14 +324,14 @@ export default function Catalogue({ hasKey, onGoSettings }) {
                       )}
                     </div>
                   ) : (sel.nmds_concepts || []).length === 0 ? (
-                    <div className={`${metaCardClass} col-span-2`}>
+                    <div key="concept-empty" className={`dhara-tab-panel ${metaCardClass} col-span-2`}>
                       <div className={metaCardLabelClass}>Concept metadata</div>
                       <div className="text-[15px] leading-relaxed text-ink-soft [text-wrap:pretty]">
                         No concept details were saved with this release.
                       </div>
                     </div>
                   ) : (
-                    <div className="flex max-h-[420px] flex-col gap-2.5 overflow-auto pr-0.5">
+                    <div key="concept-list" className="dhara-tab-panel flex max-h-[420px] flex-col gap-2.5 overflow-auto pr-0.5">
                       {(sel.nmds_concepts || []).map((row) => (
                         <div className={`${metaCardClass} col-span-2`} key={`${row.item_no}-${row.concept}-${row.code || ''}`}>
                           <div className="flex flex-wrap items-baseline gap-2 text-[13px] font-semibold text-ink">
@@ -396,9 +414,18 @@ export default function Catalogue({ hasKey, onGoSettings }) {
                         <span className={tagChipClass}>JSON</span>
                         <span className={tagChipClass}>CSV</span>
                       </div>
-                      <div className="flex flex-col gap-1.5 rounded-lg bg-teal-deep px-4 py-3.5">
-                        <div className="text-[11px] uppercase tracking-wide text-[#7d9891]">Example</div>
-                        <div className="break-all font-mono text-[12.5px] leading-relaxed text-[#e8f0e8]">curl -H "Authorization: Bearer $TOKEN" "{apiUrl}"</div>
+                      <div className="selection-invert flex flex-col gap-2 rounded-lg bg-gradient-to-br from-teal-deep to-[#0c2f2d] px-4 py-3.5 ring-1 ring-inset ring-white/[.06]">
+                        <div className="flex items-center gap-1.5">
+                          <span className="h-2 w-2 rounded-full bg-[#e4c331]/70" />
+                          <span className="h-2 w-2 rounded-full bg-[#c97e93]/70" />
+                          <span className="h-2 w-2 rounded-full bg-[#8fae4c]/70" />
+                          <div className="ml-1.5 text-[11px] uppercase tracking-wide text-[#7d9891]">Example</div>
+                        </div>
+                        <div className="break-all font-mono text-[12.5px] leading-relaxed text-[#e8f0e8]">
+                          <span className="text-[#8fbcae]">curl -H</span>{' '}
+                          <span className="text-[#e8f0e8]">"Authorization: Bearer $TOKEN"</span>{' '}
+                          <span className="text-[#f2d788]">"{apiUrl}"</span>
+                        </div>
                       </div>
                     </EndpointCard>
                   )}

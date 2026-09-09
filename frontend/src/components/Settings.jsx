@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { CheckCircle2, Clock } from 'lucide-react'
+import Button from './ui/Button'
 import { METADATA_COLUMNS } from './MetadataSheetGrid'
 import {
   getDatasetIdConfig,
@@ -100,18 +101,20 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
     setPendingFile(null)
   }
 
-  const inputClass = 'h-[42px] rounded-md border border-[#ddd3c0] bg-white px-3 font-sans text-[15px] text-ink'
-  const fieldLabelClass = 'text-[13px] font-semibold text-ink'
-  const statusToneClass = { ok: 'text-[13px] text-[#3d7a3d]', warn: 'text-[13px] text-[#9a7413]', none: 'text-[13px] text-[#8E9398]' }
+  const inputClass =
+    'h-10 rounded-xl border border-line bg-surface px-3 font-body text-[14.5px] text-ink transition-all duration-150 outline-none focus:border-teal focus:shadow-focus-ring'
+  const fieldLabelClass = 'text-[13px] font-medium text-ink'
+  const statusToneClass = { ok: 'text-[13px] text-green', warn: 'text-[13px] text-[#9a7413]', none: 'text-[13px] text-[#8E9398]' }
 
   return (
-    <div className="flex w-full flex-col gap-[22px]">
+    <div className="flex w-full flex-col gap-7">
       <div className="flex flex-col gap-1.5">
-        <div className="font-display text-4xl font-medium text-ink">Settings</div>
+        <div className="dhara-page-title">Settings</div>
+        <div className="dhara-page-sub">LLM keys, metadata rules, and classification standards.</div>
       </div>
 
-      <div className="flex flex-col gap-[18px] rounded-lg border border-line bg-white p-6">
-        <div className="text-lg font-semibold text-ink">LLM API key</div>
+      <div className="flex flex-col gap-[18px] rounded-2xl border border-line/90 bg-surface p-6">
+        <div className="text-[16px] font-semibold tracking-tight text-ink">LLM API key</div>
         <div className="grid grid-cols-2 gap-4">
           <div className="flex flex-col gap-1.5">
             <label className={fieldLabelClass}>Provider</label>
@@ -125,18 +128,23 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
           </div>
         </div>
         <div className="flex items-center gap-3.5">
-          <button className="flex h-10 items-center rounded-md bg-teal px-[18px] text-[15px] font-semibold text-white transition-colors hover:bg-teal-dark" onClick={onSaveKey}>Save key</button>
+          <Button onClick={onSaveKey}>Save key</Button>
           <span className={statusClass === 'settings-key-status-ok' ? statusToneClass.ok : statusClass === 'settings-key-status-warn' ? statusToneClass.warn : statusToneClass.none}>{status}</span>
         </div>
       </div>
 
-      <div className="flex flex-col gap-[18px] rounded-lg border border-line bg-white p-6">
-        <div className="flex gap-2">
+      <div className="flex flex-col gap-[18px] rounded-2xl border border-line/90 bg-surface p-6">
+        <div className="flex gap-2" role="tablist" aria-label="Configuration sections">
           {CONFIG_TABS.map((t) => (
             <button
               key={t.key}
-              className={`h-9 min-w-0 flex-1 rounded-full border px-3 text-sm font-semibold transition-colors ${
-                activeTab === t.key ? 'border-teal bg-teal text-white' : 'border-line bg-cream text-ink-soft hover:bg-sage hover:text-ink'
+              type="button"
+              role="tab"
+              aria-selected={activeTab === t.key}
+              className={`dhara-tab h-9 min-w-0 flex-1 rounded-xl px-3 text-sm font-semibold ${
+                activeTab === t.key
+                  ? 'border-teal-deep bg-teal-deep text-cream shadow-sm'
+                  : 'border-line bg-cream/60 text-ink-soft hover:border-teal-deep hover:bg-teal-deep hover:text-cream'
               }`}
               onClick={() => setActiveTab(t.key)}
             >
@@ -145,6 +153,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
           ))}
         </div>
 
+        <div key={activeTab} className="dhara-tab-panel flex flex-col gap-[18px]" role="tabpanel">
         {activeTab === 'dataset' && (
           <>
             <div className="-mt-2.5 text-sm text-ink-soft">Controls how new dataset IDs are generated.</div>
@@ -183,7 +192,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
               </div>
             </div>
             <div className="flex items-center gap-3.5">
-              <button className="flex h-10 items-center rounded-md bg-teal px-[18px] text-[15px] font-semibold text-white transition-colors hover:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]" disabled={!datasetIdDirty} onClick={saveDatasetIdConfig}>Save configuration</button>
+              <Button disabled={!datasetIdDirty} onClick={saveDatasetIdConfig}>Save configuration</Button>
               <span className={datasetIdDirty ? statusToneClass.warn : statusToneClass.ok}>
                 {datasetIdDirty ? 'Unsaved changes' : 'Configuration saved'}
               </span>
@@ -194,29 +203,62 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
         {activeTab === 'metadata' && (
           <>
             <div className="-mt-2.5 text-sm text-ink-soft">Choose the metadata standard and which fields are required when a dataset is submitted.</div>
-            <div className="flex max-w-md flex-col gap-1.5">
-              <label className={fieldLabelClass}>Metadata standard</label>
-              <select
-                className={inputClass}
-                value={metadataStandard}
-                onChange={(e) => setMetadataStandard(e.target.value)}
-              >
-                {METADATA_STANDARD_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
-              <div className="text-[13px] text-ink-soft">
-                Determines which metadata schema is used when filling dataset metadata.
+            <div className="flex flex-col gap-2.5">
+              <div className="flex flex-col gap-0.5">
+                <label className={fieldLabelClass}>Metadata standard</label>
+                <div className="text-[13px] text-ink-soft">
+                  Determines which metadata schema is used when filling dataset metadata.
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {METADATA_STANDARD_OPTIONS.map((opt) => {
+                  const selected = metadataStandard === opt.value
+                  const blurb = opt.value === 'sdg'
+                    ? 'UN SDG indicator fields for goals, targets, and custodians.'
+                    : 'National metadata sheet fields for catalogue publication.'
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setMetadataStandard(opt.value)}
+                      className={`dhara-tab group flex flex-col gap-2 rounded-2xl px-4 py-3.5 text-left ${
+                        selected
+                          ? 'border-teal-deep bg-teal-deep text-cream shadow-[inset_0_0_0_1px_#12403E]'
+                          : 'border-line bg-cream/50 text-ink hover:border-teal-deep hover:bg-teal-deep hover:text-cream'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className={`text-[14.5px] font-semibold tracking-tight ${selected ? 'text-cream' : 'text-ink group-hover:text-cream'}`}>
+                          {opt.label}
+                        </span>
+                        <span
+                          className={`flex h-5 w-5 flex-none items-center justify-center rounded-full border transition-colors duration-[420ms] ${
+                            selected
+                              ? 'border-cream/40 bg-cream/20 text-cream'
+                              : 'border-line bg-surface text-transparent group-hover:border-cream/40 group-hover:bg-cream/20 group-hover:text-cream'
+                          }`}
+                          aria-hidden
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={2.25} />
+                        </span>
+                      </div>
+                      <span className={`text-[12.5px] leading-snug ${selected ? 'text-cream/80' : 'text-ink-soft group-hover:text-cream/80'}`}>
+                        {blurb}
+                      </span>
+                    </button>
+                  )
+                })}
               </div>
             </div>
 
+            <div key={metadataStandard} className="dhara-tab-panel flex flex-col gap-[18px]">
             {metadataStandard === 'sdg' ? (
               <>
                 <div className="text-[13px] font-semibold text-ink">Indicator information (SDG_INDICATOR_INFO)</div>
                 <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-cream">
                   {SDG_CONCEPT_TEMPLATE.filter((row) => !row.section).map((row) => (
                     <div className="flex cursor-default select-text items-start gap-3 border-b border-line bg-white px-4 py-3.5 last:border-b-0" key={row.code}>
-                      <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-[#3d7a3d]" strokeWidth={1.75} />
+                      <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-green" strokeWidth={1.75} />
                       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                         <div className="text-[15px] font-semibold text-ink">
                           {row.concept}{' '}
@@ -245,19 +287,20 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
                 if (!field) return null
                 return (
                   <div className="flex cursor-default select-text items-start gap-3 border-b border-line bg-white px-4 py-3.5 last:border-b-0" key={key}>
-                    <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-[#3d7a3d]" strokeWidth={1.75} />
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-green" strokeWidth={1.75} />
                     <div className="flex flex-1 flex-col gap-0.5">
                       <div className="text-[15px] font-semibold text-ink">{field.title}</div>
                       <div className="text-[13px] text-ink-soft">{field.desc}</div>
                     </div>
                     <input
                       type="checkbox"
+                      className="mt-1.5 h-[15px] w-[15px] flex-none accent-teal"
                       checked={extraRequiredFields[key]}
                       onChange={() => setExtraRequiredFields((prev) => ({ ...prev, [key]: !prev[key] }))}
                     />
                     <button
                       type="button"
-                      className="flex-none rounded-[5px] border border-line px-2.5 py-1 text-xs font-semibold text-ink-soft transition-colors hover:border-[#c45c4a] hover:text-[#c45c4a]"
+                      className="flex-none rounded-md border border-line px-2.5 py-1 text-xs font-semibold text-ink-soft transition-colors hover:border-coral hover:text-coral"
                       onClick={() => setExtraRequiredFields((prev) => {
                         const next = { ...prev }
                         delete next[key]
@@ -277,7 +320,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
                   <div className="flex items-center gap-3">
                     <button
                       type="button"
-                      className="inline-flex h-10 items-center rounded-md border border-teal bg-white px-4 text-sm font-semibold text-teal transition-colors hover:bg-sage disabled:cursor-default disabled:opacity-45"
+                      className="inline-flex h-10 items-center rounded-lg border border-teal bg-white px-4 text-sm font-semibold text-teal transition-colors duration-200 hover:bg-sage disabled:cursor-default disabled:opacity-45"
                       disabled={!available.length}
                       onClick={() => setPickingFields((open) => !open)}
                     >
@@ -311,8 +354,9 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
             })()}
               </>
             )}
+            </div>
             <div className="flex items-center gap-3.5">
-              <button className="flex h-10 items-center rounded-md bg-teal px-[18px] text-[15px] font-semibold text-white transition-colors hover:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]" disabled={!metadataConfigDirty} onClick={saveMetadataConfig}>Save configuration</button>
+              <Button disabled={!metadataConfigDirty} onClick={saveMetadataConfig}>Save configuration</Button>
               <span className={metadataConfigDirty ? statusToneClass.warn : statusToneClass.ok}>
                 {metadataConfigDirty ? 'Unsaved changes' : 'Configuration saved'}
               </span>
@@ -327,7 +371,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
             <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-cream">
               {STANDARDS.map((s) => (
                 <div key={s.key} className="flex cursor-default select-text items-start gap-3 border-b border-line bg-white px-4 py-3.5 last:border-b-0">
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-[#3d7a3d]" strokeWidth={1.75} />
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-green" strokeWidth={1.75} />
                   <div className="flex flex-1 flex-col gap-0.5">
                     <div className="text-[15px] font-semibold text-ink">{s.name}</div>
                     <div className="text-[13px] text-ink-soft">{s.desc}</div>
@@ -337,7 +381,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
 
               {customStandards.map((s, i) => (
                 <div key={`${s.name}-${i}`} className="flex cursor-default select-text items-start gap-3 border-b border-line bg-white px-4 py-3.5 last:border-b-0">
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-[#3d7a3d]" strokeWidth={1.75} />
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-green" strokeWidth={1.75} />
                   <div className="flex flex-1 flex-col gap-0.5">
                     <div className="text-[15px] font-semibold text-ink">{s.name}</div>
                     <div className="text-[13px] text-ink-soft">Custom standard, uploaded by you.</div>
@@ -357,7 +401,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
             </div>
 
             <div className="flex items-center gap-3">
-              <label className="inline-flex h-10 cursor-pointer items-center rounded-md border border-teal bg-white px-4 text-sm font-semibold text-teal transition-colors hover:bg-sage">
+              <label className="inline-flex h-10 cursor-pointer items-center rounded-lg border border-teal bg-white px-4 text-sm font-semibold text-teal transition-colors duration-200 hover:bg-sage">
                 + Add custom standard
                 <input
                   type="file"
@@ -369,19 +413,18 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
             </div>
 
             <div className="flex items-center gap-3.5">
-              <button className="flex h-10 items-center rounded-md bg-teal px-[18px] text-[15px] font-semibold text-white transition-colors hover:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]" disabled={!pendingFile} onClick={saveCustomStandard}>
-                Save configuration
-              </button>
+              <Button disabled={!pendingFile} onClick={saveCustomStandard}>Save configuration</Button>
               <span className={pendingFile ? statusToneClass.warn : statusToneClass.ok}>
                 {pendingFile ? 'Unsaved changes' : 'All standards saved'}
               </span>
             </div>
           </>
         )}
+        </div>
       </div>
 
-      <div className="flex flex-col gap-[18px] rounded-lg border border-line bg-white p-6">
-        <div className="text-lg font-semibold text-ink">User information</div>
+      <div className="flex flex-col gap-[18px] rounded-2xl border border-line/90 bg-surface p-6">
+        <div className="text-[16px] font-semibold tracking-tight text-ink">User information</div>
         <div className="grid grid-cols-2 gap-4">
           <div className="flex flex-col gap-1.5">
             <label className={fieldLabelClass}>Name</label>

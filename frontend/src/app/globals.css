@@ -1,3 +1,91 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+/* Cream highlight on light surfaces; charcoal text for contrast. */
+::selection {
+  background: #E7F0DF;
+  color: #303337;
+}
+
+/* Dark panels (auth left rail, catalogue API blocks) invert selection. */
+.selection-invert ::selection {
+  background: #176B6B;
+  color: #FFF7EA;
+}
+
+/* Slim, warm-tinted scrollbars — native scroll behavior only. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d4c9b4 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: #d4c9b4;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: #c4b89e;
+}
+
+@layer components {
+  .dhara-page-title {
+    @apply font-display text-[26px] font-medium leading-tight tracking-tight text-ink;
+  }
+
+  .dhara-page-sub {
+    @apply mt-1 text-[14.5px] leading-relaxed text-ink-soft;
+  }
+
+  /* Shared tab / chip chrome — deep fill + ivory text on active/hover. */
+  .dhara-tab {
+    @apply border transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)];
+  }
+
+  .dhara-tab-panel {
+    animation: dhara-tab-in 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
+
+@keyframes dhara-tab-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dhara-tab {
+    transition: none !important;
+  }
+
+  .dhara-tab-panel {
+    animation: none !important;
+  }
+}

@@ -59,15 +59,15 @@ export default function MetadataSheetGrid({
           <button
             key={row.id}
             type="button"
-            className={`grid min-w-0 grid-cols-[18px_1fr] items-center gap-2 rounded-full border px-2.5 py-1.5 pl-2 font-sans text-[12.5px] font-medium transition-colors ${
+            className={`dhara-tab grid min-w-0 grid-cols-[18px_1fr] items-center gap-2 rounded-full px-2.5 py-1.5 pl-2 font-sans text-[12.5px] font-medium ${
               ri === activeIndex
-                ? 'border-teal bg-sage text-ink'
-                : 'border-line bg-surface text-ink-soft hover:border-teal hover:text-ink'
+                ? 'border-teal-deep bg-teal-deep text-cream'
+                : 'border-line bg-surface text-ink-soft hover:border-teal-deep hover:bg-teal-deep hover:text-cream'
             }`}
             onClick={() => setActiveIndex(ri)}
             title={row.label}
           >
-            <span className={`inline-flex h-[18px] w-[18px] items-center justify-center rounded-full text-[10.5px] font-bold ${ri === activeIndex ? 'bg-teal text-white' : 'bg-[#ece4d6] text-ink-soft'}`}>{ri + 1}</span>
+            <span className={`inline-flex h-[18px] w-[18px] items-center justify-center rounded-full text-[10.5px] font-bold transition-colors duration-[420ms] ${ri === activeIndex ? 'bg-cream/20 text-cream' : 'bg-[#ece4d6] text-ink-soft'}`}>{ri + 1}</span>
             <span className="line-clamp-2 min-w-0 text-center leading-tight">{row.label}</span>
           </button>
         ))}
@@ -75,7 +75,7 @@ export default function MetadataSheetGrid({
       </div>
 
       {activeRow && (
-        <div className="flex items-start">
+        <div key={activeRow.id} className="dhara-tab-panel flex items-start">
           <div className="min-w-0 flex-1">
             {(() => {
               const row = activeRow
@@ -98,7 +98,7 @@ export default function MetadataSheetGrid({
             {primaryCol && (
               <input
                 className={`box-border h-[42px] w-full rounded-lg border px-3.5 font-sans text-[15px] font-medium text-ink placeholder:text-[#a49c8e] focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal ${
-                  primaryCol.required && !(row.values[primaryCol.key] || '').trim() ? 'border-[#e3b3ba] bg-[rgba(217,91,104,0.06)]' : 'border-[#ddd3c0] bg-cream'
+                  primaryCol.required && !(row.values[primaryCol.key] || '').trim() ? 'border-[#e3b3ba] bg-[rgba(217,91,104,0.06)]' : 'border-line bg-cream'
                 }`}
                 type="text"
                 value={row.values[primaryCol.key] || ''}
@@ -121,7 +121,7 @@ export default function MetadataSheetGrid({
                     <span className="flex-none self-center whitespace-nowrap font-sans text-[11px] tracking-wide text-[#8E9398]">{c.label}{c.required && ' *'}</span>
                     {c.readOnly ? (
                       <span
-                        className="block flex-1 truncate rounded-lg border border-solid border-[#ddd3c0] bg-cream px-2.5 py-1 font-sans text-[12.5px] font-medium text-ink outline-none focus:whitespace-normal focus:[overflow-wrap:anywhere] focus:break-words"
+                        className="block flex-1 truncate rounded-lg border border-solid border-line bg-cream px-2.5 py-1 font-sans text-[12.5px] font-medium text-ink outline-none focus:whitespace-normal focus:[overflow-wrap:anywhere] focus:break-words"
                         title={row.values[c.key] || ''}
                         tabIndex={0}
                       >
@@ -129,7 +129,7 @@ export default function MetadataSheetGrid({
                       </span>
                     ) : c.type === 'date' ? (
                       <input
-                        className="flex-1 rounded-lg border border-solid border-[#ddd3c0] bg-surface px-2.5 py-1 font-sans text-xs text-ink"
+                        className="flex-1 rounded-lg border border-solid border-line bg-surface px-2.5 py-1 font-sans text-xs text-ink"
                         type="date"
                         value={row.values[c.key] || ''}
                         onChange={(e) => onChange(row.id, c.key, e.target.value)}

@@ -146,7 +146,7 @@ export default function NmdsGroupPanel({
                 <X className="h-5 w-5" strokeWidth={1.75} />
               </button>
             </div>
-            <div className="flex flex-1 flex-col gap-[18px] overflow-y-auto px-6 pb-6 pt-[18px]">
+            <div className="flex min-h-0 flex-1 flex-col gap-[18px] overflow-y-auto px-6 pb-6 pt-[18px]">
               <NmdsConceptFields
                 fields={fields}
                 onFieldChange={onFieldChange}

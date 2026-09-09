@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { AlertTriangle, ArrowLeft, ArrowRight, Check, Pencil, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, ArrowRight, Check, Pencil, Trash2, X } from 'lucide-react'
 import KydsSummaryCard from './KydsSummaryCard'
 import TableViewer from './TableViewer'
 import BatchUpload from './BatchUpload'
@@ -278,11 +278,11 @@ function MetadataFileList({ files, onRemove }) {
   return (
     <ul className="mt-3 flex w-full list-none flex-col gap-1.5 text-left">
       {files.map((f, i) => (
-        <li key={`${f.name}-${i}`} className="flex items-center justify-between gap-2 rounded-md bg-white/80 px-2.5 py-1.5 text-[12.5px] text-ink">
+        <li key={`${f.name}-${i}`} className="flex items-center justify-between gap-2 rounded-md bg-cream/95 px-2.5 py-1.5 text-[12.5px] text-ink">
           <span className="min-w-0 truncate">{f.name}</span>
           <button
             type="button"
-            className="flex h-6 w-6 flex-none items-center justify-center rounded text-ink-soft hover:bg-cream hover:text-[#b91c1c]"
+            className="flex h-6 w-6 flex-none items-center justify-center rounded text-ink-soft hover:bg-white hover:text-[#b91c1c]"
             onClick={(e) => {
               e.stopPropagation()
               onRemove(i)
@@ -336,11 +336,17 @@ function UploadChoice({
 
   const fileTab = choice !== 'sql'
   const dropZoneClass = (dragging) =>
-    `flex min-h-[168px] flex-1 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-5 py-6 text-center transition-colors ${
+    `flex min-h-[168px] flex-1 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed px-5 py-6 text-center transition-colors ${
       dragging
-        ? 'border-teal bg-sage'
-        : 'border-[#d4c9b4] bg-[#FFFCF6] hover:border-teal hover:bg-cream'
+        ? 'border-teal bg-forest-tint'
+        : 'border-line bg-cream/80 hover:border-teal/35 hover:bg-forest-tint/60'
     }`
+
+  const cardClass = 'flex min-h-[240px] w-full flex-col overflow-hidden rounded-card border border-line bg-surface transition-colors duration-150 hover:border-forest/20'
+  const selectorBarClass = 'border-b border-line bg-cream/80'
+  const tabBase = 'dhara-tab relative px-3 text-[13px] font-semibold disabled:cursor-not-allowed disabled:opacity-60'
+  const tabActive = 'bg-teal-deep text-cream after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-cream/80'
+  const tabIdle = 'border-transparent text-ink-soft hover:bg-teal-deep hover:text-cream'
 
   return (
     <div className="flex flex-col gap-4">
@@ -368,9 +374,9 @@ function UploadChoice({
         }}
       />
       <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-2 sm:items-stretch">
-        <div className="flex min-h-[240px] w-full flex-col overflow-hidden rounded-xl border border-line bg-white shadow-sm">
+        <div className={cardClass}>
           <div
-            className="grid h-[45px] grid-cols-2 border-b border-line bg-cream/50"
+            className={`grid h-[45px] grid-cols-2 ${selectorBarClass}`}
             role="tablist"
             aria-label="Dataset source"
           >
@@ -379,11 +385,7 @@ function UploadChoice({
               role="tab"
               aria-selected={fileTab}
               disabled={pdfUploading}
-              className={`relative px-3 text-[13px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                fileTab
-                  ? 'bg-white text-teal after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-teal'
-                  : 'text-ink-soft hover:bg-cream hover:text-ink'
-              }`}
+              className={`${tabBase} ${fileTab ? tabActive : tabIdle}`}
               onClick={() => choice === 'sql' && onChoose(null)}
             >
               File upload
@@ -393,18 +395,14 @@ function UploadChoice({
               role="tab"
               aria-selected={!fileTab}
               disabled={pdfUploading}
-              className={`relative px-3 text-[13px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                !fileTab
-                  ? 'bg-white text-teal after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-teal'
-                  : 'text-ink-soft hover:bg-cream hover:text-ink'
-              }`}
+              className={`${tabBase} ${!fileTab ? tabActive : tabIdle}`}
               onClick={() => fileTab && onChoose('sql')}
             >
               Connect SQL database
             </button>
           </div>
           {fileTab ? (
-            <div className="flex flex-1 flex-col p-3">
+            <div key="file-tab" className="dhara-tab-panel flex flex-1 flex-col p-3">
               <div
                 role="button"
                 tabIndex={0}
@@ -419,7 +417,7 @@ function UploadChoice({
                 }}
                 className={`${dropZoneClass(datasetDragging)} ${pdfUploading ? 'pointer-events-none opacity-60' : ''}`}
               >
-                <div className="text-[16px] font-bold text-ink">
+                <div className="text-[15px] font-semibold tracking-tight text-ink">
                   {pdfUploading ? 'Uploading PDF…' : 'Upload dataset files'}
                 </div>
                 <div className="max-w-[280px] text-[13px] leading-snug text-ink-soft">
@@ -430,14 +428,16 @@ function UploadChoice({
               </div>
             </div>
           ) : (
-            <div className="flex flex-1 flex-col bg-white p-5">
-              {sqlPanel}
+            <div key="sql-tab" className="dhara-tab-panel flex flex-1 flex-col p-3">
+              <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-cream p-4">
+                {sqlPanel}
+              </div>
             </div>
           )}
         </div>
 
-        <div className="flex min-h-[240px] w-full flex-col overflow-hidden rounded-xl border border-line bg-white shadow-sm">
-          <div className="flex h-[45px] items-center justify-center border-b border-line bg-cream/50 px-3">
+        <div className={cardClass}>
+          <div className={`flex h-[45px] items-center justify-center px-3 ${selectorBarClass}`}>
             <span className="text-[13px] font-semibold text-ink-soft">Metadata (optional)</span>
           </div>
           <div className="flex flex-1 flex-col p-3">
@@ -455,7 +455,7 @@ function UploadChoice({
               }}
               className={`${dropZoneClass(metadataDragging)} ${pdfUploading ? 'pointer-events-none opacity-60' : ''}`}
             >
-              <div className="text-[16px] font-bold text-ink">Upload metadata tag files</div>
+              <div className="text-[15px] font-semibold tracking-tight text-ink">Upload metadata tag files</div>
               <div className="max-w-[280px] text-[13px] leading-snug text-ink-soft">
                 Optional XLSX metadata workbooks — matched against your dataset tables during grouping.
               </div>
@@ -488,10 +488,8 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   const [pdfUploading, setPdfUploading] = useState(false)
   const [pdfError, setPdfError] = useState('')
   // Full-page status between stages (same look as PDF processing).
-  // { key, title, subtitle, steps, work?, after }
+  // { key, title, subtitle, steps, work?, after, msPerStep? }
   const [statusPage, setStatusPage] = useState(null)
-  const pendingMatchRef = useRef(null)
-  const matchResolveRef = useRef(null)
   const router = useRouter()
 
   // Consolidates the three previously-independent dialog booleans
@@ -951,23 +949,6 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
     })
   }
 
-  const beginFilesToPreviewStatus = () => {
-    pendingMatchRef.current = null
-    const waitForMatch = new Promise((resolve) => {
-      matchResolveRef.current = resolve
-    })
-    setStatusPage({
-      ...STATUS_TRANSITIONS.filesToPreview,
-      key: 'filesToPreview',
-      work: () => waitForMatch,
-      after: () => {
-        const data = pendingMatchRef.current
-        setStatusPage(null)
-        if (data) finishMatched(data)
-      },
-    })
-  }
-
   const finishMatched = (data) => {
     setMetadataFiles(data.metadataFiles)
     setMatchResult(data)
@@ -984,15 +965,18 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
     setStep(2)
   }
 
+  // Show the Files→Preview status page only AFTER extract/match succeeds,
+  // so the upload fetch is never racing a hidden/remounted BatchUpload.
   const handleMatched = (data) => {
-    pendingMatchRef.current = data
-    if (matchResolveRef.current) {
-      matchResolveRef.current()
-      matchResolveRef.current = null
-    } else {
-      // No status page running (e.g. restored path) — go straight to preview.
-      finishMatched(data)
-    }
+    setStatusPage({
+      ...STATUS_TRANSITIONS.filesToPreview,
+      key: 'filesToPreview',
+      msPerStep: 550,
+      after: () => {
+        setStatusPage(null)
+        finishMatched(data)
+      },
+    })
   }
 
   const back = () => setStep((s) => Math.max(1, s - 1))
@@ -1122,7 +1106,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   const dragEnabled = manualGrouping || editingGroups
 
   return (
-    <div className="flex items-start gap-6">
+    <div className="flex flex-col gap-5">
       <StageSidebar
         stageIdx={stageIdx}
         step={step}
@@ -1137,16 +1121,16 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
         {!statusPage && (
         <div className="flex flex-col">
           {step > 1 && step < 6 && (
-            <div className="mb-3.5 inline-flex cursor-pointer items-center gap-1.5 text-[15px] font-semibold text-teal hover:text-teal-dark" onClick={back}>
-              <ArrowLeft className="h-4 w-4" strokeWidth={2} aria-hidden />
+            <div className="mb-3.5 inline-flex cursor-pointer items-center gap-1.5 text-[14px] font-medium text-teal transition-colors hover:text-teal-dark" onClick={back}>
+              <ArrowLeft className="h-4 w-4" strokeWidth={1.75} aria-hidden />
               {BACK_LABELS[step]}
             </div>
           )}
           <div className="flex items-center justify-between gap-6">
             <div>
-              <div className="font-display text-[32px] font-medium leading-tight text-ink">{info.title}</div>
-              <div className="mt-1 text-[15px] text-ink-soft">{info.purpose}</div>
-              {info.next && <div className="mt-0.5 text-[13px] font-medium text-teal">{info.next}</div>}
+              <div className="dhara-page-title">{info.title}</div>
+              <div className="dhara-page-sub">{info.purpose}</div>
+              {info.next && <div className="mt-1 text-[13px] font-medium text-teal">{info.next}</div>}
             </div>
             {stageIdx === 0 && (step === 1 || step === 2) && <KydsSummaryCard variant="corner" />}
           </div>
@@ -1154,7 +1138,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
         )}
 
         {/* Shared content panel — choice cards, then tables / grouping / later steps */}
-        <div className="flex flex-col gap-5 rounded-xl border border-line bg-white p-5 shadow-sm sm:p-6">
+        <div className="flex flex-col gap-5 rounded-2xl border border-line/90 bg-surface p-5 sm:p-6">
         {statusPage && (
           <ConsoleStatusPlaceholder
             key={statusPage.key}
@@ -1183,12 +1167,6 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
               sqlPanel={(
                 <SqlUpload
                   onMatched={handleMatched}
-                  onWorking={beginFilesToPreviewStatus}
-                  onError={() => {
-                    setStatusPage(null)
-                    matchResolveRef.current = null
-                    pendingMatchRef.current = null
-                  }}
                   metadataFiles={step1MetadataFiles}
                   onMetadataFilesChange={setStep1MetadataFiles}
                   hideMetadataSection
@@ -1207,12 +1185,6 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                 </button>
                 <BatchUpload
                   onMatched={handleMatched}
-                  onWorking={beginFilesToPreviewStatus}
-                  onError={() => {
-                    setStatusPage(null)
-                    matchResolveRef.current = null
-                    pendingMatchRef.current = null
-                  }}
                   initialDatasetFiles={pendingDatasetFiles}
                   metadataFiles={step1MetadataFiles}
                   onMetadataFilesChange={setStep1MetadataFiles}
@@ -1242,7 +1214,11 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                   previewDatasets.map((name) => (
                     <div
                       key={name}
-                      className={`cursor-pointer rounded-full border px-3 py-1.5 text-sm ${name === effectiveDataset ? 'border-teal bg-teal text-white' : 'border-line text-ink hover:border-teal'}`}
+                      className={`dhara-tab cursor-pointer rounded-full border px-3 py-1.5 text-sm ${
+                        name === effectiveDataset
+                          ? 'border-teal-deep bg-teal-deep text-cream'
+                          : 'border-line text-ink hover:border-teal-deep hover:bg-teal-deep hover:text-cream'
+                      }`}
                       onClick={() => selectPreviewDataset(name)}
                       title={name}
                     >
@@ -1347,20 +1323,29 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
               <div className="inline-flex rounded-full border border-line bg-white p-0.5">
                 <button
                   type="button"
-                  className={`rounded-full px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${groupingMode === 'automatic' ? 'bg-teal text-white' : 'text-ink-soft hover:text-ink'}`}
+                  className={`dhara-tab rounded-full px-3.5 py-1.5 text-[13px] font-semibold ${
+                    groupingMode === 'automatic'
+                      ? 'border-transparent bg-teal-deep text-cream'
+                      : 'border-transparent text-ink-soft hover:bg-teal-deep hover:text-cream'
+                  }`}
                   onClick={() => groupingMode !== 'automatic' && requestAutomaticGrouping()}
                 >
                   Automatic (recommended)
                 </button>
                 <button
                   type="button"
-                  className={`rounded-full px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${groupingMode === 'manual' ? 'bg-teal text-white' : 'text-ink-soft hover:text-ink'}`}
+                  className={`dhara-tab rounded-full px-3.5 py-1.5 text-[13px] font-semibold ${
+                    groupingMode === 'manual'
+                      ? 'border-transparent bg-teal-deep text-cream'
+                      : 'border-transparent text-ink-soft hover:bg-teal-deep hover:text-cream'
+                  }`}
                   onClick={() => groupingMode !== 'manual' && requestManualGrouping()}
                 >
                   Manual
                 </button>
               </div>
               {groupingMode === 'automatic' ? (
+                <div key="auto-actions" className="dhara-tab-panel flex flex-wrap items-center gap-3">
                 <Button
                   variant="secondary"
                   size="sm"
@@ -1368,8 +1353,11 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                 >
                   {editingGroups ? 'Done editing' : 'Edit groups'}
                 </Button>
+                </div>
               ) : (
+                <div key="manual-actions" className="dhara-tab-panel">
                 <Button variant="secondary" size="sm" onClick={() => setActiveDialog('addGroup')}>+ Add another group</Button>
+                </div>
               )}
             </div>
 
@@ -1422,7 +1410,9 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                     <GroupNameEditor name={g.file_name} onSave={(newName) => renameBatchGroup(i, newName)} />
                     <span className="whitespace-nowrap rounded-full bg-cream px-2.5 py-0.5 text-xs text-ink-soft">{g.matched_tables.length} table{g.matched_tables.length !== 1 ? 's' : ''}</span>
                     {dragEnabled && (
-                      <button className="rounded border border-line px-1.5 py-1 text-xs text-ink-soft hover:border-coral hover:bg-[#fdecec] hover:text-coral" onClick={() => deleteBatchGroup(i)} title="Delete group">🗑</button>
+                      <button className="flex items-center justify-center rounded border border-line px-1.5 py-1 text-xs text-ink-soft transition-colors duration-200 hover:border-coral hover:bg-[#fdecec] hover:text-coral" onClick={() => deleteBatchGroup(i)} title="Delete group" aria-label="Delete group">
+                        <Trash2 className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+                      </button>
                     )}
                   </div>
                   <table className="w-full border-collapse text-[13px]">

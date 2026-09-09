@@ -676,7 +676,7 @@ export default function PdfGrouping({ jobId }) {
               <ArrowLeft className="h-4 w-4" strokeWidth={2} aria-hidden />
               Back to grouping
             </button>
-            <div className="font-display text-[32px] font-medium leading-tight text-ink">Metadata</div>
+            <div className="font-display text-[26px] font-medium leading-tight text-ink">Metadata</div>
             <div className="mt-1 text-[15px] text-ink-soft">
               Add catalogue metadata — title, category, coverage — for each group.
             </div>
@@ -749,7 +749,7 @@ export default function PdfGrouping({ jobId }) {
               <ArrowLeft className="h-4 w-4" strokeWidth={2} aria-hidden />
               Back to preview
             </button>
-            <div className="font-display text-[32px] font-medium leading-tight text-ink">Group tables</div>
+            <div className="font-display text-[26px] font-medium leading-tight text-ink">Group tables</div>
             <div className="mt-1 text-[15px] text-ink-soft">
               Confirm which tables belong together — proposals use semantic similarity (pgvector).
             </div>
@@ -774,8 +774,10 @@ export default function PdfGrouping({ jobId }) {
                 <div className="inline-flex rounded-full border border-line bg-white p-0.5">
                   <button
                     type="button"
-                    className={`rounded-full px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${
-                      groupingMode === 'automatic' ? 'bg-teal text-white' : 'text-ink-soft hover:text-ink'
+                    className={`dhara-tab rounded-full px-3.5 py-1.5 text-[13px] font-semibold ${
+                      groupingMode === 'automatic'
+                        ? 'border-transparent bg-teal-deep text-cream'
+                        : 'border-transparent text-ink-soft hover:bg-teal-deep hover:text-cream'
                     }`}
                     onClick={() => groupingMode !== 'automatic' && requestAutomatic()}
                     disabled={saving || metadataFilling}
@@ -784,8 +786,10 @@ export default function PdfGrouping({ jobId }) {
                   </button>
                   <button
                     type="button"
-                    className={`rounded-full px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${
-                      groupingMode === 'manual' ? 'bg-teal text-white' : 'text-ink-soft hover:text-ink'
+                    className={`dhara-tab rounded-full px-3.5 py-1.5 text-[13px] font-semibold ${
+                      groupingMode === 'manual'
+                        ? 'border-transparent bg-teal-deep text-cream'
+                        : 'border-transparent text-ink-soft hover:bg-teal-deep hover:text-cream'
                     }`}
                     onClick={() => groupingMode !== 'manual' && setActiveDialog('manualConfirm')}
                   >

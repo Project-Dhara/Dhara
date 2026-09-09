@@ -42,23 +42,23 @@ export default function NmdsConceptFields({
             <button
               key={t.item_no || t.title}
               type="button"
-              className={`grid min-w-0 grid-cols-[18px_1fr] items-center gap-2 rounded-full border px-2.5 py-1.5 pl-2 font-sans text-[12.5px] font-medium transition-colors ${
+              className={`dhara-tab grid min-w-0 grid-cols-[18px_1fr] items-center gap-2 rounded-full px-2.5 py-1.5 pl-2 font-sans text-[12.5px] font-medium ${
                 active
-                  ? 'border-teal bg-sage text-ink'
+                  ? 'border-teal-deep bg-teal-deep text-cream'
                   : unfilled
                     ? 'border-[#e2711d] bg-surface text-ink-soft shadow-[0_0_0_1px_#e2711d] hover:text-ink'
-                    : 'border-line bg-surface text-ink-soft hover:border-teal hover:text-ink'
+                    : 'border-line bg-surface text-ink-soft hover:border-teal-deep hover:bg-teal-deep hover:text-cream'
               }`}
               onClick={() => setTopicIndex(i)}
             >
-              <span className={`inline-flex h-[18px] w-[18px] items-center justify-center rounded-full text-[10.5px] font-bold ${active || done ? 'bg-teal text-white' : 'bg-[#ece4d6] text-ink-soft'}`}>{i + 1}</span>
+              <span className={`inline-flex h-[18px] w-[18px] items-center justify-center rounded-full text-[10.5px] font-bold transition-colors duration-[420ms] ${active || done ? (active ? 'bg-cream/20 text-cream' : 'bg-teal text-white') : 'bg-[#ece4d6] text-ink-soft'}`}>{i + 1}</span>
               <span className="min-w-0 text-center leading-tight">{t.title}</span>
             </button>
           )
         })}
       </div>
 
-      <div className="flex flex-col gap-3.5 rounded-[10px] border border-line bg-surface p-4 px-[18px]">
+      <div key={safeIndex} className="dhara-tab-panel flex flex-col gap-3.5 rounded-[10px] border border-line bg-surface p-4 px-[18px]">
         <div className="flex flex-wrap items-baseline justify-between gap-3">
           <div className="text-base font-bold text-ink">
             {topic.item_no ? `${topic.item_no}. ` : ''}{topic.title}

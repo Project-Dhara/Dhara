@@ -87,7 +87,7 @@ export default function PdfProcessingPage() {
     return (
       <PdfConsoleLayout jobId={jobId} step={1} maxStepReached={1}>
         <div className="mx-auto flex max-w-xl flex-col gap-4 py-8">
-          <div className="font-display text-2xl font-medium text-ink">Something went wrong</div>
+          <div className="font-display text-xl font-medium text-ink">Something went wrong</div>
           <ErrorBanner>{error}</ErrorBanner>
           <Button variant="primary" className="self-start" onClick={() => router.push('/console')}>Upload a different PDF</Button>
         </div>
@@ -100,7 +100,7 @@ export default function PdfProcessingPage() {
     <PdfConsoleLayout jobId={jobId} step={1} maxStepReached={1}>
       <div className="mx-auto flex max-w-xl flex-col gap-8 py-8">
         <div>
-          <div className="font-display text-2xl font-medium text-ink">{job?.filename || 'Processing your document'}</div>
+          <div className="font-display text-xl font-medium text-ink">{job?.filename || 'Processing your document'}</div>
           <div className="mt-1 text-sm text-ink-soft">
             Processing your document — this can take a few minutes for large PDFs.
           </div>

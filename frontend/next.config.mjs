@@ -2,6 +2,11 @@
 const backendOrigin = process.env.BACKEND_ORIGIN || 'http://127.0.0.1:8000'
 
 const nextConfig = {
+  // Excel batch-extract / PDF jobs can exceed the default ~30s rewrite proxy
+  // timeout and fail with "socket hang up" → UI "Extraction failed".
+  experimental: {
+    proxyTimeout: 300_000, // 5 minutes
+  },
   async rewrites() {
     // Mirrors Vite's old dev proxy (VITE_API_PROXY) -- every component's
     // fetch('/api/...') call stays unchanged, forwarded to the FastAPI

@@ -481,14 +481,14 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
                   {activeCodes.map((row, i) => (
                     <div className="grid grid-cols-[1fr_1.1fr_1.6fr] items-center gap-3.5 border-b border-[#f1ebdf] bg-white px-4 py-2.5 last:border-b-0" key={i}>
                       <input
-                        className="box-border h-[38px] rounded-md border border-[#ddd3c0] bg-cream px-3 font-sans text-sm text-ink focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal"
+                        className="box-border h-[38px] rounded-md border border-line bg-cream px-3 font-sans text-sm text-ink focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal"
                         type="text"
                         value={row.code}
                         onChange={(e) => setCodeField(i, 'code', e.target.value)}
                       />
                       <div className="text-sm font-semibold text-ink">{row.value}</div>
                       <input
-                        className="box-border h-[38px] rounded-md border border-[#ddd3c0] bg-cream px-3 font-sans text-sm text-ink focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal"
+                        className="box-border h-[38px] rounded-md border border-line bg-cream px-3 font-sans text-sm text-ink focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal"
                         type="text"
                         value={row.definition}
                         onChange={(e) => setCodeField(i, 'definition', e.target.value)}
@@ -668,7 +668,7 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
                       <div className="flex items-center gap-2 pb-2.5">
                         <button
                           type="button"
-                          className="flex h-8 items-center rounded-[5px] border border-[#ddd3c0] bg-white px-3 text-[13px] font-semibold text-ink-soft"
+                          className="flex h-8 items-center rounded-[5px] border border-line bg-white px-3 text-[13px] font-semibold text-ink-soft"
                           onClick={() => setRuleState((prev) => ({ ...prev, [id]: prev[id] === 'skip' ? undefined : 'skip' }))}
                         >
                           {skipped ? 'Unskip' : 'Skip this column'}
@@ -775,13 +775,13 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
             <div className="grid grid-cols-3 gap-3.5">
               <div className="flex flex-col gap-1.5">
                 <label className="text-[13px] font-semibold text-ink">Sector</label>
-                <select className="h-10 rounded-md border border-[#ddd3c0] bg-white px-2.5 text-sm text-ink" value={taxonomy.sector} onChange={(e) => setTaxonomy((p) => ({ ...p, sector: e.target.value }))}>
+                <select className="h-10 rounded-md border border-line bg-white px-2.5 text-sm text-ink" value={taxonomy.sector} onChange={(e) => setTaxonomy((p) => ({ ...p, sector: e.target.value }))}>
                   {['Demography', 'Labour and Employment', 'Health', 'Agriculture'].map((o) => <option key={o}>{o}</option>)}
                 </select>
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-[13px] font-semibold text-ink">Theme</label>
-                <select className="h-10 rounded-md border border-[#ddd3c0] bg-white px-2.5 text-sm text-ink" value={taxonomy.theme} onChange={(e) => {
+                <select className="h-10 rounded-md border border-line bg-white px-2.5 text-sm text-ink" value={taxonomy.theme} onChange={(e) => {
                   const theme = e.target.value
                   setTaxonomy((p) => ({ ...p, theme, product: delhiProductForTheme(theme) }))
                 }}>
@@ -790,7 +790,7 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-[13px] font-semibold text-ink">Data product</label>
-                <select className="h-10 rounded-md border border-[#ddd3c0] bg-white px-2.5 text-sm text-ink" value={taxonomy.product} onChange={(e) => setTaxonomy((p) => ({ ...p, product: e.target.value }))}>
+                <select className="h-10 rounded-md border border-line bg-white px-2.5 text-sm text-ink" value={taxonomy.product} onChange={(e) => setTaxonomy((p) => ({ ...p, product: e.target.value }))}>
                   {STATISTICS_OPTIONS.map((o) => {
                     const product = delhiProductForTheme(o)
                     return <option key={product}>{product}</option>

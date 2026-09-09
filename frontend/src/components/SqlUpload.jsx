@@ -39,7 +39,6 @@ const emptyConn = {
  */
 export default function SqlUpload({
   onMatched,
-  onWorking,
   onError,
   metadataFiles: controlledMetadataFiles,
   onMetadataFilesChange,
@@ -73,7 +72,6 @@ export default function SqlUpload({
   const run = async () => {
     setError('')
     setStage('extracting')
-    onWorking?.()
     try {
       const body = {}
       if (hasQuery) {
@@ -108,7 +106,7 @@ export default function SqlUpload({
 
       setStage('matching')
       const matchFd = new FormData()
-      matchFd.append('tables_json', JSON.stringify(extractData.tables))
+      matchFd.append('tables_json', JSON.stringify(extractData.tables || []))
       metadataFiles.forEach((f) => matchFd.append('metadata_files', f))
       const matchRes = await fetch('/api/catalogue/batch-match', withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: matchFd })))
       if (!matchRes.ok) {
@@ -120,7 +118,10 @@ export default function SqlUpload({
       setStage('idle')
       onMatched({ ...matchData, metadataFiles, perFile: extractData.per_file })
     } catch (e) {
-      setError(e.message || 'Something went wrong')
+      const message = e?.message === 'Failed to fetch'
+        ? 'Could not reach the server for SQL extract. Check that the backend is running, then try again.'
+        : (e?.message || 'Something went wrong')
+      setError(message)
       setStage('error')
       onError?.(e)
     }
@@ -142,25 +143,38 @@ export default function SqlUpload({
         {' '}for this project’s Compose DB.
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Connection mode">
         <button
           type="button"
+          role="tab"
+          aria-selected={connMode === 'url'}
           disabled={busy}
           onClick={() => setConnMode('url')}
-          className={`rounded-md px-3 py-1.5 text-[12.5px] font-semibold ${connMode === 'url' ? 'bg-teal text-white' : 'border border-line bg-surface text-ink-soft hover:bg-cream'}`}
+          className={`dhara-tab rounded-xl px-3 py-1.5 text-[12.5px] font-semibold ${
+            connMode === 'url'
+              ? 'border-teal-deep bg-teal-deep text-cream'
+              : 'border-line bg-surface text-ink-soft hover:border-teal-deep hover:bg-teal-deep hover:text-cream'
+          }`}
         >
           Connection URL
         </button>
         <button
           type="button"
+          role="tab"
+          aria-selected={connMode === 'fields'}
           disabled={busy}
           onClick={() => setConnMode('fields')}
-          className={`rounded-md px-3 py-1.5 text-[12.5px] font-semibold ${connMode === 'fields' ? 'bg-teal text-white' : 'border border-line bg-surface text-ink-soft hover:bg-cream'}`}
+          className={`dhara-tab rounded-xl px-3 py-1.5 text-[12.5px] font-semibold ${
+            connMode === 'fields'
+              ? 'border-teal-deep bg-teal-deep text-cream'
+              : 'border-line bg-surface text-ink-soft hover:border-teal-deep hover:bg-teal-deep hover:text-cream'
+          }`}
         >
           Host / user / database
         </button>
       </div>
 
+      <div key={connMode} className="dhara-tab-panel flex flex-col gap-3">
       {connMode === 'url' ? (
         <label className="flex flex-col gap-1.5">
           <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-soft">Database URL</span>
@@ -203,6 +217,7 @@ export default function SqlUpload({
           </label>
         </div>
       )}
+      </div>
 
       <div className="flex flex-col gap-2">
         <button

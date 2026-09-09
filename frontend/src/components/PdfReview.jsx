@@ -12,7 +12,6 @@ import {
   Download,
   Loader2,
   Minus,
-  Pencil,
   X,
 } from 'lucide-react'
 import { withAuthHeaders } from '../lib/auth'
@@ -509,7 +508,7 @@ function ExtractedDataRowsModal({
               <thead>
                 <tr>
                   <th
-                    className="sticky top-0 z-[2] max-w-0 border-b border-[#d7cdb9] border-r border-line bg-[#F4EFE3] px-1 py-2 text-center font-sans text-[10px] font-medium tracking-wide text-[#5c6166]"
+                    className="sticky top-0 z-[2] max-w-0 border border-cream/30 bg-teal px-1 py-2 text-center font-sans text-[10px] font-medium tracking-wide text-cream"
                   >
                     #
                   </th>
@@ -519,12 +518,12 @@ function ExtractedDataRowsModal({
                       <th
                         key={i}
                         title={lockedCols[i] ? `${name} — read-only` : name}
-                        className="sticky top-0 z-[2] max-w-0 border-b border-[#d7cdb9] border-r border-line bg-[#F4EFE3] px-1 py-2 text-left font-sans text-[10px] font-medium leading-snug tracking-wide text-[#5c6166]"
+                        className="sticky top-0 z-[2] max-w-0 border border-cream/30 bg-teal px-1 py-2 text-left font-sans text-[10px] font-medium leading-snug tracking-wide text-cream"
                       >
                         <span className="block [overflow-wrap:anywhere] break-words hyphens-auto">
                           {name}
                           {lockedCols[i] ? (
-                            <span className="mt-0.5 block font-semibold normal-case tracking-normal text-[#8a8478]">locked</span>
+                            <span className="mt-0.5 block font-semibold normal-case tracking-normal text-cream/70">locked</span>
                           ) : null}
                         </span>
                       </th>
@@ -538,13 +537,13 @@ function ExtractedDataRowsModal({
                     key={r}
                     className={`${r % 2 === 0 ? 'bg-[#FFFCF6]' : 'bg-surface'} hover:bg-[#F4EFE3]`}
                   >
-                    <td className="max-w-0 border-b border-[#f1ebdf] border-r border-[#f4efe3] px-1 py-1.5 text-center text-[10px] tabular-nums text-ink-soft">
+                    <td className="max-w-0 border border-[#cfc6b4] px-1 py-1.5 text-center text-[10px] tabular-nums text-ink-soft">
                       {r + 1}
                     </td>
                     {Array.from({ length: columnCount }, (_, c) => (
                       <td
                         key={c}
-                        className="max-w-0 overflow-hidden border-b border-[#f1ebdf] border-r border-[#f4efe3] px-1 py-1.5 align-top"
+                        className="max-w-0 overflow-hidden border border-[#cfc6b4] px-1 py-1.5 align-top"
                       >
                         <ExtractedDataCell
                           value={row[c] ?? null}
@@ -573,75 +572,11 @@ function ExtractedDataRowsModal({
   )
 }
 
-/** Inline-editable table title on the preview card / detail panel. */
-function TableTitleEditor({ table, onSave, className = '' }) {
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(() => table.title || '')
-  const inputRef = useRef(null)
-
-  useEffect(() => {
-    if (!editing) setDraft(table.title || '')
-  }, [table.title, editing])
-
-  useEffect(() => {
-    if (editing) inputRef.current?.focus()
-  }, [editing])
-
-  const startEdit = (e) => {
-    e?.stopPropagation?.()
-    setDraft(table.title || '')
-    setEditing(true)
-  }
-
-  const commit = (e) => {
-    e?.stopPropagation?.()
-    const next = draft.trim()
-    setEditing(false)
-    if (next !== (table.title || '').trim()) {
-      onSave(next || null)
-    }
-  }
-
-  if (editing) {
-    return (
-      <input
-        ref={inputRef}
-        type="text"
-        className={`w-full min-w-0 rounded border border-teal bg-white px-2 py-1 text-[14px] font-semibold leading-snug text-ink outline-none ${className}`}
-        value={draft}
-        placeholder={`Page ${table.page} table`}
-        onClick={(e) => e.stopPropagation()}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault()
-            commit(e)
-          }
-          if (e.key === 'Escape') {
-            e.preventDefault()
-            setEditing(false)
-            setDraft(table.title || '')
-          }
-        }}
-      />
-    )
-  }
-
+/** Table title on the collapsed preview card (edit in the expanded detail). */
+function TableTitleDisplay({ table, className = '' }) {
   return (
-    <div className={`inline-flex max-w-full min-w-0 items-center gap-1.5 ${className}`}>
-      <div className="min-w-0 truncate text-[14px] font-semibold leading-snug text-ink">
-        {displayTitle(table)}
-      </div>
-      <button
-        type="button"
-        className="flex h-6 w-6 flex-none items-center justify-center rounded text-ink-soft hover:bg-cream hover:text-teal"
-        title="Edit title"
-        aria-label="Edit table title"
-        onClick={startEdit}
-      >
-        <Pencil className="h-3.5 w-3.5" strokeWidth={1.75} />
-      </button>
+    <div className={`min-w-0 truncate text-[14px] font-semibold leading-snug text-ink ${className}`}>
+      {displayTitle(table)}
     </div>
   )
 }
@@ -654,6 +589,9 @@ function TableDetail({ table, onSave }) {
   const classificationNeedsReview = Object.values(table.classification || {}).some((f) => f?.human_review_needed)
   const columnsNeedReview = (table.columns || []).some((c) => c.human_review_needed)
   const columnCount = (table.columns || []).length
+  // Auto-accepted tables skip the LLM classify step, so classification /
+  // column semantics stay empty — hide those sections in Preview.
+  const showSemanticSections = table.semantic_status === 'classified'
 
   const [draft, setDraft] = useState(() => ({
     title: table.title || '',
@@ -745,7 +683,7 @@ function TableDetail({ table, onSave }) {
         />
       )}
       <label className="flex flex-col gap-1">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-soft">Table title</span>
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-teal">Table title</span>
         <input
           type="text"
           className="rounded-md border border-line bg-white px-2.5 py-1.5 text-[13.5px] font-semibold text-ink outline-none focus:border-teal"
@@ -760,6 +698,7 @@ function TableDetail({ table, onSave }) {
 
       {table.description && <p className="text-[13px] text-ink-soft">{table.description}</p>}
 
+      {showSemanticSections && (
       <CollapsibleSection
         label="Classification"
         open={classificationOpen}
@@ -787,7 +726,9 @@ function TableDetail({ table, onSave }) {
           })}
         </div>
       </CollapsibleSection>
+      )}
 
+      {showSemanticSections && (
       <CollapsibleSection
         label="Columns"
         open={columnsOpen}
@@ -799,7 +740,7 @@ function TableDetail({ table, onSave }) {
             <thead>
               <tr>
                 {['Name', 'Role', 'Concept', 'Description', 'Data type', 'Review'].map((h) => (
-                  <th key={h} className="border border-line bg-outer-bg px-2.5 py-1.5 text-left text-[11.5px] uppercase text-ink-soft">{h}</th>
+                  <th key={h} className="border border-teal/50 bg-teal px-2.5 py-1.5 text-left text-[11.5px] uppercase text-cream">{h}</th>
                 ))}
               </tr>
             </thead>
@@ -832,6 +773,7 @@ function TableDetail({ table, onSave }) {
           </table>
         </div>
       </CollapsibleSection>
+      )}
 
       {table.uncertain_cells?.length > 0 && (
         <>
@@ -842,7 +784,7 @@ function TableDetail({ table, onSave }) {
         </>
       )}
 
-      <div className="text-[11px] font-bold uppercase tracking-wide text-ink-soft">
+      <div className="text-[11px] font-bold uppercase tracking-wide text-green">
         Extracted data ({previewRows.length} rows
         {anyCellGarbled ? ` — ${garbledCellCount} cell(s) need review` : ''}
         {editableColCount < columnCount ? ' · numeric columns read-only' : ''})
@@ -854,11 +796,11 @@ function TableDetail({ table, onSave }) {
               {(table.columns || []).map((c, i) => (
                 <th
                   key={i}
-                  className="border border-line bg-outer-bg px-2.5 py-1.5 text-left text-[11.5px] uppercase text-ink-soft"
+                  className="border border-teal/50 bg-teal px-2.5 py-1.5 text-left text-[11.5px] uppercase text-cream"
                   title={lockedCols[i] ? 'Numeric column — read-only' : 'Editable'}
                 >
                   {c.name}
-                  {lockedCols[i] ? <span className="ml-1 font-semibold normal-case tracking-normal text-ink-soft/70">· locked</span> : null}
+                  {lockedCols[i] ? <span className="ml-1 font-semibold normal-case tracking-normal text-cream/75">· locked</span> : null}
                 </th>
               ))}
             </tr>
@@ -1177,7 +1119,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
               <ArrowLeft className="h-4 w-4" strokeWidth={2} aria-hidden />
               Upload another PDF
             </button>
-            <div className="font-display text-[32px] font-medium leading-tight text-ink">Review Extracted Tables</div>
+            <div className="font-display text-[26px] font-medium leading-tight text-ink">Review Extracted Tables</div>
             <div className="mt-1 text-[15px] text-ink-soft">Couldn’t load this extraction job.</div>
           </div>
           <div className="flex flex-col gap-3 rounded-xl border border-line bg-white p-5 shadow-sm sm:p-6">
@@ -1193,7 +1135,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
       <PdfConsoleLayout jobId={jobId} step={2} maxStepReached={3}>
         <div className="flex flex-col gap-[18px]">
           <div className="flex flex-col">
-            <div className="font-display text-[32px] font-medium leading-tight text-ink">Review Extracted Tables</div>
+            <div className="font-display text-[26px] font-medium leading-tight text-ink">Review Extracted Tables</div>
             <div className="mt-1 text-[15px] text-ink-soft">Loading results…</div>
           </div>
           <div className="rounded-xl border border-line bg-white p-5 py-10 text-center text-ink-soft shadow-sm sm:p-6">
@@ -1224,7 +1166,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
       <PdfConsoleLayout jobId={jobId} step={2} maxStepReached={3}>
         <div className="mx-auto flex max-w-xl flex-col gap-8 py-8">
           <div>
-            <div className="font-display text-2xl font-medium text-ink">{filename || 'Preparing grouping'}</div>
+            <div className="font-display text-xl font-medium text-ink">{filename || 'Preparing grouping'}</div>
             <div className="mt-1 text-sm text-ink-soft">
               Saving your tables and running grouping — this may take a moment.
             </div>
@@ -1301,8 +1243,10 @@ export default function PdfReview({ jobId, filename, onDone }) {
   }
 
   const chipClass = (active) =>
-    `flex h-8 flex-none items-center gap-1.5 rounded-full border px-3.5 text-[12.5px] font-semibold transition-colors ${
-      active ? 'border-teal bg-sage text-ink' : 'border-line bg-white text-ink-soft hover:border-teal hover:text-ink'
+    `dhara-tab flex h-8 flex-none items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-semibold ${
+      active
+        ? 'border-teal-deep bg-teal-deep text-cream'
+        : 'border-line bg-white text-ink-soft hover:border-teal-deep hover:bg-teal-deep hover:text-cream'
     }`
 
   return (
@@ -1337,7 +1281,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
             <ArrowLeft className="h-4 w-4" strokeWidth={2} aria-hidden />
             Upload another PDF
           </button>
-          <div className="font-display text-[32px] font-medium leading-tight text-ink">Review Extracted Tables</div>
+          <div className="font-display text-[26px] font-medium leading-tight text-ink">Review Extracted Tables</div>
           <div className="mt-1 text-[15px] text-ink-soft">
             Check classification, fix uncertain cells, and remove tables you don’t want to keep.
           </div>
@@ -1382,7 +1326,9 @@ export default function PdfReview({ jobId, filename, onDone }) {
                   }}
                 >
                   {label}
-                  <span className={`rounded-full px-1.5 py-px text-[11px] font-bold ${activeFilter === id ? 'bg-teal/15 text-teal' : 'bg-cream text-ink-soft'}`}>
+                  <span className={`rounded-full px-1.5 py-px text-[11px] font-bold transition-colors duration-[420ms] ${
+                    activeFilter === id ? 'bg-cream/20 text-cream' : 'bg-cream text-ink-soft'
+                  }`}>
                     {filterCounts[id] ?? 0}
                   </span>
                 </button>
@@ -1520,10 +1466,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
                     onClick={() => setExpanded(isOpen ? null : t.table_id)}
                   >
                     <div className="min-w-0 flex-1">
-                      <TableTitleEditor
-                        table={t}
-                        onSave={(title) => saveReview(t.table_id, { title })}
-                      />
+                      <TableTitleDisplay table={t} />
                       <div className="mt-0.5 text-[11.5px] leading-snug text-ink-soft">
                         Page {t.page} · {t.semantic_status === 'classified' ? 'AI-classified' : 'Auto-accepted (no AI review)'}
                       </div>

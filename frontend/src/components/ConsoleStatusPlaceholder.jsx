@@ -39,7 +39,9 @@ export default function ConsoleStatusPlaceholder({
         if (!cancelled) setWorkDone(true)
       })
     return () => { cancelled = true }
-  }, [work])
+    // Run once when this status page mounts — callers pass a stable work fn per transition.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     if (steps.length === 0) {
@@ -50,14 +52,14 @@ export default function ConsoleStatusPlaceholder({
     setPercent(8)
     setAnimDone(false)
 
-    const timers = []
+    const timeouts = []
     steps.forEach((_, i) => {
-      timers.push(setTimeout(() => {
+      timeouts.push(setTimeout(() => {
         setActiveIdx(i)
         setPercent(12)
       }, i * msPerStep))
     })
-    timers.push(setTimeout(() => {
+    timeouts.push(setTimeout(() => {
       setActiveIdx(steps.length - 1)
       setPercent(100)
       setAnimDone(true)
@@ -66,10 +68,9 @@ export default function ConsoleStatusPlaceholder({
     const tick = setInterval(() => {
       setPercent((p) => (p >= 92 ? p : p + 7 + Math.floor(Math.random() * 6)))
     }, 280)
-    timers.push(tick)
 
     return () => {
-      timers.forEach((t) => clearTimeout(t))
+      timeouts.forEach((t) => clearTimeout(t))
       clearInterval(tick)
     }
   }, [steps, msPerStep])
@@ -97,7 +98,7 @@ export default function ConsoleStatusPlaceholder({
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col gap-8 py-8">
       <div>
-        <div className="font-display text-2xl font-medium text-ink">{title}</div>
+        <div className="font-display text-xl font-medium text-ink">{title}</div>
         {subtitle && (
           <div className="mt-1 text-sm text-ink-soft">{subtitle}</div>
         )}

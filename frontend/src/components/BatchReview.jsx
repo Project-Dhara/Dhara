@@ -500,7 +500,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
                     <td className="border-b border-[#f1ebdf] px-2 py-1.5 align-top text-ink">{u.table.description || u.table.title}</td>
                     <td className="border-b border-[#f1ebdf] px-2 py-1.5 align-top">
                       <select
-                        className="rounded-md border border-line bg-surface px-2.5 py-1.5 text-[13px] text-ink focus:border-transparent focus:outline focus:outline-2 focus:outline-[#7fbfd4]"
+                        className="rounded-md border border-line bg-surface px-2.5 py-1.5 text-[13px] text-ink transition-shadow duration-200 focus:border-teal focus:shadow-focus-ring focus:outline-none"
                         value={assignments[idx] ?? ''}
                         onChange={(e) => setAssignments((prev) => ({ ...prev, [idx]: e.target.value }))}
                       >

@@ -44,7 +44,7 @@ export default function Publish({ datasetLabel, metadataId, hasKey, onGoSettings
     setTimeout(() => setCopied(null), 1500)
   }
 
-  const selectClass = 'h-[42px] rounded-md border border-[#ddd3c0] bg-white px-3 font-sans text-[15px] text-ink'
+  const selectClass = 'h-[42px] rounded-md border border-line bg-white px-3 font-sans text-[15px] text-ink'
   const fieldLabelClass = 'text-[13px] font-semibold text-ink'
 
   if (publishing) {
@@ -57,7 +57,7 @@ export default function Publish({ datasetLabel, metadataId, hasKey, onGoSettings
             <Check className="h-6 w-6" strokeWidth={2.5} aria-hidden />
           </div>
         </div>
-        <div className="font-display text-[28px] font-medium text-ink">Publishing to the catalogue…</div>
+        <div className="font-display text-[24px] font-medium text-ink">Publishing to the catalogue…</div>
         <div className="text-[15px] text-ink-soft">Almost there — this only takes a moment.</div>
         <div className="flex min-w-[320px] flex-col gap-2.5">
           {PUBLISH_STEPS.map((label, i) => (
@@ -93,7 +93,7 @@ export default function Publish({ datasetLabel, metadataId, hasKey, onGoSettings
           <div className="text-sm leading-relaxed text-ink-soft">Fetch the harmonised table as JSON or CSV.</div>
           <div className="flex items-center gap-2">
             <div className="flex-1 truncate rounded-md border border-line bg-[#F7F3EA] px-2.5 py-2.5 text-[11.5px] text-ink">{apiUrl}</div>
-            <button className="flex h-[34px] flex-none items-center rounded-md border border-[#ddd3c0] bg-white px-3.5 text-[13px] font-semibold text-teal" onClick={() => copy('api', apiUrl)}>{copied === 'api' ? 'Copied' : 'Copy'}</button>
+            <button className="flex h-[34px] flex-none items-center rounded-md border border-line bg-white px-3.5 text-[13px] font-semibold text-teal" onClick={() => copy('api', apiUrl)}>{copied === 'api' ? 'Copied' : 'Copy'}</button>
           </div>
           <div className="text-[11.5px] text-[#8E9398]">GET · token in Authorization header</div>
         </div>
@@ -103,7 +103,7 @@ export default function Publish({ datasetLabel, metadataId, hasKey, onGoSettings
           <div className="text-sm leading-relaxed text-ink-soft">Point an assistant at the catalogue and it can query this release.</div>
           <div className="flex items-center gap-2">
             <div className="flex-1 truncate rounded-md border border-line bg-[#F7F3EA] px-2.5 py-2.5 text-[11.5px] text-ink">{mcpUrl}</div>
-            <button className="flex h-[34px] flex-none items-center rounded-md border border-[#ddd3c0] bg-white px-3.5 text-[13px] font-semibold text-teal" onClick={() => copy('mcp', mcpUrl)}>{copied === 'mcp' ? 'Copied' : 'Copy'}</button>
+            <button className="flex h-[34px] flex-none items-center rounded-md border border-line bg-white px-3.5 text-[13px] font-semibold text-teal" onClick={() => copy('mcp', mcpUrl)}>{copied === 'mcp' ? 'Copied' : 'Copy'}</button>
           </div>
           <div className="flex flex-wrap gap-1.5">
             {MCP_TOOLS.map((t) => <span className="rounded-full border border-line bg-cream px-2.5 py-1 text-[11.5px] text-ink-soft" key={t}>{t}</span>)}
@@ -122,7 +122,7 @@ export default function Publish({ datasetLabel, metadataId, hasKey, onGoSettings
             Registered records for {datasetLabel}, harmonised to standard concepts and code lists during classification. Ready for downstream API and MCP consumption.
           </div>
         ) : (
-          <div className="flex items-center justify-between gap-5 rounded-lg border border-dashed border-[#ddd3c0] bg-cream px-4 py-3.5 text-sm text-ink-soft">
+          <div className="flex items-center justify-between gap-5 rounded-lg border border-dashed border-line bg-cream px-4 py-3.5 text-sm text-ink-soft">
             <span>A written summary is generated from the metadata with your own model key. The dataset publishes without it.</span>
             <Button variant="secondary" size="sm" onClick={onGoSettings}>Add model key</Button>
           </div>

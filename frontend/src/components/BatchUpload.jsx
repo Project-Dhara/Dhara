@@ -25,7 +25,6 @@ function FileList({ files, onRemove }) {
 
 export default function BatchUpload({
   onMatched,
-  onWorking,
   onError,
   initialDatasetFiles = [],
   metadataFiles: controlledMetadataFiles,
@@ -82,20 +81,27 @@ export default function BatchUpload({
   const runMatch = async () => {
     setError('')
     setStage('extracting')
-    onWorking?.()
     try {
       const extractFd = new FormData()
       datasetFiles.forEach((f) => extractFd.append('files', f))
       const extractRes = await fetch('/api/catalogue/batch-extract', withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: extractFd })))
       if (!extractRes.ok) {
-        const err = await extractRes.json().catch(() => ({ detail: 'Extraction failed' }))
-        throw new Error(err.detail || 'Extraction failed')
+        const err = await extractRes.json().catch(() => ({}))
+        const detail = typeof err.detail === 'string'
+          ? err.detail
+          : Array.isArray(err.detail)
+            ? err.detail.map((d) => d?.msg || JSON.stringify(d)).join('; ')
+            : ''
+        if (extractRes.status >= 500 && !detail) {
+          throw new Error('Extraction timed out or the server closed the connection. Try again with a smaller workbook, or wait a moment and retry.')
+        }
+        throw new Error(detail || `Extraction failed (HTTP ${extractRes.status})`)
       }
       const extractData = await extractRes.json()
 
       setStage('matching')
       const matchFd = new FormData()
-      matchFd.append('tables_json', JSON.stringify(extractData.tables))
+      matchFd.append('tables_json', JSON.stringify(extractData.tables || []))
       metadataFiles.forEach((f) => matchFd.append('metadata_files', f))
       // Sent so groups with no metadata-workbook match can be auto-filled
       // via Stage 4 LLM metadata generation server-side (see main.py's
@@ -103,15 +109,24 @@ export default function BatchUpload({
       datasetFiles.forEach((f) => matchFd.append('dataset_files', f))
       const matchRes = await fetch('/api/catalogue/batch-match', withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: matchFd })))
       if (!matchRes.ok) {
-        const err = await matchRes.json().catch(() => ({ detail: 'Matching failed' }))
-        throw new Error(err.detail || 'Matching failed')
+        const err = await matchRes.json().catch(() => ({}))
+        const detail = typeof err.detail === 'string'
+          ? err.detail
+          : Array.isArray(err.detail)
+            ? err.detail.map((d) => d?.msg || JSON.stringify(d)).join('; ')
+            : ''
+        throw new Error(detail || `Matching failed (HTTP ${matchRes.status})`)
       }
       const matchData = await matchRes.json()
 
       setStage('idle')
       onMatched({ ...matchData, metadataFiles, perFile: extractData.per_file })
     } catch (e) {
-      setError(e.message)
+      const raw = e?.message || ''
+      const message = raw === 'Failed to fetch'
+        ? 'Could not reach the server to read this Excel file. Check that the backend is running, then try again.'
+        : (raw || 'Could not read this Excel file')
+      setError(message)
       setStage('error')
       onError?.(e)
     }
@@ -129,35 +144,47 @@ export default function BatchUpload({
       />
 
       <div className={`grid w-full grid-cols-1 gap-5 ${hideMetadataSection ? '' : 'sm:grid-cols-2'}`}>
-        <div className="flex min-w-0 flex-col gap-2.5">
-          <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-col overflow-hidden rounded-xl bg-teal shadow-card">
+          <div className="flex h-[40px] items-center gap-2 border-b border-[#e6dcc8] bg-cream px-3.5">
             <span className="h-2 w-2 rounded-sm bg-green" />
             <span className="text-xs font-bold uppercase tracking-wide text-ink">Dataset files</span>
           </div>
-          <div
-            className={`flex h-[84px] cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-[#c9bda6] bg-[#FFFCF6] ${busy ? 'cursor-not-allowed opacity-60' : ''}`}
-            onClick={() => !busy && openPicker('dataset')}
-          >
-            <div className="text-[15px] font-semibold text-teal">Add dataset files</div>
-            <div className="text-[13px] text-[#8E9398]">XLSX — drag and drop or browse</div>
+          <div className="flex flex-col gap-2 p-3">
+            <div
+              className={`flex h-[84px] cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-white/25 bg-black/10 transition-colors hover:border-cream/70 hover:bg-black/[.14] ${busy ? 'cursor-not-allowed opacity-60' : ''}`}
+              onClick={() => !busy && openPicker('dataset')}
+            >
+              <div className="text-[15px] font-semibold text-cream">Add dataset files</div>
+              <div className="text-[13px] text-cream/70">XLSX — drag and drop or browse</div>
+            </div>
+            {datasetFiles.length > 0 && (
+              <div className="rounded-lg bg-cream/95 px-2.5 py-2 text-ink">
+                <FileList files={datasetFiles} onRemove={removeDataset} />
+              </div>
+            )}
           </div>
-          <FileList files={datasetFiles} onRemove={removeDataset} />
         </div>
 
         {!hideMetadataSection && (
-          <div className="flex min-w-0 flex-col gap-2.5">
-            <div className="flex items-center gap-2">
+          <div className="flex min-w-0 flex-col overflow-hidden rounded-xl bg-teal shadow-card">
+            <div className="flex h-[40px] items-center gap-2 border-b border-[#e6dcc8] bg-cream px-3.5">
               <span className="h-2 w-2 rounded-sm bg-yellow" />
               <span className="text-xs font-bold uppercase tracking-wide text-ink">Metadata files</span>
             </div>
-            <div
-              className={`flex h-[84px] cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-[#c9bda6] bg-[#FFFCF6] ${busy ? 'cursor-not-allowed opacity-60' : ''}`}
-              onClick={() => !busy && openPicker('metadata')}
-            >
-              <div className="text-[15px] font-semibold text-teal">Add metadata files</div>
-              <div className="text-[13px] text-[#8E9398]">XLSX tag files</div>
+            <div className="flex flex-col gap-2 p-3">
+              <div
+                className={`flex h-[84px] cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-white/25 bg-black/10 transition-colors hover:border-cream/70 hover:bg-black/[.14] ${busy ? 'cursor-not-allowed opacity-60' : ''}`}
+                onClick={() => !busy && openPicker('metadata')}
+              >
+                <div className="text-[15px] font-semibold text-cream">Add metadata files</div>
+                <div className="text-[13px] text-cream/70">XLSX tag files</div>
+              </div>
+              {metadataFiles.length > 0 && (
+                <div className="rounded-lg bg-cream/95 px-2.5 py-2 text-ink">
+                  <FileList files={metadataFiles} onRemove={removeMetadata} />
+                </div>
+              )}
             </div>
-            <FileList files={metadataFiles} onRemove={removeMetadata} />
           </div>
         )}
       </div>

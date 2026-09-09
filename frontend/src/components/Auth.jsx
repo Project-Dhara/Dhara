@@ -4,7 +4,11 @@ import { useState } from 'react'
 import { DharaLogo, TriBar } from './AppShell'
 import { isValidOrgEmail, login, signup } from '../lib/auth'
 
-const inputClass = 'h-11 rounded-md border border-[#ddd3c0] bg-white px-3.5 font-sans text-[15px] text-ink'
+const inputClass =
+  'h-11 rounded-xl border border-line bg-cream/40 px-3.5 font-body text-[15px] text-ink transition-all duration-150 outline-none focus:border-teal focus:bg-surface focus:shadow-focus-ring'
+
+const HEADLINE = 'Data harnessed for AI-ready advancements'
+const SUBTEXT = 'Inventory, metadata, harmonisation, cataloguing and API enablement — dataset by dataset.'
 
 // Login / signup split-pane. Signup is a dev convenience (backend
 // ENABLE_SIGNUP) — accounts can also be admin-provisioned via
@@ -57,25 +61,28 @@ export default function Auth({ onSuccess }) {
 
   return (
     <div className="flex h-screen w-full">
-      <div className="flex w-[420px] flex-none flex-col justify-between bg-teal-deep p-11 px-10">
-        <div className="self-start rounded-lg bg-white px-[18px] py-3.5">
-          <DharaLogo />
+      <div className="selection-invert relative flex w-[420px] flex-none flex-col justify-between overflow-hidden bg-teal-deep p-11 px-10">
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{ background: 'radial-gradient(120% 90% at 0% 0%, rgba(23,107,107,0.45) 0%, rgba(18,64,62,0) 60%)' }}
+          aria-hidden
+        />
+        <div className="relative z-10 self-start">
+          <DharaLogo variant="light" />
         </div>
-        <div className="flex flex-col gap-[18px]">
-          <TriBar />
-          <div className="text-pretty font-display text-[32px] font-medium leading-[1.15] text-cream">Data harnessed for AI-ready advancements</div>
-          <div className="text-[15px] leading-relaxed text-[#a8bdb3]">
-            Inventory, metadata, harmonisation, cataloguing and API enablement — dataset by dataset.
-          </div>
+        <div className="relative z-10 flex animate-fade-up flex-col gap-[18px]">
+          <TriBar className="overflow-hidden rounded-full" />
+          <div className="text-pretty font-display text-[26px] font-medium leading-[1.2] text-cream">{HEADLINE}</div>
+          <div className="text-[15px] leading-relaxed text-[#a8bdb3]">{SUBTEXT}</div>
         </div>
-        <div className="text-xs text-[#7d9891]">EkStep Foundation · data.dhara@ekstep.org</div>
+        <div className="relative z-10 text-xs text-[#7d9891]">EkStep Foundation · data.dhara@ekstep.org</div>
       </div>
 
-      <div className="flex flex-1 items-center justify-center bg-cream">
-        <div className="flex w-[400px] flex-col gap-6">
+      <div className="flex flex-1 items-center justify-center bg-outer-bg">
+        <div className="flex w-[400px] animate-fade-up flex-col gap-6 rounded-2xl border border-line/90 bg-surface p-8">
           <div className="flex flex-col gap-1.5">
-            <div className="text-[28px] font-semibold tracking-tight text-ink">{isSignup ? 'Create an account' : 'Sign in'}</div>
-            <div className="text-[15px] text-ink-soft">
+            <div className="font-display text-[24px] font-medium tracking-tight text-ink">{isSignup ? 'Create an account' : 'Sign in'}</div>
+            <div className="text-[14.5px] leading-relaxed text-ink-soft">
               {isSignup ? 'Departmental access to the DHARA toolkit.' : 'Use your departmental email address.'}
             </div>
           </div>
@@ -119,19 +126,19 @@ export default function Auth({ onSuccess }) {
             </div>
           </div>
 
-          {error && <div className="text-sm text-[#b3423a]">{error}</div>}
+          {error && <div className="rounded-xl border border-coral/25 bg-[#FDF6F5] px-3.5 py-2.5 text-sm text-[#b3423a]">{error}</div>}
 
           <button
-            className="flex h-[46px] items-center justify-center rounded-md bg-teal text-[15px] font-semibold text-white transition-colors hover:bg-teal-dark disabled:cursor-default disabled:opacity-60"
+            className="flex h-11 items-center justify-center rounded-xl bg-teal text-[14.5px] font-semibold tracking-tight text-white transition-colors duration-150 hover:bg-teal-dark active:scale-[0.985] disabled:cursor-default disabled:opacity-60 disabled:active:scale-100"
             onClick={submit}
             disabled={busy}
           >
             {busy ? (isSignup ? 'Creating account…' : 'Signing in…') : isSignup ? 'Create account' : 'Sign in'}
           </button>
 
-          <div className="flex items-center justify-center gap-2 text-[15px] text-ink-soft">
+          <div className="flex items-center justify-center gap-2 text-[14.5px] text-ink-soft">
             <span>{isSignup ? 'Already have an account?' : 'No account yet?'}</span>
-            <span className="cursor-pointer font-semibold text-teal" onClick={toggle}>{isSignup ? 'Sign in' : 'Sign up'}</span>
+            <span className="cursor-pointer font-semibold text-teal transition-colors hover:text-teal-dark" onClick={toggle}>{isSignup ? 'Sign in' : 'Sign up'}</span>
           </div>
         </div>
       </div>

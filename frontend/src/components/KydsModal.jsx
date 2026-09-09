@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { startTransition, useEffect, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 
 const MODALITY_OPTIONS = [
@@ -248,7 +248,7 @@ const textareaClass = `${inputClass} min-h-[72px] resize-y leading-relaxed`
 // honestly-derivable progress signal, not "completed".
 function ScrollspyNav({ activeIndex, maxSeenIndex, onJump }) {
   return (
-    <div className="flex items-center gap-1.5 border-b border-line bg-cream px-6 py-2.5">
+    <div className="flex flex-shrink-0 items-center gap-1.5 border-b border-line bg-cream px-6 py-2.5">
       {SECTION_LABELS.map((label, i) => {
         const visited = i <= maxSeenIndex
         const isCurrent = i === activeIndex
@@ -296,6 +296,7 @@ export default function KydsModal({ onSkip, onSave, initialForm = null, editing 
     if (!bodyEl) return undefined
 
     const ACTIVATION_OFFSET = 56
+    let raf = 0
 
     const syncActiveFromScroll = () => {
       if (jumpingRef.current) return
@@ -318,16 +319,28 @@ export default function KydsModal({ onSkip, onSave, initialForm = null, editing 
         if (last >= 0) next = last
       }
 
-      setActiveIndex((prev) => (prev === next ? prev : next))
-      setMaxSeenIndex((prev) => (next > prev ? next : prev))
+      // Defer nav highlight updates so they don't contend with scroll frames.
+      startTransition(() => {
+        setActiveIndex((prev) => (prev === next ? prev : next))
+        setMaxSeenIndex((prev) => (next > prev ? next : prev))
+      })
     }
 
-    bodyEl.addEventListener('scroll', syncActiveFromScroll, { passive: true })
+    const onScroll = () => {
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        syncActiveFromScroll()
+      })
+    }
+
+    bodyEl.addEventListener('scroll', onScroll, { passive: true })
     // Layout may settle after first paint (fonts / checkboxes).
-    const raf = requestAnimationFrame(syncActiveFromScroll)
+    const boot = requestAnimationFrame(syncActiveFromScroll)
     return () => {
-      cancelAnimationFrame(raf)
-      bodyEl.removeEventListener('scroll', syncActiveFromScroll)
+      cancelAnimationFrame(boot)
+      if (raf) cancelAnimationFrame(raf)
+      bodyEl.removeEventListener('scroll', onScroll)
     }
   }, [])
 
@@ -395,7 +408,8 @@ export default function KydsModal({ onSkip, onSave, initialForm = null, editing 
 
         <ScrollspyNav activeIndex={activeIndex} maxSeenIndex={maxSeenIndex} onJump={jumpTo} />
 
-        <div ref={bodyRef} className="flex flex-1 flex-col gap-[18px] overflow-y-auto scroll-smooth px-6 pb-6 pt-[18px]">
+        {/* min-h-0 is required so this flex child can shrink and actually overflow-scroll. */}
+        <div ref={bodyRef} className="flex min-h-0 flex-1 flex-col gap-[18px] overflow-y-auto px-6 pb-6 pt-[18px]">
           <section {...sectionProps(0)}>
             <div className="flex items-center gap-2.5">
               <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-teal text-xs font-bold text-white">0</span>

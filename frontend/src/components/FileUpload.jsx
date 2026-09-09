@@ -30,21 +30,30 @@ export default function FileUpload({
         disabled={loading}
       />
       <div
-        className={`flex flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-[#c9bda6] bg-[#FFFCF6] px-4 cursor-pointer
-          ${compact ? 'h-[84px] max-w-none' : 'h-[84px] max-w-[420px]'}
-          ${dragging ? 'border-teal bg-sage' : ''}
-          ${loading ? 'opacity-60 cursor-not-allowed' : ''}`}
-        onClick={() => !loading && inputRef.current.click()}
-        onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => {
-          e.preventDefault()
-          setDragging(false)
-          accept(e.dataTransfer.files[0])
-        }}
+        className={`overflow-hidden rounded-xl bg-teal shadow-card ${compact ? 'max-w-none' : 'max-w-[420px]'}`}
       >
-        <div className="text-center text-[15px] font-semibold text-teal">{loading ? 'Processing…' : label}</div>
-        <div className="text-center text-[13px] text-[#8E9398]">{selectedName || hint}</div>
+        <div className="flex h-9 items-center border-b border-[#e6dcc8] bg-cream px-3">
+          <span className="text-[11px] font-bold uppercase tracking-wide text-ink-soft">Upload</span>
+        </div>
+        <div className="p-2.5">
+          <div
+            className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed px-4 transition-colors
+              ${compact ? 'h-[72px]' : 'h-[84px]'}
+              ${dragging ? 'border-cream bg-forest-light/40' : 'border-white/25 bg-black/10 hover:border-cream/70 hover:bg-black/[.14]'}
+              ${loading ? 'cursor-not-allowed opacity-60' : ''}`}
+            onClick={() => !loading && inputRef.current.click()}
+            onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(e) => {
+              e.preventDefault()
+              setDragging(false)
+              accept(e.dataTransfer.files[0])
+            }}
+          >
+            <div className="text-center text-[15px] font-semibold text-cream">{loading ? 'Processing…' : label}</div>
+            <div className="text-center text-[13px] text-cream/70">{selectedName || hint}</div>
+          </div>
+        </div>
       </div>
     </>
   )
