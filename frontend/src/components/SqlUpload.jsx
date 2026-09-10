@@ -127,11 +127,11 @@ export default function SqlUpload({
     }
   }
 
-  const fieldClass = 'w-full rounded-md border border-line bg-surface px-3 py-2 text-[13.5px] text-ink outline-none focus:border-teal'
+  const fieldClass = 'w-full rounded-md border border-line-strong bg-surface px-3 py-2 text-[13.5px] text-ink outline-none focus:border-teal'
 
   return (
     <div className="flex w-full flex-col gap-[18px]">
-      <div className="rounded-lg border border-line bg-cream/30 px-4 py-3 text-[13px] leading-relaxed text-ink-soft">
+      <div className="rounded-lg border border-line bg-mist/80 px-4 py-3 text-[13px] leading-relaxed text-ink-soft">
         Connect to a <span className="font-semibold text-ink">PostgreSQL</span> database.
         Leave the SQL box empty to auto-extract tables. DHARA catalogue databases
         (<code className="rounded bg-cream px-1 text-[12px] text-ink">datasets</code>
@@ -152,8 +152,8 @@ export default function SqlUpload({
           onClick={() => setConnMode('url')}
           className={`dhara-tab rounded-xl px-3 py-1.5 text-[12.5px] font-semibold ${
             connMode === 'url'
-              ? 'border-teal-deep bg-teal-deep text-cream'
-              : 'border-line bg-surface text-ink-soft hover:border-teal-deep hover:bg-teal-deep hover:text-cream'
+              ? 'border-transparent bg-teal-deep text-cream'
+              : 'border-line bg-white text-ink-soft hover:bg-sage hover:text-teal-deep'
           }`}
         >
           Connection URL
@@ -166,8 +166,8 @@ export default function SqlUpload({
           onClick={() => setConnMode('fields')}
           className={`dhara-tab rounded-xl px-3 py-1.5 text-[12.5px] font-semibold ${
             connMode === 'fields'
-              ? 'border-teal-deep bg-teal-deep text-cream'
-              : 'border-line bg-surface text-ink-soft hover:border-teal-deep hover:bg-teal-deep hover:text-cream'
+              ? 'border-transparent bg-teal-deep text-cream'
+              : 'border-line bg-white text-ink-soft hover:bg-sage hover:text-teal-deep'
           }`}
         >
           Host / user / database
@@ -280,7 +280,7 @@ export default function SqlUpload({
             onClick={() => !busy && fileInputRef.current?.click()}
           >
             <div className="text-[14px] font-semibold text-teal">Add metadata tag files</div>
-            <div className="text-[12.5px] text-[#8E9398]">Optional — same as Excel flow</div>
+            <div className="text-[12.5px] text-ink-soft">Optional — same as Excel flow</div>
           </div>
           <FileList files={metadataFiles} onRemove={(i) => setMetadataFiles((prev) => prev.filter((_, idx) => idx !== i))} />
         </div>
@@ -301,7 +301,7 @@ export default function SqlUpload({
           )}
         </Button>
         {!busy && !hasQuery && (
-          <span className="text-xs text-[#8E9398]">No SQL needed — catalogue DBs expand datasets automatically</span>
+          <span className="text-xs text-ink-soft">No SQL needed — catalogue DBs expand datasets automatically</span>
         )}
       </div>
     </div>

@@ -4,7 +4,7 @@
 // button in the app; size="sm" is the compact modal-button size.
 const VARIANT_CLASSES = {
   primary:
-    'bg-teal text-white hover:bg-teal-dark active:scale-[0.985] disabled:bg-[#ece8e0] disabled:text-[#a49c8e] disabled:cursor-not-allowed disabled:active:scale-100',
+    'bg-teal text-white hover:bg-teal-dark active:scale-[0.985] disabled:bg-mist disabled:text-ink-muted disabled:cursor-not-allowed disabled:active:scale-100',
   secondary:
     'bg-surface text-ink border border-line hover:border-teal/35 hover:bg-sage/60 hover:text-teal active:scale-[0.985] disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100',
 }
@@ -25,7 +25,7 @@ export default function Button({
 }) {
   return (
     <button
-      className={`inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl font-semibold tracking-tight transition-all duration-150 ease-out focus-visible:outline-none focus-visible:shadow-focus-ring ${VARIANT_CLASSES[variant]} ${SIZE_CLASSES[size]} ${className}`}
+      className={`inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl font-semibold tracking-tight transition-all duration-dhara ease-dhara will-change-transform focus-visible:outline-none focus-visible:shadow-focus-ring hover:-translate-y-px active:translate-y-0 active:scale-[0.985] ${VARIANT_CLASSES[variant]} ${SIZE_CLASSES[size]} ${className}`}
       disabled={disabled || loading}
       {...rest}
     >

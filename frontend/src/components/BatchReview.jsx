@@ -479,7 +479,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
         <div className="flex flex-col gap-2 rounded-[10px] border border-[#f3c98b] bg-[#fffaf1] p-4">
           <div className="flex items-center justify-between gap-2.5">
             <span className="inline-flex items-center gap-1.5 text-[13.5px] font-bold text-ink">
-              <AlertTriangle className="h-4 w-4 text-[#c9610f]" strokeWidth={2} aria-hidden />
+              <AlertTriangle className="h-4 w-4 text-yellow" strokeWidth={2} aria-hidden />
               Extracted tables with no metadata match ({matchResult.unmatched_tables.length})
             </span>
           </div>
@@ -563,7 +563,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
       {toast && (
         <div
           className={`fixed right-6 top-6 z-[1200] flex items-center gap-3 rounded-[10px] py-3 pl-[18px] pr-4 font-sans text-sm font-medium leading-snug shadow-lg ${
-            toast.type === 'success' ? 'bg-[#2f9e57] text-white' : 'bg-[#e2711d] text-[#111]'
+            toast.type === 'success' ? 'bg-green text-white' : 'bg-warn-bg text-ink border border-yellow'
           }`}
           role="alert"
         >

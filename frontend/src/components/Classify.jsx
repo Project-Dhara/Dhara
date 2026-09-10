@@ -701,7 +701,7 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
                         Value in file comes from the data and cannot be changed. Code and definition are editable.
                       </p>
                       <div className="overflow-hidden rounded-lg border border-[#cfc6b4]">
-                        <div className="grid grid-cols-[38px_1.2fr_0.7fr_1.4fr_64px] items-stretch border-b border-[#cfc6b4] bg-[#F4EFE3] [&>div]:border-l [&>div]:border-[#e0d7c4] [&>div]:px-3 [&>div]:py-2 [&>div]:text-[11px] [&>div]:uppercase [&>div]:tracking-wide [&>div]:text-[#6E7378] [&>div:first-child]:border-l-0 [&>div:first-child]:text-center [&>div:last-child]:px-1 [&>div:last-child]:text-center">
+                        <div className="grid grid-cols-[38px_1.2fr_0.7fr_1.4fr_64px] items-stretch border-b border-[#cfc6b4] bg-[#F4EFE3] [&>div]:border-l [&>div]:border-[#e0d7c4] [&>div]:px-3 [&>div]:py-2 [&>div]:font-label [&>div]:text-[11px] [&>div]:uppercase [&>div]:tracking-wide [&>div]:text-[#6E7378] [&>div:first-child]:border-l-0 [&>div:first-child]:text-center [&>div:last-child]:px-1 [&>div:last-child]:text-center">
                           <div>#</div>
                           <div>
                             Value in file

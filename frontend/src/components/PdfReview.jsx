@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import {
   ArrowDown,
@@ -157,7 +158,11 @@ function ReviewBadge({ needed, reason }) {
 }
 
 function DeleteConfirmDialog({ count, onCancel, onConfirm, deleting }) {
-  return (
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+
+  if (!mounted) return null
+  return createPortal(
     <div
       className="fixed inset-0 z-[1100] flex items-center justify-center bg-[rgba(16,64,63,0.52)] p-5"
       role="alertdialog"
@@ -191,7 +196,8 @@ function DeleteConfirmDialog({ count, onCancel, onConfirm, deleting }) {
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -203,7 +209,11 @@ function tableHeaderKey(table) {
 }
 
 function MergeConfirmDialog({ count, onCancel, onConfirm, merging }) {
-  return (
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+
+  if (!mounted) return null
+  return createPortal(
     <div
       className="fixed inset-0 z-[1100] flex items-center justify-center bg-[rgba(16,64,63,0.52)] p-5"
       role="alertdialog"
@@ -231,7 +241,8 @@ function MergeConfirmDialog({ count, onCancel, onConfirm, merging }) {
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -280,6 +291,448 @@ function padRowsToColumns(rows, ncols) {
     while (next.length < ncols) next.push(null)
     return next
   })
+}
+
+function columnHeaderGroup(col) {
+  const g = col?.header_group
+  if (g == null) return null
+  const s = String(g).trim()
+  if (!s) return null
+  // Full-width table captions must never render as a parent header row.
+  if (/^table\s*[:.\-–—]?\s*\S/i.test(s)) return null
+  if (/^(?:statement|annex(?:ure)?)\s*[:.\-–—]?\s*\S/i.test(s)) return null
+  return s
+}
+
+/** Full top→leaf header path for a column (supports 1..N levels). */
+function columnHeaderPath(col) {
+  const raw = col?.header_path
+  if (Array.isArray(raw) && raw.length > 0) {
+    const path = raw.map((p) => String(p ?? '').trim()).filter(Boolean)
+    if (path.length) {
+      // Drop banner-like roots that shouldn't appear as header rows.
+      const filtered = path.filter((p, idx) => {
+        if (idx === path.length - 1) return true
+        if (/^table\s*[:.\-–—]?\s*\S/i.test(p)) return false
+        if (/^(?:statement|annex(?:ure)?)\s*[:.\-–—]?\s*\S/i.test(p)) return false
+        return true
+      })
+      return filtered.length ? filtered : [String(col?.name || '')]
+    }
+  }
+  const name = String(col?.name || '')
+  const group = columnHeaderGroup(col)
+  if (group && group.toLowerCase() !== name.toLowerCase()) return [group, name]
+  return name ? [name] : ['']
+}
+
+/**
+ * Place a column path into a depth-tall grid.
+ * Shorter paths get extra rowspan on the top label (stub columns span all levels).
+ */
+function placeHeaderPath(path, depth) {
+  const cells = Array.from({ length: depth }, () => null)
+  if (!path.length) return cells
+  const extra = Math.max(0, depth - path.length)
+  let row = 0
+  path.forEach((label, i) => {
+    const rowSpan = i === 0 ? 1 + extra : 1
+    const prefix = path.slice(0, i + 1).join('\0')
+    cells[row] = { label, rowSpan, prefix }
+    for (let k = 1; k < rowSpan; k += 1) cells[row + k] = { covered: true }
+    row += rowSpan
+  })
+  return cells
+}
+
+/**
+ * Build N header rows with colspan/rowspan for arbitrary header depth.
+ * Returns { depth, rows } where rows[r] is an array of visible segments.
+ */
+function buildMultiLevelHeaderRows(columns) {
+  const cols = columns || []
+  const paths = cols.map((c) => columnHeaderPath(c))
+  const depth = Math.max(1, ...paths.map((p) => p.length))
+  const grid = paths.map((p) => placeHeaderPath(p, depth))
+
+  const rows = []
+  for (let r = 0; r < depth; r += 1) {
+    const segs = []
+    let c = 0
+    while (c < cols.length) {
+      const cell = grid[c][r]
+      if (!cell || cell.covered) {
+        c += 1
+        continue
+      }
+      let colSpan = 1
+      while (
+        c + colSpan < cols.length
+        && grid[c + colSpan][r]
+        && !grid[c + colSpan][r].covered
+        && grid[c + colSpan][r].prefix === cell.prefix
+        && grid[c + colSpan][r].rowSpan === cell.rowSpan
+      ) {
+        colSpan += 1
+      }
+      segs.push({
+        key: `h-${r}-${c}`,
+        label: cell.label,
+        colSpan,
+        rowSpan: cell.rowSpan,
+        start: c,
+        isLeaf: r + cell.rowSpan === depth,
+      })
+      c += colSpan
+    }
+    rows.push(segs)
+  }
+  return { depth, rows }
+}
+
+function ExtractedTableHead({ columns, lockedCols = [], sticky = false, showIndex = false }) {
+  const { depth, rows } = buildMultiLevelHeaderRows(columns)
+  const rowRefs = useRef([])
+  // Sticky `top` must match each row's real offset or the leaf row hangs over the body.
+  const [stickyTops, setStickyTops] = useState(() => Array.from({ length: Math.max(depth, 1) }, () => 0))
+  const headerSig = `${depth}:${(columns || []).map((c) => columnHeaderPath(c).join('\u0001')).join('\u0002')}`
+
+  useLayoutEffect(() => {
+    if (!sticky) return undefined
+    const measure = () => {
+      const baseEl = rowRefs.current[0]
+      if (!baseEl) return
+      const base = baseEl.getBoundingClientRect().top
+      const tops = rows.map((_, i) => {
+        const el = rowRefs.current[i]
+        if (!el) return 0
+        // Prefer row box; fall back to first cell if rowspan collapses tr height to 0.
+        let top = Math.round(el.getBoundingClientRect().top - base)
+        if (i > 0 && top <= 0) {
+          const th = el.querySelector('th')
+          if (th) top = Math.round(th.getBoundingClientRect().top - base)
+        }
+        return Math.max(0, top)
+      })
+      setStickyTops((prev) => (
+        prev.length === tops.length && prev.every((v, i) => v === tops[i]) ? prev : tops
+      ))
+    }
+    measure()
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
+    rowRefs.current.forEach((el) => { if (el) ro?.observe(el) })
+    window.addEventListener('resize', measure)
+    return () => {
+      ro?.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [sticky, headerSig, rows])
+
+  // Don't stick multi-level headers until offsets are known — fixed guesses overlap row 1.
+  const stickyOn = sticky && (
+    depth <= 1 || stickyTops.length >= depth && stickyTops.every((t, i) => i === 0 || t > 0)
+  )
+
+  const thFor = (seg, isIndex = false) => {
+    const isGroup = !isIndex && depth > 1 && !seg.isLeaf
+    if (stickyOn) {
+      return [
+        // One teal for every header level — groups used to be teal-deep.
+        'sticky max-w-0 px-1 pt-0.5 pb-1 align-top font-sans text-[10px] font-medium leading-snug tracking-wide text-cream bg-teal',
+        // Same teal rule between levels as between columns.
+        'border-x border-b border-teal-deep/40',
+        isGroup ? 'text-center font-semibold' : 'text-left',
+        isIndex ? 'text-center' : '',
+      ].filter(Boolean).join(' ')
+    }
+    if (sticky) {
+      // Pre-measure: same chrome, not sticky yet (avoids body overlap).
+      return [
+        'max-w-0 px-1 pt-0.5 pb-1 align-top font-sans text-[10px] font-medium leading-snug tracking-wide text-cream bg-teal',
+        'border-x border-b border-teal-deep/40',
+        isGroup ? 'text-center font-semibold' : 'text-left',
+        isIndex ? 'text-center' : '',
+      ].filter(Boolean).join(' ')
+    }
+    return [
+      'px-2.5 py-1.5 align-top font-sans text-[11.5px] uppercase tracking-wide text-cream bg-teal',
+      'border-x border-b border-teal-deep/35',
+      isGroup ? 'text-center font-semibold' : 'text-left font-medium',
+      isIndex || seg.colSpan > 1 || seg.rowSpan > 1 ? 'text-center' : '',
+    ].filter(Boolean).join(' ')
+  }
+
+  return (
+    <thead className="bg-teal">
+      {rows.map((segs, r) => (
+        <tr
+          key={`hr-${r}`}
+          ref={(el) => { rowRefs.current[r] = el }}
+          className="bg-teal"
+        >
+          {showIndex && r === 0 ? (
+            <th
+              className={thFor({ isLeaf: true, colSpan: 1, rowSpan: depth }, true)}
+              rowSpan={depth}
+              style={stickyOn ? { top: stickyTops[0] ?? 0, zIndex: 2 } : undefined}
+            >
+              #
+            </th>
+          ) : null}
+          {segs.map((seg) => {
+            const showLocked = seg.isLeaf && lockedCols[seg.start]
+            return (
+              <th
+                key={seg.key}
+                colSpan={seg.colSpan > 1 ? seg.colSpan : undefined}
+                rowSpan={seg.rowSpan > 1 ? seg.rowSpan : undefined}
+                className={thFor(seg)}
+                style={stickyOn ? { top: stickyTops[r] ?? 0, zIndex: 2 + r } : undefined}
+                title={showLocked ? `${seg.label} — read-only` : seg.label}
+              >
+                <span className={sticky || stickyOn ? 'block [overflow-wrap:anywhere] break-words hyphens-auto' : undefined}>
+                  {seg.label}
+                  {showLocked ? (
+                    <span className={`font-semibold normal-case tracking-normal text-cream/70 ${(sticky || stickyOn) ? 'mt-0.5 block' : 'ml-1'}`}>
+                      {(sticky || stickyOn) ? 'locked' : '· locked'}
+                    </span>
+                  ) : null}
+                </span>
+              </th>
+            )
+          })}
+        </tr>
+      ))}
+    </thead>
+  )
+}
+
+function isEmptyMergeCell(value) {
+  if (value === null || value === undefined) return true
+  const s = String(value).trim()
+  if (!s) return true
+  return s === '—' || s === '–' || s === '-' || s === '−' || s === '‒'
+}
+
+function isNumericishCell(value) {
+  if (value === null || value === undefined) return false
+  const s = String(value).replace(/,/g, '').replace(/%/g, '').replace(/\*/g, '').trim()
+  if (!s || isEmptyMergeCell(s)) return false
+  return /^-?\d+(\.\d+)?$/.test(s)
+}
+
+/** Label / stub columns where PDF rowspan is common (not measure columns). */
+function isBodyLabelColumn(colIdx, columns, rows) {
+  const name = String(columns?.[colIdx]?.name || '').toLowerCase()
+  if (
+    /^(sl\.?\s*no\.?|s\.?\s*no\.?|sno|item|name|indicator|state|district|disease|particulars|description|category|sector|occupation|education|sex)$/i.test(
+      name,
+    )
+    || name.includes('name of')
+    || name.includes('local body')
+    || name.includes('disease')
+    || name.includes('district')
+    || name === 'sex'
+  ) {
+    return true
+  }
+  const vals = (rows || [])
+    .map((row) => (Array.isArray(row) ? row[colIdx] : null))
+    .filter((v) => !isEmptyMergeCell(v))
+  if (vals.length < 1) return false
+  const numeric = vals.filter((v) => isNumericishCell(v)).length
+  // Mostly non-numeric values → treat as a label column eligible for rowspan.
+  return numeric <= vals.length * 0.35
+}
+
+function isSummaryLabel(value) {
+  if (isEmptyMergeCell(value)) return false
+  const s = String(value).trim().toLowerCase()
+  // Exact ALL/TOTAL, or "Total (…)" / "ALL (…)" — not "All ages" / "All India".
+  if (/^(all|total|overall|aggregate)$/.test(s)) return true
+  if (/^grand\s*total$/.test(s)) return true
+  if (/^(all|total)\s*[\(:]/.test(s)) return true
+  return false
+}
+
+/**
+ * Reconstruct body cell merges from empty cells under label columns
+ * (pymupdf leaves rowspan/colspan continuations empty).
+ *
+ * Returns spans[r][c] = { rowSpan, colSpan } or null when covered by a prior merge.
+ *
+ * Vertical spans stop when:
+ *  - a label column to the left introduces a new value, or
+ *  - a sibling group label changes (e.g. Item "Others" → "ALL"), or
+ *  - a table-footer summary row (last row with TOTAL/ALL in Sex etc.) would
+ *    otherwise absorb blank Sl. No. / District cells from the group above.
+ */
+function buildBodyCellSpans(rows, columns) {
+  const nrows = (rows || []).length
+  const ncols = (columns || []).length
+  const spans = Array.from({ length: nrows }, () => Array.from({ length: ncols }, () => ({ rowSpan: 1, colSpan: 1 })))
+  if (!nrows || !ncols) return spans
+
+  const labelCols = []
+  for (let c = 0; c < ncols; c += 1) {
+    if (isBodyLabelColumn(c, columns, rows)) labelCols.push(c)
+  }
+  if (!labelCols.length) return spans
+
+  const labelSet = new Set(labelCols)
+
+  // Sparse identity cols (Sl. No. / Name with rowspan empties).
+  const sparseIdentityCols = []
+  // Dense high-cardinality labels (Item lists) — only break on summary transitions.
+  const denseSummaryBreakCols = []
+  for (const c of labelCols) {
+    const colName = String(columns?.[c]?.name || '').toLowerCase()
+    if (/^(sex|gender)$/.test(colName)) continue
+
+    let empty = 0
+    const nonEmpty = []
+    for (let r = 0; r < nrows; r += 1) {
+      const v = rows[r]?.[c]
+      if (isEmptyMergeCell(v)) empty += 1
+      else nonEmpty.push(String(v).trim().toLowerCase())
+    }
+    if (empty >= 1 && empty >= nrows * 0.12 && empty < nrows) {
+      sparseIdentityCols.push(c)
+      continue
+    }
+    if (nonEmpty.length >= 2) {
+      const unique = new Set(nonEmpty)
+      if (unique.size >= Math.max(3, Math.ceil(nonEmpty.length * 0.75))) {
+        denseSummaryBreakCols.push(c)
+      }
+    }
+  }
+
+  const covered = Array.from({ length: nrows }, () => Array(ncols).fill(false))
+
+  const leftBoundaryAt = (rowIdx, colIdx) => {
+    for (const lc of labelCols) {
+      if (lc >= colIdx) break
+      if (!isEmptyMergeCell(rows[rowIdx]?.[lc])) return true
+    }
+    return false
+  }
+
+  const rowHasSummaryLabel = (rowIdx) => (
+    labelCols.some((lc) => isSummaryLabel(rows[rowIdx]?.[lc]))
+  )
+
+  const siblingLabelBreakAt = (startRow, rowIdx, colIdx) => {
+    // Sparse siblings: any new value ends the span (Name under DCB → Total block).
+    for (const lc of sparseIdentityCols) {
+      if (lc === colIdx) continue
+      const startV = rows[startRow]?.[lc]
+      const v = rows[rowIdx]?.[lc]
+      if (isEmptyMergeCell(v)) continue
+      if (isEmptyMergeCell(startV)) return true
+      if (String(startV).trim().toLowerCase() !== String(v).trim().toLowerCase()) return true
+    }
+
+    // Dense Item-like cols: only break on summary transitions (Others → ALL),
+    // not on normal list changes (South → South West) that would kill Sl. No. rowspan.
+    for (const lc of denseSummaryBreakCols) {
+      if (lc === colIdx) continue
+      const startV = rows[startRow]?.[lc]
+      const v = rows[rowIdx]?.[lc]
+      if (isEmptyMergeCell(v)) continue
+      if (isEmptyMergeCell(startV)) {
+        if (isSummaryLabel(v)) return true
+        continue
+      }
+      if (String(startV).trim().toLowerCase() !== String(v).trim().toLowerCase()) {
+        if (isSummaryLabel(v) || isSummaryLabel(startV)) return true
+      }
+    }
+
+    // Footer / grand-total row: blank identity cells must stay unmerged.
+    if (rowHasSummaryLabel(rowIdx) && rowIdx === nrows - 1) return true
+
+    return false
+  }
+
+  const measureCols = []
+  for (let c = 0; c < ncols; c += 1) {
+    if (!labelSet.has(c)) measureCols.push(c)
+  }
+
+  const isSectionBannerRow = (rowIdx) => {
+    if (!measureCols.length) return false
+    const measuresEmpty = measureCols.every((c) => isEmptyMergeCell(rows[rowIdx]?.[c]))
+    if (!measuresEmpty) return false
+    return labelCols.some((c) => {
+      const v = rows[rowIdx]?.[c]
+      return !isEmptyMergeCell(v) && !isNumericishCell(v)
+    })
+  }
+
+  // Left → right so horizontal merges (Total across Sl.No + Name) claim cells first.
+  for (const c of labelCols) {
+    let r = 0
+    while (r < nrows) {
+      if (covered[r][c]) {
+        r += 1
+        continue
+      }
+      if (isEmptyMergeCell(rows[r]?.[c])) {
+        spans[r][c] = { rowSpan: 1, colSpan: 1 }
+        r += 1
+        continue
+      }
+      let rowSpan = 1
+      while (r + rowSpan < nrows && isEmptyMergeCell(rows[r + rowSpan]?.[c])) {
+        if (leftBoundaryAt(r + rowSpan, c)) break
+        if (siblingLabelBreakAt(r, r + rowSpan, c)) break
+        rowSpan += 1
+      }
+      let colSpan = 1
+      // Extend across adjacent empty label cells for the same vertical run (e.g. Total).
+      while (labelSet.has(c + colSpan)) {
+        let ok = true
+        for (let dr = 0; dr < rowSpan; dr += 1) {
+          const rr = r + dr
+          const cc = c + colSpan
+          if (covered[rr][cc] || !isEmptyMergeCell(rows[rr]?.[cc])) {
+            ok = false
+            break
+          }
+          if (leftBoundaryAt(rr, c)) {
+            ok = false
+            break
+          }
+        }
+        if (!ok) break
+        colSpan += 1
+      }
+      // Section banners (Delhi / All India / District wise…) colspan into empty measure cols.
+      if (rowSpan === 1 && isSectionBannerRow(r)) {
+        while (c + colSpan < ncols && measureCols.includes(c + colSpan)) {
+          if (covered[r][c + colSpan] || !isEmptyMergeCell(rows[r]?.[c + colSpan])) break
+          colSpan += 1
+        }
+      }
+      spans[r][c] = { rowSpan, colSpan }
+      for (let dr = 0; dr < rowSpan; dr += 1) {
+        for (let dc = 0; dc < colSpan; dc += 1) {
+          if (dr === 0 && dc === 0) continue
+          covered[r + dr][c + dc] = true
+          spans[r + dr][c + dc] = null
+        }
+      }
+      r += rowSpan
+    }
+  }
+
+  for (let r = 0; r < nrows; r += 1) {
+    for (let c = 0; c < ncols; c += 1) {
+      if (covered[r][c]) spans[r][c] = null
+    }
+  }
+  return spans
 }
 
 function isUsableTableTitle(title, columns) {
@@ -453,8 +906,11 @@ function ExtractedDataRowsModal({
 }) {
   const columns = table.columns || []
   const columnCount = columns.length
+  const cellSpans = buildBodyCellSpans(rows, columns)
+  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
+    setMounted(true)
     const onKey = (e) => {
       if (e.key === 'Escape') onClose()
     }
@@ -483,7 +939,8 @@ function ExtractedDataRowsModal({
   const remPct = 100 - INDEX_PCT
   const colWidths = weights.map((w) => (remPct * w) / weightSum)
 
-  return (
+  if (!mounted) return null
+  return createPortal(
     <div
       className="fixed inset-0 z-[1100] flex items-center justify-center overflow-hidden bg-[rgba(16,64,63,0.52)] p-4 sm:p-5"
       role="dialog"
@@ -492,7 +949,7 @@ function ExtractedDataRowsModal({
       onClick={onClose}
     >
       <div
-        className="flex max-h-[92vh] w-full min-w-0 max-w-[min(1200px,calc(100vw-2rem))] flex-col overflow-hidden rounded-[14px] bg-surface shadow-dhara"
+        className="flex h-[min(720px,90vh)] w-[min(1200px,calc(100vw-2rem))] flex-none flex-col overflow-hidden rounded-[14px] bg-surface shadow-dhara"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="relative flex flex-shrink-0 items-center justify-center bg-cream px-12 pb-4 pt-5 text-center">
@@ -529,32 +986,7 @@ function ExtractedDataRowsModal({
                   <col key={i} style={{ width: `${w}%` }} />
                 ))}
               </colgroup>
-              <thead>
-                <tr>
-                  <th
-                    className="sticky top-0 z-[2] max-w-0 border border-cream/30 bg-teal px-1 py-2 text-center font-sans text-[10px] font-medium tracking-wide text-cream"
-                  >
-                    #
-                  </th>
-                  {columns.map((col, i) => {
-                    const name = String(col?.name || '')
-                    return (
-                      <th
-                        key={i}
-                        title={lockedCols[i] ? `${name} — read-only` : name}
-                        className="sticky top-0 z-[2] max-w-0 border border-cream/30 bg-teal px-1 py-2 text-left font-sans text-[10px] font-medium leading-snug tracking-wide text-cream"
-                      >
-                        <span className="block [overflow-wrap:anywhere] break-words hyphens-auto">
-                          {name}
-                          {lockedCols[i] ? (
-                            <span className="mt-0.5 block font-semibold normal-case tracking-normal text-cream/70">locked</span>
-                          ) : null}
-                        </span>
-                      </th>
-                    )
-                  })}
-                </tr>
-              </thead>
+              <ExtractedTableHead columns={columns} lockedCols={lockedCols} sticky showIndex />
               <tbody>
                 {rows.map((row, r) => (
                   <tr
@@ -564,21 +996,28 @@ function ExtractedDataRowsModal({
                     <td className="max-w-0 border border-[#cfc6b4] px-1 py-1.5 text-center text-[10px] tabular-nums text-ink-soft">
                       {r + 1}
                     </td>
-                    {Array.from({ length: columnCount }, (_, c) => (
-                      <td
-                        key={c}
-                        className="max-w-0 overflow-hidden border border-[#cfc6b4] px-1 py-1.5 align-top"
-                      >
-                        <ExtractedDataCell
-                          value={row[c] ?? null}
-                          sourceValue={sourceRows[r]?.[c]}
-                          col={columns[c]}
-                          locked={lockedCols[c]}
-                          fitWidth
-                          onChange={(next) => onChangeCell(r, c, next)}
-                        />
-                      </td>
-                    ))}
+                    {Array.from({ length: columnCount }, (_, c) => {
+                      const span = cellSpans[r]?.[c]
+                      if (span == null) return null
+                      const merged = span.rowSpan > 1 || span.colSpan > 1
+                      return (
+                        <td
+                          key={c}
+                          rowSpan={span.rowSpan > 1 ? span.rowSpan : undefined}
+                          colSpan={span.colSpan > 1 ? span.colSpan : undefined}
+                          className={`max-w-0 overflow-hidden border border-[#cfc6b4] px-1 py-1.5 ${merged ? 'align-middle' : 'align-top'}`}
+                        >
+                          <ExtractedDataCell
+                            value={row[c] ?? null}
+                            sourceValue={sourceRows[r]?.[c]}
+                            col={columns[c]}
+                            locked={lockedCols[c]}
+                            fitWidth
+                            onChange={(next) => onChangeCell(r, c, next)}
+                          />
+                        </td>
+                      )
+                    })}
                   </tr>
                 ))}
               </tbody>
@@ -592,7 +1031,8 @@ function ExtractedDataRowsModal({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -666,7 +1106,9 @@ function TableDetail({ table, onSave, onTitleLive, onTitleCommit }) {
   const sourceRows = padRowsToColumns(table.rows || [], columnCount)
   const previewCap = 5
   const previewLimit = Math.min(previewCap, previewRows.length)
-  const hiddenCount = Math.max(0, previewRows.length - previewCap)
+  const visiblePreviewRows = previewRows.slice(0, previewLimit)
+  const previewCellSpans = buildBodyCellSpans(visiblePreviewRows, table.columns || [])
+  const hiddenCount = Math.max(0, previewRows.length - previewLimit)
   const garbledCellCount = sourceRows.flat().filter((v) => isGarbled(v)).length
   const anyCellGarbled = garbledCellCount > 0
   const lockedCols = (table.columns || []).map((col, i) => isNumericColumn(col, i, sourceRows))
@@ -832,28 +1274,23 @@ function TableDetail({ table, onSave, onTitleLive, onTitleCommit }) {
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[600px] border-collapse text-[13px]">
-          <thead>
-            <tr>
-              {(table.columns || []).map((c, i) => (
-                <th
-                  key={i}
-                  className="border border-teal/50 bg-teal px-2.5 py-1.5 text-left text-[11.5px] uppercase text-cream"
-                  title={lockedCols[i] ? 'Numeric column — read-only' : 'Editable'}
-                >
-                  {c.name}
-                  {lockedCols[i] ? <span className="ml-1 font-semibold normal-case tracking-normal text-cream/75">· locked</span> : null}
-                </th>
-              ))}
-            </tr>
-          </thead>
+          <ExtractedTableHead columns={table.columns || []} lockedCols={lockedCols} />
           <tbody>
-            {previewRows.slice(0, previewLimit).map((row, r) => (
+            {visiblePreviewRows.map((row, r) => (
               <tr key={r}>
                 {Array.from({ length: columnCount }, (_, c) => {
+                  const span = previewCellSpans[r]?.[c]
+                  if (span == null) return null
                   const v = row[c] ?? null
                   const col = table.columns?.[c]
+                  const merged = span.rowSpan > 1 || span.colSpan > 1
                   return (
-                    <td key={c} className="border border-line px-2.5 py-1.5">
+                    <td
+                      key={c}
+                      rowSpan={span.rowSpan > 1 ? span.rowSpan : undefined}
+                      colSpan={span.colSpan > 1 ? span.colSpan : undefined}
+                      className={`border border-line px-2.5 py-1.5 ${merged ? 'align-middle' : ''}`}
+                    >
                       <ExtractedDataCell
                         value={v}
                         sourceValue={sourceRows[r]?.[c]}
@@ -1309,7 +1746,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
     `dhara-tab flex h-8 flex-none items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-semibold ${
       active
         ? 'border-teal-deep bg-teal-deep text-cream'
-        : 'border-line bg-white text-ink-soft hover:border-teal-deep hover:bg-teal-deep hover:text-cream'
+        : 'border-line bg-white text-ink-soft hover:border-teal/35 hover:bg-sage hover:text-teal-deep'
     }`
 
   return (

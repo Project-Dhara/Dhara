@@ -158,9 +158,9 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
           Any other table can be edited here too, if needed.
         </div>
       ) : (
-        <div className="rounded-[10px] border border-green bg-[#f2f8f5] px-4 py-3 text-sm text-ink">
+        <div className="rounded-[10px] border border-green bg-sage px-4 py-3 text-sm text-ink">
           <span className="inline-flex items-start gap-1.5">
-            <Check className="mt-0.5 h-4 w-4 flex-none text-[#3d7a3d]" strokeWidth={2.5} aria-hidden />
+            <Check className="mt-0.5 h-4 w-4 flex-none text-green" strokeWidth={2.5} aria-hidden />
             No Source Table ID / Title mismatches found — all extracted tables look consistent. You can still edit a table&apos;s details below if needed.
           </span>
         </div>
@@ -182,20 +182,20 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
               )}
 
               <div className="flex flex-wrap gap-4">
-                <label className={`flex flex-1 basis-[260px] flex-col gap-1 text-xs ${showReason && idFlagged ? 'font-semibold text-[#c0392b]' : 'text-ink-soft'}`}>
+                <label className={`flex flex-1 basis-[260px] flex-col gap-1 text-xs ${showReason && idFlagged ? 'font-semibold text-coral' : 'text-ink-soft'}`}>
                   <span>Source Table ID{showReason && idFlagged ? ' — needs fixing' : ''}</span>
                   <input
-                    className={`rounded-lg border px-2.5 py-2 font-sans text-[13.5px] text-ink focus:border-teal focus:outline-none read-only:cursor-default read-only:bg-[#f4f1ea] read-only:text-ink-soft ${showReason && idFlagged ? 'border-2 border-[#c0392b]' : 'border-line'}`}
+                    className={`rounded-lg border px-2.5 py-2 font-sans text-[13.5px] text-ink focus:border-teal focus:outline-none read-only:cursor-default read-only:bg-mist read-only:text-ink-soft ${showReason && idFlagged ? 'border-2 border-coral' : 'border-line-strong'}`}
                     value={drafts[t._uid]?.table_id ?? ''}
                     onChange={(e) => updateDraft(t._uid, 'table_id', e.target.value)}
                     readOnly={locked}
                     spellCheck={false}
                   />
                 </label>
-                <label className={`flex flex-1 basis-[260px] flex-col gap-1 text-xs ${showReason && titleFlagged ? 'font-semibold text-[#c0392b]' : 'text-ink-soft'}`}>
+                <label className={`flex flex-1 basis-[260px] flex-col gap-1 text-xs ${showReason && titleFlagged ? 'font-semibold text-coral' : 'text-ink-soft'}`}>
                   <span>Table Title{showReason && titleFlagged ? ' — needs fixing' : ''}</span>
                   <input
-                    className={`rounded-lg border px-2.5 py-2 font-sans text-[13.5px] text-ink focus:border-teal focus:outline-none read-only:cursor-default read-only:bg-[#f4f1ea] read-only:text-ink-soft ${showReason && titleFlagged ? 'border-2 border-[#c0392b]' : 'border-line'}`}
+                    className={`rounded-lg border px-2.5 py-2 font-sans text-[13.5px] text-ink focus:border-teal focus:outline-none read-only:cursor-default read-only:bg-mist read-only:text-ink-soft ${showReason && titleFlagged ? 'border-2 border-coral' : 'border-line-strong'}`}
                     value={drafts[t._uid]?.title ?? ''}
                     onChange={(e) => updateDraft(t._uid, 'title', e.target.value)}
                     readOnly={locked}

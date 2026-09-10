@@ -338,15 +338,16 @@ function UploadChoice({
   const dropZoneClass = (dragging) =>
     `flex min-h-[168px] flex-1 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed px-5 py-6 text-center transition-colors ${
       dragging
-        ? 'border-teal bg-forest-tint'
-        : 'border-line bg-cream/80 hover:border-teal/35 hover:bg-forest-tint/60'
+        ? 'border-teal/40 bg-sage'
+        : 'border-line bg-white hover:border-line hover:bg-mist/80'
     }`
 
-  const cardClass = 'flex min-h-[240px] w-full flex-col overflow-hidden rounded-card border border-line bg-surface transition-colors duration-150 hover:border-forest/20'
-  const selectorBarClass = 'border-b border-line bg-cream/80'
+  const datasetCardClass = 'dhara-surface flex min-h-[240px] w-full flex-col overflow-hidden rounded-card border border-teal/20 bg-white'
+  const metadataCardClass = 'dhara-surface flex min-h-[240px] w-full flex-col overflow-hidden rounded-card border border-line bg-white'
+  const selectorBarClass = 'border-b border-line bg-mist'
   const tabBase = 'dhara-tab relative px-3 text-[13px] font-semibold disabled:cursor-not-allowed disabled:opacity-60'
-  const tabActive = 'bg-teal-deep text-cream after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-cream/80'
-  const tabIdle = 'border-transparent text-ink-soft hover:bg-teal-deep hover:text-cream'
+  const tabActive = 'dhara-tab-on'
+  const tabIdle = 'dhara-tab-off'
 
   return (
     <div className="flex flex-col gap-4">
@@ -374,7 +375,7 @@ function UploadChoice({
         }}
       />
       <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-2 sm:items-stretch">
-        <div className={cardClass}>
+        <div className={datasetCardClass}>
           <div
             className={`grid h-[45px] grid-cols-2 ${selectorBarClass}`}
             role="tablist"
@@ -429,14 +430,14 @@ function UploadChoice({
             </div>
           ) : (
             <div key="sql-tab" className="dhara-tab-panel flex flex-1 flex-col p-3">
-              <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-cream p-4">
+              <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-white p-4">
                 {sqlPanel}
               </div>
             </div>
           )}
         </div>
 
-        <div className={cardClass}>
+        <div className={metadataCardClass}>
           <div className={`flex h-[45px] items-center justify-center px-3 ${selectorBarClass}`}>
             <span className="text-[13px] font-semibold text-ink-soft">Metadata (optional)</span>
           </div>
@@ -1116,12 +1117,12 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
         goToStep={goToStep}
       />
 
-      <div className="flex min-w-0 flex-1 flex-col gap-[18px]">
+      <div key={step} className="dhara-page-enter flex min-w-0 flex-1 flex-col gap-[18px]">
         {/* Page header — title / purpose stay above the content panel */}
         {!statusPage && (
         <div className="flex flex-col">
           {step > 1 && step < 6 && (
-            <div className="mb-3.5 inline-flex cursor-pointer items-center gap-1.5 text-[14px] font-medium text-teal transition-colors hover:text-teal-dark" onClick={back}>
+            <div className="mb-3.5 inline-flex cursor-pointer items-center gap-1.5 text-[14px] font-medium text-teal transition-colors duration-dhara ease-dhara hover:text-teal-dark" onClick={back}>
               <ArrowLeft className="h-4 w-4" strokeWidth={1.75} aria-hidden />
               {BACK_LABELS[step]}
             </div>
@@ -1136,7 +1137,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
         )}
 
         {/* Shared content panel — choice cards, then tables / grouping / later steps */}
-        <div className="flex flex-col gap-5 rounded-2xl border border-line/90 bg-surface p-5 sm:p-6">
+        <div className="flex flex-col gap-5 rounded-2xl border border-line/90 bg-white p-5 sm:p-6">
         {statusPage && (
           <ConsoleStatusPlaceholder
             key={statusPage.key}
@@ -1200,7 +1201,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-soft">Dataset</span>
                 {previewDatasets.length > 2 ? (
                   <select
-                    className="rounded-md border border-line bg-white px-3 py-1.5 text-[13px] text-ink outline-none focus:border-teal"
+                    className="rounded-md border border-line-strong bg-white px-3 py-1.5 text-[13px] text-ink outline-none focus:border-teal"
                     value={effectiveDataset}
                     onChange={(e) => selectPreviewDataset(e.target.value)}
                   >
@@ -1214,8 +1215,8 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                       key={name}
                       className={`dhara-tab cursor-pointer rounded-full border px-3 py-1.5 text-sm ${
                         name === effectiveDataset
-                          ? 'border-teal-deep bg-teal-deep text-cream'
-                          : 'border-line text-ink hover:border-teal-deep hover:bg-teal-deep hover:text-cream'
+                          ? 'border-transparent bg-teal-deep text-cream'
+                          : 'border-line bg-white text-ink hover:bg-sage hover:text-teal-deep'
                       }`}
                       onClick={() => selectPreviewDataset(name)}
                       title={name}
@@ -1227,7 +1228,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
               </div>
             )}
             {mismatchedPreviewTables.length > 0 && (
-              <div className={`rounded-lg border px-4 py-3 text-sm font-medium ${unsavedMismatched.length === 0 ? 'border-green bg-[#f2f8f5] text-[#2f6b3f]' : 'border-[#d9822b] bg-[#fdf1e2] text-[#8a4a10]'}`}>
+              <div className={`rounded-lg border px-4 py-3 text-sm font-medium ${unsavedMismatched.length === 0 ? 'border-green bg-sage text-teal' : 'border-yellow/50 bg-warn-bg text-ink'}`}>
                 {unsavedMismatched.length > 0
                   ? (
                     <span className="inline-flex items-start gap-1.5">
@@ -1247,12 +1248,12 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
               <label className="flex min-w-0 max-w-3xl flex-col gap-1.5">
                 <span className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-ink-soft">
                   Table
-                  <span className="rounded bg-cream px-1.5 py-0.5 text-[10.5px] font-semibold normal-case tracking-normal text-[#8E9398]">
+                  <span className="rounded bg-cream px-1.5 py-0.5 text-[10.5px] font-semibold normal-case tracking-normal text-ink-soft">
                     {visiblePreviewTables.length}
                   </span>
                 </span>
                 <select
-                  className="w-full rounded-md border border-line bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-teal"
+                  className="w-full rounded-md border border-line-strong bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-teal"
                   value={previewSelected?._uid || ''}
                   onChange={(e) => selectPreviewTable(e.target.value)}
                 >
@@ -1278,14 +1279,20 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                   return (
                     <div
                       key={t._uid}
-                      className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 ${
-                        active ? 'border-teal bg-teal' : unsaved ? 'border-[#d9822b] bg-[#fdf1e2] ring-1 ring-[#d9822b]' : resolved ? 'border-green bg-[#f2f8f5]' : 'border-line bg-white'
+                      className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 transition-colors duration-dhara ease-dhara ${
+                        active
+                          ? 'border-transparent bg-teal-deep'
+                          : unsaved
+                            ? 'border-yellow bg-warn-bg ring-1 ring-yellow/50 hover:border-yellow'
+                            : resolved
+                              ? 'border-green bg-sage hover:border-teal/35'
+                              : 'border-line bg-white hover:border-teal/35 hover:bg-sage'
                       }`}
                       onClick={() => selectPreviewTable(t._uid)}
                       title={flagged ? `${t.id} — Source Table ID / Title need confirmation` : `${t.id} — no validation errors`}
                     >
                       <span className={`flex h-4.5 w-4.5 items-center justify-center rounded-full ${
-                        active ? 'bg-white text-teal' : unsaved ? 'bg-[#d9822b] text-white' : 'bg-green text-white'
+                        active ? 'bg-cream/20 text-cream' : unsaved ? 'bg-yellow text-ink' : 'bg-green text-white'
                       }`}>
                         {unsaved ? (
                           <AlertTriangle className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
@@ -1293,8 +1300,8 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                           <Check className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
                         )}
                       </span>
-                      <span className={`font-sans text-xs font-medium ${active ? 'text-white' : 'text-ink'}`}>{tableCode(t)}</span>
-                      <span className={`text-xs ${active ? 'text-[#a9cfc9]' : 'text-[#8E9398]'}`}>{t.row_count} rows</span>
+                      <span className={`font-sans text-xs font-medium ${active ? 'text-cream' : 'text-ink'}`}>{tableCode(t)}</span>
+                      <span className={`text-xs ${active ? 'text-cream/75' : 'text-ink-soft'}`}>{t.row_count} rows</span>
                     </div>
                   )
                 })}
@@ -1318,13 +1325,13 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
         {step === 3 && matchResult && (
           <div className="flex flex-col gap-4">
             <div className="flex flex-wrap items-center gap-3">
-              <div className="inline-flex rounded-full border border-line bg-white p-0.5">
+              <div className="inline-flex rounded-full border border-line bg-mist p-0.5">
                 <button
                   type="button"
                   className={`dhara-tab rounded-full px-3.5 py-1.5 text-[13px] font-semibold ${
                     groupingMode === 'automatic'
                       ? 'border-transparent bg-teal-deep text-cream'
-                      : 'border-transparent text-ink-soft hover:bg-teal-deep hover:text-cream'
+                      : 'border-transparent text-ink-soft hover:bg-sage hover:text-teal-deep'
                   }`}
                   onClick={() => groupingMode !== 'automatic' && requestAutomaticGrouping()}
                 >
@@ -1335,7 +1342,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                   className={`dhara-tab rounded-full px-3.5 py-1.5 text-[13px] font-semibold ${
                     groupingMode === 'manual'
                       ? 'border-transparent bg-teal-deep text-cream'
-                      : 'border-transparent text-ink-soft hover:bg-teal-deep hover:text-cream'
+                      : 'border-transparent text-ink-soft hover:bg-sage hover:text-teal-deep'
                   }`}
                   onClick={() => groupingMode !== 'manual' && requestManualGrouping()}
                 >
@@ -1360,7 +1367,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
             </div>
 
             {dragEnabled && (
-              <p className="m-0 text-[13px] font-medium text-[#c9610f]">
+              <p className="m-0 text-[13px] font-medium text-yellow">
                 <span className="inline-flex items-start gap-1.5">
                   <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" strokeWidth={2} aria-hidden />
                   Every table must be assigned to a group with a group name before you continue.
@@ -1408,7 +1415,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                     <GroupNameEditor name={g.file_name} onSave={(newName) => renameBatchGroup(i, newName)} />
                     <span className="whitespace-nowrap rounded-full bg-cream px-2.5 py-0.5 text-xs text-ink-soft">{g.matched_tables.length} table{g.matched_tables.length !== 1 ? 's' : ''}</span>
                     {dragEnabled && (
-                      <button className="flex items-center justify-center rounded border border-line px-1.5 py-1 text-xs text-ink-soft transition-colors duration-200 hover:border-coral hover:bg-[#fdecec] hover:text-coral" onClick={() => deleteBatchGroup(i)} title="Delete group" aria-label="Delete group">
+                      <button className="flex items-center justify-center rounded border border-line px-1.5 py-1 text-xs text-ink-soft transition-colors duration-200 hover:border-coral hover:bg-error-bg hover:text-coral" onClick={() => deleteBatchGroup(i)} title="Delete group" aria-label="Delete group">
                         <Trash2 className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
                       </button>
                     )}
@@ -1453,7 +1460,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                 >
                   <div className="flex items-center justify-between gap-2.5">
                     <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink">
-                      <AlertTriangle className="h-4 w-4 text-[#c9610f]" strokeWidth={2} aria-hidden />
+                      <AlertTriangle className="h-4 w-4 text-yellow" strokeWidth={2} aria-hidden />
                       Unmatched tables
                     </span>
                     <span className="whitespace-nowrap rounded-full bg-cream px-2.5 py-0.5 text-xs text-ink-soft">{matchResult.unmatched_tables.length}</span>
@@ -1499,7 +1506,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
             </div>
 
             {groupingToast && (
-              <div className="fixed right-6 top-6 z-[1200] flex animate-toast-in items-center gap-3 rounded-[10px] border border-[#c9610f] bg-[#e2711d] px-4 py-3 pl-4.5 font-sans text-sm font-medium leading-snug text-[#111] shadow-[0_8px_24px_rgba(226,113,29,0.22)]" role="alert">
+              <div className="fixed right-6 top-6 z-[1200] flex animate-toast-in items-center gap-3 rounded-[10px] border border-yellow bg-warn-bg px-4 py-3 pl-4.5 font-sans text-sm font-medium leading-snug text-ink shadow-[0_8px_24px_rgba(229,183,47,0.22)]" role="alert">
                 <span>{groupingToast}</span>
                 <button type="button" className="flex h-6 w-6 items-center justify-center rounded p-0.5 text-[#111] opacity-70 hover:opacity-100" onClick={() => setGroupingToast(null)} aria-label="Dismiss">
                   <X className="h-4 w-4" strokeWidth={1.75} />

@@ -248,7 +248,7 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
               Download CSV
             </button>
             <button
-              className="ml-2 inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-teal-deep px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#0b2f2e] disabled:cursor-default disabled:opacity-60"
+              className="ml-2 inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-teal px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-teal-dark disabled:cursor-default disabled:opacity-60"
               onClick={() => downloadMetadataExcel(table, setMetaLoading)}
               disabled={metaLoading}
             >
@@ -292,7 +292,7 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
                   return (
                     <td
                       key={col}
-                      className={`max-w-[220px] overflow-hidden text-ellipsis whitespace-nowrap border-b border-[#f1ebdf] border-r border-[#f4efe3] px-3.5 py-2.5 ${isNull ? 'italic text-[#a49c8e]' : 'text-ink'}`}
+                      className={`max-w-[220px] overflow-hidden text-ellipsis whitespace-nowrap border-b border-[#f1ebdf] border-r border-[#f4efe3] px-3.5 py-2.5 ${isNull ? 'italic text-ink-muted' : 'text-ink'}`}
                       title={isNull ? '' : String(val)}
                     >
                       {isNull ? '—' : String(val)}
@@ -323,7 +323,7 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
               Download CSV
             </button>
             <button
-              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-teal-deep px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#0b2f2e] disabled:cursor-default disabled:opacity-60"
+              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-teal px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-teal-dark disabled:cursor-default disabled:opacity-60"
               onClick={() => downloadMetadataExcel(table, setMetaLoading)}
               disabled={metaLoading}
             >

@@ -51,7 +51,7 @@ function navClass(active) {
   return `dhara-tab flex cursor-pointer items-center gap-2.5 rounded-xl px-3.5 py-2.5 text-[14.5px] tracking-tight ${
     active
       ? 'border-transparent bg-teal-deep font-semibold text-cream'
-      : 'border-transparent font-medium text-ink-soft hover:bg-teal-deep hover:text-cream'
+      : 'border-transparent font-medium text-ink-soft hover:bg-sage hover:text-teal-deep'
   }`
 }
 
@@ -102,7 +102,7 @@ export default function AppShell({ screen, user, onNavigate, onSignOut, children
               <div className="text-[11.5px] text-ink-soft">{user?.role}</div>
             </div>
           </div>
-          <div className="cursor-pointer px-5 pb-1 text-[13px] text-ink-soft transition-colors duration-150 hover:text-teal" onClick={onSignOut}>Sign out</div>
+          <div className="cursor-pointer px-5 pb-1 text-[13px] text-ink-soft transition-colors duration-dhara ease-dhara hover:text-teal" onClick={onSignOut}>Sign out</div>
         </div>
       </nav>
 
@@ -110,8 +110,11 @@ export default function AppShell({ screen, user, onNavigate, onSignOut, children
         {/* Padding lives on an inner wrapper (not the scrollport) so position:sticky
             children can stick flush to the top with no padding gap above them.
             has-[.cat-screen]: Catalogue.jsx manages its own internal scroll. */}
-        <div className="min-h-0 flex-1 overflow-y-auto has-[.cat-screen]:flex has-[.cat-screen]:flex-col has-[.cat-screen]:overflow-hidden">
-          <div className="p-8 px-9 has-[.cat-screen]:flex has-[.cat-screen]:min-h-0 has-[.cat-screen]:flex-1 has-[.cat-screen]:flex-col has-[.cat-screen]:overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-y-auto scroll-smooth has-[.cat-screen]:flex has-[.cat-screen]:flex-col has-[.cat-screen]:overflow-hidden">
+          <div
+            key={screen}
+            className="dhara-page-enter p-8 px-9 has-[.cat-screen]:flex has-[.cat-screen]:min-h-0 has-[.cat-screen]:flex-1 has-[.cat-screen]:flex-col has-[.cat-screen]:overflow-hidden"
+          >
             {children}
           </div>
         </div>

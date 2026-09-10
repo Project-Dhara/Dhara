@@ -65,10 +65,24 @@ def _is_numeric_cell(v: str) -> bool:
 def clean_dataframe_light(df: pd.DataFrame) -> pd.DataFrame:
     """Whitespace-normalize cells, blank out empty strings, drop fully-empty
     rows/columns. Pure Python cleanup -- no LLM, no restructuring."""
+    meta = None
+    try:
+        meta = list(getattr(df, "attrs", {}).get("dhara_column_meta") or [])
+    except Exception:
+        meta = None
     cleaned = df.map(lambda v: _cell_str(v) or None)
     cleaned.columns = [_cell_str(c) or f"Col_{i + 1}" for i, c in enumerate(cleaned.columns)]
+    before_cols = list(cleaned.columns)
     cleaned = cleaned.dropna(axis=0, how="all").dropna(axis=1, how="all")
-    return cleaned.reset_index(drop=True)
+    cleaned = cleaned.reset_index(drop=True)
+    if meta and len(meta) == len(before_cols):
+        kept = set(str(c) for c in cleaned.columns)
+        cleaned.attrs["dhara_column_meta"] = [
+            meta[i] for i, name in enumerate(before_cols) if str(name) in kept
+        ]
+    elif meta:
+        cleaned.attrs["dhara_column_meta"] = meta
+    return cleaned
 
 
 def profile_table(df: pd.DataFrame) -> Dict[str, Any]:
@@ -120,14 +134,9 @@ def profile_table(df: pd.DataFrame) -> Dict[str, Any]:
     }
 
 
-def classify_page(candidates: List[Dict[str, Any]]) -> Tuple[str, str, Dict[str, Any]]:
-    """Returns (bucket, reason, info). bucket is "high" or "llm"."""
-    lines_strict = [c for c in candidates if c["method"] == "pymupdf_lines_strict"]
-
-    if not lines_strict:
-        return "llm", "no lines_strict candidate (should not happen post-filter)", {}
-
-    primary = clean_dataframe_light(lines_strict[0]["df"])
+def _structural_bucket_for_df(df: pd.DataFrame) -> Tuple[str, str, Dict[str, Any]]:
+    """Classify one cleaned DataFrame as high-confidence or needing LLM."""
+    primary = clean_dataframe_light(df)
     info = profile_table(primary)
 
     if info["n_rows"] < MIN_ROWS or info["nonempty_ratio"] < MIN_NONEMPTY_RATIO:
@@ -143,6 +152,31 @@ def classify_page(candidates: List[Dict[str, Any]]) -> Tuple[str, str, Dict[str,
         return "llm", "placeholder column header (blank in the raw table) -- real header likely lives outside the ruled region", info
 
     return "high", "clean single-header table, passes all structural checks", info
+
+
+def classify_page(candidates: List[Dict[str, Any]]) -> Tuple[str, str, Dict[str, Any]]:
+    """Returns (bucket, reason, info). bucket is "high" or "llm".
+
+    Every pymupdf_lines_strict candidate on the page must pass structural
+    checks for the page to be auto-accepted — otherwise a clean first table
+    would hide a messy second one from LLM review.
+    """
+    lines_strict = [c for c in candidates if c["method"] == "pymupdf_lines_strict"]
+
+    if not lines_strict:
+        return "llm", "no lines_strict candidate (should not happen post-filter)", {}
+
+    last_info: Dict[str, Any] = {}
+    for c in lines_strict:
+        df = c.get("df")
+        if df is None or getattr(df, "empty", True):
+            return "llm", "empty lines_strict candidate", {}
+        bucket, reason, info = _structural_bucket_for_df(df)
+        last_info = info
+        if bucket != "high":
+            return bucket, reason, info
+
+    return "high", "all lines_strict tables pass structural checks", last_info
 
 
 # Running headers / chrome on SDA-style index PDFs that should never become
@@ -316,9 +350,26 @@ def table_dict_from_df(
     path so Preview can treat both uniformly via semantic_status."""
     cleaned = clean_dataframe_light(df)
     col_names = [str(c) for c in cleaned.columns]
-    columns = [
-        {
-            "name": name,
+    meta = []
+    try:
+        meta = list(getattr(df, "attrs", {}).get("dhara_column_meta") or [])
+    except Exception:
+        meta = []
+    columns = []
+    for i, name in enumerate(col_names):
+        m = meta[i] if i < len(meta) and isinstance(meta[i], dict) else {}
+        header_group = (str(m["header_group"]).strip() or None) if m.get("header_group") else None
+        raw_path = m.get("header_path")
+        header_path = None
+        if isinstance(raw_path, (list, tuple)):
+            header_path = [str(p).strip() for p in raw_path if str(p).strip()]
+        if not header_path:
+            leaf = str(m.get("name") or name)
+            header_path = [header_group, leaf] if header_group else [leaf]
+        columns.append({
+            "name": str(m.get("name") or name),
+            "header_group": header_group or (header_path[-2] if len(header_path) >= 2 else None),
+            "header_path": header_path,
             "role": "unknown",
             "concept": None,
             "description": None,
@@ -327,9 +378,7 @@ def table_dict_from_df(
             "category": None,
             "human_review_needed": False,
             "human_review_reason": None,
-        }
-        for name in col_names
-    ]
+        })
     title, title_source = infer_title_from_page_text(page_text, col_names, page_num=page_num)
     empty_field = {"value": None, "human_review_needed": False, "human_review_reason": None}
     return {

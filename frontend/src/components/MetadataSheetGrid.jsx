@@ -62,7 +62,7 @@ export default function MetadataSheetGrid({
             className={`dhara-tab grid min-w-0 grid-cols-[18px_1fr] items-center gap-2 rounded-full px-2.5 py-1.5 pl-2 font-sans text-[12.5px] font-medium ${
               ri === activeIndex
                 ? 'border-teal-deep bg-teal-deep text-cream'
-                : 'border-line bg-surface text-ink-soft hover:border-teal-deep hover:bg-teal-deep hover:text-cream'
+                : 'border-line bg-surface text-ink-soft hover:border-teal/35 hover:bg-sage hover:text-teal-deep'
             }`}
             onClick={() => setActiveIndex(ri)}
             title={row.label}
@@ -118,7 +118,7 @@ export default function MetadataSheetGrid({
                       missing ? 'border-[#e3b3ba] bg-[rgba(217,91,104,0.08)]' : 'border-line bg-[#F7F3EA]'
                     } ${c.readOnly ? 'items-center' : ''}`}
                   >
-                    <span className="flex-none self-center whitespace-nowrap font-sans text-[11px] tracking-wide text-[#8E9398]">{c.label}{c.required && ' *'}</span>
+                    <span className="flex-none self-center whitespace-nowrap font-label text-[11px] tracking-wide text-[#8E9398]">{c.label}{c.required && ' *'}</span>
                     {c.readOnly ? (
                       <span
                         className="block flex-1 truncate rounded-lg border border-solid border-line bg-cream px-2.5 py-1 font-sans text-[12.5px] font-medium text-ink outline-none focus:whitespace-normal focus:[overflow-wrap:anywhere] focus:break-words"

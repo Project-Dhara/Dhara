@@ -147,9 +147,9 @@ function AddGroupModal({ tables, onCreate, onClose }) {
       <div className="flex max-h-[85vh] w-full max-w-lg flex-col gap-3.5 overflow-hidden rounded-xl bg-surface p-5 shadow-dhara">
         <div className="text-[16px] font-bold text-ink">Add group manually</div>
         <label className="flex flex-col gap-1.5 text-[13px] text-ink-soft">
-          Group name
+          <span>Group name</span>
           <input
-            className="rounded-lg border border-line px-3 py-2 text-[14px] text-ink"
+            className="rounded-lg border border-line px-3 py-2 font-body text-[14px] text-ink"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Population by State"
@@ -781,7 +781,7 @@ export default function PdfGrouping({ jobId }) {
                     className={`dhara-tab rounded-full px-3.5 py-1.5 text-[13px] font-semibold ${
                       groupingMode === 'automatic'
                         ? 'border-transparent bg-teal-deep text-cream'
-                        : 'border-transparent text-ink-soft hover:bg-teal-deep hover:text-cream'
+                        : 'border-transparent text-ink-soft hover:bg-sage hover:text-teal-deep'
                     }`}
                     onClick={() => groupingMode !== 'automatic' && requestAutomatic()}
                     disabled={saving || metadataFilling}
@@ -793,7 +793,7 @@ export default function PdfGrouping({ jobId }) {
                     className={`dhara-tab rounded-full px-3.5 py-1.5 text-[13px] font-semibold ${
                       groupingMode === 'manual'
                         ? 'border-transparent bg-teal-deep text-cream'
-                        : 'border-transparent text-ink-soft hover:bg-teal-deep hover:text-cream'
+                        : 'border-transparent text-ink-soft hover:bg-sage hover:text-teal-deep'
                     }`}
                     onClick={() => groupingMode !== 'manual' && setActiveDialog('manualConfirm')}
                   >

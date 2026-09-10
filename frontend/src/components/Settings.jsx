@@ -102,9 +102,9 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
   }
 
   const inputClass =
-    'h-10 rounded-xl border border-line bg-surface px-3 font-body text-[14.5px] text-ink transition-all duration-150 outline-none focus:border-teal focus:shadow-focus-ring'
+    'h-10 rounded-xl border border-line-strong bg-surface px-3 font-body text-[14.5px] text-ink transition-all duration-dhara ease-dhara outline-none focus:border-teal focus:shadow-focus-ring'
   const fieldLabelClass = 'text-[13px] font-medium text-ink'
-  const statusToneClass = { ok: 'text-[13px] text-green', warn: 'text-[13px] text-[#9a7413]', none: 'text-[13px] text-[#8E9398]' }
+  const statusToneClass = { ok: 'text-[13px] text-green', warn: 'text-[13px] text-yellow', none: 'text-[13px] text-ink-muted' }
 
   return (
     <div className="flex w-full flex-col gap-7">
@@ -142,8 +142,8 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
               aria-selected={activeTab === t.key}
               className={`dhara-tab h-9 min-w-0 flex-1 rounded-xl px-3 text-sm font-semibold ${
                 activeTab === t.key
-                  ? 'border-teal-deep bg-teal-deep text-cream shadow-sm'
-                  : 'border-line bg-cream/60 text-ink-soft hover:border-teal-deep hover:bg-teal-deep hover:text-cream'
+                  ? 'border-transparent bg-teal-deep text-cream shadow-sm'
+                  : 'border-line bg-mist text-ink-soft hover:bg-sage hover:text-teal-deep'
               }`}
               onClick={() => setActiveTab(t.key)}
             >
@@ -222,26 +222,26 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
                       onClick={() => setMetadataStandard(opt.value)}
                       className={`dhara-tab group flex flex-col gap-2 rounded-2xl px-4 py-3.5 text-left ${
                         selected
-                          ? 'border-teal-deep bg-teal-deep text-cream shadow-[inset_0_0_0_1px_#12403E]'
-                          : 'border-line bg-cream/50 text-ink hover:border-teal-deep hover:bg-teal-deep hover:text-cream'
+                          ? 'border-transparent bg-teal-deep text-cream'
+                          : 'border-line bg-white text-ink hover:bg-sage hover:text-teal-deep'
                       }`}
                     >
                       <div className="flex items-center justify-between gap-3">
-                        <span className={`text-[14.5px] font-semibold tracking-tight ${selected ? 'text-cream' : 'text-ink group-hover:text-cream'}`}>
+                        <span className={`text-[14.5px] font-semibold tracking-tight ${selected ? 'text-cream' : 'text-ink group-hover:text-teal-deep'}`}>
                           {opt.label}
                         </span>
                         <span
                           className={`flex h-5 w-5 flex-none items-center justify-center rounded-full border transition-colors duration-[420ms] ${
                             selected
                               ? 'border-cream/40 bg-cream/20 text-cream'
-                              : 'border-line bg-surface text-transparent group-hover:border-cream/40 group-hover:bg-cream/20 group-hover:text-cream'
+                              : 'border-line bg-white text-transparent group-hover:border-teal/40 group-hover:bg-teal-deep group-hover:text-cream'
                           }`}
                           aria-hidden
                         >
                           <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={2.25} />
                         </span>
                       </div>
-                      <span className={`text-[12.5px] leading-snug ${selected ? 'text-cream/80' : 'text-ink-soft group-hover:text-cream/80'}`}>
+                      <span className={`text-[12.5px] leading-snug ${selected ? 'text-cream/80' : 'text-ink-soft group-hover:text-teal-deep/80'}`}>
                         {blurb}
                       </span>
                     </button>
@@ -254,14 +254,14 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
             {metadataStandard === 'sdg' ? (
               <>
                 <div className="text-[13px] font-semibold text-ink">Indicator information (SDG_INDICATOR_INFO)</div>
-                <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-cream">
+                <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-white">
                   {SDG_CONCEPT_TEMPLATE.filter((row) => !row.section).map((row) => (
                     <div className="flex cursor-default select-text items-start gap-3 border-b border-line bg-white px-4 py-3.5 last:border-b-0" key={row.code}>
                       <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-green" strokeWidth={1.75} />
                       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                         <div className="text-[15px] font-semibold text-ink">
                           {row.concept}{' '}
-                          <span className="text-[13px] font-medium text-[#8E9398]">({row.code})</span>
+                          <span className="text-[13px] font-medium text-ink-soft">({row.code})</span>
                         </div>
                       </div>
                     </div>
@@ -273,7 +273,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
               </>
             ) : (
               <>
-            <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-cream">
+            <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-white">
               {Object.keys(extraRequiredFields).length === 0 && (
                 <div className="flex cursor-default select-text items-start gap-3 border-b border-line bg-white px-4 py-3.5 last:border-b-0">
                   <div className="flex flex-1 flex-col gap-0.5">
@@ -336,7 +336,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
                           <button
                             type="button"
                             key={c.key}
-                            className="h-8 rounded-full border border-line bg-cream px-3 text-[13px] font-semibold text-ink transition-colors hover:border-teal hover:bg-sage"
+                            className="h-8 rounded-full border border-line bg-mist px-3 text-[13px] font-semibold text-ink transition-colors hover:bg-sage hover:text-teal-deep"
                             onClick={() => {
                               setExtraRequiredFields((prev) => ({ ...prev, [c.key]: true }))
                               if (available.length <= 1) setPickingFields(false)
@@ -367,7 +367,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
           <>
             <div className="-mt-2.5 text-sm text-ink-soft">Current supported classification codes. Add your own if you need one that isn't listed.</div>
 
-            <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-cream">
+            <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-white">
               {STANDARDS.map((s) => (
                 <div key={s.key} className="flex cursor-default select-text items-start gap-3 border-b border-line bg-white px-4 py-3.5 last:border-b-0">
                   <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-green" strokeWidth={1.75} />
@@ -390,7 +390,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
 
               {pendingFile && (
                 <div className="flex cursor-default select-text items-start gap-3 border-b border-line bg-[#fffaf1] px-4 py-3.5 last:border-b-0">
-                  <Clock className="mt-0.5 h-4 w-4 flex-none text-[#9a7413]" strokeWidth={1.75} />
+                  <Clock className="mt-0.5 h-4 w-4 flex-none text-yellow" strokeWidth={1.75} />
                   <div className="flex flex-1 flex-col gap-0.5">
                     <div className="text-[15px] font-semibold text-ink">{pendingFile.name}</div>
                     <div className="text-[13px] text-ink-soft">Not yet saved — click "Save configuration" to add it below.</div>

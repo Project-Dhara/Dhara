@@ -36,7 +36,7 @@ import pymupdf
 
 def extract_pymupdf_chunk(pdf_path: str, pages: List[int]) -> List[Dict[str, Any]]:
     """Runs both pymupdf table-detection strategies over one chunk of pages."""
-    import pandas as pd
+    from pdf_header_utils import dataframe_from_extracted_rows
 
     results: List[Dict[str, Any]] = []
     if not pages:
@@ -56,7 +56,11 @@ def extract_pymupdf_chunk(pdf_path: str, pages: List[int]) -> List[Dict[str, Any
                     rows = tab.extract()
                     if not rows:
                         continue
-                    df = pd.DataFrame(rows[1:], columns=rows[0]) if len(rows) > 1 else pd.DataFrame(rows)
+                    # Flatten multi-row / merged headers (e.g. "In Lakhs" spanning
+                    # Mid Year Population + No. of Births) before building the DF.
+                    df = dataframe_from_extracted_rows(rows)
+                    if df is None or df.empty:
+                        continue
                     bb = tab.bbox
                     results.append({
                         "page": page_num,

@@ -42,19 +42,19 @@ export default function Dashboard({ onStartFlow }) {
       <div className="grid grid-cols-4 gap-3.5">
         {STATS.map((s) => (
           <div
-            className="dhara-tab group flex cursor-default flex-col gap-3 rounded-2xl border-line/90 bg-surface p-5 hover:border-teal-deep hover:bg-teal-deep hover:shadow-[0_8px_24px_rgba(18,64,62,0.18)]"
+            className="dhara-tab dhara-surface group flex cursor-default flex-col gap-3 rounded-2xl border-line/90 bg-surface p-5 hover:border-teal/35 hover:bg-sage hover:shadow-[0_8px_24px_rgba(23,107,107,0.08)]"
             key={s.label}
           >
             <div className="flex items-center gap-2.5">
               <span
-                className="flex h-8 w-8 flex-none items-center justify-center rounded-full transition-colors duration-200 group-hover:!bg-[rgba(255,247,234,0.18)] group-hover:!text-cream"
+                className="flex h-8 w-8 flex-none items-center justify-center rounded-full transition-colors duration-200"
                 style={{ background: `${s.color}1F`, color: s.color }}
               >
                 <s.Icon className="h-4 w-4" strokeWidth={1.85} aria-hidden />
               </span>
-              <span className="text-[11.5px] uppercase tracking-[0.05em] text-ink-soft transition-colors duration-200 group-hover:text-cream">{s.label}</span>
+              <span className="text-[11.5px] uppercase tracking-[0.05em] text-ink-soft transition-colors duration-200 group-hover:text-teal-deep">{s.label}</span>
             </div>
-            <div className="font-display text-[28px] font-medium leading-none tracking-tight text-ink transition-colors duration-200 group-hover:text-cream">{s.value}</div>
+            <div className="font-display text-[28px] font-medium leading-none tracking-tight text-ink transition-colors duration-200 group-hover:text-teal-deep">{s.value}</div>
           </div>
         ))}
       </div>
@@ -65,7 +65,7 @@ export default function Dashboard({ onStartFlow }) {
         </div>
         {DATASETS.map((row) => (
           <div
-            className={`group grid ${gridCols} cursor-pointer items-center gap-4 border-b border-line/50 px-5 py-3.5 text-[14.5px] transition-colors duration-150 last:border-b-0 hover:bg-sage/40`}
+            className={`group grid ${gridCols} cursor-pointer items-center gap-4 border-b border-line/50 px-5 py-3.5 text-[14.5px] transition-all duration-dhara ease-dhara last:border-b-0 hover:bg-sage/40`}
             key={row.name}
             onClick={onStartFlow}
           >

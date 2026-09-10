@@ -51,7 +51,7 @@ export default function NmdsGroupPanel({
         compact
       />
       {canApplyToAll && (
-        <label className={`mt-2 inline-flex select-none items-center gap-2 font-sans text-[13px] font-semibold ${filledCount === 0 ? 'cursor-default text-[#a49c8e]' : 'cursor-pointer text-ink'}`}>
+        <label className={`mt-2 inline-flex select-none items-center gap-2 font-sans text-[13px] font-semibold ${filledCount === 0 ? 'cursor-default text-ink-muted' : 'cursor-pointer text-ink'}`}>
           <input
             type="checkbox"
             className="m-0 h-[15px] w-[15px] accent-teal"

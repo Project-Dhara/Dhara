@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 
 const MODALITY_OPTIONS = [
@@ -236,7 +237,7 @@ function Field({ label, hint, children }) {
   )
 }
 
-const inputClass = 'w-full rounded-[7px] border border-line bg-cream px-3 py-2 font-sans text-[13.5px] text-ink placeholder:text-[#a49c8e] focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal'
+const inputClass = 'w-full rounded-[7px] border border-line-strong bg-cream px-3 py-2 font-sans text-[13.5px] text-ink placeholder:text-ink-muted focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal'
 const textareaClass = `${inputClass} min-h-[72px] resize-y leading-relaxed`
 
 // Step tabs for the carousel: click to jump; current step is highlighted,
@@ -302,6 +303,17 @@ export default function KydsModal({ onSkip, onSave, initialForm = null, editing 
   useEffect(() => {
     if (panelScrollRef.current) panelScrollRef.current.scrollTop = 0
   }, [activeIndex])
+
+  // Portal after mount so SSR / first paint don't touch document.body.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => {
+    setMounted(true)
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prevOverflow
+    }
+  }, [])
 
   const setList = (key) => (value) => {
     setForm((prev) => ({ ...prev, [key]: toggleIn(prev[key], value) }))
@@ -422,13 +434,13 @@ export default function KydsModal({ onSkip, onSave, initialForm = null, editing 
       </Field>
 
       <h3 className="mt-1.5 text-[13px] font-bold text-ink">B. Information / dataset classification (IT Act)</h3>
-      <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-[#8E9398]">Organisational classification</h4>
+      <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-ink-soft">Organisational classification</h4>
       <ExclusiveCheckboxGrid
         options={ORG_CLASSIFICATION}
         selected={form.orgClassification}
         onChange={setExclusive('orgClassification')}
       />
-      <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-[#8E9398]">National-interest classification (only if applicable)</h4>
+      <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-ink-soft">National-interest classification (only if applicable)</h4>
       <ExclusiveCheckboxGrid
         options={NATIONAL_CLASSIFICATION}
         selected={form.nationalClassification}
@@ -478,13 +490,13 @@ export default function KydsModal({ onSkip, onSave, initialForm = null, editing 
         <h2 className="text-[16px] font-bold text-ink">Granularity</h2>
       </div>
       <p className="text-[13px] leading-snug text-ink-soft">Tick the finest level present.</p>
-      <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-[#8E9398]">Individual level</h4>
+      <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-ink-soft">Individual level</h4>
       <ExclusiveCheckboxGrid options={GRANULARITY_INDIVIDUAL} selected={form.granularity} onChange={setExclusive('granularity')} />
-      <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-[#8E9398]">Local level</h4>
+      <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-ink-soft">Local level</h4>
       <ExclusiveCheckboxGrid options={GRANULARITY_LOCAL} selected={form.granularity} onChange={setExclusive('granularity')} />
-      <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-[#8E9398]">Regional level</h4>
+      <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-ink-soft">Regional level</h4>
       <ExclusiveCheckboxGrid options={GRANULARITY_REGIONAL} selected={form.granularity} onChange={setExclusive('granularity')} />
-      <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-[#8E9398]">Statistical level</h4>
+      <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-ink-soft">Statistical level</h4>
       <ExclusiveCheckboxGrid options={GRANULARITY_STATISTICAL} selected={form.granularity} onChange={setExclusive('granularity')} />
 
       <h3 className="mt-1.5 text-[13px] font-bold text-ink">Identifiability flags</h3>
@@ -516,9 +528,9 @@ export default function KydsModal({ onSkip, onSave, initialForm = null, editing 
         <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-teal text-xs font-bold text-white">5</span>
         <h2 className="text-[16px] font-bold text-ink">Update frequency and retention</h2>
       </div>
-      <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-[#8E9398]">Update frequency</h4>
+      <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-ink-soft">Update frequency</h4>
       <ExclusiveCheckboxGrid options={UPDATE_FREQUENCY} selected={form.updateFrequency} onChange={setExclusive('updateFrequency')} />
-      <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-[#8E9398]">Retention</h4>
+      <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-ink-soft">Retention</h4>
       <ExclusiveCheckboxGrid options={RETENTION} selected={form.retention} onChange={setExclusive('retention')} />
       <Field label="Retention citation / purpose / event">
         <textarea
@@ -535,9 +547,9 @@ export default function KydsModal({ onSkip, onSave, initialForm = null, editing 
         <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-teal text-xs font-bold text-white">6</span>
         <h2 className="text-[16px] font-bold text-ink">Storage</h2>
       </div>
-      <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-[#8E9398]">Offline</h4>
+      <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-ink-soft">Offline</h4>
       <CheckboxGrid options={STORAGE_OFFLINE} selected={form.storage} onToggle={setList('storage')} />
-      <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-[#8E9398]">Online</h4>
+      <h4 className="mt-1 text-[11px] font-bold uppercase tracking-wide text-ink-soft">Online</h4>
       <CheckboxGrid options={STORAGE_ONLINE} selected={form.storage} onToggle={setList('storage')} />
     </section>,
 
@@ -577,9 +589,10 @@ export default function KydsModal({ onSkip, onSave, initialForm = null, editing 
     </section>,
   ]
 
-  return (
+  return mounted
+    ? createPortal(
     <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-[rgba(16,64,63,0.52)] p-5" role="dialog" aria-modal="true" aria-labelledby="kyds-title">
-      <div className="flex max-h-[92vh] w-full max-w-[860px] flex-col overflow-hidden rounded-[14px] bg-surface shadow-dhara">
+      <div className="flex h-[min(720px,90vh)] w-[min(860px,calc(100vw-2.5rem))] flex-none flex-col overflow-hidden rounded-[14px] bg-surface shadow-dhara">
         <div className="relative flex flex-shrink-0 items-center justify-center bg-cream px-12 pb-4 pt-5 text-center">
           <div>
             <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-teal">Optional · Know Your Dataset</div>
@@ -660,6 +673,8 @@ export default function KydsModal({ onSkip, onSave, initialForm = null, editing 
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
+    : null
 }

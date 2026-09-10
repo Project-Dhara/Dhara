@@ -278,7 +278,7 @@ def _extract_clipped(
     pdf_path: str, page_num: int, clip: pymupdf.Rect, side: str
 ) -> List[Dict[str, Any]]:
     """Run both pymupdf strategies inside a clip rectangle."""
-    import pandas as pd
+    from pdf_header_utils import dataframe_from_extracted_rows
 
     results: List[Dict[str, Any]] = []
     doc = pymupdf.open(pdf_path)
@@ -293,11 +293,9 @@ def _extract_clipped(
                 rows = tab.extract()
                 if not rows:
                     continue
-                df = (
-                    pd.DataFrame(rows[1:], columns=rows[0])
-                    if len(rows) > 1
-                    else pd.DataFrame(rows)
-                )
+                df = dataframe_from_extracted_rows(rows)
+                if df is None or df.empty:
+                    continue
                 bb = tab.bbox
                 results.append(
                     {

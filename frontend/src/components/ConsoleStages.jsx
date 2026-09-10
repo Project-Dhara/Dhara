@@ -39,6 +39,19 @@ export function stageIndexForStep(step) {
   return 3
 }
 
+// Green fill on the connector after stage `i`: full once that stage is
+// behind you, otherwise proportional to the current substep (same rule for
+// Excel and PDF — both share this rail).
+function connectorFillPercent(i, stageIdx, step) {
+  if (i < stageIdx) return 100
+  if (i > stageIdx) return 0
+  const subs = STAGE_DEFS[i].subs
+  if (!subs.length) return 0
+  const idx = subs.findIndex((s) => s.step === step)
+  const at = idx < 0 ? 0 : idx
+  return Math.round(((at + 1) / subs.length) * 100)
+}
+
 // Connected-line stepper: ivory pending → teal active → leaf-green done.
 // Substeps stay hidden until you hover a stage, then float out as a small
 // panel beneath it — click any reachable one (current or already-visited) to
@@ -52,21 +65,21 @@ export function StageSidebar({ stageIdx, step, maxStepReached, expandedStage, se
         const isLast = i === STAGE_DEFS.length - 1
         return (
           <div key={s.name} className={`flex items-center ${isLast ? 'flex-none' : 'flex-1'}`}>
-            <div className="dhara-tab group relative flex flex-none cursor-default items-center gap-2.5 rounded-full border-transparent px-2.5 py-1.5 hover:bg-teal-deep">
+            <div className="dhara-tab group relative flex flex-none cursor-default items-center gap-2.5 rounded-full border-transparent px-2.5 py-1.5 hover:bg-sage">
               <span
-                className={`flex h-6 w-6 flex-none items-center justify-center rounded-full text-[11px] font-semibold transition-all duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                className={`flex h-6 w-6 flex-none items-center justify-center rounded-full text-[11px] font-semibold transition-all duration-dhara ease-dhara ${
                   active
-                    ? 'bg-teal text-white shadow-[0_0_0_4px_rgba(23,107,107,0.14)] group-hover:bg-cream/20 group-hover:text-cream group-hover:shadow-none'
+                    ? 'bg-teal-deep text-cream shadow-[0_0_0_4px_rgba(18,64,62,0.14)]'
                     : done
-                      ? 'bg-green text-white group-hover:bg-cream/20 group-hover:text-cream'
-                      : 'bg-cream text-[#9AA0A6] group-hover:bg-cream/20 group-hover:text-cream'
+                      ? 'bg-green text-white'
+                      : 'bg-cream text-[#9AA0A6] group-hover:bg-white group-hover:text-teal-deep'
                 }`}
               >
                 {done ? <Check className="h-3 w-3" strokeWidth={2.5} aria-hidden /> : i + 1}
               </span>
               <span
-                className={`whitespace-nowrap text-[12.5px] font-semibold tracking-tight transition-colors duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:text-cream ${
-                  active ? 'text-ink' : done ? 'text-ink-soft' : 'text-[#9AA0A6]'
+                className={`whitespace-nowrap text-[12.5px] font-semibold tracking-tight transition-colors duration-dhara ease-dhara ${
+                  active ? 'text-ink group-hover:text-teal-deep' : done ? 'text-ink-soft group-hover:text-teal-deep' : 'text-[#9AA0A6] group-hover:text-teal-deep'
                 }`}
               >
                 {s.name}
@@ -74,7 +87,7 @@ export function StageSidebar({ stageIdx, step, maxStepReached, expandedStage, se
 
               {/* Floating substep panel — invisible/unhittable until hovered,
                   so it never steals clicks or space from the stepper bar. */}
-              <div className="pointer-events-none absolute left-0 top-full z-30 -translate-y-1 pt-2.5 opacity-0 transition-all duration-200 ease-out group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100">
+              <div className="pointer-events-none absolute left-0 top-full z-30 -translate-y-1.5 pt-2.5 opacity-0 transition-all duration-dhara ease-dhara group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100">
                 <div className="flex min-w-[200px] flex-col gap-0.5 rounded-xl border border-line bg-surface p-1.5 shadow-hover">
                   {s.subs.map((sub) => {
                     const subActive = sub.step === step
@@ -109,9 +122,10 @@ export function StageSidebar({ stageIdx, step, maxStepReached, expandedStage, se
               </div>
             </div>
             {!isLast && (
-              <div className="mx-3 h-px min-w-[16px] flex-1 rounded-full bg-line">
+              <div className="mx-3 h-0.5 min-w-[16px] flex-1 overflow-hidden rounded-full bg-line">
                 <div
-                  className={`h-full rounded-full transition-all duration-500 ease-out ${done ? 'w-full bg-green' : 'w-0 bg-teal'}`}
+                  className="h-full rounded-full bg-green transition-all duration-dhara-slow ease-dhara-out"
+                  style={{ width: `${connectorFillPercent(i, stageIdx, step)}%` }}
                 />
               </div>
             )}
@@ -152,7 +166,7 @@ export function ConsoleStagesShell({ step, maxStepReached, onGoToStep, children 
         goToStep={goToStep}
       />
       {/* Same content column as Excel Console.jsx — header + panels stay unchanged inside children. */}
-      <div className="flex min-w-0 flex-1 flex-col gap-[18px]">
+      <div key={step} className="dhara-page-enter flex min-w-0 flex-1 flex-col gap-[18px]">
         {children}
       </div>
     </div>

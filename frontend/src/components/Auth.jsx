@@ -5,7 +5,7 @@ import { DharaLogo, TriBar } from './AppShell'
 import { isValidOrgEmail, login, signup } from '../lib/auth'
 
 const inputClass =
-  'h-11 rounded-xl border border-line bg-cream/40 px-3.5 font-body text-[15px] text-ink transition-all duration-150 outline-none focus:border-teal focus:bg-surface focus:shadow-focus-ring'
+  'h-11 rounded-xl border border-line bg-cream/40 px-3.5 font-body text-[15px] text-ink transition-all duration-dhara ease-dhara outline-none focus:border-teal focus:bg-surface focus:shadow-focus-ring'
 
 const HEADLINE = 'Data harnessed for AI-ready advancements'
 const SUBTEXT = 'Inventory, metadata, harmonisation, cataloguing and API enablement — dataset by dataset.'
@@ -129,7 +129,7 @@ export default function Auth({ onSuccess }) {
           {error && <div className="rounded-xl border border-coral/25 bg-[#FDF6F5] px-3.5 py-2.5 text-sm text-[#b3423a]">{error}</div>}
 
           <button
-            className="flex h-11 items-center justify-center rounded-xl bg-teal text-[14.5px] font-semibold tracking-tight text-white transition-colors duration-150 hover:bg-teal-dark active:scale-[0.985] disabled:cursor-default disabled:opacity-60 disabled:active:scale-100"
+            className="flex h-11 items-center justify-center rounded-xl bg-teal text-[14.5px] font-semibold tracking-tight text-white transition-all duration-dhara ease-dhara hover:-translate-y-px hover:bg-teal-dark active:translate-y-0 active:scale-[0.985] disabled:cursor-default disabled:opacity-60 disabled:active:scale-100"
             onClick={submit}
             disabled={busy}
           >

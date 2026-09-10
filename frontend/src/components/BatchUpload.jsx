@@ -203,7 +203,7 @@ export default function BatchUpload({
             </span>
           )}
         </Button>
-        {!busy && <span className="text-xs text-[#8E9398]">{datasetFiles.length} dataset · {metadataFiles.length} metadata</span>}
+        {!busy && <span className="text-xs text-ink-soft">{datasetFiles.length} dataset · {metadataFiles.length} metadata</span>}
       </div>
 
       {busy && (

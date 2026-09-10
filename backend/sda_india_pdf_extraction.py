@@ -283,16 +283,25 @@ def split_by_confidence(
     for page_num, candidates in pages_grouped.items():
         bucket, reason, _info = classify_page(candidates)
         if bucket == "high":
-            primary = next(c["df"] for c in candidates if c["method"] == "pymupdf_lines_strict")
-            # Pass surrounding page text so we can recover the heading that
-            # pymupdf's table extract never includes inside the DataFrame.
-            table = table_dict_from_df(
-                primary,
-                page_text=page_text.get(page_num, ""),
-                page_num=page_num,
-            )
-            table["page"] = page_num
-            high_results[page_num] = {"tables": [table]}
+            # Keep every ruled table on the page — extraction already found them;
+            # previously only the first lines_strict candidate was auto-accepted.
+            tables = []
+            for c in candidates:
+                if c.get("method") != "pymupdf_lines_strict":
+                    continue
+                df = c.get("df")
+                if df is None or getattr(df, "empty", True):
+                    continue
+                # Pass surrounding page text so we can recover the heading that
+                # pymupdf's table extract never includes inside the DataFrame.
+                table = table_dict_from_df(
+                    df,
+                    page_text=page_text.get(page_num, ""),
+                    page_num=page_num,
+                )
+                table["page"] = page_num
+                tables.append(table)
+            high_results[page_num] = {"tables": tables}
         else:
             llm_pages[page_num] = candidates
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
@@ -315,7 +324,15 @@ TASK_A_RECONSTRUCTION_RULES = """TASK A -- RECONSTRUCT THE TABLE:
 - Prefer whichever candidate got a given row/column right; you may combine cells from different candidates.
 - If candidates disagree on a cell and you can't tell which is right from the raw text, keep the
   pymupdf_lines_strict value (or any single consistent choice) and add a note in "uncertain_cells".
-- Flatten multi-row headers into single column names.
+- Flatten multi-row / merged headers into ONE name per physical data column. Do NOT promote a
+  spanning group label into its own extra column.
+  Example — source header grid:
+      Year | In Lakhs (spans 2 cols) | *Birth Rate
+           | Mid Year Population | No. of Births |
+    Correct columns (4): ["Year", "Mid Year Population as on 1st July (In Lakhs)",
+    "No. of Births (In Lakhs)", "*Birth Rate"]
+    WRONG (5 phantom columns): ["Year", "In Lakhs", "Birth Rate", "Mid Year Population", "No. of Births"]
+  Every data row length MUST equal len(columns); values stay under their leaf headers.
 - Preserve a title/description if one is visible in the raw text.
 - SYMBOLIC / ICON CELLS (especially Direction / Trend / Change columns):
   PDF extractors often emit private-use or icon-font glyphs for green/red trend arrows instead of real text.
@@ -494,6 +511,18 @@ def _rows_look_garbled(rows: List[List[Any]]) -> bool:
 def _cell_is_empty(value: Any) -> bool:
     if value is None:
         return True
+    try:
+        # pandas / numpy NaN from candidate DataFrames
+        if value != value:  # noqa: PLR0124 — NaN != NaN
+            return True
+    except Exception:
+        pass
+    try:
+        import math
+        if isinstance(value, float) and math.isnan(value):
+            return True
+    except Exception:
+        pass
     return str(value).strip().lower() in _EMPTY_TOKENS
 
 
@@ -948,7 +977,16 @@ def _normalize_table(table: Dict[str, Any]) -> Dict[str, Any]:
                 k in name_l or k in concept_l for k in ("direction", "trend", "change")
             ):
                 input_type, input_options = "dropdown", ["up", "down"]
-            columns.append({
+            # Preserve multi-level header meta when present (alignment-guard
+            # fallback / post-stamp attach). Do not invent it here.
+            header_group = c.get("header_group")
+            if header_group is not None:
+                header_group = str(header_group).strip() or None
+            raw_path = c.get("header_path")
+            header_path = None
+            if isinstance(raw_path, (list, tuple)):
+                header_path = [str(p).strip() for p in raw_path if str(p).strip()]
+            col_out = {
                 "name": c.get("name", ""),
                 "role": c.get("role") or "unknown",
                 "concept": c.get("concept"),
@@ -960,7 +998,15 @@ def _normalize_table(table: Dict[str, Any]) -> Dict[str, Any]:
                 "input_type": input_type,
                 "input_options": input_options,
                 "human_review_reason": reason,
-            })
+            }
+            if header_path:
+                col_out["header_path"] = header_path
+                col_out["header_group"] = header_group or (
+                    header_path[-2] if len(header_path) >= 2 else None
+                )
+            elif header_group:
+                col_out["header_group"] = header_group
+            columns.append(col_out)
 
     # Pad / trim every row to match column count. The model often declares a
     # Direction/Trend column but omits that cell from each row array, which
@@ -1058,6 +1104,473 @@ def derive_human_review_needed(table: Dict[str, Any]) -> tuple[bool, Optional[st
     return True, reason
 
 
+def _norm_header_key(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+
+# Trailing unit tokens that pymupdf often flattens onto a leaf name
+# ("North DMC\n%" → "North DMC %") and then get re-attached as phantom cols.
+_UNIT_SUFFIX_RE = re.compile(
+    r"(?:\s*%|\s+(?:pct|percent(?:age)?|\bin\s+(?:lakhs?|thousands?|crores?|millions?)))$",
+    re.IGNORECASE,
+)
+_UNIT_LEAF_RE = re.compile(
+    r"^(?:%|pct|percent(?:age)?|(?:in\s+)?(?:lakhs?|thousands?|crores?|millions?))$",
+    re.IGNORECASE,
+)
+
+
+def _strip_unit_suffix(value: Any) -> str:
+    """'north dmc %' / 'north dmc percent' → 'north dmc'."""
+    s = _norm_header_key(value)
+    if not s:
+        return ""
+    stripped = _UNIT_SUFFIX_RE.sub("", s).strip()
+    return stripped or s
+
+
+def _header_alias_keys(value: Any, path: Any = None) -> set:
+    """Match keys for a header, including unit-suffix and parent/leaf variants."""
+    keys: set = set()
+    leaf = _norm_header_key(value)
+    if leaf:
+        keys.add(leaf)
+        keys.add(_strip_unit_suffix(leaf))
+
+    path_clean: List[str] = []
+    if isinstance(path, (list, tuple)):
+        path_clean = [str(p).strip() for p in path if str(p).strip()]
+    if path_clean:
+        last = path_clean[-1]
+        keys.add(_norm_header_key(last))
+        keys.add(_strip_unit_suffix(last))
+        # Leaf is only "%" / "percent" → identity is the parent agency name.
+        if len(path_clean) >= 2 and _UNIT_LEAF_RE.match(last):
+            keys.add(_norm_header_key(path_clean[-2]))
+        if len(path_clean) >= 2:
+            joined = f"{path_clean[-2]} {path_clean[-1]}"
+            dashed = f"{path_clean[-2]} - {path_clean[-1]}"
+            keys.add(_norm_header_key(joined))
+            keys.add(_strip_unit_suffix(joined))
+            keys.add(_norm_header_key(dashed))
+            keys.add(_strip_unit_suffix(dashed))
+            keys.add(_norm_header_key(" / ".join(path_clean)))
+    return {k for k in keys if k}
+
+
+def _candidate_is_duplicate_of_columns(
+    m: Dict[str, Any],
+    fallback_name: str,
+    columns: List[Dict[str, Any]],
+) -> bool:
+    """True when candidate header is a unit-suffixed clone of an LLM column."""
+    path = _header_path_from_meta(m, fallback_name)
+    leaf = str(m.get("name") or fallback_name or "").strip()
+    cand_keys = _header_alias_keys(leaf, path)
+    if not cand_keys:
+        return False
+    for col in columns:
+        existing = _header_alias_keys(col.get("name"), col.get("header_path"))
+        if cand_keys & existing:
+            return True
+    return False
+
+
+def _candidate_column_meta(df: pd.DataFrame) -> List[Dict[str, Any]]:
+    try:
+        meta = list(getattr(df, "attrs", {}).get("dhara_column_meta") or [])
+    except Exception:
+        meta = []
+    if meta:
+        return [m if isinstance(m, dict) else {} for m in meta]
+    # Fallback: single-level leaves from column names only.
+    return [
+        {"name": str(c), "header_group": None, "header_path": [str(c)]}
+        for c in df.columns
+    ]
+
+
+def _header_path_from_meta(m: Dict[str, Any], fallback_name: str) -> List[str]:
+    raw = m.get("header_path")
+    if isinstance(raw, (list, tuple)):
+        path = [str(p).strip() for p in raw if str(p).strip()]
+        if path:
+            return path
+    leaf = str(m.get("name") or fallback_name).strip() or fallback_name
+    group = m.get("header_group")
+    group_s = str(group).strip() if group is not None else ""
+    if group_s and group_s.lower() != leaf.lower():
+        return [group_s, leaf]
+    return [leaf] if leaf else [fallback_name or ""]
+
+
+def _table_already_has_multilevel_headers(table: Dict[str, Any]) -> bool:
+    for col in table.get("columns") or []:
+        path = col.get("header_path")
+        if isinstance(path, (list, tuple)) and len([p for p in path if str(p).strip()]) >= 2:
+            return True
+        if col.get("header_group"):
+            return True
+    return False
+
+
+def _score_candidate_for_llm_table(table: Dict[str, Any], cand: Dict[str, Any]) -> float:
+    df = cand.get("df")
+    if df is None:
+        return float("-inf")
+    llm_cols = table.get("columns") or []
+    meta = _candidate_column_meta(df)
+    n_llm = len(llm_cols)
+    n_cand = int(df.shape[1])
+    score = 0.0
+    score -= abs(n_llm - n_cand) * 3.0
+    if n_llm == n_cand:
+        score += 12.0
+    llm_keys = {_norm_header_key(c.get("name")) for c in llm_cols if c.get("name")}
+    cand_keys: set = set()
+    for i, name in enumerate(df.columns):
+        cand_keys.add(_norm_header_key(name))
+        m = meta[i] if i < len(meta) else {}
+        if m.get("name"):
+            cand_keys.add(_norm_header_key(m.get("name")))
+        path = m.get("header_path") or []
+        if isinstance(path, (list, tuple)) and path:
+            cand_keys.add(_norm_header_key(path[-1]))
+            # Flattened "Parent - Leaf" style LLM names.
+            if len(path) >= 2:
+                cand_keys.add(_norm_header_key(f"{path[-2]} - {path[-1]}"))
+                cand_keys.add(_norm_header_key(f"{path[-2]} {path[-1]}"))
+    overlap = len(llm_keys & cand_keys)
+    score += overlap * 2.5
+    if cand.get("method") == "pymupdf_lines_strict":
+        score += 1.5
+    # Prefer richer numeric fill when otherwise tied.
+    score += min(2.0, _dataframe_numeric_fill_ratio(df))
+    return score
+
+
+def _pick_candidate_for_llm_table(
+    table: Dict[str, Any],
+    candidates: Optional[List[Dict[str, Any]]],
+    used: Optional[set] = None,
+) -> Optional[Dict[str, Any]]:
+    if not candidates:
+        return None
+    used = used if used is not None else set()
+    pool = [
+        (i, c) for i, c in enumerate(candidates)
+        if i not in used and c.get("df") is not None and not getattr(c["df"], "empty", True)
+    ]
+    if not pool:
+        # Allow reuse if every candidate was already claimed (multi-table pages
+        # with fewer candidates than LLM tables).
+        pool = [
+            (i, c) for i, c in enumerate(candidates)
+            if c.get("df") is not None and not getattr(c["df"], "empty", True)
+        ]
+    if not pool:
+        return None
+    best_i, best = max(pool, key=lambda ic: _score_candidate_for_llm_table(table, ic[1]))
+    if _score_candidate_for_llm_table(table, best) < -20:
+        return None
+    used.add(best_i)
+    return best
+
+
+
+def _map_meta_indices_to_llm_columns(
+    columns: List[Dict[str, Any]],
+    meta: List[Dict[str, Any]],
+    df: pd.DataFrame,
+) -> List[Optional[int]]:
+    """For each LLM column, index into candidate meta (or None)."""
+    n_llm = len(columns)
+    n_meta = len(meta)
+    if n_llm == n_meta:
+        return list(range(n_llm))
+
+    # Build lookup from normalized leaf / flattened / unit-stripped keys -> meta index.
+    # Prefer earlier meta columns when aliases collide (e.g. "North DMC" before "North DMC %").
+    key_to_meta: Dict[str, int] = {}
+    for i, m in enumerate(meta):
+        leaf = str(m.get("name") or (df.columns[i] if i < len(df.columns) else "")).strip()
+        path = _header_path_from_meta(m, leaf)
+        for k in _header_alias_keys(leaf, path):
+            if k and k not in key_to_meta:
+                key_to_meta[k] = i
+
+    mapping: List[Optional[int]] = [None] * n_llm
+    used_meta: set = set()
+    for i, col in enumerate(columns):
+        aliases = _header_alias_keys(col.get("name"), col.get("header_path"))
+        mi = None
+        for k in aliases:
+            cand = key_to_meta.get(k)
+            if cand is not None and cand not in used_meta:
+                mi = cand
+                break
+        if mi is not None:
+            mapping[i] = mi
+            used_meta.add(mi)
+
+    # Fill remaining by position when widths match after partial matches.
+    if n_llm == n_meta:
+        for i in range(n_llm):
+            if mapping[i] is None and i not in used_meta:
+                mapping[i] = i
+                used_meta.add(i)
+    return mapping
+
+
+def _restore_body_merge_empties_from_df(table: Dict[str, Any], df: pd.DataFrame) -> None:
+    """Re-introduce empty continuation cells so Preview can rowspan/colspan.
+
+    LLM reconstruction often forward-fills merged stubs. When the pymupdf
+    grid has the same shape, clear cells that are empty in the candidate and
+    equal the value above in the LLM grid (safe rowspan undo). Only touches
+    sparse label-like columns (same heuristic as Preview)."""
+    columns = table.get("columns") or []
+    rows = table.get("rows") or []
+    if not rows or df.shape[1] != len(columns) or df.shape[0] != len(rows):
+        return
+
+    nrows = len(rows)
+    sparse_cols: List[int] = []
+    for c in range(df.shape[1]):
+        empty = sum(1 for v in df.iloc[:, c].tolist() if _cell_is_empty(v))
+        if empty >= 1 and empty >= nrows * 0.12 and empty < nrows:
+            sparse_cols.append(c)
+    if not sparse_cols:
+        return
+
+    cand = df.values.tolist()
+    for r in range(nrows):
+        row = list(rows[r])
+        changed = False
+        for c in sparse_cols:
+            if not _cell_is_empty(cand[r][c]):
+                continue
+            if _cell_is_empty(row[c]):
+                continue
+            above = None
+            for rr in range(r - 1, -1, -1):
+                if not _cell_is_empty(rows[rr][c] if c < len(rows[rr]) else None):
+                    above = rows[rr][c]
+                    break
+            if above is not None and _norm_header_key(row[c]) == _norm_header_key(above):
+                row[c] = None
+                changed = True
+        if changed:
+            rows[r] = row
+    table["rows"] = rows
+
+
+def _stamp_header_meta_on_column(col: Dict[str, Any], m: Dict[str, Any]) -> None:
+    fallback = str(col.get("name") or "")
+    path = _header_path_from_meta(m, fallback)
+    if not path:
+        return
+    col["header_path"] = path
+    col["header_group"] = path[-2] if len(path) >= 2 else None
+    leaf = path[-1]
+    llm_name = str(col.get("name") or "").strip()
+    if leaf and (not llm_name or _norm_header_key(llm_name) != _norm_header_key(leaf)):
+        if len(path) >= 2 and (
+            " - " in llm_name
+            or _norm_header_key(llm_name) == _norm_header_key(f"{path[-2]} {leaf}")
+            or _norm_header_key(path[-2]) in _norm_header_key(llm_name)
+        ):
+            col["name"] = leaf
+
+
+def _column_from_candidate_meta(m: Dict[str, Any], fallback_name: str = "") -> Dict[str, Any]:
+    path = _header_path_from_meta(m, fallback_name or str(m.get("name") or "Col"))
+    leaf = path[-1] if path else (fallback_name or "Col")
+    return {
+        "name": leaf,
+        "header_group": path[-2] if len(path) >= 2 else None,
+        "header_path": path,
+        "role": "unknown",
+        "concept": None,
+        "description": None,
+        "data_type": "unknown",
+        "unit": None,
+        "category": None,
+        "human_review_needed": False,
+        "input_type": None,
+        "input_options": None,
+        "human_review_reason": None,
+    }
+
+
+def _align_llm_rows_to_candidate(
+    llm_rows: List[List[Any]],
+    df: pd.DataFrame,
+) -> List[Optional[int]]:
+    """Map each LLM row index -> candidate row index (or None)."""
+    cand_rows = df.values.tolist()
+    n_llm, n_cand = len(llm_rows), len(cand_rows)
+    if n_llm == n_cand:
+        return list(range(n_llm))
+    if n_cand == 0:
+        return [None] * n_llm
+
+    cand_by_key: Dict[str, int] = {}
+    for i, row in enumerate(cand_rows):
+        if not row:
+            continue
+        key = _norm_header_key(row[0])
+        if key and key not in cand_by_key:
+            cand_by_key[key] = i
+
+    aligned: List[Optional[int]] = []
+    matched = 0
+    for row in llm_rows:
+        key = _norm_header_key(row[0] if row else "")
+        ci = cand_by_key.get(key)
+        if ci is not None:
+            matched += 1
+        aligned.append(ci)
+    if matched >= max(1, int(n_llm * 0.6)):
+        return aligned
+    return [i if i < n_cand else None for i in range(n_llm)]
+
+
+def _merge_missing_candidate_columns(
+    table: Dict[str, Any],
+    df: pd.DataFrame,
+    meta: List[Dict[str, Any]],
+    mapping: List[Optional[int]],
+) -> None:
+    """Insert candidate columns the LLM dropped (e.g. trailing rowspan header).
+
+    Walks candidate columns in order; keeps LLM semantics for matched columns
+    and synthesizes missing ones from the pymupdf grid + dhara_column_meta."""
+    columns = list(table.get("columns") or [])
+    rows = [list(r) if isinstance(r, list) else [] for r in (table.get("rows") or [])]
+    if not columns or not meta:
+        return
+
+    meta_to_llm = {
+        meta_i: llm_i
+        for llm_i, meta_i in enumerate(mapping)
+        if meta_i is not None
+    }
+    missing_meta = []
+    for i in range(len(meta)):
+        if i in meta_to_llm:
+            continue
+        fallback = str(df.columns[i]) if i < len(df.columns) else ""
+        # pymupdf often emits a second leaf like "North DMC %" beside "North DMC"
+        # after flattening a multiline unit. The LLM already kept the real column —
+        # do not restore the unit-suffixed clone.
+        if _candidate_is_duplicate_of_columns(meta[i], fallback, columns):
+            continue
+        missing_meta.append(i)
+    if not missing_meta:
+        return
+
+    # Only restore when the candidate is at least as wide (LLM skipped a col).
+    if len(meta) < len(columns):
+        return
+
+    cand_vals = df.values.tolist()
+    row_map = _align_llm_rows_to_candidate(rows, df)
+    missing_set = set(missing_meta)
+
+    new_columns: List[Dict[str, Any]] = []
+    sources: List[Tuple[str, int]] = []
+    used_llm: set = set()
+
+    for meta_i in range(len(meta)):
+        if meta_i in meta_to_llm:
+            llm_i = meta_to_llm[meta_i]
+            used_llm.add(llm_i)
+            new_columns.append(dict(columns[llm_i]))
+            sources.append(("llm", llm_i))
+        elif meta_i in missing_set:
+            m = meta[meta_i]
+            fallback = str(df.columns[meta_i]) if meta_i < len(df.columns) else ""
+            new_columns.append(_column_from_candidate_meta(m, fallback))
+            sources.append(("cand", meta_i))
+        # else: unit-suffixed duplicate of an LLM column — drop it
+
+    for llm_i, col in enumerate(columns):
+        if llm_i not in used_llm:
+            new_columns.append(dict(col))
+            sources.append(("llm", llm_i))
+
+    new_rows: List[List[Any]] = []
+    for r_i, row in enumerate(rows):
+        built: List[Any] = []
+        cand_i = row_map[r_i] if r_i < len(row_map) else None
+        for kind, idx in sources:
+            if kind == "llm":
+                built.append(row[idx] if idx < len(row) else None)
+            else:
+                if cand_i is None or cand_i >= len(cand_vals):
+                    built.append(None)
+                else:
+                    crow = cand_vals[cand_i]
+                    val = crow[idx] if idx < len(crow) else None
+                    if _cell_is_empty(val):
+                        built.append(None)
+                    else:
+                        built.append(None if isinstance(val, float) and val != val else val)
+        new_rows.append(built)
+
+    table["columns"] = new_columns
+    table["rows"] = new_rows
+    notes = list(table.get("notes") or [])
+    note = (
+        f"ADDED: restored {len(missing_meta)} column(s) from pymupdf candidate "
+        "that the LLM reconstruction omitted (often a trailing rowspan header)."
+    )
+    if note not in notes:
+        notes.append(note)
+    table["notes"] = notes
+
+
+def _attach_structure_from_candidates(
+    table: Dict[str, Any],
+    candidates: Optional[List[Dict[str, Any]]],
+    used: Optional[set] = None,
+) -> Dict[str, Any]:
+    """Copy multi-level headers / merge empties from pymupdf, and restore any
+    columns the LLM dropped (e.g. last rowspan measure). Does not change the
+    extraction prompt or overwrite existing LLM cell values for matched cols."""
+    cand = _pick_candidate_for_llm_table(table, candidates, used)
+    if cand is None:
+        return table
+    df = cand["df"]
+    meta = _candidate_column_meta(df)
+    columns = table.get("columns") or []
+    if not columns or not meta:
+        return table
+
+    mapping = _map_meta_indices_to_llm_columns(columns, meta, df)
+    _merge_missing_candidate_columns(table, df, meta, mapping)
+
+    columns = table.get("columns") or []
+    mapping = _map_meta_indices_to_llm_columns(columns, meta, df)
+
+    for llm_i, meta_i in enumerate(mapping):
+        if meta_i is None or meta_i >= len(meta):
+            continue
+        col = columns[llm_i]
+        existing = col.get("header_path")
+        if isinstance(existing, (list, tuple)) and [p for p in existing if str(p).strip()]:
+            if not col.get("header_group") and len(existing) >= 2:
+                col["header_group"] = str(existing[-2]).strip() or None
+            continue
+        _stamp_header_meta_on_column(col, meta[meta_i])
+    table["columns"] = columns
+
+    _restore_body_merge_empties_from_df(table, df)
+    return table
+
+
+
 def _stamp_llm_metadata(
     page_result: Dict[str, Any],
     page_num: int,
@@ -1070,14 +1583,19 @@ def _stamp_llm_metadata(
     deterministically -- not something we trust the LLM to self-report.
 
     ADDED: strips ungrounded Direction/Trend columns, then runs
-    _apply_column_alignment_guard, before derive_human_review_needed."""
+    _apply_column_alignment_guard, then attaches pymupdf multi-level header
+    meta / merge empties, before derive_human_review_needed."""
     tables = []
+    used_candidates: set = set()
     for t in page_result.get("tables", []):
         normalized = _normalize_table(t)
         # ADDED: do not keep LLM-invented Direction columns when absent in source.
         normalized = _strip_ungrounded_direction_columns(normalized, candidates, page_text)
         # ADDED: structural alignment guard (detect + optional candidate fallback).
         normalized = _apply_column_alignment_guard(normalized, candidates)
+        # ADDED: multi-level headers + body merge empties from pymupdf candidate
+        # (no prompt change — LLM values stay; display meta is stamped here).
+        normalized = _attach_structure_from_candidates(normalized, candidates, used_candidates)
         normalized["semantic_status"] = "classified"
         # Preserve fallback extraction stamp when the alignment guard replaced the grid.
         if not (isinstance(normalized.get("extraction"), dict) and normalized["extraction"].get("confidence") == "alignment_guard_fallback"):

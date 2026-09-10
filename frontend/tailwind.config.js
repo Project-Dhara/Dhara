@@ -33,8 +33,11 @@ module.exports = {
         surface: '#ffffff',
       },
       fontFamily: {
-        display: ['Space Grotesk', 'Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-        body: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        sans: ['"Plus Jakarta Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        display: ['"Plus Jakarta Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        body: ['"Plus Jakarta Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        label: ['"DM Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+        mono: ['"DM Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
       },
       borderRadius: {
         card: '16px',
@@ -46,25 +49,39 @@ module.exports = {
         hover: '0 4px 14px rgba(23, 107, 107, 0.08), 0 12px 28px rgba(23, 107, 107, 0.08)',
         'focus-ring': '0 0 0 3px rgba(23, 107, 107, 0.16)',
       },
+      transitionTimingFunction: {
+        dhara: 'cubic-bezier(0.22, 1, 0.36, 1)',
+        'dhara-out': 'cubic-bezier(0.16, 1, 0.3, 1)',
+      },
+      transitionDuration: {
+        dhara: '420ms',
+        'dhara-fast': '240ms',
+        'dhara-slow': '560ms',
+      },
       keyframes: {
         'toast-in': {
-          from: { transform: 'translateY(-8px)', opacity: '0' },
+          from: { transform: 'translateY(-10px)', opacity: '0' },
           to: { transform: 'translateY(0)', opacity: '1' },
         },
         'progress-pulse': {
           '0%, 100%': { opacity: '1' },
-          '50%': { opacity: '0.6' },
+          '50%': { opacity: '0.55' },
         },
         'fade-up': {
-          from: { transform: 'translateY(6px)', opacity: '0' },
+          from: { transform: 'translateY(10px)', opacity: '0' },
           to: { transform: 'translateY(0)', opacity: '1' },
+        },
+        'soft-in': {
+          from: { transform: 'scale(0.985)', opacity: '0' },
+          to: { transform: 'scale(1)', opacity: '1' },
         },
       },
       animation: {
-        'toast-in': 'toast-in 200ms ease-out',
-        'progress-pulse': 'progress-pulse 1.6s ease-in-out infinite',
-        'fade-up': 'fade-up 320ms cubic-bezier(0.16, 1, 0.3, 1)',
-        'tab-in': 'fade-up 280ms cubic-bezier(0.22, 1, 0.36, 1)',
+        'toast-in': 'toast-in 320ms cubic-bezier(0.16, 1, 0.3, 1)',
+        'progress-pulse': 'progress-pulse 1.8s ease-in-out infinite',
+        'fade-up': 'fade-up 480ms cubic-bezier(0.16, 1, 0.3, 1)',
+        'tab-in': 'fade-up 420ms cubic-bezier(0.22, 1, 0.36, 1)',
+        'soft-in': 'soft-in 420ms cubic-bezier(0.22, 1, 0.36, 1)',
       },
     },
   },

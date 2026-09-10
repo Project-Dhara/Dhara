@@ -267,7 +267,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
                     className={`dhara-tab flex cursor-pointer items-center gap-1.5 rounded-t-lg border-b-2 px-3 py-2 text-[13.5px] font-semibold ${
                       tab === t
                         ? 'border-teal-deep bg-teal-deep text-cream'
-                        : 'border-transparent text-ink-soft hover:bg-teal-deep hover:text-cream'
+                        : 'border-transparent text-ink-soft hover:bg-sage hover:text-teal-deep'
                     }`}
                     onClick={() => {
                       setTab(t)
@@ -291,7 +291,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
                       className={`dhara-tab flex h-8 flex-1 items-center justify-center rounded-full border font-sans text-[12.5px] font-semibold ${
                         summaryChip === 'ai'
                           ? 'border-teal-deep bg-teal-deep text-cream'
-                          : 'border-line bg-white text-ink-soft hover:border-teal-deep hover:bg-teal-deep hover:text-cream'
+                          : 'border-line bg-white text-ink-soft hover:border-teal/35 hover:bg-sage hover:text-teal-deep'
                       }`}
                       onClick={() => setSummaryChip('ai')}
                     >
@@ -302,7 +302,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
                       className={`dhara-tab flex h-8 flex-1 items-center justify-center rounded-full border font-sans text-[12.5px] font-semibold ${
                         summaryChip === 'nmds'
                           ? 'border-teal-deep bg-teal-deep text-cream'
-                          : 'border-line bg-white text-ink-soft hover:border-teal-deep hover:bg-teal-deep hover:text-cream'
+                          : 'border-line bg-white text-ink-soft hover:border-teal/35 hover:bg-sage hover:text-teal-deep'
                       }`}
                       onClick={() => setSummaryChip('nmds')}
                     >
