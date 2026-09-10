@@ -222,6 +222,176 @@ def _cluster_by_distance(
     return list(buckets.values())
 
 
+def _suggest_group_name(members: list[dict], index: int) -> str:
+    for key in ("subject", "domain", "entity", "title"):
+        vals = [str(m.get(key) or "").strip() for m in members]
+        vals = [v for v in vals if v]
+        if not vals:
+            continue
+        # Most common non-empty
+        best = max(set(vals), key=vals.count)
+        if best:
+            return _clean_group_display_name(best)[:80]
+    return f"Group {index + 1}"
+
+
+# Merged multi-page tables append "(pages 1–2)" to the table title for
+# provenance; that suffix must not carry into the group display name.
+_PAGES_IN_TITLE_RE = re.compile(
+    r"\s*\(\s*pages?\s+\d+(?:\s*[–—\-]\s*\d+)?\s*\)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _clean_group_display_name(name: str) -> str:
+    cleaned = _PAGES_IN_TITLE_RE.sub("", name or "").strip()
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,-")
+    return cleaned or (name or "").strip()
+
+
+# --- SDG India Index / indicator-table grouping ---------------------------
+# When a job is clearly a set of per-goal indicator tables (e.g. titles like
+# "TABLE 1.1: … INDICATORS OF SDG 1", columns "SDG 1 Index Score"), bucket by
+# goal number instead of embedding similarity. Non-SDG jobs keep clustering.
+
+_SDG_GOAL_RE = re.compile(r"\bSDG\s*(\d{1,2})\b", re.IGNORECASE)
+_SDG_INDICATORS_RE = re.compile(
+    r"INDICATORS?\s+OF\s+SDG\s*(\d{1,2})\b", re.IGNORECASE
+)
+_SDG_INDEX_RE = re.compile(r"\bSDG\s*(\d{1,2})\s*Index\b", re.IGNORECASE)
+_TABLE_MAJOR_RE = re.compile(r"\bTABLE\s+(\d{1,2})\.\d+", re.IGNORECASE)
+_SDA_TITLE_HINT_RE = re.compile(
+    r"\b(SDG|INDICATOR|STATES?\s*/?\s*UTs?)\b", re.IGNORECASE
+)
+
+
+def _valid_sdg_goal(n: int) -> Optional[int]:
+    return n if 1 <= n <= 17 else None
+
+
+def detect_sdg_goal(table: dict) -> Optional[int]:
+    """
+    Extract SDG goal 1–17 from title / columns / classification when present.
+    Returns None if the table does not look goal-tagged.
+    """
+    title = str(table.get("title") or "")
+    subject = str(table.get("subject") or "")
+    domain = str(table.get("domain") or "")
+    col_names: list[str] = []
+    for col in table.get("columns") or []:
+        if isinstance(col, dict):
+            col_names.append(str(col.get("name") or ""))
+        else:
+            col_names.append(str(col))
+    cols_blob = " | ".join(col_names)
+
+    m = _SDG_INDICATORS_RE.search(title)
+    if m:
+        return _valid_sdg_goal(int(m.group(1)))
+
+    m = _SDG_INDEX_RE.search(title)
+    if m:
+        return _valid_sdg_goal(int(m.group(1)))
+
+    m = _SDG_GOAL_RE.search(title)
+    if m:
+        return _valid_sdg_goal(int(m.group(1)))
+
+    # SDA India style: TABLE 3.1 + States/UTs / indicator wording → goal 3
+    m = _TABLE_MAJOR_RE.search(title)
+    if m and _SDA_TITLE_HINT_RE.search(title):
+        return _valid_sdg_goal(int(m.group(1)))
+
+    m = _SDG_INDEX_RE.search(cols_blob)
+    if m:
+        return _valid_sdg_goal(int(m.group(1)))
+
+    # Avoid weak "SDG" mentions in long column blobs that list many goals;
+    # only accept a single clear Index Score column match (above) or metadata.
+    for field in (subject, domain):
+        m = _SDG_GOAL_RE.search(field)
+        if m:
+            return _valid_sdg_goal(int(m.group(1)))
+
+    return None
+
+
+def corpus_looks_like_sdg_indicator_tables(tables: list[dict]) -> bool:
+    """
+    True when enough tables carry a detectable SDG goal that SDG-wise
+    buckets are safer than embedding clusters.
+    """
+    if len(tables) < 2:
+        return False
+    tagged_goals = [detect_sdg_goal(t) for t in tables]
+    tagged = [g for g in tagged_goals if g is not None]
+    if len(tagged) < 2:
+        return False
+    ratio = len(tagged) / len(tables)
+    distinct = set(tagged)
+    # Majority tagged, or several goals with a solid tagged share.
+    if ratio >= 0.5:
+        return True
+    if len(distinct) >= 2 and ratio >= 0.35:
+        return True
+    return False
+
+
+def _groups_from_clusters(
+    clusters: list[list[str]],
+    by_id: dict[str, dict],
+    name_start_index: int = 0,
+) -> list[dict]:
+    groups = []
+    for i, member_ids in enumerate(clusters):
+        members = [by_id[m] for m in member_ids if m in by_id]
+        if not members:
+            continue
+        name = _suggest_group_name(members, name_start_index + i)
+        groups.append(
+            {"name": name, "tables": members, "table_pks": [m["id"] for m in members]}
+        )
+    return groups
+
+
+def _propose_sdg_groups(
+    tables: list[dict],
+    embeddings: dict[str, list[float]],
+    threshold: float,
+) -> list[dict]:
+    """Bucket by SDG goal; leftover tables still use embedding clusters."""
+    by_goal: dict[int, list[dict]] = defaultdict(list)
+    leftovers: list[dict] = []
+    for t in tables:
+        goal = detect_sdg_goal(t)
+        if goal is not None:
+            by_goal[goal].append(t)
+        else:
+            leftovers.append(t)
+
+    groups: list[dict] = []
+    for goal in sorted(by_goal.keys()):
+        members = by_goal[goal]
+        groups.append(
+            {
+                "name": f"SDG {goal}",
+                "tables": members,
+                "table_pks": [m["id"] for m in members],
+            }
+        )
+
+    if leftovers:
+        by_id = {t["id"]: t for t in leftovers}
+        clusters = _cluster_by_distance(
+            [t["id"] for t in leftovers],
+            embeddings,
+            threshold,
+        )
+        groups.extend(_groups_from_clusters(clusters, by_id, name_start_index=len(groups)))
+
+    return groups
+
+
 def propose_groups(
     conn,
     job_id: str,
@@ -232,6 +402,9 @@ def propose_groups(
 ) -> dict[str, Any]:
     """
     Ensure embeddings exist, cluster, return grouping payload + method used.
+
+    When the job looks like per-goal SDG indicator tables, groups are named
+    SDG 1 / SDG 2 / … instead of embedding clusters.
     """
     tables = pdf_store.list_active_tables(conn, job_id)
     if not tables:
@@ -259,25 +432,31 @@ def propose_groups(
                 )
         method = "hybrid"
 
-    clusters = _cluster_by_distance(
-        [t["id"] for t in tables],
-        embeddings,
-        threshold,
-    )
     by_id = {t["id"]: t for t in tables}
 
-    # Prefer multi-table clusters as named groups; leave true singletons unmatched
-    # only when they didn't connect — still put each cluster as a group so
-    # Automatic mode matches Excel (everything grouped, user can edit).
-    groups = []
-    for i, member_ids in enumerate(clusters):
-        members = [by_id[m] for m in member_ids if m in by_id]
-        if not members:
-            continue
-        name = _suggest_group_name(members, i)
-        groups.append({"name": name, "tables": members, "table_pks": [m["id"] for m in members]})
+    if corpus_looks_like_sdg_indicator_tables(tables):
+        groups = _propose_sdg_groups(tables, embeddings, threshold)
+        method = "sdg_goal"
+    else:
+        clusters = _cluster_by_distance(
+            [t["id"] for t in tables],
+            embeddings,
+            threshold,
+        )
+        # Prefer multi-table clusters as named groups; leave true singletons unmatched
+        # only when they didn't connect — still put each cluster as a group so
+        # Automatic mode matches Excel (everything grouped, user can edit).
+        groups = _groups_from_clusters(clusters, by_id)
 
     groups.sort(key=lambda g: (-len(g["tables"]), g["name"].lower()))
+    if method == "sdg_goal":
+        def _sdg_sort_key(g: dict) -> tuple:
+            m = re.match(r"^SDG\s+(\d+)$", g.get("name") or "", re.IGNORECASE)
+            if m:
+                return (0, int(m.group(1)))
+            return (1, 0, (g.get("name") or "").lower())
+
+        groups.sort(key=_sdg_sort_key)
     return {
         "groups": groups,
         "unmatched_tables": [],
@@ -285,19 +464,6 @@ def propose_groups(
         "indexed": indexed,
         "threshold": threshold,
     }
-
-
-def _suggest_group_name(members: list[dict], index: int) -> str:
-    for key in ("subject", "domain", "entity", "title"):
-        vals = [str(m.get(key) or "").strip() for m in members]
-        vals = [v for v in vals if v]
-        if not vals:
-            continue
-        # Most common non-empty
-        best = max(set(vals), key=vals.count)
-        if best:
-            return best[:80]
-    return f"Group {index + 1}"
 
 
 def apply_proposal_to_db(conn, job_id: str, proposal: dict) -> dict:

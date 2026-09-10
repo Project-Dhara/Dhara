@@ -142,7 +142,6 @@ export default function Catalogue({ hasKey, onGoSettings }) {
       <div className="flex items-end justify-between gap-6">
         <div>
           <div className="font-display text-[26px] font-medium leading-tight tracking-tight text-ink">Catalogue</div>
-          <div className="text-[14.5px] text-ink-soft">Published releases, their summaries and the endpoints that serve them.</div>
         </div>
         <button
           className="h-10 rounded-full border border-teal bg-white px-4 text-[13px] font-semibold text-teal transition-colors hover:bg-sage"

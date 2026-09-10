@@ -1631,11 +1631,23 @@ async def pdf_persist_approved(job_id: str, request: Request, user_email: str = 
     """
     Continue from Preview: write approved tables to Postgres, embed summaries
     into pgvector, and propose similarity-based groups.
+
+    Optional JSON body `{ "tables": [ { table_id, title, rows, columns, … } ] }`
+    overlays the in-memory job reviews so Preview edits that haven't been
+    PATCHed yet (or failed silently) still reach grouping.
     """
     import pdf_store
     import pdf_grouping
 
     api_key = request.headers.get(LLM_KEY_HEADER, "").strip() or None
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
     with _pdf_jobs_lock:
         job = _get_pdf_job(job_id)
         if not job or job.get("user_email") != user_email:
@@ -1644,6 +1656,35 @@ async def pdf_persist_approved(job_id: str, request: Request, user_email: str = 
             raise HTTPException(409, f"Job not finished yet (status={job['status']})")
         tables = _pdf_tables_from_job(job)
         filename = job.get("filename")
+
+        # Overlay client Preview state (titles etc.) onto job tables + reviews.
+        client_tables = body.get("tables")
+        if isinstance(client_tables, list) and client_tables:
+            by_id = {
+                str(t.get("table_id")): t
+                for t in client_tables
+                if isinstance(t, dict) and t.get("table_id")
+            }
+            overlay_keys = (
+                "title",
+                "rows",
+                "columns",
+                "classification",
+                "human_review_needed",
+                "human_review_reason",
+                "semantic_status",
+            )
+            reviews = dict(job.get("reviews") or {})
+            for t in tables:
+                tid = str(t.get("table_id") or "")
+                override = by_id.get(tid)
+                if not override:
+                    continue
+                patch = {k: override[k] for k in overlay_keys if k in override}
+                t.update(patch)
+                reviews[tid] = {**reviews.get(tid, {}), **patch}
+            job["reviews"] = reviews
+            _save_pdf_job(job)
 
     conn = _cat.get_connection()
     try:

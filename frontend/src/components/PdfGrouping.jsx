@@ -275,11 +275,9 @@ export default function PdfGrouping({ jobId }) {
           }
           const persistedJob = await persistRes.json()
           if (cancelled) return
-          if (!persisted?.grouping) {
-            applyGrouping(persistedJob.grouping || persistedJob)
-            setAutoSnapshot(toClientState(persistedJob.grouping || persistedJob))
-            setToast('Tables saved to Postgres and grouped by similarity.')
-          }
+          applyGrouping(persistedJob.grouping || persistedJob)
+          setAutoSnapshot(toClientState(persistedJob.grouping || persistedJob))
+          setToast('Tables saved to Postgres and grouped by similarity.')
           return
         }
         if (!res.ok) {
@@ -288,8 +286,16 @@ export default function PdfGrouping({ jobId }) {
         }
         const data = await res.json()
         if (cancelled) return
-        // Prefer in-progress local/persisted grouping edits over a stale API copy.
-        if (!persisted?.grouping) {
+        // Prefer server grouping when still on the grouping step (or first load).
+        // SessionStorage only wins after the user has moved past grouping into
+        // metadata / classify, so re-Continue from Preview always shows the
+        // latest propose (including renamed titles).
+        const keepLocalGrouping = Boolean(
+          persisted?.matchResult
+          || (persisted?.pipelineStep ?? 3) > 3
+          || (persisted?.manualGrouping && persisted?.grouping),
+        )
+        if (!keepLocalGrouping) {
           applyGrouping(data)
           setAutoSnapshot(toClientState(data))
         } else if (!autoSnapshot) {
@@ -437,7 +443,11 @@ export default function PdfGrouping({ jobId }) {
       setAutoSnapshot(toClientState(data))
       setManualGrouping(false)
       setEditingGroups(false)
-      setToast(`Automatic grouping updated (${data.method || 'pgvector'}).`)
+      setToast(
+        data.method === 'sdg_goal'
+          ? 'Automatic grouping updated (SDG-wise).'
+          : `Automatic grouping updated (${data.method || 'pgvector'}).`,
+      )
     } catch (e) {
       setError(e.message || 'Propose failed')
     } finally {
@@ -677,9 +687,6 @@ export default function PdfGrouping({ jobId }) {
               Back to grouping
             </button>
             <div className="font-display text-[26px] font-medium leading-tight text-ink">Metadata</div>
-            <div className="mt-1 text-[15px] text-ink-soft">
-              Add catalogue metadata — title, category, coverage — for each group.
-            </div>
           </div>
           <BatchReview
             matchResult={matchResult}
@@ -750,9 +757,6 @@ export default function PdfGrouping({ jobId }) {
               Back to preview
             </button>
             <div className="font-display text-[26px] font-medium leading-tight text-ink">Group tables</div>
-            <div className="mt-1 text-[15px] text-ink-soft">
-              Confirm which tables belong together — proposals use semantic similarity (pgvector).
-            </div>
             <div className="mt-1.5 text-[13px] font-medium text-ink">
               {filename || 'PDF report'}
               <span className="font-normal text-ink-soft">

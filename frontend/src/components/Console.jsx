@@ -1129,8 +1129,6 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
           <div className="flex items-center justify-between gap-6">
             <div>
               <div className="dhara-page-title">{info.title}</div>
-              <div className="dhara-page-sub">{info.purpose}</div>
-              {info.next && <div className="mt-1 text-[13px] font-medium text-teal">{info.next}</div>}
             </div>
             {stageIdx === 0 && (step === 1 || step === 2) && <KydsSummaryCard variant="corner" />}
           </div>

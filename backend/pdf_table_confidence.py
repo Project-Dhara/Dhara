@@ -181,10 +181,47 @@ def _is_chrome_title_line(line: str) -> bool:
     return False
 
 
+def _is_usable_inferred_title(title: str, columns: Optional[List[str]] = None) -> bool:
+    """
+    Reject garbage titles: truncated wraps ("Direc-"), lone column labels,
+    or header rows joined with middots. Prefer no title over a bad one.
+    """
+    s = _normalize_title_line(title)
+    if not s or len(s) < 4:
+        return False
+    if _is_chrome_title_line(s):
+        return False
+    # PDF line-wrap leftovers: "Direc-" / "Indic-"
+    if re.search(r"[–—\-]$", s):
+        return False
+    # Column-join fallback used to produce "Indicator · SDG Index 4 · …"
+    if " · " in s or s.count("|") >= 2:
+        return False
+
+    col_names = [
+        _normalize_title_line(c).lower()
+        for c in (columns or [])
+        if _normalize_title_line(c)
+    ]
+    low = s.lower()
+    for c in col_names:
+        if not c:
+            continue
+        if low == c:
+            return False
+        # Truncated / partial column header used as title
+        if len(low) <= 16 and (c.startswith(low.rstrip("-–—")) or low.rstrip("-–—") in c):
+            return False
+    return True
+
+
 def _looks_like_heading(line: str) -> bool:
     """Heuristic: short Title Case / ALL CAPS / few words, not a sentence."""
     s = _normalize_title_line(line)
     if _is_chrome_title_line(s):
+        return False
+    # Truncated wrap from a column header (e.g. "Direc-") is not a heading.
+    if re.search(r"[–—\-]$", s):
         return False
     words = s.split()
     if not (1 <= len(words) <= 12):
@@ -217,8 +254,8 @@ def infer_title_from_page_text(
       1. Explicit TABLE/FIGURE caption on the page (e.g. "TABLE 2.1: …").
       2. Heading-like line immediately above the column-header cue in the text
          (find first column name in page_text, walk upward, skip chrome).
-      3. Join the first few column names as a compact fallback.
-      4. "Page {n} table" last resort.
+      3. None when no real title is found — Preview shows an empty cue so
+         the user can review and add one (never invent from column fragments).
 
     Returns (title, title_source) where title_source documents which branch
     fired (for Preview/debugging; not an LLM decision).
@@ -234,7 +271,7 @@ def infer_title_from_page_text(
             rest = _normalize_title_line(m.group(2))
             # Keep the full caption including "TABLE 2.1: …" when informative.
             title = ln if rest else ln
-            if not _is_chrome_title_line(title):
+            if _is_usable_inferred_title(title, col_names):
                 return title, "heuristic_table_caption"
 
     # --- 2) Line above the column-header cue ("Indicators", etc.) ---
@@ -258,17 +295,10 @@ def infer_title_from_page_text(
                 # Avoid picking a column name itself as the title.
                 if candidate.lower() in col_lower:
                     continue
-                return candidate, "heuristic_heading_above_table"
+                if _is_usable_inferred_title(candidate, col_names):
+                    return candidate, "heuristic_heading_above_table"
 
-    # --- 3) Column-name fallback ---
-    if col_names:
-        joined = " · ".join(col_names[:4])
-        if len(joined) <= 120:
-            return joined, "heuristic_column_names"
-
-    # --- 4) Last resort ---
-    if page_num is not None:
-        return f"Page {page_num} table", "heuristic_page_fallback"
+    # --- 3) No usable title — leave empty so Preview prompts review ---
     return None, "heuristic_none"
 
 

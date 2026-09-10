@@ -110,7 +110,6 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
     <div className="flex w-full flex-col gap-7">
       <div className="flex flex-col gap-1.5">
         <div className="dhara-page-title">Settings</div>
-        <div className="dhara-page-sub">LLM keys, metadata rules, and classification standards.</div>
       </div>
 
       <div className="flex flex-col gap-[18px] rounded-2xl border border-line/90 bg-surface p-6">

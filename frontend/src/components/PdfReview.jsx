@@ -282,9 +282,33 @@ function padRowsToColumns(rows, ncols) {
   })
 }
 
+function isUsableTableTitle(title, columns) {
+  const t = String(title || '').trim()
+  if (!t || t.length < 4) return false
+  // Truncated PDF wrap leftovers like "Direc-"
+  if (/[–—-]$/.test(t)) return false
+  // Joined header rows — not a real table title
+  if (t.includes(' · ') || (t.match(/\|/g) || []).length >= 2) return false
+  const colNames = (columns || [])
+    .map((c) => String(c?.name ?? c ?? '').trim().toLowerCase())
+    .filter(Boolean)
+  const low = t.toLowerCase()
+  const stem = low.replace(/[–—-]+$/g, '')
+  for (const c of colNames) {
+    if (low === c) return false
+    if (stem.length <= 16 && (c.startsWith(stem) || c.includes(stem))) return false
+  }
+  return true
+}
+
 function displayTitle(table) {
   const t = (table?.title || '').trim()
-  return t || `Page ${table?.page} table`
+  if (isUsableTableTitle(t, table?.columns)) return t
+  return null
+}
+
+function titleForEdit(table) {
+  return displayTitle(table) || ''
 }
 
 /** Direction / Trend columns store up|down|same; show arrow symbols in the UI. */
@@ -474,8 +498,8 @@ function ExtractedDataRowsModal({
         <div className="relative flex flex-shrink-0 items-center justify-center bg-cream px-12 pb-4 pt-5 text-center">
           <div className="min-w-0 max-w-full">
             <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-teal">Extracted data</div>
-            <div id="extracted-data-title" className="truncate text-2xl font-bold tracking-tight text-ink">
-              {displayTitle(table)}
+            <div id="extracted-data-title" className={`truncate text-2xl font-bold tracking-tight ${displayTitle(table) ? 'text-ink' : 'italic text-ink-soft'}`}>
+              {displayTitle(table) || 'No title — review'}
             </div>
             <div className="mt-1.5 text-[13.5px] leading-relaxed text-ink-soft">
               Page {table.page} · {rows.length.toLocaleString()} row{rows.length === 1 ? '' : 's'} · {columnCount} column{columnCount === 1 ? '' : 's'}
@@ -574,9 +598,17 @@ function ExtractedDataRowsModal({
 
 /** Table title on the collapsed preview card (edit in the expanded detail). */
 function TableTitleDisplay({ table, className = '' }) {
+  const title = displayTitle(table)
+  if (title) {
+    return (
+      <div className={`min-w-0 truncate text-[14px] font-semibold leading-snug text-ink ${className}`}>
+        {title}
+      </div>
+    )
+  }
   return (
-    <div className={`min-w-0 truncate text-[14px] font-semibold leading-snug text-ink ${className}`}>
-      {displayTitle(table)}
+    <div className={`min-w-0 truncate text-[14px] font-semibold italic leading-snug text-ink-soft ${className}`}>
+      No title — review
     </div>
   )
 }
@@ -585,7 +617,7 @@ function TableTitleDisplay({ table, className = '' }) {
 // human review -- plus extracted-data cells for non-numeric columns
 // (garbled/corrupted values stay highlighted). Numeric columns
 // (integer / decimal / percentage) stay read-only.
-function TableDetail({ table, onSave }) {
+function TableDetail({ table, onSave, onTitleLive, onTitleCommit }) {
   const classificationNeedsReview = Object.values(table.classification || {}).some((f) => f?.human_review_needed)
   const columnsNeedReview = (table.columns || []).some((c) => c.human_review_needed)
   const columnCount = (table.columns || []).length
@@ -594,7 +626,7 @@ function TableDetail({ table, onSave }) {
   const showSemanticSections = table.semantic_status === 'classified'
 
   const [draft, setDraft] = useState(() => ({
-    title: table.title || '',
+    title: titleForEdit(table),
     classification: Object.fromEntries(
       Object.entries(table.classification || {}).map(([k, f]) => [k, f?.value ?? ''])
     ),
@@ -607,8 +639,8 @@ function TableDetail({ table, onSave }) {
   const [columnsOpen, setColumnsOpen] = useState(columnsNeedReview)
 
   useEffect(() => {
-    setDraft((prev) => ({ ...prev, title: table.title || '' }))
-  }, [table.title])
+    setDraft((prev) => ({ ...prev, title: titleForEdit(table) }))
+  }, [table.title, table.columns])
 
   const setField = (key, value) =>
     setDraft((prev) => ({ ...prev, classification: { ...prev.classification, [key]: value } }))
@@ -640,7 +672,7 @@ function TableDetail({ table, onSave }) {
   const lockedCols = (table.columns || []).map((col, i) => isNumericColumn(col, i, sourceRows))
   const editableColCount = lockedCols.filter((locked) => !locked).length
   const rowsDirty = JSON.stringify(draft.rows) !== JSON.stringify(sourceRows)
-  const titleDirty = (draft.title || '').trim() !== (table.title || '').trim()
+  const titleDirty = (draft.title || '').trim() !== titleForEdit(table)
   const canSave = (table.human_review_needed || rowsDirty || titleDirty) && !saved
 
   const handleSave = () => {
@@ -688,10 +720,19 @@ function TableDetail({ table, onSave }) {
           type="text"
           className="rounded-md border border-line bg-white px-2.5 py-1.5 text-[13.5px] font-semibold text-ink outline-none focus:border-teal"
           value={draft.title}
-          placeholder={`Page ${table.page} table`}
+          placeholder="Add a table title"
           onChange={(e) => {
+            const nextTitle = e.target.value
             setSaved(false)
-            setDraft((prev) => ({ ...prev, title: e.target.value }))
+            setDraft((prev) => ({ ...prev, title: nextTitle }))
+            // Keep parent Preview state in sync so Continue persists the latest title
+            // even if the user never clicks "Save changes".
+            onTitleLive?.(nextTitle.trim() || null)
+          }}
+          onBlur={() => {
+            // Persist title into job reviews (Continue also sends tables; this
+            // covers reload-before-Continue).
+            onTitleCommit?.(draft.title.trim() || null)
           }}
         />
       </label>
@@ -956,9 +997,31 @@ export default function PdfReview({ jobId, filename, onDone }) {
     // Advance the stepper while the single persist+propose request runs.
     const phaseTimer = setTimeout(() => setContinuePhase('group'), 900)
     try {
+      // Drop stale grouping UI from a previous Continue so the new propose wins.
+      try {
+        sessionStorage.removeItem(`dhara_pdf_pipeline_v1_${jobId}`)
+      } catch {
+        /* best-effort */
+      }
       const res = await fetch(
         `/api/pdf/jobs/${jobId}/persist-approved`,
-        withLlmKeyHeaders(withAuthHeaders({ method: 'POST' })),
+        withLlmKeyHeaders(withAuthHeaders({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          // Preview state is source of truth for titles / reviews at Continue.
+          body: JSON.stringify({
+            tables: (tables || []).map((t) => ({
+              table_id: t.table_id,
+              title: t.title ?? null,
+              rows: t.rows,
+              columns: t.columns,
+              classification: t.classification,
+              human_review_needed: t.human_review_needed,
+              human_review_reason: t.human_review_reason,
+              semantic_status: t.semantic_status,
+            })),
+          }),
+        })),
       )
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
@@ -1282,9 +1345,6 @@ export default function PdfReview({ jobId, filename, onDone }) {
             Upload another PDF
           </button>
           <div className="font-display text-[26px] font-medium leading-tight text-ink">Review Extracted Tables</div>
-          <div className="mt-1 text-[15px] text-ink-soft">
-            Check classification, fix uncertain cells, and remove tables you don’t want to keep.
-          </div>
           <div className="mt-1.5 text-[13px] font-medium text-ink">
             {filename || 'PDF report'}
             <span className="font-normal text-ink-soft">
@@ -1456,7 +1516,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
                       type="checkbox"
                       className="h-3.5 w-3.5 flex-none accent-teal"
                       checked={selected}
-                      aria-label={`Select ${t.title || `page ${t.page} table`}`}
+                      aria-label={`Select ${displayTitle(t) || `page ${t.page} table`}`}
                       onChange={() => toggleSelected(t.table_id)}
                       onClick={(e) => e.stopPropagation()}
                     />
@@ -1481,7 +1541,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
                           disabled={downloadingId === t.table_id}
                           onClick={(e) => {
                             e.stopPropagation()
-                            downloadOneTable(t.table_id, t.title || `Page ${t.page} table`)
+                            downloadOneTable(t.table_id, displayTitle(t) || `page_${t.page}_table`)
                           }}
                         >
                           {downloadingId === t.table_id ? (
@@ -1504,7 +1564,18 @@ export default function PdfReview({ jobId, filename, onDone }) {
                     </div>
                   </div>
                 </div>
-                {isOpen && <TableDetail table={t} onSave={(edits) => saveReview(t.table_id, edits)} />}
+                {isOpen && (
+                  <TableDetail
+                    table={t}
+                    onSave={(edits) => saveReview(t.table_id, edits)}
+                    onTitleLive={(title) => {
+                      setTables((prev) => prev.map((row) => (
+                        row.table_id === t.table_id ? { ...row, title } : row
+                      )))
+                    }}
+                    onTitleCommit={(title) => saveReview(t.table_id, { title })}
+                  />
+                )}
               </div>
             )
           })}
