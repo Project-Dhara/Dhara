@@ -949,7 +949,7 @@ function ExtractedDataRowsModal({
       onClick={onClose}
     >
       <div
-        className="flex h-[min(720px,90vh)] w-[min(1200px,calc(100vw-2rem))] flex-none flex-col overflow-hidden rounded-[14px] bg-surface shadow-dhara"
+        className="flex max-h-[min(720px,90vh)] w-[min(1200px,calc(100vw-2rem))] flex-none flex-col overflow-hidden rounded-[14px] bg-surface shadow-dhara"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="relative flex flex-shrink-0 items-center justify-center bg-cream px-12 pb-4 pt-5 text-center">

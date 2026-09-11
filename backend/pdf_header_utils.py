@@ -111,7 +111,7 @@ def _is_leaf_header_token(v: Any) -> bool:
     Short token suitable as a leaf column label under a spanning parent.
 
     Examples that match structurally: 1, 2, >8, Male, Rural, Q1, 2001, 15-19.
-    Examples that do not: 1954 as a count, 150.54, long prose occupation titles.
+    Examples that do not: 0 / blank counts, 1954 as a count, 150.54, long prose.
     """
     s = _cell_str(v)
     if not s or len(s) > _LEAF_MAX_LEN:
@@ -124,7 +124,10 @@ def _is_leaf_header_token(v: Any) -> bool:
         return True
     if _is_numeric_cell(v):
         n = _numeric_abs(v)
-        return n is not None and n < _MEASUREMENT_ABS_MIN
+        # Zero is almost never a column code; it is a count that leaks into headers.
+        if n is None or n == 0:
+            return False
+        return n < _MEASUREMENT_ABS_MIN
     # Short text / hyphenated codes (Rural, 15-19, Not stated, …)
     return True
 
@@ -382,6 +385,12 @@ def _row_is_leaf_header(
     if sum(1 for v in non_empty if _is_measurement_number(v)) >= 2:
         return False
 
+    # A strip of identical numbers (especially all zeros) is body data, not codes.
+    # Real leaf rows are diverse: 1,2,3… or M,F,O or 2001,2011.
+    unique_vals = {_cell_str(v) for v in non_empty}
+    if len(unique_vals) == 1 and _is_numeric_cell(next(iter(non_empty))):
+        return False
+
     long_prose = sum(1 for v in non_empty if len(_cell_str(v)) > _LEAF_MAX_LEN)
     if long_prose >= 1 and sum(1 for v in non_empty if _is_measurement_number(v)) >= 1:
         return False
@@ -550,8 +559,9 @@ def _split_hybrid_leaf_data_row(
     Some extracts put leaf codes (2001, 2011) on the same row as the first
     section stub (A + title). Split into a leaf-header row and a data row.
 
-    Must NOT fire on real data rows where small integers (35, 13) sit beside
-    decimal measurements (18.6) — those are values, not header leaves.
+    Must NOT fire on real data rows. Small integers under group columns
+    (0, 86, 32, …) are counts — only calendar years and non-numeric short
+    codes are valid hybrid leaf halves.
     """
     parent = _pad_row(parent_row, n_cols)
     cells = _pad_row(row, n_cols)
@@ -572,8 +582,12 @@ def _split_hybrid_leaf_data_row(
             # group or span under a colspan parent
             if _cell_str(val):
                 group_vals.append(val)
+            # Years always qualify; other leaf tokens must be non-numeric
+            # (Male, Rural, …). Plain ints are treated as data counts.
             if _is_year_code(val) or (
-                _is_leaf_header_token(val) and not _is_measurement_number(val)
+                _is_leaf_header_token(val)
+                and not _is_numeric_cell(val)
+                and not _is_measurement_number(val)
             ):
                 leaf_row[i] = val
                 found_leaf = True
@@ -591,6 +605,10 @@ def _split_hybrid_leaf_data_row(
     # Almost all non-empty group cells should be leaf tokens (Census years, etc.).
     nonempty_group = sum(1 for v in group_vals if _cell_str(v))
     if nonempty_group and leaf_count < max(2, int(nonempty_group * 0.75)):
+        return None, None
+    # Identical repeated values under groups are counts, not category labels.
+    unique_leaves = {_cell_str(v) for v in leaf_row if _cell_str(v)}
+    if len(unique_leaves) == 1:
         return None, None
     return leaf_row, data_row
 
