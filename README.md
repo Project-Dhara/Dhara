@@ -1,13 +1,61 @@
-# DHARA Toolkit
+<p align="center">
+  <img src="./Dhara_logo.png" alt="Data Dhara" width="420" />
+</p>
 
-Internal tool for building and maintaining the DES Delhi data catalog (the
-Postgres database that [des-website](https://des-website-235956738573.asia-south1.run.app)
-reads from). Upload government **Excel** workbooks or **PDF** statistical
-reports, extract tables (with optional LLM assistance), review/group them,
-harmonise classifications, and push dataset records plus clean Excel exports
-into the catalog.
+<p align="center">
+  <a href="http://localhost:8000/docs"><img src="https://img.shields.io/badge/API-Swagger-0A7EA4?style=flat-square" alt="API docs" /></a>
+  <img src="https://img.shields.io/badge/Frontend-Next.js_14-000000?style=flat-square" alt="Next.js" />
+  <img src="https://img.shields.io/badge/Backend-FastAPI-009688?style=flat-square" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/Database-Postgres_%2B_pgvector-336791?style=flat-square" alt="Postgres" />
+  <img src="https://img.shields.io/badge/Deploy-Docker-2496ED?style=flat-square" alt="Docker" />
+</p>
 
-For deeper module/API detail see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+# DHARA: Data cataloguing for government statistical releases
+
+Internal toolkit for building and maintaining the DES Delhi data catalog — the
+Postgres database that
+[des-website](https://des-website-235956738573.asia-south1.run.app) reads from.
+Upload Excel workbooks or PDF statistical reports, extract and review tables,
+harmonise classifications, and publish clean datasets into the catalogue.
+
+---
+
+## What can be done with Dhara
+
+- **Ingest Excel workbooks** — batch-extract tables, match them to metadata tag
+  files, reconcile IDs/titles, classify columns, and publish.
+- **Connect a SQL database** — paste a Postgres URL; tables are auto-extracted
+  (DHARA catalogue DBs expand `datasets` from `dataset_rows`) and continue on
+  the same review path as Excel.
+- **Process PDF reports** — extract tables from statistical PDFs, preview and
+  edit grids, merge cross-page tables, group related tables, then join the
+  shared catalogue pipeline.
+- **Harmonise classifications** — steward code lists, fill definitions, and
+  match occupation values to NCO 2015 with optional LLM assistance.
+- **Publish to a shared catalogue** — push metadata groups and table records
+  (plus clean / original Excel exports) into Postgres for browsing and for
+  downstream consumers like des-website.
+- **Browse published datasets** — Catalogue UI lists what you have published,
+  with access metadata and API-oriented previews.
+- **Secure the API** — JWT login; Swagger at `/docs` with Bearer auth for
+  exploring endpoints.
+
+---
+
+## Why Dhara
+
+- **One pipeline for Excel, SQL, and PDF** — different intake paths, one
+  Console flow into the same catalogue.
+- **Human-in-the-loop by design** — Preview, grouping, metadata, and classify
+  steps keep stewards in control before anything is published.
+- **Catalogue as source of truth** — Postgres holds authoritative rows;
+  pgvector is for semantic retrieval only, not a second database.
+- **Bring your own LLM key** — MEITY-empanelled providers via Settings; no
+  shared server-side model key required for local work.
+- **Built for DES Delhi** — shaped around government statistical products,
+  NMDS/SDG metadata, and NCO/NIC-style harmonisation — not a generic ETL toy.
+
+---
 
 ## Project structure
 
@@ -16,7 +64,7 @@ dhara-poc/
 ├── Makefile                     make up / down / logs / psql / prod …
 ├── docker-compose.yml           postgres + backend + frontend (dev); app (prod)
 ├── Dockerfile                   Combined Next.js + FastAPI image (:8080)
-├── docs/ARCHITECTURE.md         Module/API map (keep in sync with code layout)
+├── Dhara_logo.png               Brand mark (README / docs)
 ├── backend/                     FastAPI + openpyxl + LLM + Postgres + pgvector
 │   ├── main.py                  App setup + router registration (entrypoint)
 │   ├── routes/                  FastAPI routers: auth, kyds, catalogue, pdf, dashboard
@@ -182,6 +230,18 @@ docker exec -it dhara-postgres psql -U dhara -d dhara -c '\dt'
 API routes (except health / login / signup) expect `Authorization: Bearer <JWT>`.
 Sign up via the UI when `ENABLE_SIGNUP=true`, or create accounts with
 `backend/scripts/create_user.py`.
+
+**Call the API**
+
+Use Swagger at http://localhost:8000/docs: get a token via curl (below) or the
+app login, click **Authorize**, paste the token only (no `Bearer` prefix).
+
+```bash
+TOKEN=$(curl -s http://localhost:8000/api/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@org.example","password":"…"}' | python3 -c 'import sys,json; print(json.load(sys.stdin)["token"])')
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/me
+```
 
 ## Deployment
 

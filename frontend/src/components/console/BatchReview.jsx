@@ -11,6 +11,7 @@ import MetadataSheetGrid, { METADATA_COLUMNS } from './MetadataSheetGrid'
 import NmdsGroupPanel from './NmdsGroupPanel'
 import ConsoleStatusPlaceholder from './ConsoleStatusPlaceholder'
 import Button from '../ui/Button'
+import Combobox from '../ui/Combobox'
 import ErrorBanner from '../ui/ErrorBanner'
 import Toast from '../ui/Toast'
 import { STATUS_TRANSITIONS } from '../../lib/consoleStatusTransitions'
@@ -408,7 +409,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
   if (step === 'done' && result) {
     const label = groups[0]?.metadata?.title || groups[0]?.file_name || ''
     return (
-      <div className="mx-auto flex max-w-[920px] flex-col gap-6">
+      <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6">
         <div className="flex flex-col items-center gap-2.5 px-5 py-10 text-center">
           <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#e6f7f3] text-[#0a6e57]">
             <Check className="h-8 w-8" strokeWidth={2.5} aria-hidden />
@@ -429,7 +430,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
   }
 
   return (
-    <div className="mx-auto flex max-w-[920px] flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6">
       {step === 'review' && (
         <div className="mb-1 text-center">
           {showFillInHeading ? (
@@ -526,16 +527,20 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
                     <td className="whitespace-nowrap border-b border-[#f1ebdf] px-2 py-1.5 align-top font-sans text-[11.5px] text-teal">{u.table.id}</td>
                     <td className="border-b border-[#f1ebdf] px-2 py-1.5 align-top text-ink">{u.table.description || u.table.title}</td>
                     <td className="border-b border-[#f1ebdf] px-2 py-1.5 align-top">
-                      <select
-                        className="rounded-md border border-line bg-surface px-2.5 py-1.5 text-[13px] text-ink transition-shadow duration-200 focus:border-teal focus:shadow-focus-ring focus:outline-none"
+                      <Combobox
+                        className="min-w-[220px]"
+                        options={[
+                          { value: '', label: "Skip (don't push)" },
+                          ...groups.map((g, gi) => ({
+                            value: String(gi),
+                            label: g.metadata.title || g.file_name,
+                          })),
+                        ]}
                         value={assignments[idx] ?? ''}
-                        onChange={(e) => setAssignments((prev) => ({ ...prev, [idx]: e.target.value }))}
-                      >
-                        <option value="">Skip (don't push)</option>
-                        {groups.map((g, gi) => (
-                          <option key={gi} value={gi}>{g.metadata.title || g.file_name}</option>
-                        ))}
-                      </select>
+                        onChange={(next) => setAssignments((prev) => ({ ...prev, [idx]: next }))}
+                        placeholder="Select a group"
+                        ariaLabel={`Assign ${u.table.id || 'table'} to group`}
+                      />
                     </td>
                   </tr>
                 ))}

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from catalogue import catalogue as _cat
 from core.deps import require_user
 
-router = APIRouter()
+router = APIRouter(tags=["KYDS"])
 
 
 @router.post("/api/kyds")

@@ -15,13 +15,15 @@ import {
   PRIMARY_FILTERS,
   REASON_FILTER_IDS,
   REASON_LABELS,
+  TABLE_EDIT_CHANNEL,
   closeEditorWindow,
   collectReviewReasons,
+  displayTitle,
   isAiClassified,
   matchesStatusFilter,
   tableHeaderKey,
 } from '../../lib/pdfReviewHelpers'
-import { DeleteConfirmDialog, MergeConfirmDialog, ScrollToTopButton, TableExpandPanel } from './PdfReviewAtoms'
+import { DeleteConfirmDialog, MergeConfirmDialog, ReviewBadge, ScrollToTopButton, TableExpandPanel } from './PdfReviewAtoms'
 import { TableDetail, TableTitleDisplay } from './TableDetail'
 
 export function PdfTableEditorPage({ jobId, tableId }) {
@@ -735,7 +737,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
             ) : null}
           </div>
 
-          {showReasonFilters && (
+          <TableExpandPanel open={showReasonFilters}>
             <div
               className="flex flex-wrap items-center gap-2 border-t border-line/70 pt-2"
               role="tablist"
@@ -766,7 +768,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
                 </button>
               ))}
             </div>
-          )}
+          </TableExpandPanel>
 
           {selectMode && (
             <div className="flex flex-wrap items-center gap-2.5 rounded-lg border border-line bg-cream/80 px-3 py-2">

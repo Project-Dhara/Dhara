@@ -148,12 +148,13 @@ export function deleteMatchGroup(matchResult, index) {
 
 export function moveMatchTable(matchResult, tableId, dest) {
   if (!matchResult) return matchResult
+  const rowId = (table) => table?.id || table?._uid || table?.table_id
   let movedEntry = null
   const groups = matchResult.groups.map((g) => {
     const keep = []
     const take = []
     ;(g.matched_tables || []).forEach((mt) => {
-      const id = mt.table.id || mt.table._uid
+      const id = rowId(mt.table)
       ;(id === tableId ? take : keep).push(mt)
     })
     if (take.length > 0) movedEntry = take[0]
@@ -161,12 +162,12 @@ export function moveMatchTable(matchResult, tableId, dest) {
   })
   let unmatched_tables = matchResult.unmatched_tables || []
   if (!movedEntry) {
-    const idx = unmatched_tables.findIndex((u) => (u.table.id || u.table._uid) === tableId)
+    const idx = unmatched_tables.findIndex((u) => rowId(u.table) === tableId)
     if (idx === -1) return matchResult
     movedEntry = unmatched_tables[idx]
     unmatched_tables = unmatched_tables.filter((_, i) => i !== idx)
   } else {
-    unmatched_tables = unmatched_tables.filter((u) => (u.table.id || u.table._uid) !== tableId)
+    unmatched_tables = unmatched_tables.filter((u) => rowId(u.table) !== tableId)
   }
   const table = movedEntry.table
   if (dest === 'unmatched') {

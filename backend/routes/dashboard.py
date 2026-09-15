@@ -124,7 +124,7 @@ def _pdf_dashboard_row(
     }
 
 
-@router.patch("/api/pdf/jobs/{job_id}/pipeline")
+@router.patch("/api/pdf/jobs/{job_id}/pipeline", tags=["PDF"])
 async def pdf_set_pipeline_step(job_id: str, request: Request, user_email: str = Depends(require_user)):
     """Persist console pipeline step for dashboard readiness (steps 3–6)."""
     from pdf import pdf_store
@@ -177,7 +177,7 @@ async def pdf_set_pipeline_step(job_id: str, request: Request, user_email: str =
     return {"ok": True, "job_id": job_id, "pipeline_step": saved}
 
 
-@router.get("/api/dashboard")
+@router.get("/api/dashboard", tags=["Dashboard"])
 async def get_dashboard(user_email: str = Depends(require_user)):
     """Dataset readiness for the Dashboard: catalogue groups + in-flight PDF jobs."""
     from pdf import pdf_store

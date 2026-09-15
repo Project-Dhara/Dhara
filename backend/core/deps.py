@@ -1,5 +1,9 @@
 """Shared FastAPI dependencies and small helpers used across route modules."""
-from fastapi import HTTPException, Request, UploadFile
+from typing import Optional
+
+import jwt
+from fastapi import Depends, HTTPException, Request, UploadFile
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from core import auth as _auth
 from extraction.extractor import TableExtractor
@@ -8,16 +12,26 @@ LLM_KEY_HEADER = "x-llm-api-key"
 LLM_PROVIDER_HEADER = "x-llm-provider"
 _KNOWN_LLM_PROVIDERS = {"anthropic", "openai"}
 
+# Registers the Bearer JWT scheme in OpenAPI so /docs shows Authorize.
+# auto_error=False keeps a missing token as HTTP 401 (same as before) instead
+# of FastAPI's default 403 from the security scheme.
+bearer_scheme = HTTPBearer(auto_error=False, bearerFormat="JWT", scheme_name="BearerAuth")
 
-def require_user(request: Request) -> str:
+
+def require_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+) -> str:
     """FastAPI dependency: verifies the bearer token and returns the email
     it carries. Every write-path route below depends on this so data is
     always stored under the authenticated caller, never a client-supplied
     value."""
+    token = (credentials.credentials if credentials else "") or ""
+    if not token.strip():
+        raise HTTPException(401, "Missing bearer token")
     try:
-        return _auth.email_from_request(request)
-    except ValueError as e:
-        raise HTTPException(401, str(e))
+        return _auth.decode_token(token.strip())
+    except jwt.PyJWTError as e:
+        raise HTTPException(401, f"Invalid or expired token: {e}")
 
 
 def _extractor_for(request: Request) -> TableExtractor:

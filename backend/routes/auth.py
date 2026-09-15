@@ -8,10 +8,10 @@ from core import auth as _auth
 from catalogue import catalogue as _cat
 from core.deps import require_user
 
-router = APIRouter()
+router = APIRouter(tags=["Auth"])
 
 
-@router.get("/api/me")
+@router.get("/api/me", summary="Current session")
 async def me(user_email: str = Depends(require_user)):
     """Validate the current session and return the signed-in profile.
     Used on app boot so a stale localStorage token after a backend restart
@@ -33,7 +33,7 @@ async def me(user_email: str = Depends(require_user)):
         "dept": user.get("dept") or "",
     }
 
-@router.post("/api/signup")
+@router.post("/api/signup", summary="Sign up")
 async def signup(request: Request):
     """Self-serve account creation. Enabled by default for dev — set
     ENABLE_SIGNUP=false to lock this down to admin-provisioned accounts
@@ -74,7 +74,7 @@ async def signup(request: Request):
     return {"token": token, "email": email, "name": name, "dept": dept}
 
 
-@router.post("/api/login")
+@router.post("/api/login", summary="Sign in")
 async def login(request: Request):
     """Accounts are admin-provisioned only (see create_user.py) — this just
     verifies email/password and issues a bearer token."""

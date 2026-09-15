@@ -29,7 +29,7 @@ from pdf.pdf_jobs import (
 )
 from extraction.table_export import safe_download_stem, table_to_excel_bytes
 
-router = APIRouter()
+router = APIRouter(tags=["PDF"])
 
 
 @router.post("/api/pdf/upload")
@@ -72,7 +72,7 @@ async def pdf_upload(request: Request, file: UploadFile = File(...), user_email:
     return {"job_id": job_id}
 
 
-@router.get("/api/pdf/jobs")
+@router.get("/api/pdf/jobs", include_in_schema=False)
 async def pdf_jobs_list(user_email: str = Depends(require_user)):
     """Lists the caller's own PDF jobs, most recent first -- lets the
     frontend recover an in-progress/finished job after a page refresh."""

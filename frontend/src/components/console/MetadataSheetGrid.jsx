@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import Combobox from '../ui/Combobox'
 
 // Metadata entry, one card per table/metadata group. Field set mirrors what
-// the backend's /api/catalogue/push and /api/catalogue/batch-push accept
-// (see PushModal.jsx / BatchReview.jsx) — only `title` is actually required.
+// the backend's /api/catalogue/batch-push accept
+// (see BatchReview.jsx) — only `title` is actually required.
 // Short categorical / date fields share a wide 2-column card grid so values
 // stay readable; free-text fields get their own full-width row.
 export const METADATA_COLUMNS = [
@@ -45,6 +46,13 @@ export default function MetadataSheetGrid({
 
   const activeRow = rows[activeIndex]
   const useDropdown = rows.length > 10
+  const groupOptions = useMemo(
+    () => rows.map((row, ri) => ({
+      value: ri,
+      label: `${ri + 1}. ${row.label || `Group ${ri + 1}`}`,
+    })),
+    [rows],
+  )
 
   return (
     <div className="flex flex-col gap-5">
@@ -56,21 +64,15 @@ export default function MetadataSheetGrid({
           </span>
         </div>
         {useDropdown ? (
-          <label className="flex w-full max-w-xl flex-col gap-1.5">
-            <span className="sr-only">Select metadata group</span>
-            <select
-              className="w-full rounded-lg border border-line bg-surface px-3 py-2.5 font-sans text-[13.5px] text-ink transition-shadow duration-200 focus:border-teal focus:shadow-focus-ring focus:outline-none"
+          <div className="w-full">
+            <Combobox
+              options={groupOptions}
               value={activeIndex}
-              onChange={(e) => setActiveIndex(Number(e.target.value))}
-              aria-label="Select metadata group"
-            >
-              {rows.map((row, ri) => (
-                <option key={row.id} value={ri}>
-                  {ri + 1}. {row.label || `Group ${ri + 1}`}
-                </option>
-              ))}
-            </select>
-          </label>
+              onChange={(next) => setActiveIndex(Number(next))}
+              placeholder="Select a group"
+              ariaLabel="Select metadata group"
+            />
+          </div>
         ) : (
           <div className="grid grid-cols-4 gap-x-4 gap-y-3.5 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
             {rows.map((row, ri) => (

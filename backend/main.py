@@ -15,7 +15,29 @@ from routes import dashboard as routes_dashboard
 from routes import kyds as routes_kyds
 from routes import pdf as routes_pdf
 
-app = FastAPI(title="Table Extractor API")
+OPENAPI_TAGS = [
+    {"name": "Health", "description": "Liveness. No JWT."},
+    {"name": "Auth", "description": "Login issues a JWT. Send it as `Authorization: Bearer <token>` on every other route. `/api/me` checks the current session."},
+    {"name": "KYDS", "description": "Know Your Dataset survey. JWT required."},
+    {"name": "Catalogue", "description": "Excel/SQL extract → match → classify → publish. JWT required."},
+    {"name": "PDF", "description": "PDF extract → preview → grouping. JWT required."},
+    {"name": "Dashboard", "description": "Workspace readiness rows. JWT required."},
+]
+
+app = FastAPI(
+    title="DHARA API",
+    description=(
+        "Internal catalogue pipeline API.\n\n"
+        "## JWT\n\n"
+        "1. Call **POST /api/login** with `{ \"email\", \"password\" }` (no token).\n"
+        "2. Copy `token` from the response.\n"
+        "3. Click **Authorize**, paste the token only (do not type `Bearer`).\n"
+        "4. Try authenticated endpoints. The token expires after 12 hours and is "
+        "invalidated when the backend process restarts."
+    ),
+    openapi_tags=OPENAPI_TAGS,
+    swagger_ui_parameters={"persistAuthorization": True},
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,7 +53,7 @@ app.include_router(routes_pdf.router)
 app.include_router(routes_dashboard.router)
 
 
-@app.get("/api/health")
+@app.get("/api/health", tags=["Health"], summary="Health")
 async def health():
     out = {"status": "ok", "pgvector": False}
     try:
@@ -57,7 +79,7 @@ if _assets_dir.exists():
     app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
 
 
-@app.get("/{full_path:path}")
+@app.get("/{full_path:path}", include_in_schema=False)
 async def serve_spa(full_path: str):
     if _index_html.exists():
         return FileResponse(str(_index_html))

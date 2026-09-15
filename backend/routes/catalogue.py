@@ -24,7 +24,7 @@ from extraction.sql_extract import extract_tables_from_sql
 from extraction.table_export import table_to_excel_bytes
 from metadata.table_id_title import _catalogue_table_title, _validate_tables
 
-router = APIRouter()
+router = APIRouter(tags=["Catalogue"])
 
 
 @router.post("/api/table-metadata")

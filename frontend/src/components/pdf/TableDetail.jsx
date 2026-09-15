@@ -5,19 +5,34 @@ import { Check, Pencil } from 'lucide-react'
 import Button from '../ui/Button'
 import { isGarbled } from '../../lib/garbled'
 import {
-  CLASSIFICATION_LABELS,
-  ROLE_OPTIONS,
+  adjustMergesAfterRowDelete,
+  adjustMergesAfterRowInsert,
   applyNameToColumnMeta,
   cloneColumns,
+  cloneEditorStructure,
+  closeEditorWindow,
   columnDraftFromTable,
+  columnHeaderPath,
+  columnParentPath,
   displayTitle,
+  invertActionFlash,
   isNumericColumn,
+  materializeCellMerges,
+  mergesFromSpans,
+  movedBlockFlash,
+  notifyTableEdited,
   padRowsToColumns,
+  promoteMergeValuesBeforeRowDelete,
+  reorderColumnRange,
+  reorderRowRange,
   reshapeRows,
+  resolveEditorBodySpans,
+  setHeaderPathLevel,
   titleForEdit,
+  unmergeAt,
+  withParentPath,
 } from '../../lib/pdfReviewHelpers'
-import { CollapsibleSection, ReviewBadge } from './PdfReviewAtoms'
-import { ExtractedTableHead } from './ExtractedTableGrid'
+import { ExtractedDataCell, ExtractedTableHead } from './ExtractedTableGrid'
 import { ReferenceComparePanel } from './PdfReferenceViewer'
 import { TableEditModal } from './TableEditModal'
 
@@ -38,16 +53,10 @@ export function TableTitleDisplay({ table, className = '' }) {
   )
 }
 
-// One table's classification/column fields, editable where flagged for
-// human review -- plus extracted-data cells for non-numeric columns
-// (garbled/corrupted values stay highlighted). Numeric columns
-// (integer / decimal / percentage) stay read-only. Column structure
-// (rename / reorder / add / delete) is editable with PDF + original snapshots.
+// Extracted-data preview + full-page structure editor. Numeric columns
+// (integer / decimal / percentage) stay read-only in the grid; rename /
+// reorder / add / delete / merge are edited with PDF + original snapshots.
 export function TableDetail({ table, jobId, onSave, onTitleLive, onTitleCommit, editorOnly = false }) {
-  const classificationNeedsReview = Object.values(table.classification || {}).some((f) => f?.human_review_needed)
-  const columnsNeedReview = (table.columns || []).some((c) => c.human_review_needed)
-  const showSemanticSections = table.semantic_status === 'classified'
-
   const [originalSnapshot] = useState(() => ({
     columns: cloneColumns(table.columns || []),
     rows: padRowsToColumns(table.rows || [], (table.columns || []).length),
@@ -55,9 +64,6 @@ export function TableDetail({ table, jobId, onSave, onTitleLive, onTitleCommit, 
 
   const [draft, setDraft] = useState(() => ({
     title: titleForEdit(table),
-    classification: Object.fromEntries(
-      Object.entries(table.classification || {}).map(([k, f]) => [k, f?.value ?? ''])
-    ),
     columns: columnDraftFromTable(table.columns || []),
     rows: padRowsToColumns(table.rows || [], (table.columns || []).length),
     cellMerges: Array.isArray(table.cell_merges) ? table.cell_merges.map((m) => ({ ...m })) : [],
@@ -65,8 +71,6 @@ export function TableDetail({ table, jobId, onSave, onTitleLive, onTitleCommit, 
       || (Array.isArray(table.cell_merges) && table.cell_merges.length > 0),
   }))
   const [saved, setSaved] = useState(false)
-  const [classificationOpen, setClassificationOpen] = useState(classificationNeedsReview)
-  const [columnsOpen, setColumnsOpen] = useState(false)
   const [savingEditor, setSavingEditor] = useState(false)
   // Full undo/redo history of editor structure changes (+ last-action red/green flash)
   const [actionFlash, setActionFlash] = useState(null)
@@ -188,17 +192,6 @@ export function TableDetail({ table, jobId, onSave, onTitleLive, onTitleCommit, 
     setActionFlash(entry.flash)
   }
 
-  const setField = (key, value) => {
-    markDirty()
-    setDraft((prev) => ({ ...prev, classification: { ...prev.classification, [key]: value } }))
-  }
-  const setColumn = (idx, key, value) => {
-    markDirty()
-    setDraft((prev) => ({
-      ...prev,
-      columns: prev.columns.map((c, i) => (i === idx ? { ...c, [key]: value } : c)),
-    }))
-  }
   const setCell = (rowIdx, colIdx, value) => {
     markDirty()
     setDraft((prev) => {
@@ -583,12 +576,6 @@ export function TableDetail({ table, jobId, onSave, onTitleLive, onTitleCommit, 
   const canSave = (table.human_review_needed || structureDirty || titleDirty) && !saved
 
   const handleSave = () => {
-    const classification = Object.fromEntries(
-      Object.entries(table.classification || {}).map(([k, f]) => [
-        k,
-        { value: draft.classification[k], human_review_needed: false, human_review_reason: null },
-      ])
-    )
     const columns = draft.columns.map((c) => ({
       ...c,
       name: (c.name || '').trim() || 'Column',
@@ -602,7 +589,7 @@ export function TableDetail({ table, jobId, onSave, onTitleLive, onTitleCommit, 
     const title = draft.title.trim() || null
     onSave({
       title,
-      classification,
+      classification: table.classification || {},
       columns,
       rows: padRowsToColumns(draft.rows, columns.length),
       cell_merges: draft.cellMerges || [],
@@ -731,77 +718,6 @@ export function TableDetail({ table, jobId, onSave, onTitleLive, onTitleCommit, 
           tableId={table.table_id}
           originalSnapshot={originalSnapshot}
         />
-      )}
-
-      {showSemanticSections && (
-      <CollapsibleSection
-        label="Classification"
-        open={classificationOpen}
-        onToggle={() => setClassificationOpen((v) => !v)}
-        hint={classificationNeedsReview ? '· needs review' : undefined}
-      >
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2">
-          {Object.entries(CLASSIFICATION_LABELS).map(([key, label]) => {
-            const field = table.classification?.[key] || {}
-            return (
-              <div key={key} className={`flex flex-col gap-1 rounded-md p-2 ${field.human_review_needed ? 'border border-yellow bg-[#fff8e1]' : 'bg-outer-bg'}`}>
-                <div className="text-[11px] font-bold uppercase text-ink-soft">{label}</div>
-                {field.human_review_needed ? (
-                  <input
-                    className="rounded border border-yellow px-1.5 py-1 text-[13px]"
-                    value={draft.classification[key] ?? ''}
-                    onChange={(e) => setField(key, e.target.value)}
-                  />
-                ) : (
-                  <div className="text-[13px] text-ink">{field.value ?? <em className="text-[#a49c8e]">—</em>}</div>
-                )}
-                {field.human_review_needed && <ReviewBadge needed reason={field.human_review_reason} />}
-              </div>
-            )
-          })}
-        </div>
-      </CollapsibleSection>
-      )}
-
-      {showSemanticSections && (
-      <CollapsibleSection
-        label="Column semantics"
-        open={columnsOpen}
-        onToggle={() => setColumnsOpen((v) => !v)}
-        hint={columnsNeedReview ? '· needs review' : `· ${columnCount} column${columnCount === 1 ? '' : 's'}`}
-      >
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[600px] border-collapse text-[13px]">
-            <thead>
-              <tr>
-                {['Name', 'Role', 'Concept', 'Description', 'Data type', 'Review'].map((h) => (
-                  <th key={h} className="border border-teal/50 bg-teal px-2.5 py-1.5 text-left text-[11.5px] uppercase text-cream">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {displayColumns.map((c, i) => (
-                <tr key={i} className={c.human_review_needed ? 'bg-[#fff8e1]' : ''}>
-                  <td className="border border-line px-2.5 py-1.5">{c.name}</td>
-                  <td className="border border-line px-2.5 py-1.5">
-                    <select className="w-full rounded border border-line px-1 py-0.5" value={c.role || 'unknown'} onChange={(e) => setColumn(i, 'role', e.target.value)}>
-                        {ROLE_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}
-                      </select>
-                  </td>
-                  <td className="border border-line px-2.5 py-1.5">
-                    <input className="w-full rounded border border-line px-1 py-0.5" value={c.concept || ''} onChange={(e) => setColumn(i, 'concept', e.target.value)} />
-                  </td>
-                  <td className="border border-line px-2.5 py-1.5">
-                    <input className="w-full rounded border border-line px-1 py-0.5" value={c.description || ''} onChange={(e) => setColumn(i, 'description', e.target.value)} />
-                  </td>
-                  <td className="border border-line px-2.5 py-1.5">{c.data_type || '—'}</td>
-                  <td className="border border-line px-2.5 py-1.5">{c.human_review_needed ? <ReviewBadge needed reason={c.human_review_reason} /> : '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </CollapsibleSection>
       )}
 
       {table.uncertain_cells?.length > 0 && (
