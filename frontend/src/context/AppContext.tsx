@@ -5,7 +5,14 @@
 // an overlay shown on top of whatever route is active, not a route itself).
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { getLlmApiKey, setLlmApiKey, getLlmProvider, setLlmProvider } from '../lib/llmKey'
-import { getStoredUser, clearSession, setSession, type StoredUser } from '../lib/auth'
+import {
+  getToken,
+  getStoredUser,
+  clearSession,
+  setSession,
+  withAuthHeaders,
+  type StoredUser,
+} from '../lib/auth'
 
 type LoginData = { token: string; email: string; name?: string; dept?: string }
 type Settings = { provider: string; apiKey: string }
@@ -32,7 +39,7 @@ const EMPTY_USER: StoredUser = { name: '', role: 'Administrator', email: '', dep
 export function AppProvider({ children }: { children: ReactNode }) {
   // Auth state is only known for certain once mounted on the client
   // (localStorage doesn't exist during server rendering) -- authChecked
-  // gates any redirect logic until after that first client-side read, to
+  // gates any redirect logic until after that first client-side check, to
   // avoid a false "logged out" flash/hydration mismatch.
   const [authChecked, setAuthChecked] = useState(false)
   const [loggedIn, setLoggedIn] = useState(false)
@@ -42,13 +49,54 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [keySaved, setKeySaved] = useState(false)
 
   useEffect(() => {
-    const storedUser = getStoredUser()
-    setLoggedIn(!!storedUser)
-    if (storedUser) setUser(storedUser)
-    const savedKey = getLlmApiKey()
-    setSettings({ provider: getLlmProvider() || 'Anthropic', apiKey: savedKey })
-    setKeySaved(!!savedKey)
-    setAuthChecked(true)
+    let cancelled = false
+
+    async function restoreSession() {
+      const savedKey = getLlmApiKey()
+      setSettings({ provider: getLlmProvider() || 'Anthropic', apiKey: savedKey })
+      setKeySaved(!!savedKey)
+
+      const token = getToken()
+      const storedUser = getStoredUser()
+      if (!token || !storedUser) {
+        clearSession()
+        if (!cancelled) {
+          setLoggedIn(false)
+          setUser(EMPTY_USER)
+          setAuthChecked(true)
+        }
+        return
+      }
+
+      try {
+        // Confirm the token is still valid for this backend process. A
+        // restart rotates AUTH_INSTANCE_ID and returns 401 here.
+        const res = await fetch('/api/me', withAuthHeaders())
+        if (!res.ok) throw new Error('session invalid')
+        const data = await res.json()
+        if (cancelled) return
+        const nextUser: StoredUser = {
+          name: data.name || storedUser.name || data.email,
+          email: data.email || storedUser.email,
+          dept: data.dept || storedUser.dept || '',
+          role: storedUser.role || 'Administrator',
+        }
+        setSession(token, nextUser)
+        setUser(nextUser)
+        setLoggedIn(true)
+      } catch {
+        clearSession()
+        if (!cancelled) {
+          setLoggedIn(false)
+          setUser(EMPTY_USER)
+        }
+      } finally {
+        if (!cancelled) setAuthChecked(true)
+      }
+    }
+
+    restoreSession()
+    return () => { cancelled = true }
   }, [])
 
   const handleSettingsChange = (next: Settings) => {

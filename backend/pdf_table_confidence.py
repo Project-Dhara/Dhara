@@ -37,7 +37,8 @@ trade-off of skipping the LLM: worth knowing, not just a footnote.
 """
 
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 
@@ -66,8 +67,12 @@ def clean_dataframe_light(df: pd.DataFrame) -> pd.DataFrame:
     """Whitespace-normalize cells, blank out empty strings, drop fully-empty
     rows/columns. Pure Python cleanup -- no LLM, no restructuring."""
     meta = None
+    caption = None
+    banner_id = None
     try:
         meta = list(getattr(df, "attrs", {}).get("dhara_column_meta") or [])
+        caption = getattr(df, "attrs", {}).get("dhara_table_caption")
+        banner_id = getattr(df, "attrs", {}).get("dhara_banner_table_id")
     except Exception:
         meta = None
     cleaned = df.map(lambda v: _cell_str(v) or None)
@@ -82,6 +87,10 @@ def clean_dataframe_light(df: pd.DataFrame) -> pd.DataFrame:
         ]
     elif meta:
         cleaned.attrs["dhara_column_meta"] = meta
+    if caption:
+        cleaned.attrs["dhara_table_caption"] = caption
+    if banner_id:
+        cleaned.attrs["dhara_banner_table_id"] = banner_id
     return cleaned
 
 
@@ -113,11 +122,15 @@ def profile_table(df: pd.DataFrame) -> Dict[str, Any]:
     # mostly-text (a label) -- not a murky middle. A column stuck between
     # MIXED_TYPE_LOW and MIXED_TYPE_HIGH numeric fraction usually means cells
     # bled into the wrong column during extraction.
+    # Exception: short stub/code columns (1, a, (b), …) legitimately mix
+    # digits and letters and are not misalignment.
     mixed_type_columns = 0
     for col in df.columns:
         vals = [_cell_str(v) for v in df[col].values]
         nonempty = [v for v in vals if v]
         if len(nonempty) < 3:
+            continue
+        if _is_stub_code_column(nonempty):
             continue
         numeric_frac = sum(_is_numeric_cell(v) for v in nonempty) / len(nonempty)
         if MIXED_TYPE_LOW < numeric_frac < MIXED_TYPE_HIGH:
@@ -132,6 +145,13 @@ def profile_table(df: pd.DataFrame) -> Dict[str, Any]:
         "header_dupe_in_first_row": header_dupe_in_first_row,
         "mixed_type_columns": mixed_type_columns,
     }
+
+
+def _is_stub_code_column(nonempty: List[str]) -> bool:
+    """Group/S.No.-style codes (1, a, (b)) look mixed numeric/text but are labels."""
+    if len(nonempty) < 3:
+        return False
+    return all(len(v) <= 4 for v in nonempty)
 
 
 def _structural_bucket_for_df(df: pd.DataFrame) -> Tuple[str, str, Dict[str, Any]]:
@@ -157,26 +177,29 @@ def _structural_bucket_for_df(df: pd.DataFrame) -> Tuple[str, str, Dict[str, Any
 def classify_page(candidates: List[Dict[str, Any]]) -> Tuple[str, str, Dict[str, Any]]:
     """Returns (bucket, reason, info). bucket is "high" or "llm".
 
-    Every pymupdf_lines_strict candidate on the page must pass structural
-    checks for the page to be auto-accepted — otherwise a clean first table
-    would hide a messy second one from LLM review.
+    Every ruled-border candidate on the page (lines_strict, else lines) must
+    pass structural checks for the page to be auto-accepted — otherwise a clean
+    first table would hide a messy second one from LLM review.
     """
-    lines_strict = [c for c in candidates if c["method"] == "pymupdf_lines_strict"]
+    ruled = [c for c in candidates if c["method"] == "pymupdf_lines_strict"]
+    if not ruled:
+        ruled = [c for c in candidates if c["method"] == "pymupdf_lines"]
 
-    if not lines_strict:
-        return "llm", "no lines_strict candidate (should not happen post-filter)", {}
+    if not ruled:
+        return "llm", "no ruled-border candidate (should not happen post-filter)", {}
 
     last_info: Dict[str, Any] = {}
-    for c in lines_strict:
+    for c in ruled:
         df = c.get("df")
         if df is None or getattr(df, "empty", True):
-            return "llm", "empty lines_strict candidate", {}
+            return "llm", "empty ruled-border candidate", {}
         bucket, reason, info = _structural_bucket_for_df(df)
         last_info = info
         if bucket != "high":
             return bucket, reason, info
 
-    return "high", "all lines_strict tables pass structural checks", last_info
+    label = "lines_strict" if ruled[0]["method"] == "pymupdf_lines_strict" else "lines"
+    return "high", f"all {label} tables pass structural checks", last_info
 
 
 # Running headers / chrome on SDA-style index PDFs that should never become
@@ -197,6 +220,25 @@ _TABLE_CAPTION_RE = re.compile(
     r"^\s*(TABLE|FIG(?:URE)?|CHART)\s+\d+(?:\.\d+)*\s*[:.\-–—]?\s*(.+)$",
     re.I,
 )
+# Broader document captions (SDA / DES / vital-stats style).
+_EXTENDED_CAPTION_RES = (
+    _TABLE_CAPTION_RE,
+    re.compile(
+        r"^\s*(?:TABLE|TAB\.?)\s*[:.\-–—]?\s*[A-Z0-9][\w.\-–—/]*(?:\s*[:.\-–—]\s*.+)?$",
+        re.I,
+    ),
+    re.compile(
+        r"^\s*(?:STATEMENT|ANNEX(?:URE)?|SCHEDULE|EXHIBIT|APPENDIX)\s*"
+        r"[:.\-–—]?\s*[\w.\-–—/]+(?:\s*[:.\-–—]\s*.+)?$",
+        re.I,
+    ),
+    re.compile(
+        r"^\s*(?:FIG(?:URE)?|CHART|BOX)\s+\d+(?:\.\d+)*\s*[:.\-–—]?\s*.+$",
+        re.I,
+    ),
+)
+# Max vertical gap (PDF points) between caption/heading and table top.
+_BBOX_TITLE_MAX_GAP_PT = 140.0
 
 
 def _normalize_title_line(line: str) -> str:
@@ -249,6 +291,191 @@ def _is_usable_inferred_title(title: str, columns: Optional[List[str]] = None) -
     return True
 
 
+def _matches_extended_caption(line: str) -> bool:
+    s = _normalize_title_line(line)
+    if not s:
+        return False
+    return any(p.match(s) for p in _EXTENDED_CAPTION_RES)
+
+
+def build_pdf_outline_index(pdf_path: Union[str, Path]) -> Dict[int, List[str]]:
+    """
+    Map each 1-based page number to the outline/bookmark breadcrumb active on
+    that page (from the PDF TOC). Used as a fallback table title when no
+    caption or heading is found above the grid.
+    """
+    try:
+        import pymupdf
+    except ImportError:
+        return {}
+
+    path = Path(pdf_path)
+    if not path.is_file():
+        return {}
+
+    doc = pymupdf.open(path)
+    try:
+        toc = doc.get_toc() or []
+        n_pages = doc.page_count
+    finally:
+        doc.close()
+
+    items = sorted(
+        (
+            (int(e[0]), _normalize_title_line(str(e[1])), int(e[2]))
+            for e in toc
+            if isinstance(e, (list, tuple)) and len(e) >= 3 and str(e[1]).strip()
+        ),
+        key=lambda x: (x[2], x[0]),
+    )
+
+    stack: Dict[int, str] = {}
+    index: Dict[int, List[str]] = {}
+    item_idx = 0
+    for page in range(1, n_pages + 1):
+        while item_idx < len(items) and items[item_idx][2] <= page:
+            lvl, title, _ = items[item_idx]
+            stack[lvl] = title
+            for deeper in [k for k in stack if k > lvl]:
+                del stack[deeper]
+            item_idx += 1
+        index[page] = [stack[k] for k in sorted(stack)]
+    return index
+
+
+def extract_page_text_blocks(doc: Any, page_num: int) -> List[Dict[str, float]]:
+    """
+    Positioned text lines from one PDF page. Each block:
+      {text, x0, y0, x1, y1} in PDF coordinates (y grows downward).
+    """
+    if doc is None or page_num is None or page_num < 1:
+        return []
+    try:
+        page = doc[page_num - 1]
+        payload = page.get_text("dict") or {}
+    except Exception:
+        return []
+
+    blocks_out: List[Dict[str, float]] = []
+    for block in payload.get("blocks") or []:
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines") or []:
+            spans = line.get("spans") or []
+            text = _normalize_title_line("".join(str(s.get("text") or "") for s in spans))
+            if not text:
+                continue
+            bbox = line.get("bbox") or block.get("bbox")
+            if not bbox or len(bbox) < 4:
+                continue
+            blocks_out.append({
+                "text": text,
+                "x0": float(bbox[0]),
+                "y0": float(bbox[1]),
+                "x1": float(bbox[2]),
+                "y1": float(bbox[3]),
+            })
+    return blocks_out
+
+
+def _horizontal_overlap(a0: float, a1: float, b0: float, b1: float) -> float:
+    return max(0.0, min(a1, b1) - max(a0, b0))
+
+
+def _blocks_above_bbox(
+    page_blocks: List[Dict[str, float]],
+    bbox: List[float],
+    *,
+    max_gap: float = _BBOX_TITLE_MAX_GAP_PT,
+) -> List[Tuple[float, Dict[str, float]]]:
+    """Text lines above the table, sorted nearest-first (distance to table top)."""
+    if not page_blocks or not bbox or len(bbox) < 4:
+        return []
+    tx0, ty0, tx1, _ty1 = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+    table_w = max(tx1 - tx0, 1.0)
+    h_pad = max(24.0, table_w * 0.12)
+
+    above: List[Tuple[float, Dict[str, float]]] = []
+    for b in page_blocks:
+        gap = ty0 - float(b["y1"])
+        if gap < -4 or gap > max_gap:
+            continue
+        overlap = _horizontal_overlap(
+            float(b["x0"]), float(b["x1"]),
+            tx0 - h_pad, tx1 + h_pad,
+        )
+        if overlap <= 0:
+            continue
+        above.append((gap, b))
+    above.sort(key=lambda t: (t[0], -(t[1]["x1"] - t[1]["x0"])))
+    return above
+
+
+def _title_from_outline_sections(
+    sections: Optional[List[str]],
+    columns: Optional[List[str]],
+) -> Tuple[Optional[str], str]:
+    if not sections:
+        return None, "heuristic_none"
+    filtered = [s for s in sections if s and not _is_chrome_title_line(s)]
+    if not filtered:
+        return None, "heuristic_none"
+
+    deepest = filtered[-1]
+    if len(filtered) >= 2 and len(deepest) < 48:
+        parent = filtered[-2]
+        if parent.lower() != deepest.lower():
+            combo = f"{parent} — {deepest}"
+            if _is_usable_inferred_title(combo, columns):
+                return combo, "heuristic_pdf_outline"
+    if _is_usable_inferred_title(deepest, columns):
+        return deepest, "heuristic_pdf_outline"
+    return None, "heuristic_none"
+
+
+def _title_from_bbox_blocks(
+    page_blocks: List[Dict[str, float]],
+    bbox: List[float],
+    col_names: List[str],
+) -> Tuple[Optional[str], str]:
+    """Caption or heading immediately above the ruled table region."""
+    for _gap, block in _blocks_above_bbox(page_blocks, bbox):
+        text = block["text"]
+        if _matches_extended_caption(text) and _is_usable_inferred_title(text, col_names):
+            return text, "heuristic_bbox_caption"
+    for _gap, block in _blocks_above_bbox(page_blocks, bbox):
+        text = block["text"]
+        if _looks_like_heading(text) and _is_usable_inferred_title(text, col_names):
+            return text, "heuristic_bbox_heading"
+    return None, "heuristic_none"
+
+
+def _title_from_page_lines(
+    lines: List[str],
+    col_names: List[str],
+) -> Tuple[Optional[str], str]:
+    for ln in lines:
+        if _matches_extended_caption(ln) and _is_usable_inferred_title(ln, col_names):
+            return ln, "heuristic_table_caption"
+
+    header_idx = None
+    col_lower = {c.lower() for c in col_names[:3] if c}
+    for i, ln in enumerate(lines):
+        low = ln.lower()
+        if col_lower and any(c in low for c in col_lower):
+            if sum(1 for c in col_lower if c in low) >= 1:
+                header_idx = i
+                break
+    if header_idx is not None and header_idx > 0:
+        for j in range(header_idx - 1, max(-1, header_idx - 8), -1):
+            candidate = lines[j]
+            if candidate.lower() in col_lower:
+                continue
+            if _looks_like_heading(candidate) and _is_usable_inferred_title(candidate, col_names):
+                return candidate, "heuristic_heading_above_table"
+    return None, "heuristic_none"
+
+
 def _looks_like_heading(line: str) -> bool:
     """Heuristic: short Title Case / ALL CAPS / few words, not a sentence."""
     s = _normalize_title_line(line)
@@ -277,63 +504,83 @@ def infer_title_from_page_text(
     page_text: str,
     columns: List[str],
     page_num: Optional[int] = None,
+    *,
+    bbox: Optional[List[float]] = None,
+    page_blocks: Optional[List[Dict[str, float]]] = None,
+    outline_sections: Optional[List[str]] = None,
 ) -> Tuple[Optional[str], str]:
     """
-    Infer a display title for an auto-accepted (no-LLM) table from the page's
-    plain text. The ruled-table extract only has cell/header values — section
-    headings like "Target Justification" live *above* the grid in the PDF, so
-    we recover them from page_text instead of calling an LLM.
+    Infer a display title for an auto-accepted (no-LLM) table.
 
     Strategy (first match wins):
-      1. Explicit TABLE/FIGURE caption on the page (e.g. "TABLE 2.1: …").
-      2. Heading-like line immediately above the column-header cue in the text
-         (find first column name in page_text, walk upward, skip chrome).
-      3. None when no real title is found — Preview shows an empty cue so
-         the user can review and add one (never invent from column fragments).
+      1. Caption/heading positioned above the table bbox (when bbox + blocks known).
+      2. Extended caption patterns on the page (TABLE, STATEMENT, ANNEX, …).
+      3. Heading-like line above the column-header cue in plain page text.
+      4. PDF outline/bookmark breadcrumb for this page (section context).
+      5. None — Preview prompts the user to add a title.
 
-    Returns (title, title_source) where title_source documents which branch
-    fired (for Preview/debugging; not an LLM decision).
+    Returns (title, title_source) for debugging in Preview.
     """
     col_names = [_normalize_title_line(c) for c in columns if _normalize_title_line(c)]
-    lines = [_normalize_title_line(ln) for ln in (page_text or "").splitlines()]
-    lines = [ln for ln in lines if ln]
+    lines = [
+        ln for ln in (_normalize_title_line(ln) for ln in (page_text or "").splitlines())
+        if ln
+    ]
 
-    # --- 1) Explicit TABLE / FIGURE caption anywhere on the page ---
-    for ln in lines:
-        m = _TABLE_CAPTION_RE.match(ln)
-        if m:
-            rest = _normalize_title_line(m.group(2))
-            # Keep the full caption including "TABLE 2.1: …" when informative.
-            title = ln if rest else ln
-            if _is_usable_inferred_title(title, col_names):
-                return title, "heuristic_table_caption"
+    if bbox and page_blocks:
+        title, source = _title_from_bbox_blocks(page_blocks, bbox, col_names)
+        if title:
+            return title, source
 
-    # --- 2) Line above the column-header cue ("Indicators", etc.) ---
-    # Locate where the table header appears in the text stream, then take the
-    # nearest prior heading-like line (skips "SDG INDIA INDEX" / year chrome).
-    header_idx = None
-    col_lower = {c.lower() for c in col_names[:3] if c}
-    for i, ln in enumerate(lines):
-        low = ln.lower()
-        # Header row often appears as one line or consecutive short labels.
-        if col_lower and any(c in low for c in col_lower):
-            # Prefer a line that looks like several headers, or the first col alone.
-            hits = sum(1 for c in col_lower if c in low)
-            if hits >= 1:
-                header_idx = i
-                break
-    if header_idx is not None and header_idx > 0:
-        for j in range(header_idx - 1, max(-1, header_idx - 8), -1):
-            candidate = lines[j]
-            if _looks_like_heading(candidate):
-                # Avoid picking a column name itself as the title.
-                if candidate.lower() in col_lower:
-                    continue
-                if _is_usable_inferred_title(candidate, col_names):
-                    return candidate, "heuristic_heading_above_table"
+    title, source = _title_from_page_lines(lines, col_names)
+    if title:
+        return title, source
 
-    # --- 3) No usable title — leave empty so Preview prompts review ---
+    title, source = _title_from_outline_sections(outline_sections, col_names)
+    if title:
+        return title, source
+
     return None, "heuristic_none"
+
+
+def dedupe_column_names(columns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Guarantee unique column names in the output.
+
+    A flattened multi-level header (e.g. two "2023-24" leaf columns under
+    different parent groups like "Sanctioned" / "Released") should carry its
+    group in the name, but neither the deterministic (no-LLM) path nor the
+    LLM always does this. Duplicate names corrupt the table for any
+    downstream consumer keyed by column name, so disambiguate deterministically
+    here: prefer the column's own category/header_group as a qualifier,
+    falling back to a plain occurrence suffix. Does not touch already-unique
+    names. Shared by both the auto-accepted (table_dict_from_df) and
+    LLM-validated (_normalize_table) paths so neither can leak duplicates.
+    """
+    seen: Dict[str, int] = {}
+    for col in columns:
+        name = str(col.get("name") or "").strip()
+        seen[name] = seen.get(name, 0) + 1
+
+    counters: Dict[str, int] = {}
+    for col in columns:
+        name = str(col.get("name") or "").strip()
+        if not name or seen.get(name, 0) <= 1:
+            continue
+        counters[name] = counters.get(name, 0) + 1
+        if counters[name] == 1:
+            continue  # first occurrence keeps the original name
+        qualifier = col.get("category") or col.get("header_group")
+        if qualifier and str(qualifier).strip().lower() not in name.lower():
+            new_name = f"{name} ({qualifier})"
+        else:
+            new_name = f"{name} ({counters[name]})"
+        col["name"] = new_name
+        col.setdefault("human_review_needed", False)
+        if not col["human_review_needed"]:
+            col["human_review_needed"] = True
+            col["human_review_reason"] = "ambiguous_column"
+            col["input_type"] = col.get("input_type") or "inputbox"
+    return columns
 
 
 def table_dict_from_df(
@@ -341,12 +588,16 @@ def table_dict_from_df(
     *,
     page_text: str = "",
     page_num: Optional[int] = None,
+    method: str = "pymupdf_lines_strict",
+    bbox: Optional[List[float]] = None,
+    page_blocks: Optional[List[Dict[str, float]]] = None,
+    outline_sections: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Build a validated-table-shaped dict directly from a clean DataFrame,
     with no LLM involved. Semantic classification fields stay null (this path
-    skips meaning judgment). Title is filled by infer_title_from_page_text
-    when page_text is provided — the heading sits outside the ruled grid, so
-    a cheap text heuristic replaces an LLM title call. Schema matches the LLM
+    skips meaning judgment). Title prefers an in-grid banner caption stored on
+    ``df.attrs`` (TABLE id row + descriptive title inside the ruled border),
+    then falls back to infer_title_from_page_text. Schema matches the LLM
     path so Preview can treat both uniformly via semantic_status."""
     cleaned = clean_dataframe_light(df)
     col_names = [str(c) for c in cleaned.columns]
@@ -379,9 +630,32 @@ def table_dict_from_df(
             "human_review_needed": False,
             "human_review_reason": None,
         })
-    title, title_source = infer_title_from_page_text(page_text, col_names, page_num=page_num)
+    columns = dedupe_column_names(columns)
+    in_grid_title = None
+    in_grid_banner_id = None
+    try:
+        in_grid_title = (getattr(df, "attrs", {}).get("dhara_table_caption") or "").strip() or None
+        in_grid_banner_id = (
+            getattr(df, "attrs", {}).get("dhara_banner_table_id") or ""
+        ).strip() or None
+    except Exception:
+        in_grid_title = None
+        in_grid_banner_id = None
+    # In-grid banners (TABLE id row + descriptive title row inside the ruled
+    # border) beat page-text / outline heuristics — those look above the bbox.
+    if in_grid_title:
+        title, title_source = in_grid_title, "heuristic_in_grid_banner"
+    else:
+        title, title_source = infer_title_from_page_text(
+            page_text,
+            col_names,
+            page_num=page_num,
+            bbox=bbox,
+            page_blocks=page_blocks,
+            outline_sections=outline_sections,
+        )
     empty_field = {"value": None, "human_review_needed": False, "human_review_reason": None}
-    return {
+    result = {
         "title": title,
         "title_source": title_source,
         "description": None,
@@ -403,6 +677,9 @@ def table_dict_from_df(
         # equivalent (and only other) place this flag gets computed.
         "human_review_needed": False,
         "human_review_reason": None,
-        "extraction": {"method": "pymupdf_lines_strict", "confidence": "high"},
+        "extraction": {"method": method or "pymupdf_lines_strict", "confidence": "high"},
         "source": "auto_high_confidence",
     }
+    if in_grid_banner_id:
+        result["banner_table_id"] = in_grid_banner_id
+    return result

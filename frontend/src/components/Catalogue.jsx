@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Copy, FileText, Plug, Tags, Terminal } from 'lucide-react'
 import { withAuthHeaders } from '../lib/auth'
 
@@ -78,6 +78,8 @@ export default function Catalogue({ hasKey, onGoSettings }) {
   const [summaryChip, setSummaryChip] = useState('ai')
   const [mcpOpen, setMcpOpen] = useState(false)
   const [copied, setCopied] = useState(null)
+  const listScrollRef = useRef(null)
+  const detailScrollRef = useRef(null)
   const [apiPreviewOpen, setApiPreviewOpen] = useState(false)
   const [mcpPreviewOpen, setMcpPreviewOpen] = useState(false)
   const [datasets, setDatasets] = useState([])
@@ -189,7 +191,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
               <span className="cursor-pointer text-[12.5px] font-semibold text-teal" onClick={() => { setQuery(''); setFilter('all') }}>Clear filter</span>
             )}
           </div>
-          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-0.5">
+          <div ref={listScrollRef} className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-0.5">
             {error && <div className="rounded-[10px] border border-dashed border-line bg-white p-5 text-sm text-[#8E9398]">{error}</div>}
             {!error && !loading && list.map((d) => (
               <div
@@ -222,7 +224,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
         </div>
 
         {sel && (
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto rounded-[10px] border border-line bg-white">
+          <div ref={detailScrollRef} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto rounded-[10px] border border-line bg-white">
             <div className="flex flex-col gap-3 border-b border-line px-[22px] pb-4 pt-5">
               <div className="flex items-center gap-2.5">
                 <span className="rounded-full border border-[#c9dcc0] bg-sage px-2.5 py-1 text-[12.5px] font-semibold text-teal">{sel.id}</span>

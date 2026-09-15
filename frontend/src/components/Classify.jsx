@@ -52,39 +52,120 @@ function codesFingerprint(codes) {
   )
 }
 
+function normalizeColumnName(name) {
+  return String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')
+}
+
 function pickCanonicalName(names) {
   return [...names].sort((a, b) => a.length - b.length || a.localeCompare(b))[0]
 }
 
+/** Union code lists by value; keep the first filled code/definition for each. */
+function mergeCodeLists(lists) {
+  const byValue = new Map()
+  for (const list of lists || []) {
+    for (const row of list || []) {
+      const key = String(row?.value ?? row?.code ?? '').trim().toLowerCase()
+      if (!key) continue
+      const prev = byValue.get(key)
+      if (!prev) {
+        byValue.set(key, {
+          code: row.code ?? '',
+          value: row.value ?? '',
+          definition: row.definition ?? '',
+        })
+        continue
+      }
+      if (!String(prev.code || '').trim() && row.code) prev.code = row.code
+      if (!String(prev.definition || '').trim() && row.definition) prev.definition = row.definition
+    }
+  }
+  return [...byValue.values()]
+}
+
+function aliasKey(a) {
+  return `${a?._metadataId || ''}::${a?.name || ''}`
+}
+
+/**
+ * Club classification columns for the chip list:
+ *  1) same value set (even if names differ) → one chip, aliases for harmonise
+ *  2) same column name across metadata groups → one chip (union values), extras in harmonise
+ */
 function collapseEquivalentColumns(columns) {
-  const groups = new Map()
-  columns.forEach((c) => {
+  // Pass 1 — identical value fingerprints
+  const byFp = new Map()
+  ;(columns || []).forEach((c) => {
     const fp = codesFingerprint(c.codes)
     const key = isOccupationColumn(c.name)
-      ? `occ:${fp}`
-      : (fp ? `other:${fp}` : `name:${c.name}`)
-    const list = groups.get(key) || []
+      ? `occ:${fp || normalizeColumnName(c.name)}`
+      : (fp ? `fp:${fp}` : `solo:${c._metadataId || ''}::${normalizeColumnName(c.name)}`)
+    const list = byFp.get(key) || []
     list.push(c)
-    groups.set(key, list)
+    byFp.set(key, list)
   })
-  return [...groups.values()].map((list) => {
+
+  const fpCollapsed = [...byFp.values()].map((list) => {
     const names = list.map((c) => c.name)
     const occNames = names.filter(isOccupationColumn)
     const name = pickCanonicalName(occNames.length ? occNames : names)
     const primary = list.find((c) => c.name === name) || list[0]
-    const aliasNames = [...new Set(names)].filter((n) => n !== primary.name)
     return {
       ...primary,
       name: primary.name,
-      codes: cloneCodeRows(primary.codes),
-        aliases: list.map((c) => ({
+      codes: mergeCodeLists(list.map((c) => c.codes)),
+      aliases: list.map((c) => ({
         name: c.name,
         _metadataId: c._metadataId,
         _groupIndex: c._groupIndex,
       })),
+    }
+  })
+
+  // Pass 2 — same normalized name across groups (even if value sets differ)
+  const byName = new Map()
+  fpCollapsed.forEach((c) => {
+    const key = `${isOccupationColumn(c.name) ? 'occ' : 'col'}:${normalizeColumnName(c.name)}`
+    const list = byName.get(key) || []
+    list.push(c)
+    byName.set(key, list)
+  })
+
+  return [...byName.values()].map((list) => {
+    const primary = [...list].sort((a, b) => (b.codes?.length || 0) - (a.codes?.length || 0))[0]
+    const aliases = []
+    const seen = new Set()
+    list.forEach((c) => {
+      const parts = c.aliases?.length
+        ? c.aliases
+        : [{ name: c.name, _metadataId: c._metadataId, _groupIndex: c._groupIndex }]
+      parts.forEach((a) => {
+        const k = aliasKey(a)
+        if (!a?.name || seen.has(k)) return
+        seen.add(k)
+        aliases.push(a)
+      })
+    })
+    const aliasNames = [...new Set(aliases.map((a) => a.name).filter((n) => n !== primary.name))]
+    return {
+      ...primary,
+      name: primary.name,
+      codes: mergeCodeLists(list.map((c) => c.codes)),
+      aliases,
       aliasNames,
     }
   })
+}
+
+function relatedAliasCount(column) {
+  const primaryKey = aliasKey({
+    name: column.name,
+    _metadataId: column._metadataId,
+  })
+  return (column.aliases || []).filter((a) => aliasKey(a) !== primaryKey).length
 }
 
 function isPrimaryHarmoniseAlias(column, alias) {
@@ -136,6 +217,7 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
   const [ncoMatchesByCol, setNcoMatchesByCol] = useState({})
   const [ncoLoading, setNcoLoading] = useState(false)
   const [ncoError, setNcoError] = useState('')
+  const [ncoPanelOpen, setNcoPanelOpen] = useState(false)
   const [fillAiLoading, setFillAiLoading] = useState(false)
   const [fillAiError, setFillAiError] = useState('')
   const [publishing, setPublishing] = useState(false)
@@ -210,6 +292,11 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
   const activeCodes = columnCodes[selectedCol] || []
   const ncoMatches = (selectedCol && ncoMatchesByCol[selectedCol]) || null
   const columnDirty = JSON.stringify(columnCodes[selectedCol]) !== JSON.stringify(savedCodes[selectedCol])
+
+  useEffect(() => {
+    setNcoPanelOpen(Boolean(selectedCol && ncoMatchesByCol[selectedCol]))
+    setNcoError('')
+  }, [selectedCol])
 
   const setCodeFieldFor = (name, rowIndex, field, value) => {
     setColumnCodes((prev) => ({
@@ -428,50 +515,116 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
               <span className={cardNoteClass}>
                 {classifiedColumns.length} columns · pick one to check its code list
                 {saving ? ' · saving…' : ''}
-                {fillAiError && !isOccupationColumn(selectedCol) ? ` · ${fillAiError}` : ''}
               </span>
-              {!isOccupationColumn(selectedCol) && (
-              <button
-                type="button"
-                className="ml-auto h-[34px] flex-none rounded-md border-0 bg-teal px-3.5 text-[13px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]"
-                disabled={fillAiLoading || !activeCodes.length}
-                onClick={fillDefinitionsWithAi}
-              >
-                {fillAiLoading ? 'Filling…' : 'Fill with AI'}
-              </button>
-              )}
             </div>
 
-            <div className="flex flex-wrap gap-2.5 border-b border-line p-4 px-[18px]">
+            <div className="grid grid-cols-1 gap-2.5 border-b border-line p-4 px-[18px] sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {classifiedColumns.map((c) => (
-                <div
+                <button
                   key={`${c._metadataId || ''}:${c.name}`}
-                  className={`flex min-w-[140px] cursor-pointer flex-col gap-[3px] rounded-lg border px-3.5 py-2.5 transition-colors hover:border-[#c9bda6] ${
+                  type="button"
+                  className={`flex min-w-0 w-full cursor-pointer flex-col gap-1 rounded-lg border px-3.5 py-2.5 text-left transition-colors hover:border-[#c9bda6] ${
                     c.name === selectedCol ? 'border-[#b9cfa9] bg-sage' : 'border-line bg-white'
                   }`}
                   onClick={() => setSelectedCol(c.name)}
+                  title={c.name}
                 >
-                  <div className="text-[15px] font-semibold text-ink">{c.name}</div>
-                  <div className="text-[12.5px] text-ink-soft">
-                    {c.codes.length} codes{c.aliasNames?.length ? ` · +${c.aliasNames.length} same list` : ''}
+                  <div className="truncate text-[14px] font-semibold text-ink">{c.name}</div>
+                  <div className="truncate text-[12.5px] text-ink-soft">
+                    {c.codes.length} code{c.codes.length === 1 ? '' : 's'}
+                    {relatedAliasCount(c) > 0
+                      ? ` · +${relatedAliasCount(c)} in harmonisation`
+                      : ''}
                   </div>
-                </div>
+                </button>
               ))}
             </div>
 
             {activeColumn && (
               <>
-                <div className="flex items-baseline justify-between gap-4 px-[18px] pb-3 pt-[18px]">
-                  <div>
+                <div className="flex items-center justify-between gap-4 px-[18px] pb-3 pt-[18px]">
+                  <div className="min-w-0">
                     <span className="text-xl font-bold text-ink">{activeColumn.name}</span>
-                    <span className="ml-2.5 text-sm text-ink-soft">{activeColumn.concept}</span>
+                    {activeColumn.concept && activeColumn.concept !== activeColumn.name && (
+                      <span className="ml-2.5 text-sm text-ink-soft">{activeColumn.concept}</span>
+                    )}
+                    <div className="mt-0.5 text-[13px] text-ink-soft">
+                      {activeCodes.length} values
+                      {relatedAliasCount(activeColumn) > 0
+                        ? ` · ${relatedAliasCount(activeColumn)} related in harmonisation`
+                        : activeColumn.note ? ` · ${activeColumn.note}` : ''}
+                      {fillAiError && !isOccupationColumn(selectedCol) ? ` · ${fillAiError}` : ''}
+                    </div>
                   </div>
-                  <div className="whitespace-nowrap text-[13px] text-ink-soft">
-                    {activeCodes.length} values
-                    {activeColumn.aliasNames?.length
-                      ? ` · also ${activeColumn.aliasNames.join(', ')}`
-                      : activeColumn.note ? ` · ${activeColumn.note}` : ''}
-                  </div>
+                  {!isOccupationColumn(selectedCol) ? (
+                    <button
+                      type="button"
+                      className="h-[34px] flex-none rounded-md border-0 bg-teal px-3.5 text-[13px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]"
+                      disabled={fillAiLoading || !activeCodes.length}
+                      onClick={fillDefinitionsWithAi}
+                    >
+                      {fillAiLoading ? 'Filling…' : 'Fill with AI'}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="h-[34px] flex-none rounded-md border-0 bg-teal px-3.5 text-[13px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]"
+                      disabled={ncoLoading || activeCodes.length === 0}
+                      onClick={() => {
+                        setNcoPanelOpen(true)
+                        const values = activeCodes.map((r) => r.value || r.code).filter(Boolean)
+                        setNcoLoading(true)
+                        setNcoError('')
+                        fetch('/api/catalogue/match-nco', withAuthHeaders(withLlmKeyHeaders({
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ values }),
+                        })))
+                          .then(async (res) => {
+                            if (!res.ok) {
+                              const err = await res.json().catch(() => ({ detail: 'NCO matching failed' }))
+                              throw new Error(err.detail || 'NCO matching failed')
+                            }
+                            return res.json()
+                          })
+                          .then((data) => {
+                            const occName = selectedCol
+                            const matches = data.matches || {}
+                            setNcoMatchesByCol((prev) => ({ ...prev, [occName]: matches }))
+                            if (!isOccupationColumn(occName)) return
+                            const rows = columnCodes[occName] || []
+                            const nextRows = rows.map((row) => {
+                              const m = matches[row.value]
+                              if (!m || m.code == null || m.code === '') return row
+                              return {
+                                ...row,
+                                code: String(m.code),
+                                definition: m.title != null && m.title !== '' ? String(m.title) : row.definition,
+                              }
+                            })
+                            setColumnCodes((prev) => ({ ...prev, [occName]: nextRows }))
+                            setAliasVerified((prev) => {
+                              const next = { ...prev }
+                              flattenForHarmonise(classifiedColumns)
+                                .filter((e) => e.sourceName === occName)
+                                .forEach((e) => { delete next[e.id] })
+                              return next
+                            })
+                            setHarmDirty((prev) => {
+                              const next = { ...prev }
+                              flattenForHarmonise(classifiedColumns)
+                                .filter((e) => e.sourceName === occName)
+                                .forEach((e) => { delete next[e.id] })
+                              return next
+                            })
+                          })
+                          .catch((e) => setNcoError(e.message))
+                          .finally(() => setNcoLoading(false))
+                      }}
+                    >
+                      {ncoLoading ? 'Matching…' : 'Suggest NCO codes'}
+                    </button>
+                  )}
                 </div>
 
                 <div className="mx-[18px] mb-4 overflow-hidden rounded-lg border border-[#cfc6b4]">
@@ -502,74 +655,18 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
                   <button className={saveBtnClass} disabled={!columnDirty} onClick={saveColumnCodes}>Save changes</button>
                 </div>
 
-                {isOccupationColumn(activeColumn.name) && (
+                {isOccupationColumn(activeColumn.name) && ncoPanelOpen && (
                   <div className="border-t border-line px-[18px] pb-[18px]">
-                    <div className="flex items-start justify-between gap-4 pb-3 pt-4">
-                      <div>
-                        <div className="text-[15px] font-bold text-ink">NCO 2015 code suggestion</div>
-                        <div className="mt-1 max-w-[520px] text-[13px] leading-snug text-ink-soft">
-                          Fills Code and Definition above from the suggested NCO code and title. Harmonisation still asks you to verify those codes before they are saved.
-                        </div>
+                    <div className="pb-3 pt-4">
+                      <div className="text-[15px] font-bold text-ink">NCO 2015 code suggestion</div>
+                      <div className="mt-1 max-w-[520px] text-[13px] leading-snug text-ink-soft">
+                        Fills Code and Definition above from the suggested NCO code and title. Harmonisation still asks you to verify those codes before they are saved.
                       </div>
-                      <button
-                        type="button"
-                        className={saveBtnClass}
-                        disabled={ncoLoading || activeCodes.length === 0}
-                        onClick={() => {
-                          const values = activeCodes.map((r) => r.value || r.code).filter(Boolean)
-                          setNcoLoading(true)
-                          setNcoError('')
-                          fetch('/api/catalogue/match-nco', withAuthHeaders(withLlmKeyHeaders({
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ values }),
-                          })))
-                            .then(async (res) => {
-                              if (!res.ok) {
-                                const err = await res.json().catch(() => ({ detail: 'NCO matching failed' }))
-                                throw new Error(err.detail || 'NCO matching failed')
-                              }
-                              return res.json()
-                            })
-                            .then((data) => {
-                              const occName = selectedCol
-                              const matches = data.matches || {}
-                              setNcoMatchesByCol((prev) => ({ ...prev, [occName]: matches }))
-                              if (!isOccupationColumn(occName)) return
-                              const rows = columnCodes[occName] || []
-                              const nextRows = rows.map((row) => {
-                                const m = matches[row.value]
-                                if (!m || m.code == null || m.code === '') return row
-                                return {
-                                  ...row,
-                                  code: String(m.code),
-                                  definition: m.title != null && m.title !== '' ? String(m.title) : row.definition,
-                                }
-                              })
-                              setColumnCodes((prev) => ({ ...prev, [occName]: nextRows }))
-                              setAliasVerified((prev) => {
-                                const next = { ...prev }
-                                flattenForHarmonise(classifiedColumns)
-                                  .filter((e) => e.sourceName === occName)
-                                  .forEach((e) => { delete next[e.id] })
-                                return next
-                              })
-                              setHarmDirty((prev) => {
-                                const next = { ...prev }
-                                flattenForHarmonise(classifiedColumns)
-                                  .filter((e) => e.sourceName === occName)
-                                  .forEach((e) => { delete next[e.id] })
-                                return next
-                              })
-                            })
-                            .catch((e) => setNcoError(e.message))
-                            .finally(() => setNcoLoading(false))
-                        }}
-                      >
-                        {ncoLoading ? 'Matching…' : 'Suggest NCO codes'}
-                      </button>
                     </div>
                     {ncoError && <div className="mb-2.5 text-[13px] text-[#b91c1c]">{ncoError}</div>}
+                    {ncoLoading && !ncoMatches && (
+                      <div className="text-[13px] text-ink-soft">Matching occupation values to NCO 2015…</div>
+                    )}
                     {ncoMatches && (
                       <div className="overflow-hidden rounded-lg border border-[#cfc6b4]">
                         <div className="grid grid-cols-[1.2fr_0.7fr_0.8fr_1.4fr] items-start gap-3.5 border-b border-[#d7cdb9] bg-[#F4EFE3] px-4 py-2.5 font-sans text-[11.5px] uppercase tracking-wide text-[#8E9398]">
@@ -637,7 +734,9 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
               const rowsDirty = JSON.stringify(rows) !== JSON.stringify(savedCodes[sourceName])
               const done = entryReady(entry)
               const detail = isAlias
-                ? `Same values as ${sourceName} — review and verify`
+                ? (name === sourceName
+                  ? `Same column in another group — review and verify`
+                  : `Related to ${sourceName} — review and verify`)
                 : occ
                   ? 'Suggested NCO codes — review and verify'
                   : 'Value → code and definition from classification'

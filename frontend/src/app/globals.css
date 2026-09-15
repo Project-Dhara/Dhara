@@ -7,11 +7,11 @@
   --dhara-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --dhara-duration: 420ms;
   --dhara-duration-fast: 240ms;
-  --dhara-duration-slow: 560ms;
+  --dhara-duration-slow: 650ms;
 }
 
 html {
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

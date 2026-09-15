@@ -40,6 +40,16 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
   if (!authChecked || !loggedIn) return null // brief, avoids a logged-out flash before the client-side check runs
 
+  // Full-page table editor: skip AppShell chrome for maximum workspace.
+  const isTableEditor = Boolean(
+    pathname
+    && pathname.includes('/console/review/')
+    && pathname.includes('/edit/'),
+  )
+  if (isTableEditor) {
+    return <>{children}</>
+  }
+
   return (
     <AppShell
       screen={screenForPathname(pathname)}

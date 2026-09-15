@@ -175,3 +175,114 @@ Respond with ONLY: {{"valid": true or false, "issues": ["...", ...]}}
         "table_id": table_id,
         "title": title,
     }
+
+
+def _title_looks_like_headers(title: str, columns: Optional[List] = None) -> bool:
+    text = " ".join(str(title or "").split()).strip().upper()
+    if not text:
+        return False
+    if TABLE_MARKER_RE.search(text) and len(text) < 40:
+        return True
+    if re.search(r"\bSL\.?\s*NO\.?\b", text, re.I):
+        return True
+    cols = [str(c).strip().upper() for c in (columns or []) if str(c).strip()]
+    if len(cols) >= 2:
+        hits = sum(1 for c in cols[:6] if c and c in text)
+        if hits >= max(2, int(min(4, len(cols[:6])) * 0.5)):
+            return True
+    return False
+
+
+def repair_table_id_title_llm(
+    table_id: str,
+    title: str,
+    *,
+    context_rows: Optional[List[str]] = None,
+    columns: Optional[List] = None,
+    api_key: Optional[str] = None,
+    model: str = OPENAI_VALIDATION_MODEL,
+) -> Optional[Dict[str, str]]:
+    """
+    Small repair call: return corrected Source Table ID and/or Table Title when
+    extraction/validation left them empty, swapped, or header-like.
+
+    Returns ``{"table_id": str, "title": str}`` with only fields that should
+    replace the current values (omitted keys mean "leave unchanged"), or None
+    when nothing usable was produced.
+    """
+    table_id = (table_id or "").strip()
+    title = (title or "").strip()
+    lines = [str(x).strip() for x in (context_rows or []) if str(x).strip()]
+    col_preview = ", ".join(str(c) for c in (columns or [])[:8] if str(c).strip())
+
+    context_block = "\n".join(f"- {ln}" for ln in lines[:6]) or "(none)"
+    prompt = f"""Return the correct Source Table ID and Table Title for this statistics table.
+
+Source Table ID (current): {table_id!r}
+Table Title (current): {title!r}
+Leading rows:
+{context_block}
+Column headers (hint): {col_preview or "(unknown)"}
+
+Definitions:
+- Source Table ID = short identifier, usually containing TABLE plus a code (e.g. "TABLE: B-6", "Table : D-12").
+- Table Title = descriptive caption of what the table measures (not the TABLE id, not column headers like SL. NO. / AGE).
+- If a subtitle banner follows the main caption, join with " — ".
+- Keep original wording/casing from the leading rows when possible.
+- If a field is already correct, return it unchanged.
+- Respond with ONLY JSON: {{"table_id": "...", "title": "..."}}
+"""
+
+    try:
+        client = openai.OpenAI(api_key=api_key or os.environ.get("OPENAI_API_KEY"))
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=280,
+        )
+        text = response.choices[0].message.content or ""
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        parsed = json.loads(match.group(0)) if match else {}
+        out: Dict[str, str] = {}
+
+        repaired_id = str(parsed.get("table_id") or "").strip()
+        if repaired_id and repaired_id != table_id:
+            out["table_id"] = repaired_id
+
+        repaired_title = str(parsed.get("title") or "").strip()
+        if repaired_title and repaired_title != title:
+            if _title_looks_like_headers(repaired_title, columns):
+                repaired_title = ""
+            elif TABLE_MARKER_RE.search(repaired_title) and len(repaired_title) < 48:
+                repaired_title = ""
+            if repaired_title:
+                out["title"] = repaired_title
+
+        return out or None
+    except Exception as exc:
+        print(f"[validation] id/title repair skipped ({exc})", flush=True)
+        return None
+
+
+def repair_table_title_llm(
+    table_id: str,
+    title: str,
+    *,
+    context_rows: Optional[List[str]] = None,
+    columns: Optional[List] = None,
+    api_key: Optional[str] = None,
+    model: str = OPENAI_VALIDATION_MODEL,
+) -> Optional[str]:
+    """Backward-compatible wrapper — returns only a repaired title string."""
+    repaired = repair_table_id_title_llm(
+        table_id,
+        title,
+        context_rows=context_rows,
+        columns=columns,
+        api_key=api_key,
+        model=model,
+    )
+    if not repaired:
+        return None
+    return repaired.get("title")

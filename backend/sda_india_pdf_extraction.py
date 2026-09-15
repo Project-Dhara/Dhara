@@ -18,7 +18,13 @@ import pymupdf
 from dotenv import load_dotenv
 
 from pdf_extraction_workers import extract_pymupdf_chunk
-from pdf_table_confidence import classify_page, table_dict_from_df
+from pdf_table_confidence import (
+    build_pdf_outline_index,
+    classify_page,
+    dedupe_column_names,
+    extract_page_text_blocks,
+    table_dict_from_df,
+)
 
 load_dotenv(Path(__file__).parent / ".env")
 
@@ -145,11 +151,208 @@ def group_by_page(tables: List[Dict[str, Any]]) -> Dict[int, List[Dict[str, Any]
     return dict(sorted(pages.items()))
 
 def filter_candidate_pages(pages_grouped: Dict[int, List[Dict[str, Any]]]) -> Dict[int, List[Dict[str, Any]]]:
+    """Keep pages that have at least one ruled-border hit (lines_strict or lines).
+
+    Drops text-only false positives (prose misread as tables) while retaining
+    real grids whose lines are too light/partial for lines_strict alone.
+    """
     return {
         page_num: candidates
         for page_num, candidates in pages_grouped.items()
-        if any(c["method"] == "pymupdf_lines_strict" for c in candidates)
+        if any(
+            str(c.get("method") or "") in ("pymupdf_lines_strict", "pymupdf_lines")
+            for c in candidates
+        )
     }
+
+
+_METHOD_RANK = {
+    "pymupdf_lines_strict": 0,
+    "pymupdf_lines": 1,
+    "pymupdf_text": 2,
+}
+
+
+def _bbox_iou(a: Optional[List[float]], b: Optional[List[float]]) -> float:
+    """Intersection-over-union for [x0,y0,x1,y1] boxes; 0 if either missing."""
+    if not a or not b or len(a) < 4 or len(b) < 4:
+        return 0.0
+    ax0, ay0, ax1, ay1 = (float(a[0]), float(a[1]), float(a[2]), float(a[3]))
+    bx0, by0, bx1, by1 = (float(b[0]), float(b[1]), float(b[2]), float(b[3]))
+    ix0, iy0 = max(ax0, bx0), max(ay0, by0)
+    ix1, iy1 = min(ax1, bx1), min(ay1, by1)
+    iw, ih = max(0.0, ix1 - ix0), max(0.0, iy1 - iy0)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = max(0.0, ax1 - ax0) * max(0.0, ay1 - ay0)
+    area_b = max(0.0, bx1 - bx0) * max(0.0, by1 - by0)
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _bbox_overlap_frac(a: Optional[List[float]], b: Optional[List[float]]) -> float:
+    """intersection / min(area) — catches a tall text bbox covering a ruled table."""
+    if not a or not b or len(a) < 4 or len(b) < 4:
+        return 0.0
+    ax0, ay0, ax1, ay1 = (float(a[0]), float(a[1]), float(a[2]), float(a[3]))
+    bx0, by0, bx1, by1 = (float(b[0]), float(b[1]), float(b[2]), float(b[3]))
+    ix0, iy0 = max(ax0, bx0), max(ay0, by0)
+    ix1, iy1 = min(ax1, bx1), min(ay1, by1)
+    iw, ih = max(0.0, ix1 - ix0), max(0.0, iy1 - iy0)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = max(0.0, ax1 - ax0) * max(0.0, ay1 - ay0)
+    area_b = max(0.0, bx1 - bx0) * max(0.0, by1 - by0)
+    denom = min(area_a, area_b)
+    return inter / denom if denom > 0 else 0.0
+
+
+def _bboxes_same_table(a: Optional[List[float]], b: Optional[List[float]]) -> bool:
+    return _bbox_iou(a, b) >= 0.55 or _bbox_overlap_frac(a, b) >= 0.65
+
+
+def _candidate_grid_score(cand: Dict[str, Any]) -> Tuple[int, int, int]:
+    """Rank overlapping strategy hits: more columns win, then more cells, then method."""
+    df = cand.get("df")
+    if df is None or getattr(df, "empty", True):
+        return (0, 0, 0)
+    n_rows, n_cols = int(df.shape[0]), int(df.shape[1])
+    method = str(cand.get("method") or "")
+    method_bonus = max(0, 3 - _METHOD_RANK.get(method, 9))
+    return (n_cols, n_rows * n_cols, method_bonus)
+
+
+def _is_substantially_richer(challenger: Dict[str, Any], incumbent: Dict[str, Any]) -> bool:
+    """True when challenger is clearly the full table and incumbent a fragment.
+
+    Common failure: lines_strict returns only the stub/label columns while
+    lines recovers the full month/measure grid; the stub bbox sits inside the
+    full table so naive method-rank dedupe kept the fragment.
+    """
+    sc = _candidate_grid_score(challenger)
+    si = _candidate_grid_score(incumbent)
+    if sc[0] >= si[0] + 3 and sc[1] > si[1]:
+        return True
+    if sc[0] > si[0] and sc[1] >= max(si[1] * 2, si[1] + 20):
+        return True
+    if sc[0] == si[0] and sc[1] >= si[1] * 2 + 10:
+        return True
+    return False
+
+
+def dedupe_candidates_by_bbox(
+    candidates: List[Dict[str, Any]],
+    *,
+    iou_threshold: float = 0.55,
+) -> List[Dict[str, Any]]:
+    """Collapse strategy duplicates of the same physical table.
+
+    Prefer lines_strict > lines > text when bboxes heavily overlap *and* the
+    grids are similarly rich. If a later strategy recovers a substantially
+    wider/larger grid whose bbox nests the earlier hit, keep the richer one
+    (fragment lines_strict must not eclipse a full lines table). Distinct
+    tables on different y-bands stay intact. Drops a spanning pymupdf_text
+    blob that covers ruled tables (LLM mix-and-match source).
+    """
+    if not candidates:
+        return []
+    ordered = sorted(
+        enumerate(candidates),
+        key=lambda ic: (
+            _METHOD_RANK.get(str(ic[1].get("method") or ""), 9),
+            (ic[1].get("bbox") or [0, 0, 0, 0])[1],
+            ic[0],
+        ),
+    )
+    kept: List[Dict[str, Any]] = []
+    for _, cand in ordered:
+        bb = cand.get("bbox")
+        method = str(cand.get("method") or "")
+        # Text strategy that overlaps already-kept ruled regions = merge artifact
+        # unless it is the only hit (handled below via richness).
+        if method == "pymupdf_text" and kept:
+            ruled_hits = sum(
+                1 for prev in kept
+                if str(prev.get("method") or "").startswith("pymupdf_lines")
+                and _bboxes_same_table(bb, prev.get("bbox"))
+            )
+            if ruled_hits >= 1:
+                continue
+        conflicts = [
+            i for i, prev in enumerate(kept)
+            if _bboxes_same_table(bb, prev.get("bbox"))
+        ]
+        if not conflicts:
+            kept.append(cand)
+            continue
+        best_i = max(conflicts, key=lambda i: _candidate_grid_score(kept[i]))
+        best_prev = kept[best_i]
+        if _is_substantially_richer(cand, best_prev):
+            for i in sorted(conflicts, reverse=True):
+                kept.pop(i)
+            kept.append(cand)
+        # Else keep the incumbent (already preferred by method order / richness).
+    kept.sort(key=lambda c: ((c.get("bbox") or [0, 0, 0, 0])[1], _METHOD_RANK.get(str(c.get("method") or ""), 9)))
+    return kept
+
+
+def _ruled_candidates(candidates: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    if not candidates:
+        return []
+    return [
+        c for c in candidates
+        if str(c.get("method") or "") in ("pymupdf_lines_strict", "pymupdf_lines")
+        and c.get("df") is not None
+        and not getattr(c["df"], "empty", True)
+    ]
+
+
+def _distinct_ruled_candidates(candidates: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    return dedupe_candidates_by_bbox(_ruled_candidates(candidates))
+
+
+def _score_candidate_for_table_shape(
+    table: Dict[str, Any],
+    cand: Dict[str, Any],
+) -> float:
+    df = cand.get("df")
+    if df is None or getattr(df, "empty", True):
+        return float("-inf")
+    n_cols = len(table.get("columns") or [])
+    n_rows = len(table.get("rows") or [])
+    score = -abs(int(df.shape[1]) - n_cols) * 12.0
+    score -= abs(int(df.shape[0]) - n_rows) * 0.4
+    score += _dataframe_numeric_fill_ratio(df) * 2.0
+    if cand.get("method") == "pymupdf_lines_strict":
+        score += 0.25
+    elif cand.get("method") == "pymupdf_lines":
+        score += 0.1
+    return score
+
+
+def _best_matching_ruled_candidate(
+    table: Dict[str, Any],
+    candidates: Optional[List[Dict[str, Any]]],
+    used: Optional[set] = None,
+) -> Tuple[Optional[Dict[str, Any]], Optional[int]]:
+    """Pick unused ruled candidate whose shape best matches this LLM table."""
+    if not candidates:
+        return None, None
+    used = used if used is not None else set()
+    best: Optional[Tuple[float, int, Dict[str, Any]]] = None
+    for i, c in enumerate(candidates):
+        if i in used:
+            continue
+        if str(c.get("method") or "") not in ("pymupdf_lines_strict", "pymupdf_lines"):
+            continue
+        score = _score_candidate_for_table_shape(table, c)
+        if best is None or score > best[0]:
+            best = (score, i, c)
+    if best is None:
+        return None, None
+    return best[2], best[1]
 
 
 def _pick_dual_column_strict_half(cands: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -264,47 +467,93 @@ def resolve_dual_column_pages(
 def split_by_confidence(
     pages_grouped: Dict[int, List[Dict[str, Any]]],
     page_text: Optional[Dict[int, str]] = None,
+    *,
+    pdf_path: Optional[Path] = None,
+    outline_index: Optional[Dict[int, List[str]]] = None,
 ):
     """Runs the deterministic (no-LLM) classifier per page. Returns:
       high_results   -- {page_num: {"tables": [...]}} accepted directly, no LLM
       llm_pages      -- {page_num: candidates} still needing the OpenAI step
       reason_counts  -- {reason: count} for the "llm" bucket, for visibility into why
 
-    For high-confidence pages, titles are inferred from page_text (section
-    heading / TABLE caption above the ruled grid) — see
-    pdf_table_confidence.infer_title_from_page_text — so Preview does not
-    show a blank "Page N table" for auto-accepted tables.
+    For high-confidence pages, titles are inferred from page_text, positioned
+    text above the table bbox, extended caption patterns, and PDF outline —
+    see pdf_table_confidence.infer_title_from_page_text.
     """
     page_text = page_text or {}
+    outline_index = outline_index or {}
     high_results: Dict[int, Dict[str, Any]] = {}
     llm_pages: Dict[int, List[Dict[str, Any]]] = {}
     reason_counts: Dict[str, int] = {}
 
-    for page_num, candidates in pages_grouped.items():
-        bucket, reason, _info = classify_page(candidates)
-        if bucket == "high":
-            # Keep every ruled table on the page — extraction already found them;
-            # previously only the first lines_strict candidate was auto-accepted.
-            tables = []
-            for c in candidates:
-                if c.get("method") != "pymupdf_lines_strict":
-                    continue
-                df = c.get("df")
-                if df is None or getattr(df, "empty", True):
-                    continue
-                # Pass surrounding page text so we can recover the heading that
-                # pymupdf's table extract never includes inside the DataFrame.
-                table = table_dict_from_df(
-                    df,
-                    page_text=page_text.get(page_num, ""),
-                    page_num=page_num,
+    doc = None
+    if pdf_path and Path(pdf_path).is_file():
+        doc = pymupdf.open(pdf_path)
+    page_blocks_cache: Dict[int, List[Dict[str, float]]] = {}
+
+    try:
+        for page_num, candidates in pages_grouped.items():
+            # Collapse lines_strict/lines/text clones of the same bbox before
+            # classifying or sending to the LLM (avoids mix-and-match).
+            candidates = dedupe_candidates_by_bbox(candidates)
+            bucket, reason, _info = classify_page(candidates)
+            if bucket == "high":
+                if doc is not None and page_num not in page_blocks_cache:
+                    page_blocks_cache[page_num] = extract_page_text_blocks(doc, page_num)
+                page_blocks = page_blocks_cache.get(page_num)
+                outline_sections = outline_index.get(page_num, [])
+
+                # Keep every distinct ruled table on the page.
+                has_strict = any(c.get("method") == "pymupdf_lines_strict" for c in candidates)
+                ruled_methods = {"pymupdf_lines_strict"} if has_strict else {"pymupdf_lines"}
+                # If strict missed a second physical table that only `lines` saw,
+                # still include non-overlapping lines tables.
+                tables = []
+                taken_bboxes: List[List[float]] = []
+                ordered = [
+                    c for c in candidates
+                    if c.get("method") in ruled_methods
+                ] + (
+                    [c for c in candidates if c.get("method") == "pymupdf_lines"]
+                    if has_strict else []
                 )
-                table["page"] = page_num
-                tables.append(table)
-            high_results[page_num] = {"tables": tables}
-        else:
-            llm_pages[page_num] = candidates
-            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+                seen = set()
+                for c in ordered:
+                    cid = id(c)
+                    if cid in seen:
+                        continue
+                    seen.add(cid)
+                    df = c.get("df")
+                    if df is None or getattr(df, "empty", True):
+                        continue
+                    bb = c.get("bbox")
+                    if bb and any(_bboxes_same_table(bb, prev) for prev in taken_bboxes):
+                        continue
+                    bbox_f = None
+                    if bb and len(bb) >= 4:
+                        bbox_f = [float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3])]
+                    table = table_dict_from_df(
+                        df,
+                        page_text=page_text.get(page_num, ""),
+                        page_num=page_num,
+                        method=str(c.get("method") or "pymupdf_lines_strict"),
+                        bbox=bbox_f,
+                        page_blocks=page_blocks,
+                        outline_sections=outline_sections,
+                    )
+                    table["page"] = page_num
+                    if bbox_f:
+                        table["bbox"] = bbox_f
+                    tables.append(table)
+                    if bb:
+                        taken_bboxes.append(bb)
+                high_results[page_num] = {"tables": tables}
+            else:
+                llm_pages[page_num] = candidates
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+    finally:
+        if doc is not None:
+            doc.close()
 
     return high_results, llm_pages, reason_counts
 
@@ -320,10 +569,18 @@ def df_to_text(df: pd.DataFrame, max_rows: int = 40) -> str:
 # -- are worded identically everywhere they're asked for, in one LLM call.
 TASK_A_RECONSTRUCTION_RULES = """TASK A -- RECONSTRUCT THE TABLE:
 - Reconcile the candidate extractions into ONE clean, correct table per distinct table on the page.
+- Count the DISTINCT physical tables from ruled-border candidates (pymupdf_lines_strict /
+  pymupdf_lines) that have different vertical positions / captions. You MUST emit that many
+  separate tables in "tables" (one object each). Do NOT merge two ruled candidates — or their
+  rows — into a single output table unless the raw text makes clear they are literally one table
+  split by a page/column break (same header, no new caption in between). When in doubt, keep
+  them as separate tables; a pymupdf_text candidate that spans multiple captions is a
+  whitespace-alignment artifact, not evidence that the underlying tables should be combined.
 - NEVER invent a value that isn't present in at least one candidate or the raw text.
-- Prefer whichever candidate got a given row/column right; you may combine cells from different candidates.
+- Prefer whichever candidate got a given row/column right; you may combine cells from different
+  candidates that describe the SAME physical table (same bbox / same caption), not across tables.
 - If candidates disagree on a cell and you can't tell which is right from the raw text, keep the
-  pymupdf_lines_strict value (or any single consistent choice) and add a note in "uncertain_cells".
+  pymupdf_lines_strict (or pymupdf_lines) value and add a note in "uncertain_cells".
 - Flatten multi-row / merged headers into ONE name per physical data column. Do NOT promote a
   spanning group label into its own extra column.
   Example — source header grid:
@@ -333,6 +590,16 @@ TASK_A_RECONSTRUCTION_RULES = """TASK A -- RECONSTRUCT THE TABLE:
     "No. of Births (In Lakhs)", "*Birth Rate"]
     WRONG (5 phantom columns): ["Year", "In Lakhs", "Birth Rate", "Mid Year Population", "No. of Births"]
   Every data row length MUST equal len(columns); values stay under their leaf headers.
+- Column names in the output MUST be unique. If the same leaf header (e.g. a year, "Male"/"Female",
+  or a repeated sub-metric) appears under two different parent groups, you MUST fold the parent group
+  into the name so the two columns read differently (e.g. "2023-24 (Sanctioned)" and
+  "2023-24 (Released)", or "Male (Institutional Births)" and "Male (Non-Institutional Births)").
+  Never emit two columns with the identical name.
+- SECTION / CATEGORY HEADER ROWS: a row that only has a value in the first 1-2 columns (e.g. a letter
+  or index like "A"/"B" plus a group label like "Vital Rates (per 1000)") and is blank in every measure
+  column is a section heading for the rows below it, not a data point to discard. Keep it as its own
+  row with the group label in place and null in the other columns -- do NOT silently drop it (that loses
+  the grouping context for every row underneath) and do NOT invent values to fill it in.
 - Preserve a title/description if one is visible in the raw text.
 - SYMBOLIC / ICON CELLS (especially Direction / Trend / Change columns):
   PDF extractors often emit private-use or icon-font glyphs for green/red trend arrows instead of real text.
@@ -677,10 +944,12 @@ def _dataframe_numeric_fill_ratio(df: pd.DataFrame) -> float:
 
 
 def _best_lines_strict_candidate(candidates: Optional[List[Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
+    """Prefer lines_strict; fall back to looser lines (not text) when strict missed."""
     if not candidates:
         return None
     strict = [c for c in candidates if c.get("method") == "pymupdf_lines_strict" and c.get("df") is not None]
-    pool = strict or [c for c in candidates if c.get("df") is not None]
+    lines = [c for c in candidates if c.get("method") == "pymupdf_lines" and c.get("df") is not None]
+    pool = strict or lines
     if not pool:
         return None
     return max(pool, key=lambda c: _dataframe_numeric_fill_ratio(c["df"]))
@@ -770,6 +1039,7 @@ def _strip_ungrounded_direction_columns(
 def _apply_column_alignment_guard(
     table: Dict[str, Any],
     candidates: Optional[List[Dict[str, Any]]] = None,
+    used_candidates: Optional[set] = None,
 ) -> Dict[str, Any]:
     """ADDED: Post-LLM robustness pass for shifted/mismatched column grids.
 
@@ -782,6 +1052,31 @@ def _apply_column_alignment_guard(
     columns = table.get("columns") or []
     rows = table.get("rows") or []
     issues = _detect_column_alignment_issues(columns, rows)
+
+    # Prefer a shape-matched unused ruled candidate (multi-table pages) over a
+    # single global "best fill" pick that would always reclaim table #1.
+    matched_cand, matched_idx = _best_matching_ruled_candidate(
+        table, candidates, used_candidates
+    )
+    best_cand = matched_cand or (
+        _best_lines_strict_candidate(candidates) if candidates else None
+    )
+    if best_cand is not None:
+        cand_ncols = int(best_cand["df"].shape[1])
+        if cand_ncols >= 2 and len(columns) >= max(6, cand_ncols * 2):
+            issues.append({
+                "col_index": -1, "name": "(table structure)", "kind": "structure",
+                "detail": f"reconstructed {len(columns)} columns vs {cand_ncols} in the "
+                          "ruled-border candidate -- likely a title/caption line misread as headers",
+            })
+        elif cand_ncols >= 4 and len(columns) <= max(2, cand_ncols // 2):
+            issues.append({
+                "col_index": -1, "name": "(table structure)", "kind": "structure",
+                "detail": f"reconstructed only {len(columns)} columns vs {cand_ncols} in the "
+                          "ruled-border candidate -- likely a multi-level header collapsed too far, "
+                          "losing a real column split (e.g. per-year values)",
+            })
+
     if not issues:
         return table
 
@@ -789,7 +1084,6 @@ def _apply_column_alignment_guard(
     for idx, col in enumerate(columns):
         if idx not in issue_idxs:
             continue
-        # Force review on the misaligned column so the UI highlights it.
         col["human_review_needed"] = True
         col["human_review_reason"] = "column_alignment_mismatch"
         if col.get("input_type") is None:
@@ -812,24 +1106,34 @@ def _apply_column_alignment_guard(
     if summary not in notes:
         notes.append(summary)
 
-    # Severe = geo got Direction tokens, serial glued, or 2+ measure failures.
-    severe = any(i["kind"] in ("geo", "serial") for i in issues) or sum(
+    severe = any(i["kind"] in ("geo", "serial", "structure") for i in issues) or sum(
         1 for i in issues if i["kind"] == "measure"
     ) >= 2
 
+    has_structure_issue = any(i["kind"] == "structure" for i in issues)
+
     fallback_used = False
     if severe and candidates:
-        cand = _best_lines_strict_candidate(candidates)
+        cand, cand_idx = matched_cand, matched_idx
+        if cand is None:
+            cand = _best_lines_strict_candidate(candidates)
+            cand_idx = None
+            if cand is not None and candidates:
+                for i, c in enumerate(candidates):
+                    if c is cand:
+                        cand_idx = i
+                        break
         if cand is not None:
             llm_fill = _measure_numeric_fill_ratio(columns, rows)
             cand_fill = _dataframe_numeric_fill_ratio(cand["df"])
-            # Only replace cells when the candidate is clearly richer numerically.
-            if cand_fill >= 0.5 and cand_fill > llm_fill + 0.25:
-                fallback = table_dict_from_df(cand["df"])
-                # Keep LLM semantics; replace the broken grid from pymupdf.
+            if has_structure_issue or (cand_fill >= 0.5 and cand_fill > llm_fill + 0.25):
+                fallback = table_dict_from_df(
+                    cand["df"],
+                    method=str(cand.get("method") or "pymupdf_lines_strict"),
+                )
                 table["columns"] = fallback["columns"]
                 table["rows"] = fallback["rows"]
-                # Re-run pad via kinds already matching fallback width.
+                _stamp_bbox_from_candidate(table, cand)
                 table["extraction"] = {
                     "method": f"pymupdf_fallback_after_llm<{cand.get('method')}>",
                     "confidence": "alignment_guard_fallback",
@@ -842,6 +1146,9 @@ def _apply_column_alignment_guard(
                 notes.append(fallback_note)
                 uncertain.append(fallback_note)
                 fallback_used = True
+                table["_skip_structure_attach"] = True
+                if used_candidates is not None and cand_idx is not None:
+                    used_candidates.add(cand_idx)
                 # Re-detect on fallback grid (usually clean); keep prior notes.
                 issues = _detect_column_alignment_issues(table["columns"], table["rows"])
                 if issues:
@@ -1021,6 +1328,8 @@ def _normalize_table(table: Dict[str, Any]) -> Dict[str, Any]:
         while len(row) < ncols:
             row.append(None)
         rows.append(row)
+
+    columns = dedupe_column_names(columns)
 
     return {
         "title": table.get("title"),
@@ -1242,7 +1551,7 @@ def _score_candidate_for_llm_table(table: Dict[str, Any], cand: Dict[str, Any]) 
                 cand_keys.add(_norm_header_key(f"{path[-2]} {path[-1]}"))
     overlap = len(llm_keys & cand_keys)
     score += overlap * 2.5
-    if cand.get("method") == "pymupdf_lines_strict":
+    if cand.get("method") in ("pymupdf_lines_strict", "pymupdf_lines"):
         score += 1.5
     # Prefer richer numeric fill when otherwise tied.
     score += min(2.0, _dataframe_numeric_fill_ratio(df))
@@ -1278,6 +1587,34 @@ def _pick_candidate_for_llm_table(
 
 
 
+def _header_leaves_fuzzy_match(a: Any, b: Any) -> bool:
+    """True when leaves are the same or one is a prefixed variant of the other.
+
+    Structural only: 'Age <1' ↔ '<1', 'Birth Weight M' ↔ 'M'. Avoids treating
+    LLM renames as distinct columns during candidate↔LLM alignment.
+    """
+    aa = _norm_header_key(a)
+    bb = _norm_header_key(b)
+    if not aa or not bb:
+        return False
+    if aa == bb:
+        return True
+    # Prefer longer containment with a word/token boundary so '1' does not
+    # match '15-24', but 'age <1' / '<1' and 'age 1-4' / '1-4' do.
+    if len(aa) >= len(bb):
+        longer, shorter = aa, bb
+    else:
+        longer, shorter = bb, aa
+    if len(shorter) < 1:
+        return False
+    if longer.endswith(" " + shorter) or longer.startswith(shorter + " "):
+        return True
+    # Tight codes like '<1', '>=70', '1-4' often appear after a dimension word
+    # with no extra punctuation: 'age<1' after aggressive normalize is rare,
+    # but 'age 1-4' already handled above.
+    return False
+
+
 def _map_meta_indices_to_llm_columns(
     columns: List[Dict[str, Any]],
     meta: List[Dict[str, Any]],
@@ -1292,8 +1629,10 @@ def _map_meta_indices_to_llm_columns(
     # Build lookup from normalized leaf / flattened / unit-stripped keys -> meta index.
     # Prefer earlier meta columns when aliases collide (e.g. "North DMC" before "North DMC %").
     key_to_meta: Dict[str, int] = {}
+    meta_leaves: List[str] = []
     for i, m in enumerate(meta):
         leaf = str(m.get("name") or (df.columns[i] if i < len(df.columns) else "")).strip()
+        meta_leaves.append(leaf)
         path = _header_path_from_meta(m, leaf)
         for k in _header_alias_keys(leaf, path):
             if k and k not in key_to_meta:
@@ -1309,9 +1648,38 @@ def _map_meta_indices_to_llm_columns(
             if cand is not None and cand not in used_meta:
                 mi = cand
                 break
+        if mi is None:
+            # Fuzzy: LLM often prefixes dimension words ('Age <1' vs '<1').
+            llm_leaf = str(col.get("name") or "").strip()
+            for cand_i, cand_leaf in enumerate(meta_leaves):
+                if cand_i in used_meta:
+                    continue
+                if _header_leaves_fuzzy_match(llm_leaf, cand_leaf):
+                    mi = cand_i
+                    break
         if mi is not None:
             mapping[i] = mi
             used_meta.add(mi)
+
+    matched = sum(1 for m in mapping if m is not None)
+    # Widths nearly equal but names diverged → positional identity beats a
+    # failed name map that would later splice two full grids together.
+    if (
+        abs(n_llm - n_meta) <= 2
+        and matched < max(2, int(min(n_llm, n_meta) * 0.5))
+        and min(n_llm, n_meta) >= 4
+    ):
+        return [i if i < n_meta else None for i in range(n_llm)]
+
+    # Residual pairing: after exact/fuzzy hits, map leftover LLM columns onto
+    # leftover meta columns in order (e.g. 'Cause of Death' ↔ 'NAME OF THE DISEASE'
+    # when age bands already matched). Prevents restore+append doubling.
+    unmatched_llm = [i for i, m in enumerate(mapping) if m is None]
+    unused_meta = [i for i in range(n_meta) if i not in used_meta]
+    if unmatched_llm and unused_meta and abs(len(unmatched_llm) - len(unused_meta)) <= 2:
+        for llm_i, meta_i in zip(unmatched_llm, unused_meta):
+            mapping[llm_i] = meta_i
+            used_meta.add(meta_i)
 
     # Fill remaining by position when widths match after partial matches.
     if n_llm == n_meta:
@@ -1325,41 +1693,58 @@ def _map_meta_indices_to_llm_columns(
 def _restore_body_merge_empties_from_df(table: Dict[str, Any], df: pd.DataFrame) -> None:
     """Re-introduce empty continuation cells so Preview can rowspan/colspan.
 
-    LLM reconstruction often forward-fills merged stubs. When the pymupdf
-    grid has the same shape, clear cells that are empty in the candidate and
-    equal the value above in the LLM grid (safe rowspan undo). Only touches
-    sparse label-like columns (same heuristic as Preview)."""
+    The ruled pymupdf grid is the source of truth for merge structure. LLM
+    reconstruction often fills those holes by forward-filling the parent value
+    or inventing placeholders (0). Clear any LLM value where the candidate cell
+    is empty inside a sparse (merge-bearing) column.
+
+    Row counts may differ (LLM drops a '(1)(2)(3)' index row, etc.) — align by
+    row key before comparing cells.
+    """
     columns = table.get("columns") or []
     rows = table.get("rows") or []
-    if not rows or df.shape[1] != len(columns) or df.shape[0] != len(rows):
+    if not rows or df.shape[1] != len(columns):
         return
+
+    cand_vals = df.values.tolist()
+    if df.shape[0] == len(rows):
+        cand = [list(r) for r in cand_vals]
+    else:
+        row_map = _align_llm_rows_to_candidate(rows, df)
+        cand = []
+        width = df.shape[1]
+        for r_i in range(len(rows)):
+            ci = row_map[r_i] if r_i < len(row_map) else None
+            if ci is None or ci >= len(cand_vals):
+                cand.append([None] * width)
+            else:
+                cand.append(list(cand_vals[ci]))
 
     nrows = len(rows)
     sparse_cols: List[int] = []
     for c in range(df.shape[1]):
-        empty = sum(1 for v in df.iloc[:, c].tolist() if _cell_is_empty(v))
+        empty = sum(
+            1 for r in range(nrows)
+            if _cell_is_empty(cand[r][c] if c < len(cand[r]) else None)
+        )
         if empty >= 1 and empty >= nrows * 0.12 and empty < nrows:
             sparse_cols.append(c)
     if not sparse_cols:
         return
 
-    cand = df.values.tolist()
     for r in range(nrows):
         row = list(rows[r])
         changed = False
         for c in sparse_cols:
+            if c >= len(cand[r]) or c >= len(row):
+                continue
             if not _cell_is_empty(cand[r][c]):
                 continue
             if _cell_is_empty(row[c]):
                 continue
-            above = None
-            for rr in range(r - 1, -1, -1):
-                if not _cell_is_empty(rows[rr][c] if c < len(rows[rr]) else None):
-                    above = rows[rr][c]
-                    break
-            if above is not None and _norm_header_key(row[c]) == _norm_header_key(above):
-                row[c] = None
-                changed = True
+            # Candidate empty ⇒ rowspan continuation; drop LLM fill/placeholder.
+            row[c] = None
+            changed = True
         if changed:
             rows[r] = row
     table["rows"] = rows
@@ -1445,7 +1830,11 @@ def _merge_missing_candidate_columns(
     """Insert candidate columns the LLM dropped (e.g. trailing rowspan header).
 
     Walks candidate columns in order; keeps LLM semantics for matched columns
-    and synthesizes missing ones from the pymupdf grid + dhara_column_meta."""
+    and synthesizes missing ones from the pymupdf grid + dhara_column_meta.
+
+    Must NOT splice a full candidate grid onto a renamed LLM grid when name
+    matching failed — that doubles columns (e.g. '<1…TOTAL' + 'Age <1…').
+    """
     columns = list(table.get("columns") or [])
     rows = [list(r) if isinstance(r, list) else [] for r in (table.get("rows") or [])]
     if not columns or not meta:
@@ -1456,6 +1845,9 @@ def _merge_missing_candidate_columns(
         for llm_i, meta_i in enumerate(mapping)
         if meta_i is not None
     }
+    matched = len(meta_to_llm)
+    match_ratio = matched / max(len(columns), 1)
+
     missing_meta = []
     for i in range(len(meta)):
         if i in meta_to_llm:
@@ -1472,6 +1864,13 @@ def _merge_missing_candidate_columns(
 
     # Only restore when the candidate is at least as wide (LLM skipped a col).
     if len(meta) < len(columns):
+        return
+
+    # Mapping failure (renames / prefixing), not real omissions: abort rather
+    # than restore every candidate column and then append every LLM column.
+    if matched == 0:
+        return
+    if len(missing_meta) > max(2, int(len(meta) * 0.5)) and match_ratio < 0.5:
         return
 
     cand_vals = df.values.tolist()
@@ -1495,8 +1894,12 @@ def _merge_missing_candidate_columns(
             sources.append(("cand", meta_i))
         # else: unit-suffixed duplicate of an LLM column — drop it
 
+    # Append LLM-only extras only when most LLM columns already mapped onto
+    # the candidate (true additions). Low match rate ⇒ leftovers are renames
+    # of columns we already restored — appending them doubles the table.
+    append_unmatched = match_ratio >= 0.5
     for llm_i, col in enumerate(columns):
-        if llm_i not in used_llm:
+        if llm_i not in used_llm and append_unmatched:
             new_columns.append(dict(col))
             sources.append(("llm", llm_i))
 
@@ -1531,6 +1934,15 @@ def _merge_missing_candidate_columns(
     table["notes"] = notes
 
 
+def _stamp_bbox_from_candidate(table: Dict[str, Any], cand: Optional[Dict[str, Any]]) -> None:
+    """Persist pymupdf region for PDF snapshot comparison in review UI."""
+    if not cand or table.get("bbox"):
+        return
+    bb = cand.get("bbox")
+    if bb and len(bb) >= 4:
+        table["bbox"] = [float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3])]
+
+
 def _attach_structure_from_candidates(
     table: Dict[str, Any],
     candidates: Optional[List[Dict[str, Any]]],
@@ -1542,6 +1954,7 @@ def _attach_structure_from_candidates(
     cand = _pick_candidate_for_llm_table(table, candidates, used)
     if cand is None:
         return table
+    _stamp_bbox_from_candidate(table, cand)
     df = cand["df"]
     meta = _candidate_column_meta(df)
     columns = table.get("columns") or []
@@ -1571,6 +1984,85 @@ def _attach_structure_from_candidates(
 
 
 
+def _recover_missing_ruled_tables(
+    tables: List[Dict[str, Any]],
+    candidates: Optional[List[Dict[str, Any]]],
+    page_num: int,
+    page_text: str,
+    used_candidate_idxs: set,
+) -> List[Dict[str, Any]]:
+    """If the LLM collapsed/omitted distinct ruled tables, restore them.
+
+    When the page has multiple non-overlapping ruled regions but fewer LLM
+    tables, rebuild from those ruled candidates (preserving LLM title /
+    classification by reading order when available). Does not change how
+    cells are extracted — only which physical tables are kept.
+    """
+    ruled = _distinct_ruled_candidates(candidates)
+    if len(ruled) <= 1 or len(tables) >= len(ruled):
+        return tables
+
+    cand_list = list(candidates or [])
+    out: List[Dict[str, Any]] = []
+    for i, rc in enumerate(ruled):
+        extra = table_dict_from_df(
+            rc["df"],
+            page_text=page_text,
+            page_num=page_num,
+            method=str(rc.get("method") or "pymupdf_lines_strict"),
+        )
+        extra["page"] = page_num
+        if rc.get("bbox") and len(rc["bbox"]) >= 4:
+            extra["bbox"] = [float(x) for x in rc["bbox"][:4]]
+        # Prefer LLM semantics for the same ordinal when present.
+        if i < len(tables):
+            src = tables[i]
+            if (src.get("title") or "").strip():
+                extra["title"] = src.get("title")
+                if src.get("title_source"):
+                    extra["title_source"] = src.get("title_source")
+            if src.get("description"):
+                extra["description"] = src.get("description")
+            if isinstance(src.get("classification"), dict) and src.get("classification"):
+                extra["classification"] = src.get("classification")
+                extra["semantic_status"] = src.get("semantic_status") or "classified"
+            else:
+                extra["semantic_status"] = "not_classified"
+            # Carry column-level semantics when widths match.
+            src_cols = src.get("columns") or []
+            if len(src_cols) == len(extra.get("columns") or []):
+                for j, col in enumerate(extra["columns"]):
+                    sc = src_cols[j]
+                    for key in (
+                        "role", "concept", "description", "data_type", "unit",
+                        "category", "human_review_needed", "input_type",
+                        "input_options", "human_review_reason",
+                    ):
+                        if sc.get(key) is not None:
+                            col[key] = sc.get(key)
+        else:
+            extra["semantic_status"] = "not_classified"
+            extra["notes"] = list(extra.get("notes") or []) + [
+                "ADDED: recovered ruled-border table omitted/collapsed by LLM reconstruction."
+            ]
+
+        if (tables and any(
+            (t.get("extraction") or {}).get("confidence") == "alignment_guard_fallback"
+            for t in tables
+        )):
+            extra["extraction"] = {
+                "method": f"pymupdf_recovered<{rc.get('method')}>",
+                "confidence": "alignment_guard_fallback",
+            }
+        extra["human_review_needed"], extra["human_review_reason"] = derive_human_review_needed(extra)
+        out.append(extra)
+
+        for idx, c in enumerate(cand_list):
+            if c is rc or _bbox_iou(c.get("bbox"), rc.get("bbox")) >= 0.9:
+                used_candidate_idxs.add(idx)
+    return out
+
+
 def _stamp_llm_metadata(
     page_result: Dict[str, Any],
     page_num: int,
@@ -1585,29 +2077,47 @@ def _stamp_llm_metadata(
     ADDED: strips ungrounded Direction/Trend columns, then runs
     _apply_column_alignment_guard, then attaches pymupdf multi-level header
     meta / merge empties, before derive_human_review_needed."""
+    # Dedupe strategy clones so attach/guard/recover see one grid per region.
+    candidates = dedupe_candidates_by_bbox(list(candidates or []))
     tables = []
     used_candidates: set = set()
     for t in page_result.get("tables", []):
         normalized = _normalize_table(t)
-        # ADDED: do not keep LLM-invented Direction columns when absent in source.
         normalized = _strip_ungrounded_direction_columns(normalized, candidates, page_text)
-        # ADDED: structural alignment guard (detect + optional candidate fallback).
-        normalized = _apply_column_alignment_guard(normalized, candidates)
-        # ADDED: multi-level headers + body merge empties from pymupdf candidate
-        # (no prompt change — LLM values stay; display meta is stamped here).
-        normalized = _attach_structure_from_candidates(normalized, candidates, used_candidates)
+        normalized = _apply_column_alignment_guard(normalized, candidates, used_candidates)
+        if normalized.pop("_skip_structure_attach", False):
+            pass
+        else:
+            normalized = _attach_structure_from_candidates(normalized, candidates, used_candidates)
+            normalized["columns"] = dedupe_column_names(normalized.get("columns") or [])
         normalized["semantic_status"] = "classified"
-        # Preserve fallback extraction stamp when the alignment guard replaced the grid.
         if not (isinstance(normalized.get("extraction"), dict) and normalized["extraction"].get("confidence") == "alignment_guard_fallback"):
             normalized["extraction"] = {"method": "pymupdf+llm", "confidence": "llm_validated"}
         normalized["page"] = page_num
+        if not normalized.get("bbox"):
+            matched, _ = _best_matching_ruled_candidate(normalized, candidates, used_candidates)
+            _stamp_bbox_from_candidate(
+                normalized,
+                matched or _best_lines_strict_candidate(candidates),
+            )
         normalized["human_review_needed"], normalized["human_review_reason"] = derive_human_review_needed(normalized)
         tables.append(normalized)
+
+    tables = _recover_missing_ruled_tables(
+        tables, candidates, page_num, page_text, used_candidates
+    )
     return {"tables": tables}
 
 
 def build_validation_prompt(page_num: int, candidates: List[Dict[str, Any]], text: str) -> str:
+    candidates = dedupe_candidates_by_bbox(candidates)
+    ruled_n = len(_distinct_ruled_candidates(candidates))
     sections = [f"--- {t['method']}, table {i + 1} ---\n{df_to_text(t['df'])}" for i, t in enumerate(candidates)]
+    count_hint = (
+        f"Ruled-border detectors found {ruled_n} distinct table region(s) on this page. "
+        f"Return exactly {ruled_n} object(s) in \"tables\" unless the raw text clearly shows otherwise.\n\n"
+        if ruled_n else ""
+    )
 
     return f"""You are processing page {page_num} of an Indian government survey PDF (SDA_INDIA). You have two jobs on
 this page, in order, in this same response:
@@ -1615,11 +2125,11 @@ this page, in order, in this same response:
 A. RECONSTRUCT each table on the page.
 B. UNDERSTAND what each reconstructed table means (initial semantic classification only).
 
-You are given one or more independent extractions of the same page's table(s) by two different detection
-strategies (pymupdf_lines_strict, which only catches tables with ruled border lines, and pymupdf_text, which
-infers columns from text alignment/whitespace), plus the raw page text for grounding. The strategies frequently
+You are given one or more independent extractions of the same page's table(s) by detection
+strategies (pymupdf_lines_strict / pymupdf_lines for ruled borders, and pymupdf_text for
+whitespace alignment), plus the raw page text for grounding. The strategies frequently
 disagree: one may merge two columns, split a multi-line header across rows, drop a footnote, or misread a
-numeric column.
+numeric column. Candidates with different vertical positions are DIFFERENT tables.
 
 Raw page text:
 {text[:3000]}
@@ -1627,7 +2137,7 @@ Raw page text:
 Extracted candidates:
 {chr(10).join(sections) if sections else '(no table candidates extracted on this page)'}
 
-{TASK_A_RECONSTRUCTION_RULES}
+{count_hint}{TASK_A_RECONSTRUCTION_RULES}
 
 {TASK_B_CLASSIFICATION_RULES}
 
@@ -1643,6 +2153,7 @@ def validate_page(client: openai.OpenAI, page_num: int, candidates: List[Dict[st
         response_format={"type": "json_object"},
         messages=[{"role": "user", "content": prompt}],
         max_tokens=SINGLE_PAGE_MAX_TOKENS,
+        temperature=0,
     )
     text_out = resp.choices[0].message.content
     try:
@@ -1682,25 +2193,32 @@ def build_batch_validation_prompt(pages: List[int], pages_grouped: Dict[int, Lis
                                    page_text: Dict[int, str]) -> str:
     page_sections = []
     for page_num in pages:
-        candidates = pages_grouped.get(page_num, [])
+        candidates = dedupe_candidates_by_bbox(pages_grouped.get(page_num, []))
+        ruled_n = len(_distinct_ruled_candidates(candidates))
         sections = [f"  --- {t['method']}, table {i + 1} ---\n{df_to_text(t['df'], max_rows=40)}" for i, t in enumerate(candidates)]
         text = page_text.get(page_num, "")[:RAW_TEXT_CHARS_PER_PAGE_BATCHED]
+        count_hint = (
+            f"\nRuled-border detectors found {ruled_n} distinct table region(s). "
+            f"Return exactly {ruled_n} table object(s) for this page unless raw text clearly shows otherwise."
+            if ruled_n else ""
+        )
         page_sections.append(
             f"=== PAGE {page_num} ===\n"
             f"Raw page text:\n{text}\n\n"
             f"Extracted candidates:\n{chr(10).join(sections) if sections else '  (no table candidates extracted on this page)'}"
+            f"{count_hint}"
         )
 
     return f"""You are processing {len(pages)} pages of an Indian government survey PDF (SDA_INDIA). For each page you
 have two jobs, in order, in this same response: A) reconstruct each table on that page, B) understand what each
 reconstructed table means (initial semantic classification only).
 
-For each page below, you are given one or more independent extractions of that page's table(s) by two different
-detection strategies (pymupdf_lines_strict, which only catches tables with ruled border lines, and pymupdf_text,
-which infers columns from text alignment/whitespace), plus the raw page text for grounding. The strategies
-frequently disagree: one may merge two columns, split a multi-line header across rows, drop a footnote, misread a
-numeric column, glue the header into the first data row, or -- for pages routed here specifically because they
-looked ambiguous -- produce a nearly empty or garbled result that only the raw text can clarify.
+For each page below, you are given one or more independent extractions of that page's table(s) by detection
+strategies (pymupdf_lines_strict / pymupdf_lines for ruled borders, and pymupdf_text for whitespace alignment),
+plus the raw page text for grounding. Candidates at different vertical positions are DIFFERENT tables — do not
+merge them. The strategies frequently disagree: one may merge two columns, split a multi-line header across rows,
+drop a footnote, misread a numeric column, glue the header into the first data row, or -- for pages routed here
+specifically because they looked ambiguous -- produce a nearly empty or garbled result that only the raw text can clarify.
 
 {chr(10).join('----------------------------------------' + chr(10) + s for s in page_sections)}
 
@@ -1723,6 +2241,7 @@ def validate_batch(client: openai.OpenAI, pages: List[int], pages_grouped: Dict[
         response_format={"type": "json_object"},
         messages=[{"role": "user", "content": prompt}],
         max_tokens=min(16000, MAX_TOKENS_PER_PAGE * len(pages)),
+        temperature=0,
     )
     text_out = resp.choices[0].message.content
     try:
@@ -1859,7 +2378,13 @@ def run_pipeline(pdf_path: Path, on_progress: Optional[Callable[[str, int, str],
 
     pages_grouped = filter_candidate_pages(group_by_page(all_tables))
     pages_grouped = resolve_dual_column_pages(pdf_path, pages_grouped, page_text)
-    high_results, llm_pages, reason_counts = split_by_confidence(pages_grouped, page_text)
+    outline_index = build_pdf_outline_index(pdf_path)
+    high_results, llm_pages, reason_counts = split_by_confidence(
+        pages_grouped,
+        page_text,
+        pdf_path=pdf_path,
+        outline_index=outline_index,
+    )
     progress("classify_confidence", 55,
               f"{len(high_results)} page(s) auto-accepted, {len(llm_pages)} page(s) need AI validation")
 
@@ -1912,13 +2437,20 @@ def main():
     log(f"  {len(pages_grouped)} page(s) have at least one table candidate")
 
     pages_grouped = filter_candidate_pages(pages_grouped)
-    log(f"  {len(pages_grouped)} page(s) kept after requiring a lines_strict (ruled-border) hit -- drops likely false positives from the looser text strategy")
+    log(f"  {len(pages_grouped)} page(s) kept after requiring a ruled-border hit "
+        f"(lines_strict or lines) -- drops likely false positives from the looser text strategy")
 
     pages_grouped = resolve_dual_column_pages(PDF_PATH, pages_grouped, page_text)
 
     log("Stage 3: confidence-classifying pages (no LLM)")
     t0 = time.time()
-    high_results, llm_pages, reason_counts = split_by_confidence(pages_grouped, page_text)
+    outline_index = build_pdf_outline_index(PDF_PATH)
+    high_results, llm_pages, reason_counts = split_by_confidence(
+        pages_grouped,
+        page_text,
+        pdf_path=PDF_PATH,
+        outline_index=outline_index,
+    )
     log(f"  {len(high_results)} page(s) auto-accepted (no LLM call), {len(llm_pages)} page(s) need OpenAI validation, in {time.time() - t0:.1f}s")
     for reason, count in sorted(reason_counts.items(), key=lambda kv: -kv[1]):
         log(f"    [llm bucket] {count}x: {reason}")

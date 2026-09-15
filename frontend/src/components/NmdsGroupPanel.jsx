@@ -1,5 +1,7 @@
 'use client'
 
+import { useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { AlertTriangle, X } from 'lucide-react'
 import FileUpload from './FileUpload'
 import NmdsConceptFields from './NmdsConceptFields'
@@ -37,6 +39,67 @@ export default function NmdsGroupPanel({
 }) {
   const filledCount = fieldsToList(fields).length
   const prefilledHint = appliedFrom?.fileName || (appliedFrom ? 'Fields filled in' : null)
+
+  useEffect(() => {
+    if (!modalOpen || hideFieldEditor) return undefined
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [modalOpen, hideFieldEditor])
+
+  const modal = !hideFieldEditor && modalOpen && typeof document !== 'undefined'
+    ? createPortal(
+      <div
+        className="fixed inset-0 z-[1100] flex items-center justify-center bg-[rgba(16,64,63,0.52)] p-5"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="nmds-modal-title"
+      >
+        <div className="flex h-[min(680px,90vh)] w-full max-w-[860px] flex-col overflow-hidden rounded-[14px] bg-surface shadow-dhara">
+          <div className="relative flex flex-shrink-0 items-start justify-between gap-4 border-b border-line bg-cream px-6 pb-3.5 pt-4">
+            <div className="min-w-0">
+              <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-teal">{standardName} concept metadata</div>
+              <div id="nmds-modal-title" className="truncate text-xl font-bold tracking-tight text-ink">{groupLabel}</div>
+              {fileMismatch && !parsing && (
+                <div className="mt-1.5 text-[13px] font-medium leading-snug text-[#8a4b0f]">
+                  <span className="inline-flex items-start gap-1.5">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" strokeWidth={2} aria-hidden />
+                    <span>
+                      Couldn&apos;t match the uploaded file against the known {standardName} concepts — fields below are empty.
+                      Kindly check the file or fill them in manually.
+                    </span>
+                  </span>
+                </div>
+              )}
+              {parseError && (
+                <div className="mt-1.5 text-[13px] leading-snug text-[#c0392b]">Couldn&apos;t auto-fill from the uploaded file: {parseError}.</div>
+              )}
+              {!fileMismatch && !parseError && (
+                <div className="mt-1 text-[13px] leading-snug text-ink-soft">
+                  {filledCount > 0 ? `${filledCount} field${filledCount !== 1 ? 's' : ''} filled in.` : 'Fields autosave — fill each topic, then continue.'}
+                </div>
+              )}
+            </div>
+            <button type="button" className="flex h-8 w-8 flex-none items-center justify-center rounded-md text-ink-soft hover:bg-cream hover:text-ink" onClick={onCloseModal} aria-label="Close">
+              <X className="h-5 w-5" strokeWidth={1.75} />
+            </button>
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-6 pb-5 pt-4">
+            <NmdsConceptFields
+              fields={fields}
+              onFieldChange={onFieldChange}
+              onSave={onCloseModal}
+              topics={topics}
+              placeholders={placeholders}
+            />
+          </div>
+        </div>
+      </div>,
+      document.body,
+    )
+    : null
 
   return (
     <div className="flex flex-col gap-2">
@@ -83,7 +146,7 @@ export default function NmdsGroupPanel({
           {parsing && <div className="mt-0.5 text-[11px] text-ink-soft">Reading concept metadata from {file.name}…</div>}
           {parseError && (
             <div className="mt-0.5 text-[11px] text-[#c0392b]">
-              Couldn't auto-fill from {file.name}: {parseError}. You can still fill the fields in manually.
+              Couldn&apos;t auto-fill from {file.name}: {parseError}. You can still fill the fields in manually.
             </div>
           )}
           {!parsing && !parseError && fileMismatch && (
@@ -115,49 +178,7 @@ export default function NmdsGroupPanel({
         </Button>
       </div>
 
-      {!hideFieldEditor && modalOpen && (
-        <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-[rgba(16,64,63,0.52)] p-5" role="dialog" aria-modal="true" aria-labelledby="nmds-modal-title">
-          <div className="flex max-h-[92vh] w-full max-w-[860px] flex-col overflow-hidden rounded-[14px] bg-surface shadow-dhara">
-            <div className="relative flex flex-shrink-0 items-start justify-between gap-4 bg-cream px-6 pb-4 pt-5">
-              <div>
-                <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-teal">{standardName} concept metadata</div>
-                <div id="nmds-modal-title" className="text-2xl font-bold tracking-tight text-ink">{groupLabel}</div>
-                {fileMismatch && !parsing && (
-                  <div className="mt-1.5 text-[13.5px] font-medium leading-relaxed text-[#8a4b0f]">
-                    <span className="inline-flex items-start gap-1.5">
-                      <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" strokeWidth={2} aria-hidden />
-                      <span>
-                        Couldn&apos;t match the uploaded file against the known {standardName} concepts — fields below are empty.
-                        Kindly check the file or fill them in manually.
-                      </span>
-                    </span>
-                  </div>
-                )}
-                {parseError && (
-                  <div className="mt-1.5 text-[13.5px] leading-relaxed text-[#c0392b]">Couldn't auto-fill from the uploaded file: {parseError}.</div>
-                )}
-                {!fileMismatch && !parseError && (
-                  <div className="mt-1.5 text-[13.5px] leading-relaxed text-ink-soft">
-                    {filledCount > 0 ? `${filledCount} field${filledCount !== 1 ? 's' : ''} filled in.` : 'The fields are autosaved, kindly fill in all the fields and proceed to next topic.'}
-                  </div>
-                )}
-              </div>
-              <button type="button" className="flex h-8 w-8 items-center justify-center rounded-md text-ink-soft hover:bg-cream hover:text-ink" onClick={onCloseModal} aria-label="Close">
-                <X className="h-5 w-5" strokeWidth={1.75} />
-              </button>
-            </div>
-            <div className="flex min-h-0 flex-1 flex-col gap-[18px] overflow-y-auto px-6 pb-6 pt-[18px]">
-              <NmdsConceptFields
-                fields={fields}
-                onFieldChange={onFieldChange}
-                onSave={onCloseModal}
-                topics={topics}
-                placeholders={placeholders}
-              />
-            </div>
-          </div>
-        </div>
-      )}
+      {modal}
     </div>
   )
 }

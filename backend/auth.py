@@ -4,11 +4,16 @@ Login auth: password hashing + JWT issuance/verification.
 Accounts are admin-provisioned only (see create_user.py) — there is no
 public signup endpoint. Every write-path API route requires a valid
 bearer token, and the email it carries is what data gets stored under.
+
+Tokens are bound to AUTH_INSTANCE_ID, which is generated when the backend
+process starts. Restarting the server invalidates every outstanding session
+so users must sign in again.
 """
 
 import os
 import re
 import time
+import uuid
 
 import bcrypt
 import jwt
@@ -18,6 +23,9 @@ EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$")
 
 JWT_ALG = "HS256"
 JWT_EXP_SECONDS = 60 * 60 * 12  # 12 hours
+
+# Rotates on every process start — embedded in each token as claim "iid".
+AUTH_INSTANCE_ID = uuid.uuid4().hex
 
 
 def _secret() -> str:
@@ -43,13 +51,20 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 def create_token(email: str) -> str:
-    payload = {"sub": email, "exp": int(time.time()) + JWT_EXP_SECONDS}
+    payload = {
+        "sub": email,
+        "exp": int(time.time()) + JWT_EXP_SECONDS,
+        "iid": AUTH_INSTANCE_ID,
+    }
     return jwt.encode(payload, _secret(), algorithm=JWT_ALG)
 
 
 def decode_token(token: str) -> str:
-    """Return the email ("sub" claim) carried by a valid, unexpired token."""
+    """Return the email ("sub" claim) carried by a valid, unexpired token
+    issued by this backend process."""
     payload = jwt.decode(token, _secret(), algorithms=[JWT_ALG])
+    if payload.get("iid") != AUTH_INSTANCE_ID:
+        raise jwt.InvalidTokenError("Session ended — please sign in again")
     return payload["sub"]
 
 
@@ -57,7 +72,7 @@ def email_from_request(request) -> str:
     """Extract and verify the bearer token on an incoming request.
 
     Raises ValueError (caller maps this to HTTP 401) if the token is
-    missing, malformed, or expired.
+    missing, malformed, expired, or from a previous backend process.
     """
     header = request.headers.get("authorization", "")
     if not header.lower().startswith("bearer "):

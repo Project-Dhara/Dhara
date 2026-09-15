@@ -1,15 +1,16 @@
 """
-Authoritative Postgres storage for PDF pipeline tables & groupings.
+Authoritative Postgres storage for PDF pipeline jobs, tables & groupings.
 
-JSON under data/pdf_jobs/ remains a processing cache for extraction/review.
-On Continue from Preview, approved tables are upserted here — this module is
-the source of truth for grouping and downstream stages. pgvector embeddings
-are an ancillary index (see vector_store / pdf_grouping).
+Working extraction/review state (result, reviews, deleted ids, source PDF bytes)
+lives on `pdf_jobs` — nothing is written under backend/data/. After Continue from
+Preview, approved tables are also normalized into `pdf_tables` / groups.
+pgvector embeddings are an ancillary index (see vector_store / pdf_grouping).
 """
 
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from typing import Any, Optional
 
@@ -37,6 +38,25 @@ def init_pdf_schema(conn) -> None:
             )
             """
         )
+        # Working-job columns (extraction + review). Added via ALTER so existing
+        # deployments keep their pdf_jobs rows without a separate migration.
+        for stmt in (
+            "ALTER TABLE pdf_jobs ADD COLUMN IF NOT EXISTS stage TEXT",
+            "ALTER TABLE pdf_jobs ADD COLUMN IF NOT EXISTS percent INTEGER DEFAULT 0",
+            "ALTER TABLE pdf_jobs ADD COLUMN IF NOT EXISTS message TEXT",
+            "ALTER TABLE pdf_jobs ADD COLUMN IF NOT EXISTS error TEXT",
+            "ALTER TABLE pdf_jobs ADD COLUMN IF NOT EXISTS result JSONB",
+            "ALTER TABLE pdf_jobs ADD COLUMN IF NOT EXISTS reviews JSONB DEFAULT '{}'::jsonb",
+            "ALTER TABLE pdf_jobs ADD COLUMN IF NOT EXISTS deleted_table_ids JSONB DEFAULT '[]'::jsonb",
+            "ALTER TABLE pdf_jobs ADD COLUMN IF NOT EXISTS pdf_bytes BYTEA",
+            "ALTER TABLE pdf_jobs ADD COLUMN IF NOT EXISTS created_at_epoch DOUBLE PRECISION",
+            "ALTER TABLE pdf_jobs ADD COLUMN IF NOT EXISTS pipeline_step INTEGER",
+            """
+            CREATE INDEX IF NOT EXISTS idx_pdf_jobs_user_updated
+                ON pdf_jobs (user_email, updated_at DESC)
+            """,
+        ):
+            cur.execute(stmt)
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS pdf_tables (
@@ -158,6 +178,213 @@ def upsert_job(conn, *, job_id: str, user_email: str, filename: Optional[str], s
     conn.commit()
 
 
+_WORKING_JOB_SELECT = """
+    job_id, user_email, filename, status, stage, percent, message, error,
+    result, reviews, deleted_table_ids, grouping_status, pipeline_step,
+    created_at, created_at_epoch, updated_at
+"""
+
+
+def _json_obj(value, default):
+    if value is None:
+        return default
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return default
+    return default
+
+
+def _row_to_working_job(row: dict) -> dict:
+    """Map a pdf_jobs row into the in-memory job dict used by main.py."""
+    epoch = row.get("created_at_epoch")
+    if epoch is None and row.get("created_at") is not None:
+        try:
+            epoch = float(row["created_at"].timestamp())
+        except Exception:
+            epoch = time.time()
+    elif epoch is not None:
+        epoch = float(epoch)
+    else:
+        epoch = time.time()
+
+    return {
+        "job_id": row["job_id"],
+        "status": row.get("status") or "queued",
+        "stage": row.get("stage") or row.get("status") or "queued",
+        "percent": int(row.get("percent") or 0),
+        "message": row.get("message") or "",
+        "filename": row.get("filename"),
+        "user_email": row.get("user_email"),
+        "created_at": epoch,
+        "result": _json_obj(row.get("result"), None),
+        "error": row.get("error"),
+        "reviews": _json_obj(row.get("reviews"), {}) or {},
+        "deleted_table_ids": _json_obj(row.get("deleted_table_ids"), []) or [],
+        "grouping_status": row.get("grouping_status"),
+        "pipeline_step": int(row["pipeline_step"]) if row.get("pipeline_step") is not None else None,
+    }
+
+
+def save_working_job(
+    conn,
+    job: dict,
+    *,
+    pdf_bytes: Optional[bytes] = None,
+    clear_pdf_bytes: bool = False,
+) -> None:
+    """Upsert extraction/review working state. pdf_bytes only written when provided."""
+    job_id = job["job_id"]
+    created_epoch = float(job.get("created_at") or time.time())
+    reviews = job.get("reviews") if isinstance(job.get("reviews"), dict) else {}
+    deleted = job.get("deleted_table_ids") if isinstance(job.get("deleted_table_ids"), list) else []
+    result = job.get("result")
+
+    with conn.cursor() as cur:
+        if pdf_bytes is not None or clear_pdf_bytes:
+            cur.execute(
+                """
+                INSERT INTO pdf_jobs (
+                    job_id, user_email, filename, status, stage, percent, message, error,
+                    result, reviews, deleted_table_ids, pdf_bytes, created_at_epoch, updated_at
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, NOW()
+                )
+                ON CONFLICT (job_id) DO UPDATE SET
+                    user_email = EXCLUDED.user_email,
+                    filename = COALESCE(EXCLUDED.filename, pdf_jobs.filename),
+                    status = EXCLUDED.status,
+                    stage = EXCLUDED.stage,
+                    percent = EXCLUDED.percent,
+                    message = EXCLUDED.message,
+                    error = EXCLUDED.error,
+                    result = EXCLUDED.result,
+                    reviews = EXCLUDED.reviews,
+                    deleted_table_ids = EXCLUDED.deleted_table_ids,
+                    pdf_bytes = EXCLUDED.pdf_bytes,
+                    created_at_epoch = COALESCE(pdf_jobs.created_at_epoch, EXCLUDED.created_at_epoch),
+                    updated_at = NOW()
+                """,
+                (
+                    job_id,
+                    job.get("user_email"),
+                    job.get("filename"),
+                    job.get("status") or "queued",
+                    job.get("stage"),
+                    int(job.get("percent") or 0),
+                    job.get("message"),
+                    job.get("error"),
+                    psycopg2.extras.Json(result) if result is not None else None,
+                    psycopg2.extras.Json(reviews),
+                    psycopg2.extras.Json(deleted),
+                    None if clear_pdf_bytes else psycopg2.Binary(pdf_bytes),
+                    created_epoch,
+                ),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO pdf_jobs (
+                    job_id, user_email, filename, status, stage, percent, message, error,
+                    result, reviews, deleted_table_ids, created_at_epoch, updated_at
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, NOW()
+                )
+                ON CONFLICT (job_id) DO UPDATE SET
+                    user_email = EXCLUDED.user_email,
+                    filename = COALESCE(EXCLUDED.filename, pdf_jobs.filename),
+                    status = EXCLUDED.status,
+                    stage = EXCLUDED.stage,
+                    percent = EXCLUDED.percent,
+                    message = EXCLUDED.message,
+                    error = EXCLUDED.error,
+                    result = EXCLUDED.result,
+                    reviews = EXCLUDED.reviews,
+                    deleted_table_ids = EXCLUDED.deleted_table_ids,
+                    created_at_epoch = COALESCE(pdf_jobs.created_at_epoch, EXCLUDED.created_at_epoch),
+                    updated_at = NOW()
+                """,
+                (
+                    job_id,
+                    job.get("user_email"),
+                    job.get("filename"),
+                    job.get("status") or "queued",
+                    job.get("stage"),
+                    int(job.get("percent") or 0),
+                    job.get("message"),
+                    job.get("error"),
+                    psycopg2.extras.Json(result) if result is not None else None,
+                    psycopg2.extras.Json(reviews),
+                    psycopg2.extras.Json(deleted),
+                    created_epoch,
+                ),
+            )
+    conn.commit()
+
+
+def load_working_job(conn, job_id: str) -> Optional[dict]:
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            f"SELECT {_WORKING_JOB_SELECT} FROM pdf_jobs WHERE job_id = %s",
+            (job_id,),
+        )
+        row = cur.fetchone()
+        return _row_to_working_job(dict(row)) if row else None
+
+
+def list_working_jobs(conn, user_email: str) -> list[dict]:
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            f"""
+            SELECT {_WORKING_JOB_SELECT}
+              FROM pdf_jobs
+             WHERE user_email = %s
+             ORDER BY COALESCE(created_at_epoch, EXTRACT(EPOCH FROM created_at)) DESC NULLS LAST
+            """,
+            (user_email,),
+        )
+        return [_row_to_working_job(dict(r)) for r in cur.fetchall()]
+
+
+def get_pdf_bytes(conn, job_id: str) -> Optional[bytes]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT pdf_bytes FROM pdf_jobs WHERE job_id = %s", (job_id,))
+        row = cur.fetchone()
+        if not row or row[0] is None:
+            return None
+        return bytes(row[0])
+
+
+def set_pipeline_step(conn, job_id: str, step: int) -> None:
+    """Record the furthest console step reached for dashboard readiness."""
+    step_i = max(1, min(6, int(step)))
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE pdf_jobs
+               SET pipeline_step = GREATEST(COALESCE(pipeline_step, 0), %s),
+                   updated_at = NOW()
+             WHERE job_id = %s
+            """,
+            (step_i, job_id),
+        )
+    conn.commit()
+
+
+def get_pipeline_step(conn, job_id: str) -> Optional[int]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT pipeline_step FROM pdf_jobs WHERE job_id = %s", (job_id,))
+        row = cur.fetchone()
+        if not row or row[0] is None:
+            return None
+        return int(row[0])
 def persist_approved_tables(
     conn,
     *,
@@ -251,7 +478,9 @@ def persist_approved_tables(
         cur.execute(
             """
             UPDATE pdf_jobs
-               SET grouping_status = 'pending', updated_at = NOW()
+               SET grouping_status = 'pending',
+                   pipeline_step = GREATEST(COALESCE(pipeline_step, 0), 3),
+                   updated_at = NOW()
              WHERE job_id = %s
             """,
             (job_id,),
@@ -343,7 +572,9 @@ def save_grouping(
         cur.execute(
             """
             UPDATE pdf_jobs
-               SET grouping_status = 'saved', updated_at = NOW()
+               SET grouping_status = 'saved',
+                   pipeline_step = GREATEST(COALESCE(pipeline_step, 0), 4),
+                   updated_at = NOW()
              WHERE job_id = %s
             """,
             (job_id,),

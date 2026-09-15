@@ -116,7 +116,12 @@ export default function SqlUpload({
       const matchData = await matchRes.json()
 
       setStage('idle')
-      onMatched({ ...matchData, metadataFiles, perFile: extractData.per_file })
+      onMatched({
+        ...matchData,
+        batch_id: extractData.batch_id || null,
+        metadataFiles,
+        perFile: extractData.per_file,
+      })
     } catch (e) {
       const message = e?.message === 'Failed to fetch'
         ? 'Could not reach the server for SQL extract. Check that the backend is running, then try again.'

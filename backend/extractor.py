@@ -437,6 +437,24 @@ class TableExtractor:
             if len(raw_notes) >= 10:
                 break
 
+        # Leading sheet rows for title repair if validation later disagrees.
+        title_context_rows: List[str] = []
+        for row in block[:8]:
+            if self._blank(row):
+                continue
+            seen_vals, parts = set(), []
+            for v in row:
+                if v is None:
+                    continue
+                sv = str(v).strip()
+                if sv and sv not in seen_vals:
+                    seen_vals.add(sv)
+                    parts.append(sv)
+            if parts:
+                title_context_rows.append(" ".join(parts))
+            if len(title_context_rows) >= 6:
+                break
+
         return {
             "id": f"{filename}__{sheet_name}__{idx}",
             "table_id": table_id or f"Table {idx+1}",
@@ -449,11 +467,22 @@ class TableExtractor:
             "raw_header_rows": raw_header_rows,
             "raw_col_num_rows": raw_col_num_rows,
             "raw_notes": raw_notes,
+            "title_context_rows": title_context_rows,
         }
 
     # ── Title / description extraction ────────────────────────────────────────
 
     def _strip_title_desc(self, block: List[List[Any]]) -> Tuple[str, str, int]:
+        """
+        Pull Source Table ID + descriptive title from leading full-width banners.
+
+        Same pattern as PDF in-grid captions: ``TABLE: B-12`` then the long
+        title row, then optional subtitle banners (joined into the title).
+        Falls back to the legacy first/second-row heuristic when no banner
+        pattern is detected.
+        """
+        from pdf_header_utils import extract_in_grid_caption
+
         def row_text(row):
             seen_vals, parts = set(), []
             for v in row:
@@ -465,15 +494,42 @@ class TableExtractor:
                     parts.append(sv)
             return " ".join(parts)
 
+        caption = extract_in_grid_caption(block)
+        table_id = (caption.get("table_id_label") or "").strip()
+        title = (caption.get("title") or "").strip()
+        body_start = int(caption.get("rows_consumed") or 0)
+
+        if table_id or title:
+            while body_start < len(block) and self._blank(block[body_start]):
+                body_start += 1
+            # If we only got an id, try the next non-blank row as title (legacy).
+            if table_id and not title:
+                for j in range(body_start, len(block)):
+                    if self._blank(block[j]):
+                        continue
+                    text = row_text(block[j])
+                    non_none = [v for v in block[j] if v is not None and str(v).strip()]
+                    n_nums = sum(1 for v in non_none if isinstance(v, (int, float)))
+                    if text and len(text) > 10 and n_nums < max(1, len(non_none) / 2):
+                        # Prefer a single-label banner-like row over a real header.
+                        unique = {str(v).strip().upper() for v in non_none}
+                        if len(unique) == 1 or len(non_none) <= 2:
+                            title = text
+                            body_start = j + 1
+                    break
+            while body_start < len(block) and self._blank(block[body_start]):
+                body_start += 1
+            return table_id, title, body_start
+
+        # Legacy fallback: first non-blank → id-ish / title, second → description.
         non_blank = [(i, r) for i, r in enumerate(block) if not self._blank(r)]
-        title = description = ""
-        body_start = 0
         if not non_blank:
-            return title, description, body_start
+            return "", "", 0
 
         i0, r0 = non_blank[0]
-        title = row_text(r0)
+        first = row_text(r0)
         body_start = i0 + 1
+        second = ""
 
         if len(non_blank) > 1:
             i1, r1 = non_blank[1]
@@ -481,12 +537,20 @@ class TableExtractor:
             non_none = [v for v in r1 if v is not None]
             n_nums = sum(1 for v in non_none if isinstance(v, (int, float)))
             if text1 and len(text1) > 10 and n_nums < len(non_none) / 2:
-                description = text1
+                second = text1
                 body_start = i1 + 1
+
+        # Prefer TABLE-marker row as id when present.
+        if re.search(r"\bTABLE[\s:\-]", first, re.IGNORECASE):
+            table_id, title = first, second
+        elif second and re.search(r"\bTABLE[\s:\-]", second, re.IGNORECASE):
+            table_id, title = second, first
+        else:
+            table_id, title = first, second
 
         while body_start < len(block) and self._blank(block[body_start]):
             body_start += 1
-        return title, description, body_start
+        return table_id, title, body_start
 
     # ── LLM completion (provider-agnostic) ───────────────────────────────────
 

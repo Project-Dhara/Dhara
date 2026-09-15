@@ -2,15 +2,14 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { AlertTriangle, ArrowLeft, ArrowRight, Check, Pencil, Trash2, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Check, Sparkles } from 'lucide-react'
 import KydsSummaryCard from './KydsSummaryCard'
 import TableViewer from './TableViewer'
 import BatchUpload from './BatchUpload'
 import SqlUpload from './SqlUpload'
-import BatchReview from './BatchReview'
 import ReconcileIds from './ReconcileIds'
-import Classify from './Classify'
-import Publish from './Publish'
+import GroupingWorkspace from './GroupingWorkspace'
+import PostPreviewLaterSteps from './PostPreviewLaterSteps'
 import Button from './ui/Button'
 import Badge from './ui/Badge'
 import ErrorBanner from './ui/ErrorBanner'
@@ -20,6 +19,18 @@ import { withAuthHeaders } from '../lib/auth'
 import { withLlmKeyHeaders } from '../lib/llmKey'
 import { getMetadataStandard } from '../lib/settingsConfig'
 import { StageSidebar, stageIndexForStep } from './ConsoleStages'
+import {
+  EMPTY_GROUP_METADATA,
+  fillGroupMetadataForMatchResult,
+} from '../lib/postPreview'
+
+/** Preview review status for Source Table ID / Title. */
+function previewReviewStatus(t, savedIds) {
+  const saved = savedIds?.has?.(t._uid)
+  if (t.id_title_mismatch && !saved) return 'fix'
+  if ((t.title_repaired_by_llm || t.table_id_repaired_by_llm) && !saved) return 'ai'
+  return 'ok'
+}
 
 // Short government table code for a tab button — e.g. "Table : D-12 & D-13"
 // → "D12, D13" — pulled from the source's own table-label row (`table.title`,
@@ -46,69 +57,8 @@ function tablePickerLabel(table) {
   return rows ? `${code} — ${rows}` : code
 }
 
-// Inline-editable group name shown on the grouping page — lets the user
-// override the auto-derived name (e.g. if it's still not quite right) without
-// leaving the page.
-function GroupNameEditor({ name, onSave }) {
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(name)
-
-  const startEdit = () => { setDraft(name); setEditing(true) }
-  const cancelEdit = () => setEditing(false)
-  const saveEdit = () => {
-    const trimmed = draft.trim()
-    if (trimmed && trimmed !== name) onSave(trimmed)
-    setEditing(false)
-  }
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter') saveEdit()
-    if (e.key === 'Escape') cancelEdit()
-  }
-
-  if (editing) {
-    return (
-      <span className="flex min-w-0 flex-1 items-center gap-1.5">
-        <input
-          className="min-w-0 flex-1 rounded border border-teal px-2 py-1 text-sm"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={handleKeyDown}
-          autoFocus
-          spellCheck={false}
-        />
-        <button className="inline-flex items-center justify-center rounded bg-teal px-1.5 py-1 text-xs text-white hover:bg-teal-dark" onClick={saveEdit} title="Save" aria-label="Save">
-          <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
-        </button>
-        <button className="inline-flex items-center justify-center rounded border border-line px-1.5 py-1 text-xs text-ink-soft hover:bg-outer-bg" onClick={cancelEdit} title="Cancel" aria-label="Cancel">
-          <X className="h-3.5 w-3.5" strokeWidth={2} />
-        </button>
-      </span>
-    )
-  }
-  return (
-    <span className="flex min-w-0 flex-1 items-center gap-1.5">
-      <span className="text-sm font-semibold text-ink">{name}</span>
-      <button className="inline-flex h-6 w-6 items-center justify-center rounded text-ink-soft hover:bg-cream hover:text-teal" onClick={startEdit} title="Edit group name" aria-label="Edit group name">
-        <Pencil className="h-3.5 w-3.5" strokeWidth={1.75} />
-      </button>
-    </span>
-  )
-}
-
-// Mirrors backend/catalogue_matching.py's _EMPTY_METADATA -- a manually
-// created group needs the same blank catalogue fields an auto-grouped one
-// gets, so downstream metadata/push steps treat it identically.
-const EMPTY_GROUP_METADATA = {
-  title: '', product: '', category: '', geography: '', frequency: '',
-  time_period: '', data_source: '', description: '', last_updated: '',
-  future_release: '', key_statistics: '', remarks: '',
-}
-
-// Ports of backend/catalogue_matching.py's `_base_title` / `build_group_name`
-// / `auto_group_tables` -- needed client-side so a title correction made on
-// the preview page can re-derive group membership and each group's display
-// name from the *saved* title, instead of leaving both stuck on whatever the
-// backend computed from the pre-correction title at upload time.
+// Ports of backend title-base helpers — needed client-side so a title
+// correction on preview can re-home tables into shared grouping buckets.
 function baseTitle(title) {
   const base = (title || '').replace(/\s*\([^)]*\)\s*$/, '').trim().replace(/\s+/g, ' ').toUpperCase()
   return base || (title || '').trim().toUpperCase()
@@ -125,91 +75,6 @@ function buildGroupName(base) {
   }
   const cleaned = words.join(' ').trim().replace(/^[\s.,-]+|[\s.,-]+$/g, '') || title
   return cleaned.replace(/\S+/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase())
-}
-
-// Generic centered-overlay modal shell -- replaces .push-overlay, used by
-// AddGroupModal and the manual/automatic-grouping confirm dialogs.
-function ModalOverlay({ children, className = '' }) {
-  return (
-    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-[rgba(11,30,45,0.5)] p-4" role="dialog" aria-modal="true">
-      <div className={`flex max-h-[85vh] w-full flex-col gap-3.5 overflow-hidden rounded-xl bg-surface p-5 shadow-dhara ${className}`}>
-        {children}
-      </div>
-    </div>
-  )
-}
-
-// Lets the user hand-pick a set of tables (by title) and bundle them into a
-// new group, for cases the automatic title-based grouping didn't handle the
-// way they wanted. `tables` is the full list of {id, title} candidates.
-function AddGroupModal({ tables, onCreate, onClose }) {
-  const [name, setName] = useState('')
-  const [selected, setSelected] = useState(() => new Set())
-
-  const toggle = (id) => {
-    setSelected((prev) => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
-    })
-  }
-
-  const canCreate = name.trim() && selected.size > 0
-
-  return (
-    <ModalOverlay className="max-w-[560px]">
-      <div className="flex items-center justify-between">
-        <div className="text-[16px] font-bold text-ink">Add group manually</div>
-        <button className="rounded p-1 text-ink-soft hover:bg-cream hover:text-ink" onClick={onClose} aria-label="Close">
-          <X className="h-5 w-5" strokeWidth={1.75} />
-        </button>
-      </div>
-
-      <label className="flex flex-col gap-1.5 text-[13px] text-ink-soft">
-        <span>Group name</span>
-        <input
-          className="rounded-md border border-line px-2.5 py-2 text-sm text-ink"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. Infant Mortality By Age"
-          autoFocus
-        />
-      </label>
-
-      <div className="flex max-h-[40vh] flex-col overflow-y-auto rounded-lg border border-line">
-        {tables.map((t) => (
-          <label key={t.id} className="flex cursor-pointer items-center gap-2.5 border-b border-cream px-3 py-2 text-[13px] last:border-b-0 hover:bg-cream">
-            <input
-              type="checkbox"
-              checked={selected.has(t.id)}
-              onChange={() => toggle(t.id)}
-            />
-            <span className="flex-1 text-ink">{t.title || 'Untitled table'}</span>
-            <span className="whitespace-nowrap text-[11.5px] text-ink-soft">{t.id}</span>
-          </label>
-        ))}
-      </div>
-
-      <div className="flex items-center justify-end gap-2.5">
-        <span className="mr-auto text-[13px] text-ink-soft">{selected.size} table{selected.size !== 1 ? 's' : ''} selected</span>
-        <Button variant="secondary" onClick={onClose}>Cancel</Button>
-        <Button variant="primary" disabled={!canCreate} onClick={() => onCreate(name.trim(), [...selected])}>Create group</Button>
-      </div>
-    </ModalOverlay>
-  )
-}
-
-function ConfirmDialog({ title, body, onCancel, onContinue }) {
-  return (
-    <ModalOverlay className="max-w-[440px]">
-      <div className="text-[16px] font-bold text-ink">{title}</div>
-      <p className="text-[13px] text-ink-soft">{body}</p>
-      <div className="flex items-center justify-end gap-2.5">
-        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
-        <Button variant="primary" onClick={onContinue}>Continue</Button>
-      </div>
-    </ModalOverlay>
-  )
 }
 
 // Three-line header per step: name (orientation), a purpose sentence that's
@@ -493,16 +358,8 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   const [statusPage, setStatusPage] = useState(null)
   const router = useRouter()
 
-  // Consolidates the three previously-independent dialog booleans
-  // (showAddGroup / showManualGroupingConfirm / showAutoGroupingConfirm)
-  // into one piece of state, so at most one dialog can ever be open at a
-  // time by construction. Values: null | 'addGroup' | 'manualConfirm' | 'autoConfirm'.
-  const [activeDialog, setActiveDialog] = useState(null)
-  // Lets the user delete a group or create a new group for unmatched tables
-  // from the automatically-grouped view, without wiping the existing
-  // groups the way "Group manually" does.
+  // Shared GroupingWorkspace owns dialogs; Console tracks mode + autofill.
   const [editingGroups, setEditingGroups] = useState(false)
-  const [dragOverGroup, setDragOverGroup] = useState(null) // group index the dragged table is currently over, or null
   const [groupingToast, setGroupingToast] = useState(null)
   const [metadataFilling, setMetadataFilling] = useState(false)
 
@@ -529,6 +386,8 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   // below — null means "all datasets", so a single-file upload (the common
   // case) sees no change in behavior.
   const [selectedDataset, setSelectedDataset] = useState(persisted?.selectedDataset ?? null)
+  // Preview tab filter: all | fix (needs fixing) | ai (AI review) | ok
+  const [previewReviewFilter, setPreviewReviewFilter] = useState('all')
 
   // ── carried into Classify / Publish after the metadata save ──
   const [metaLabel, setMetaLabel] = useState(persisted?.metaLabel ?? '')
@@ -581,75 +440,6 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
     }
   }, [step, matchResult, batchPreviewId, selectedDataset, metaLabel, metadataId, metadataIds, pendingGroups, savedIds, metadataStarted, maxStepReached])
 
-  const renameBatchGroup = (index, newName) => {
-    setMatchResult((prev) => prev && ({
-      ...prev,
-      groups: prev.groups.map((g, i) => (i === index ? { ...g, file_name: newName } : g)),
-    }))
-  }
-
-  // Batch groups carry their tables as {table, inventory_item, confidence}
-  // entries -- deleting a group sends those back to unmatched_tables instead
-  // of dropping them, so nothing silently disappears from the release.
-  const deleteBatchGroup = (index) => {
-    setMatchResult((prev) => {
-      if (!prev) return prev
-      const removed = prev.groups[index]
-      const returned = removed.matched_tables.map((mt) => ({ table: mt.table, inventory_item: null, confidence: 'manual' }))
-      return {
-        ...prev,
-        groups: prev.groups.filter((_, i) => i !== index),
-        unmatched_tables: [...prev.unmatched_tables, ...returned],
-      }
-    })
-  }
-
-  // Drag-and-drop between the "Unmatched tables" card and any group card,
-  // while editing (manual or automatic-view edit mode). `dest` is either a
-  // group index or the string 'unmatched'. Finds the table wherever it
-  // currently lives (a group's matched_tables, or unmatched_tables), pulls
-  // it out from there, and drops it into the destination.
-  const moveTable = (tableId, dest) => {
-    setMatchResult((prev) => {
-      if (!prev) return prev
-      let movedEntry = null
-      const groups = prev.groups.map((g) => {
-        const [keep, take] = [[], []]
-        g.matched_tables.forEach((mt) => (mt.table.id === tableId ? take : keep).push(mt))
-        if (take.length > 0) movedEntry = take[0]
-        return { ...g, matched_tables: keep }
-      })
-      let unmatched_tables = prev.unmatched_tables
-      if (!movedEntry) {
-        const idx = unmatched_tables.findIndex((u) => u.table.id === tableId)
-        if (idx === -1) return prev
-        movedEntry = unmatched_tables[idx]
-        unmatched_tables = unmatched_tables.filter((_, i) => i !== idx)
-      }
-      const table = movedEntry.table
-      if (dest === 'unmatched') {
-        unmatched_tables = [...unmatched_tables, { table, confidence: 'none' }]
-      } else {
-        groups[dest] = {
-          ...groups[dest],
-          matched_tables: [...groups[dest].matched_tables, { table, inventory_item: null, confidence: 'manual' }],
-        }
-      }
-      return { ...prev, groups, unmatched_tables }
-    })
-  }
-
-  // Dragging every table out of a group (or deleting them one by one)
-  // leaves an empty group card behind -- drop those automatically once the
-  // user is done editing, rather than pushing empty groups downstream.
-  const finishEditingGroups = () => {
-    setMatchResult((prev) => prev && ({
-      ...prev,
-      groups: prev.groups.filter((g) => g.matched_tables.length > 0),
-    }))
-    setEditingGroups(false)
-  }
-
   const revertToAutomaticBatchGrouping = () => {
     if (!autoMatchResultRef.current) return
     setMatchResult(autoMatchResultRef.current)
@@ -657,76 +447,12 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
     setEditingGroups(false)
   }
 
-  const createBatchGroup = (name, tableIds) => {
-    setMatchResult((prev) => {
-      if (!prev) return prev
-      const idSet = new Set(tableIds)
-      const pulled = []
-      const groups = prev.groups
-        .map((g) => {
-          const [keep, take] = [[], []]
-          g.matched_tables.forEach((mt) => (idSet.has(mt.table.id) ? take : keep).push(mt))
-          pulled.push(...take)
-          return { ...g, matched_tables: keep }
-        })
-        .filter((g) => g.matched_tables.length > 0)
-      const unmatchedKeep = []
-      prev.unmatched_tables.forEach((u) => {
-        if (idSet.has(u.table.id)) pulled.push({ table: u.table, inventory_item: null, confidence: 'manual' })
-        else unmatchedKeep.push(u)
-      })
-      groups.push({
-        workbook_index: groups.length,
-        file_name: name,
-        metadata: { ...EMPTY_GROUP_METADATA },
-        concepts: [],
-        classifications: {},
-        matched_tables: pulled,
-      })
-      return { ...prev, groups, unmatched_tables: unmatchedKeep }
-    })
-    setActiveDialog(null)
+  const handleRequestAutomatic = () => {
+    revertToAutomaticBatchGrouping()
   }
 
-  // Discards whatever grouping (automatic or partially-manual) currently
-  // exists and starts a clean slate of hand-built groups -- every table
-  // becomes "available" again for the first group the user creates.
-  const startManualGrouping = () => {
-    if (!manualGrouping) {
-      setMatchResult((prev) => prev && ({
-        ...prev,
-        groups: [],
-        unmatched_tables: batchAllTables.map((t) => ({ table: t, confidence: 'none' })),
-      }))
-      setManualGrouping(true)
-    }
-    setActiveDialog('addGroup')
-  }
-
-  // First switch into manual grouping wipes the current grouping, so confirm
-  // with the user before doing it -- they can always get it back via
-  // "Automatic grouping" afterwards. Once already in manual mode, adding
-  // another group doesn't erase anything, so no confirmation is needed.
-  const requestManualGrouping = () => {
-    if (manualGrouping) {
-      startManualGrouping()
-    } else {
-      setActiveDialog('manualConfirm')
-    }
-  }
-
-  // Reverting to automatic grouping erases the hand-built groups just as
-  // switching into manual grouping erases the automatic ones -- confirm
-  // with the user before doing it.
-  const requestAutomaticGrouping = () => {
-    setActiveDialog('autoConfirm')
-  }
-
-  // Every table must end up in a named group before moving on -- block the
-  // transition and warn instead of silently leaving tables unmatched,
-  // whether they were left that way by manual grouping, editing, or drag-
-  // and-drop. Stage 4 metadata autofill runs here (after grouping), not at
-  // extract/match time, so KYDS + table facts apply to the final groups.
+  // Every table must end up in a named group before moving on. Stage 4
+  // metadata autofill runs here (shared with PDF via fillGroupMetadataForMatchResult).
   const requestContinueToMetadata = async () => {
     if (matchResult?.unmatched_tables.length > 0) {
       setGroupingToast('All tables must be assigned to a group with a group name before continuing.')
@@ -743,82 +469,13 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
 
     const fillWork = async () => {
       try {
-        const res = await fetch(
-          '/api/catalogue/fill-group-metadata',
-          withAuthHeaders(withLlmKeyHeaders({
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ groups: matchResult.groups, standard: getMetadataStandard() }),
-          })),
-        )
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ detail: 'Metadata autofill failed' }))
-          const detail = typeof err.detail === 'string' ? err.detail : 'Metadata autofill failed'
-          setMatchResult((prev) => (prev ? {
-            ...prev,
-            llm_autofill_skipped_no_key: false,
-            kyds_missing: false,
-            autofill_errors: [{ group: 'all', error: detail }],
-          } : prev))
-          setGroupingToast(`${detail} — fill metadata in manually below.`)
-          return
-        }
-        const data = await res.json()
-        const autofillErrors = Array.isArray(data.autofill_errors) ? data.autofill_errors : []
-        const metaPatches = Array.isArray(data.group_metadata) ? data.group_metadata : null
-        setMatchResult((prev) => {
-          if (!prev) return prev
-          let nextGroups = prev.groups
-          if (metaPatches) {
-            nextGroups = prev.groups.map((g, i) => {
-              const patch = metaPatches.find((p) => p.index === i) || metaPatches[i]
-              if (!patch) return g
-              const next = { ...g }
-              if (patch.file_name) next.file_name = patch.file_name
-              if (patch.filled && patch.metadata) {
-                next.metadata = { ...(g.metadata || {}), ...patch.metadata }
-              }
-              if (patch.concept_metadata && Object.keys(patch.concept_metadata).length) {
-                next.concept_metadata = { ...(g.concept_metadata || {}), ...patch.concept_metadata }
-              }
-              if (patch.catalogue_metadata && Object.keys(patch.catalogue_metadata).length) {
-                next.catalogue_metadata = { ...(g.catalogue_metadata || {}), ...patch.catalogue_metadata }
-              }
-              return next
-            })
-          } else if (Array.isArray(data.groups) && data.groups.length === prev.groups.length) {
-            nextGroups = prev.groups.map((g, i) => ({
-              ...g,
-              file_name: data.groups[i]?.file_name || g.file_name,
-              metadata: data.groups[i]?.metadata && Object.keys(data.groups[i].metadata).length
-                ? { ...(g.metadata || {}), ...data.groups[i].metadata }
-                : g.metadata,
-            }))
-          }
-          return {
-            ...prev,
-            groups: nextGroups,
-            llm_autofill_skipped_no_key: Boolean(data.llm_autofill_skipped_no_key),
-            kyds_missing: Boolean(data.kyds_missing),
-            autofill_errors: autofillErrors,
-            autofill_filled_count: Number(data.autofill_filled_count) || 0,
-          }
+        const filled = await fillGroupMetadataForMatchResult(matchResult, {
+          withAuthHeaders,
+          withLlmKeyHeaders,
+          getMetadataStandard,
         })
-        const filledCount = Number(data.autofill_filled_count) || 0
-        if (data.kyds_missing) {
-          setGroupingToast('Fill in Know Your Dataset first so metadata can be auto-mapped — or fill fields manually on the next step.')
-        } else if (data.llm_autofill_skipped_no_key) {
-          setGroupingToast('Add an LLM API key in Settings to auto-fill metadata, or fill fields manually on the next step.')
-        } else if (autofillErrors.length > 0) {
-          const sample = autofillErrors[0]?.group || autofillErrors[0]?.error || 'unknown'
-          setGroupingToast(
-            filledCount > 0
-              ? `Auto-filled ${filledCount} group${filledCount !== 1 ? 's' : ''}; ${autofillErrors.length} need manual entry (${sample}).`
-              : autofillErrors.length === 1
-                ? `Auto-fill failed for 1 group (${sample}). Fill that group in manually.`
-                : `Auto-fill failed for ${autofillErrors.length} groups. Fill those groups in manually.`,
-          )
-        }
+        setMatchResult(filled.matchResult)
+        if (filled.toast) setGroupingToast(filled.toast)
       } catch (e) {
         const detail = e.message || 'Could not auto-fill metadata'
         setMatchResult((prev) => (prev ? {
@@ -1099,12 +756,26 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   // no filter is applied) so the banner only warns about the dataset in view.
   const mismatchedPreviewTables = visiblePreviewTables.filter((t) => t.id_title_mismatch)
   const unsavedMismatched = mismatchedPreviewTables.filter((t) => !savedIds.has(t._uid))
+  const aiFilledPreviewTables = visiblePreviewTables.filter(
+    (t) => (t.title_repaired_by_llm || t.table_id_repaired_by_llm) && !t.id_title_mismatch,
+  )
+  const unsavedAiFilled = aiFilledPreviewTables.filter((t) => !savedIds.has(t._uid))
+  const okPreviewCount = visiblePreviewTables.filter((t) => previewReviewStatus(t, savedIds) === 'ok').length
+  const filteredPreviewTables = visiblePreviewTables.filter((t) => {
+    if (previewReviewFilter === 'all') return true
+    return previewReviewStatus(t, savedIds) === previewReviewFilter
+  })
+  const filteredPreviewUidKey = filteredPreviewTables.map((t) => t._uid).join('|')
+
+  useEffect(() => {
+    if (step !== 2 || !filteredPreviewUidKey) return
+    const uids = filteredPreviewUidKey.split('|')
+    if (!uids.includes(batchPreviewId)) setBatchPreviewId(uids[0])
+  }, [step, previewReviewFilter, filteredPreviewUidKey, batchPreviewId])
 
   // Grouping step: one segmented "mode" derived from existing state, so the
   // three old separate entry points (Edit / switch-to-manual / add-group)
   // collapse into one toggle + a single contextual secondary action.
-  const groupingMode = manualGrouping ? 'manual' : 'automatic'
-  const dragEnabled = manualGrouping || editingGroups
 
   return (
     <div className="flex flex-col gap-5">
@@ -1227,29 +898,81 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                 )}
               </div>
             )}
-            {mismatchedPreviewTables.length > 0 && (
-              <div className={`rounded-lg border px-4 py-3 text-sm font-medium ${unsavedMismatched.length === 0 ? 'border-green bg-sage text-teal' : 'border-yellow/50 bg-warn-bg text-ink'}`}>
-                {unsavedMismatched.length > 0
-                  ? (
+            {(unsavedMismatched.length > 0 || unsavedAiFilled.length > 0) && (
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                {unsavedMismatched.length > 0 && (
+                  <div className="flex-1 rounded-lg border border-coral/40 bg-error-bg px-4 py-3 text-sm font-medium text-ink">
                     <span className="inline-flex items-start gap-1.5">
-                      <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" strokeWidth={2} aria-hidden />
-                      {unsavedMismatched.length} of {mismatchedPreviewTables.length} flagged table{mismatchedPreviewTables.length !== 1 ? 's' : ''} still need correcting & saving — open each flagged table below.
+                      <AlertTriangle className="mt-0.5 h-4 w-4 flex-none text-coral" strokeWidth={2} aria-hidden />
+                      <span>
+                        <span className="font-semibold text-coral">Needs fixing:</span>{' '}
+                        {unsavedMismatched.length} of {mismatchedPreviewTables.length} table{mismatchedPreviewTables.length !== 1 ? 's' : ''} still need correcting & saving.
+                      </span>
                     </span>
-                  )
-                  : (
+                  </div>
+                )}
+                {unsavedAiFilled.length > 0 && (
+                  <div className="flex-1 rounded-lg border border-[#5B8DEF]/45 bg-[#EEF4FF] px-4 py-3 text-sm font-medium text-ink">
                     <span className="inline-flex items-start gap-1.5">
-                      <Check className="mt-0.5 h-4 w-4 flex-none" strokeWidth={2.5} aria-hidden />
-                      All {mismatchedPreviewTables.length} flagged table{mismatchedPreviewTables.length !== 1 ? 's' : ''} saved.
+                      <Sparkles className="mt-0.5 h-4 w-4 flex-none text-[#2F6FED]" strokeWidth={2} aria-hidden />
+                      <span>
+                        <span className="font-semibold text-[#2F6FED]">AI review:</span>{' '}
+                        {unsavedAiFilled.length} table{unsavedAiFilled.length !== 1 ? 's' : ''} had Source Table ID / Title filled by AI — confirm they look right.
+                      </span>
                     </span>
-                  )}
+                  </div>
+                )}
               </div>
             )}
-            {visiblePreviewTables.length > 10 ? (
+            {mismatchedPreviewTables.length > 0 && unsavedMismatched.length === 0 && (
+              <div className="rounded-lg border border-green bg-sage px-4 py-3 text-sm font-medium text-teal">
+                <span className="inline-flex items-start gap-1.5">
+                  <Check className="mt-0.5 h-4 w-4 flex-none" strokeWidth={2.5} aria-hidden />
+                  All {mismatchedPreviewTables.length} flagged table{mismatchedPreviewTables.length !== 1 ? 's' : ''} saved.
+                </span>
+              </div>
+            )}
+
+            {(unsavedMismatched.length > 0 || unsavedAiFilled.length > 0 || previewReviewFilter !== 'all') && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-soft">Show</span>
+                {[
+                  { id: 'all', label: 'All', count: visiblePreviewTables.length, activeClass: 'bg-teal-deep text-cream' },
+                  { id: 'fix', label: 'Needs fixing', count: unsavedMismatched.length, activeClass: 'bg-coral text-white', idleClass: 'border-coral/35 text-coral hover:bg-error-bg' },
+                  { id: 'ai', label: 'AI review', count: unsavedAiFilled.length, activeClass: 'bg-[#2F6FED] text-white', idleClass: 'border-[#5B8DEF]/40 text-[#2F6FED] hover:bg-[#EEF4FF]' },
+                  { id: 'ok', label: 'Reviewed / OK', count: okPreviewCount, activeClass: 'bg-green text-white', idleClass: 'border-green/40 text-green hover:bg-sage' },
+                ].map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12.5px] font-semibold transition-colors ${
+                      previewReviewFilter === f.id
+                        ? `border-transparent ${f.activeClass}`
+                        : `border-line bg-white text-ink-soft ${f.idleClass || 'hover:bg-sage hover:text-teal-deep'}`
+                    }`}
+                    onClick={() => setPreviewReviewFilter(f.id)}
+                  >
+                    {f.label}
+                    <span className={`rounded-full px-1.5 py-0.5 text-[10.5px] font-semibold ${
+                      previewReviewFilter === f.id ? 'bg-white/20' : 'bg-cream text-ink-soft'
+                    }`}>
+                      {f.count}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {filteredPreviewTables.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-sm text-ink-soft">
+                No tables in this filter. Choose another status above.
+              </div>
+            ) : filteredPreviewTables.length > 10 ? (
               <label className="flex min-w-0 max-w-3xl flex-col gap-1.5">
                 <span className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-ink-soft">
                   Table
                   <span className="rounded bg-cream px-1.5 py-0.5 text-[10.5px] font-semibold normal-case tracking-normal text-ink-soft">
-                    {visiblePreviewTables.length}
+                    {filteredPreviewTables.length}
                   </span>
                 </span>
                 <select
@@ -1257,10 +980,9 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                   value={previewSelected?._uid || ''}
                   onChange={(e) => selectPreviewTable(e.target.value)}
                 >
-                  {visiblePreviewTables.map((t) => {
-                    const flagged = !!t.id_title_mismatch
-                    const unsaved = flagged && !savedIds.has(t._uid)
-                    const mark = unsaved ? '⚠ ' : flagged ? '✓ ' : ''
+                  {filteredPreviewTables.map((t) => {
+                    const status = previewReviewStatus(t, savedIds)
+                    const mark = status === 'fix' ? '⚠ Needs fixing — ' : status === 'ai' ? '✦ AI review — ' : ''
                     return (
                       <option key={t._uid} value={t._uid}>
                         {mark}{tablePickerLabel(t)}
@@ -1271,10 +993,8 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
               </label>
             ) : (
               <div className="flex flex-wrap items-center gap-2.5">
-                {visiblePreviewTables.map((t) => {
-                  const flagged = !!t.id_title_mismatch
-                  const unsaved = flagged && !savedIds.has(t._uid)
-                  const resolved = !unsaved
+                {filteredPreviewTables.map((t) => {
+                  const status = previewReviewStatus(t, savedIds)
                   const active = t._uid === previewSelected?._uid
                   return (
                     <div
@@ -1282,38 +1002,66 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                       className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 transition-colors duration-dhara ease-dhara ${
                         active
                           ? 'border-transparent bg-teal-deep'
-                          : unsaved
-                            ? 'border-yellow bg-warn-bg ring-1 ring-yellow/50 hover:border-yellow'
-                            : resolved
-                              ? 'border-green bg-sage hover:border-teal/35'
-                              : 'border-line bg-white hover:border-teal/35 hover:bg-sage'
+                          : status === 'fix'
+                            ? 'border-coral/50 bg-error-bg ring-1 ring-coral/30 hover:border-coral'
+                            : status === 'ai'
+                              ? 'border-[#5B8DEF]/50 bg-[#EEF4FF] ring-1 ring-[#5B8DEF]/25 hover:border-[#2F6FED]'
+                              : 'border-green bg-sage hover:border-teal/35'
                       }`}
                       onClick={() => selectPreviewTable(t._uid)}
-                      title={flagged ? `${t.id} — Source Table ID / Title need confirmation` : `${t.id} — no validation errors`}
+                      title={
+                        status === 'fix'
+                          ? `${t.id} — Needs fixing`
+                          : status === 'ai'
+                            ? `${t.id} — AI filled — please review`
+                            : `${t.id} — Reviewed / OK`
+                      }
                     >
                       <span className={`flex h-4.5 w-4.5 items-center justify-center rounded-full ${
-                        active ? 'bg-cream/20 text-cream' : unsaved ? 'bg-yellow text-ink' : 'bg-green text-white'
+                        active
+                          ? 'bg-cream/20 text-cream'
+                          : status === 'fix'
+                            ? 'bg-coral text-white'
+                            : status === 'ai'
+                              ? 'bg-[#2F6FED] text-white'
+                              : 'bg-green text-white'
                       }`}>
-                        {unsaved ? (
+                        {status === 'fix' ? (
                           <AlertTriangle className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
+                        ) : status === 'ai' ? (
+                          <Sparkles className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
                         ) : (
                           <Check className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
                         )}
                       </span>
                       <span className={`font-sans text-xs font-medium ${active ? 'text-cream' : 'text-ink'}`}>{tableCode(t)}</span>
-                      <span className={`text-xs ${active ? 'text-cream/75' : 'text-ink-soft'}`}>{t.row_count} rows</span>
+                      <span className={`text-[10.5px] font-semibold uppercase tracking-wide ${
+                        active
+                          ? 'text-cream/70'
+                          : status === 'fix'
+                            ? 'text-coral'
+                            : status === 'ai'
+                              ? 'text-[#2F6FED]'
+                              : 'text-ink-soft'
+                      }`}>
+                        {status === 'fix' ? 'Fix' : status === 'ai' ? 'AI' : 'OK'}
+                      </span>
                     </div>
                   )
                 })}
               </div>
             )}
-            {previewSelected && (
+            {previewSelected && filteredPreviewTables.some((t) => t._uid === previewSelected._uid) && (
               <TableViewer table={previewSelected} compact />
             )}
             <ReconcileIds
               tables={batchAllTables}
               scopeTables={visiblePreviewTables}
-              visibleId={previewSelected?._uid}
+              visibleId={
+                filteredPreviewTables.some((t) => t._uid === previewSelected?._uid)
+                  ? previewSelected?._uid
+                  : filteredPreviewTables[0]?._uid
+              }
               onContinue={applyReconcile}
               onNavigate={selectPreviewTable}
               onSave={markTableSaved}
@@ -1323,253 +1071,55 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
         )}
 
         {step === 3 && matchResult && (
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="inline-flex rounded-full border border-line bg-mist p-0.5">
-                <button
-                  type="button"
-                  className={`dhara-tab rounded-full px-3.5 py-1.5 text-[13px] font-semibold ${
-                    groupingMode === 'automatic'
-                      ? 'border-transparent bg-teal-deep text-cream'
-                      : 'border-transparent text-ink-soft hover:bg-sage hover:text-teal-deep'
-                  }`}
-                  onClick={() => groupingMode !== 'automatic' && requestAutomaticGrouping()}
-                >
-                  Automatic (recommended)
-                </button>
-                <button
-                  type="button"
-                  className={`dhara-tab rounded-full px-3.5 py-1.5 text-[13px] font-semibold ${
-                    groupingMode === 'manual'
-                      ? 'border-transparent bg-teal-deep text-cream'
-                      : 'border-transparent text-ink-soft hover:bg-sage hover:text-teal-deep'
-                  }`}
-                  onClick={() => groupingMode !== 'manual' && requestManualGrouping()}
-                >
-                  Manual
-                </button>
-              </div>
-              {groupingMode === 'automatic' ? (
-                <div key="auto-actions" className="dhara-tab-panel flex flex-wrap items-center gap-3">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => (editingGroups ? finishEditingGroups() : setEditingGroups(true))}
-                >
-                  {editingGroups ? 'Done editing' : 'Edit groups'}
-                </Button>
-                </div>
-              ) : (
-                <div key="manual-actions" className="dhara-tab-panel">
-                <Button variant="secondary" size="sm" onClick={() => setActiveDialog('addGroup')}>+ Add another group</Button>
-                </div>
-              )}
-            </div>
-
-            {dragEnabled && (
-              <p className="m-0 text-[13px] font-medium text-yellow">
-                <span className="inline-flex items-start gap-1.5">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" strokeWidth={2} aria-hidden />
-                  Every table must be assigned to a group with a group name before you continue.
-                </span>
-              </p>
-            )}
-
-            {activeDialog === 'manualConfirm' && (
-              <ConfirmDialog
-                title="Switch to manual grouping?"
-                body='The current grouping will be erased. You can get it back by pressing "Automatic grouping" again.'
-                onCancel={() => setActiveDialog(null)}
-                onContinue={() => { setActiveDialog(null); startManualGrouping() }}
-              />
-            )}
-            {activeDialog === 'autoConfirm' && (
-              <ConfirmDialog
-                title="Switch to automatic grouping?"
-                body="The current grouping will be erased and reverted to the automatic grouping."
-                onCancel={() => setActiveDialog(null)}
-                onContinue={() => { setActiveDialog(null); revertToAutomaticBatchGrouping() }}
-              />
-            )}
-
-            {/* Edit mode gets a visually distinct region (dashed teal ring)
-                around the whole group-card list, so it's obvious at a
-                glance whether the page is in confirm-mode or edit-mode --
-                not just via each button's own disabled/enabled state. */}
-            <div className={`flex flex-col gap-3 rounded-xl p-1 ${dragEnabled ? 'ring-2 ring-dashed ring-teal/40' : ''}`}>
-              {matchResult.groups.map((g, i) => (
-                <div
-                  className={`flex flex-col gap-1.5 rounded-[10px] border bg-white p-4 transition-colors ${dragEnabled && dragOverGroup === i ? 'border-teal bg-[#f2f8f7]' : 'border-line'}`}
-                  key={i}
-                  onDragOver={dragEnabled ? (e) => { e.preventDefault(); setDragOverGroup(i) } : undefined}
-                  onDragLeave={dragEnabled ? () => setDragOverGroup((d) => (d === i ? null : d)) : undefined}
-                  onDrop={dragEnabled ? (e) => {
-                    e.preventDefault()
-                    const tableId = e.dataTransfer.getData('text/plain')
-                    if (tableId) moveTable(tableId, i)
-                    setDragOverGroup(null)
-                  } : undefined}
-                >
-                  <div className="flex items-center justify-between gap-2.5">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-ink-soft">Group name:</span>
-                    <GroupNameEditor name={g.file_name} onSave={(newName) => renameBatchGroup(i, newName)} />
-                    <span className="whitespace-nowrap rounded-full bg-cream px-2.5 py-0.5 text-xs text-ink-soft">{g.matched_tables.length} table{g.matched_tables.length !== 1 ? 's' : ''}</span>
-                    {dragEnabled && (
-                      <button className="flex items-center justify-center rounded border border-line px-1.5 py-1 text-xs text-ink-soft transition-colors duration-200 hover:border-coral hover:bg-error-bg hover:text-coral" onClick={() => deleteBatchGroup(i)} title="Delete group" aria-label="Delete group">
-                        <Trash2 className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
-                      </button>
-                    )}
-                  </div>
-                  <table className="w-full border-collapse text-[13px]">
-                    <thead>
-                      <tr>
-                        <th className="border-b border-line py-1.5 text-left text-xs uppercase text-ink-soft">Dataset ID</th>
-                        <th className="border-b border-line py-1.5 text-left text-xs uppercase text-ink-soft">Table Title</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {g.matched_tables.map((mt) => (
-                        <tr
-                          key={mt.table.id}
-                          draggable={dragEnabled}
-                          onDragStart={dragEnabled ? (e) => { e.dataTransfer.setData('text/plain', mt.table.id) } : undefined}
-                          className={dragEnabled ? 'cursor-grab hover:bg-cream' : undefined}
-                        >
-                          <td className="border-b border-line py-1.5 font-bold text-teal">{mt.table.id}</td>
-                          <td className="border-b border-line py-1.5">{mt.table.title || '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {dragEnabled && g.matched_tables.length === 0 && (
-                    <p className="m-0 text-xs italic text-ink-soft">Drag tables here</p>
-                  )}
-                </div>
-              ))}
-              {(dragEnabled || matchResult.unmatched_tables.length > 0) && (
-                <div
-                  className={`flex flex-col gap-1.5 rounded-[10px] border p-4 ${dragEnabled && dragOverGroup === 'unmatched' ? 'border-teal bg-[#f2f8f7]' : 'border-[#f3c98b] bg-[#fffaf1]'}`}
-                  onDragOver={dragEnabled ? (e) => { e.preventDefault(); setDragOverGroup('unmatched') } : undefined}
-                  onDragLeave={dragEnabled ? () => setDragOverGroup((d) => (d === 'unmatched' ? null : d)) : undefined}
-                  onDrop={dragEnabled ? (e) => {
-                    e.preventDefault()
-                    const tableId = e.dataTransfer.getData('text/plain')
-                    if (tableId) moveTable(tableId, 'unmatched')
-                    setDragOverGroup(null)
-                  } : undefined}
-                >
-                  <div className="flex items-center justify-between gap-2.5">
-                    <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink">
-                      <AlertTriangle className="h-4 w-4 text-yellow" strokeWidth={2} aria-hidden />
-                      Unmatched tables
-                    </span>
-                    <span className="whitespace-nowrap rounded-full bg-cream px-2.5 py-0.5 text-xs text-ink-soft">{matchResult.unmatched_tables.length}</span>
-                  </div>
-                  {dragEnabled && (
-                    <p className="m-0 text-xs italic text-ink-soft">Drag tables here to unassign, or onto a group above to assign</p>
-                  )}
-                  <table className="w-full border-collapse text-[13px]">
-                    <thead>
-                      <tr>
-                        <th className="border-b border-line py-1.5 text-left text-xs uppercase text-ink-soft">Dataset ID</th>
-                        <th className="border-b border-line py-1.5 text-left text-xs uppercase text-ink-soft">Table Title</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {matchResult.unmatched_tables.map((u) => (
-                        <tr
-                          key={u.table.id}
-                          draggable={dragEnabled}
-                          onDragStart={dragEnabled ? (e) => { e.dataTransfer.setData('text/plain', u.table.id) } : undefined}
-                          className={dragEnabled ? 'cursor-grab hover:bg-cream' : undefined}
-                        >
-                          <td className="border-b border-line py-1.5 font-bold text-teal">{u.table.id}</td>
-                          <td className="border-b border-line py-1.5">{u.table.title || '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-
-            <div className="flex items-center gap-4">
-              {editingGroups ? (
-                <Button variant="primary" onClick={finishEditingGroups}>Done editing</Button>
-              ) : (
-                <Button variant="primary" onClick={requestContinueToMetadata} disabled={metadataFilling} className="inline-flex items-center gap-1.5">
-                  {metadataFilling && <span className="inline-block h-[13px] w-[13px] animate-spin rounded-full border-2 border-white/50 border-t-white" />}
-                  {metadataFilling ? 'Filling metadata…' : 'Continue to metadata'}
-                  {!metadataFilling && <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />}
-                </Button>
-              )}
-            </div>
-
-            {groupingToast && (
-              <div className="fixed right-6 top-6 z-[1200] flex animate-toast-in items-center gap-3 rounded-[10px] border border-yellow bg-warn-bg px-4 py-3 pl-4.5 font-sans text-sm font-medium leading-snug text-ink shadow-[0_8px_24px_rgba(229,183,47,0.22)]" role="alert">
-                <span>{groupingToast}</span>
-                <button type="button" className="flex h-6 w-6 items-center justify-center rounded p-0.5 text-[#111] opacity-70 hover:opacity-100" onClick={() => setGroupingToast(null)} aria-label="Dismiss">
-                  <X className="h-4 w-4" strokeWidth={1.75} />
-                </button>
-              </div>
-            )}
-            {activeDialog === 'addGroup' && (
-              <AddGroupModal
-                tables={manualGrouping ? batchAllTables : matchResult.unmatched_tables.map((u) => u.table)}
-                onCreate={createBatchGroup}
-                onClose={() => setActiveDialog(null)}
-              />
-            )}
-          </div>
-        )}
-
-        {/* Kept mounted (hidden via CSS, not removed from the tree) once the
-            metadata step is reached, so stepping back to Dataset Inventory
-            and returning doesn't lose whatever was already filled in here. */}
-        {metadataStarted && matchResult && (
-          <div style={{ display: step === 4 ? 'contents' : 'none' }}>
-            <BatchReview
-              matchResult={matchResult}
-              metadataFiles={metadataFiles}
-              onDone={(label, ids) => {
-                setMetaLabel(label || 'this release')
-                setMetadataIds(ids || [])
-                setMetadataId((ids && ids[0]) || null)
-                setPendingGroups(null)
-                setStatusPage({
-                  ...STATUS_TRANSITIONS.metadataToClassify,
-                  key: 'metadataToClassify',
-                  msPerStep: 550,
-                  after: () => {
-                    setStatusPage(null)
-                    setStep(5)
-                  },
-                })
-              }}
-              onCancel={() => setStep(3)}
-            />
-          </div>
-        )}
-
-        {step === 5 && (
-          <Classify
-            metadataIds={metadataIds}
-            datasetLabel={metaLabel || 'This dataset'}
-            onContinue={publishFromClassify}
+          <GroupingWorkspace
+            matchResult={matchResult}
+            onMatchResultChange={setMatchResult}
+            manualGrouping={manualGrouping}
+            onManualGroupingChange={setManualGrouping}
+            editingGroups={editingGroups}
+            onEditingGroupsChange={setEditingGroups}
+            autoSnapshot={autoMatchResultRef.current}
+            onRequestAutomatic={handleRequestAutomatic}
+            onContinueToMetadata={requestContinueToMetadata}
+            metadataFilling={metadataFilling}
+            toast={groupingToast}
+            onDismissToast={() => setGroupingToast(null)}
           />
         )}
 
-        {step === 6 && (
-          <Publish
-            datasetLabel={metaLabel || 'This dataset'}
-            metadataId={metadataId}
-            hasKey={hasKey}
-            onGoSettings={onGoSettings}
-            onGoDashboard={onGoDashboard}
-            onGoCatalogue={onGoCatalogue}
-            onUploadAnother={onUploadAnother}
-          />
-        )}
+        <PostPreviewLaterSteps
+          step={step}
+          matchResult={matchResult}
+          metadataFiles={metadataFiles}
+          metadataStarted={metadataStarted}
+          metaLabel={metaLabel}
+          metadataId={metadataId}
+          metadataIds={metadataIds}
+          datasetLabel="This dataset"
+          hasKey={hasKey}
+          onBackToGrouping={() => setStep(3)}
+          onMetadataDone={(label, ids) => {
+            setMetaLabel(label || 'this release')
+            setMetadataIds(ids || [])
+            setMetadataId((ids && ids[0]) || null)
+            setPendingGroups(null)
+            setStatusPage({
+              ...STATUS_TRANSITIONS.metadataToClassify,
+              key: 'metadataToClassify',
+              msPerStep: 550,
+              after: () => {
+                setStatusPage(null)
+                setStep(5)
+              },
+            })
+          }}
+          onClassifyContinue={publishFromClassify}
+          onGoSettings={onGoSettings}
+          onGoDashboard={onGoDashboard}
+          onGoCatalogue={onGoCatalogue}
+          onUploadAnother={onUploadAnother}
+        />
+
         </div>
         </div>
       </div>

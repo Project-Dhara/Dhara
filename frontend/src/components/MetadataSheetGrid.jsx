@@ -5,8 +5,8 @@ import { useEffect, useState } from 'react'
 // Metadata entry, one card per table/metadata group. Field set mirrors what
 // the backend's /api/catalogue/push and /api/catalogue/batch-push accept
 // (see PushModal.jsx / BatchReview.jsx) — only `title` is actually required.
-// Short categorical fields render as compact editable badges; focused fields
-// expand to show wrapped content. Free-text fields get their own full-width row.
+// Short categorical / date fields share a wide 2-column card grid so values
+// stay readable; free-text fields get their own full-width row.
 export const METADATA_COLUMNS = [
   { key: 'title', label: 'Title', type: 'primary', placeholder: 'Dataset / table title', required: true },
   { key: 'product', label: 'Product', type: 'badge', placeholder: 'e.g. Population_Data' },
@@ -25,7 +25,7 @@ export const METADATA_COLUMNS = [
 function resizeBadgeInput(el, expanded) {
   if (!el) return
   el.style.height = 'auto'
-  el.style.height = expanded ? `${el.scrollHeight}px` : ''
+  el.style.height = `${Math.max(expanded ? el.scrollHeight : 34, 34)}px`
 }
 
 export default function MetadataSheetGrid({
@@ -44,6 +44,7 @@ export default function MetadataSheetGrid({
   }, [rows.length, activeIndex])
 
   const activeRow = rows[activeIndex]
+  const useDropdown = rows.length > 10
 
   return (
     <div className="flex flex-col gap-5">
@@ -54,24 +55,42 @@ export default function MetadataSheetGrid({
             {rows.length} metadata group{rows.length !== 1 ? 's' : ''} — select to review
           </span>
         </div>
-        <div className="grid grid-cols-4 gap-x-4 gap-y-3.5 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
-        {rows.map((row, ri) => (
-          <button
-            key={row.id}
-            type="button"
-            className={`dhara-tab grid min-w-0 grid-cols-[18px_1fr] items-center gap-2 rounded-full px-2.5 py-1.5 pl-2 font-sans text-[12.5px] font-medium ${
-              ri === activeIndex
-                ? 'border-teal-deep bg-teal-deep text-cream'
-                : 'border-line bg-surface text-ink-soft hover:border-teal/35 hover:bg-sage hover:text-teal-deep'
-            }`}
-            onClick={() => setActiveIndex(ri)}
-            title={row.label}
-          >
-            <span className={`inline-flex h-[18px] w-[18px] items-center justify-center rounded-full text-[10.5px] font-bold transition-colors duration-[420ms] ${ri === activeIndex ? 'bg-cream/20 text-cream' : 'bg-[#ece4d6] text-ink-soft'}`}>{ri + 1}</span>
-            <span className="line-clamp-2 min-w-0 text-center leading-tight">{row.label}</span>
-          </button>
-        ))}
-        </div>
+        {useDropdown ? (
+          <label className="flex w-full max-w-xl flex-col gap-1.5">
+            <span className="sr-only">Select metadata group</span>
+            <select
+              className="w-full rounded-lg border border-line bg-surface px-3 py-2.5 font-sans text-[13.5px] text-ink transition-shadow duration-200 focus:border-teal focus:shadow-focus-ring focus:outline-none"
+              value={activeIndex}
+              onChange={(e) => setActiveIndex(Number(e.target.value))}
+              aria-label="Select metadata group"
+            >
+              {rows.map((row, ri) => (
+                <option key={row.id} value={ri}>
+                  {ri + 1}. {row.label || `Group ${ri + 1}`}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <div className="grid grid-cols-4 gap-x-4 gap-y-3.5 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
+            {rows.map((row, ri) => (
+              <button
+                key={row.id}
+                type="button"
+                className={`dhara-tab grid min-w-0 grid-cols-[18px_1fr] items-center gap-2 rounded-full px-2.5 py-1.5 pl-2 font-sans text-[12.5px] font-medium ${
+                  ri === activeIndex
+                    ? 'border-teal-deep bg-teal-deep text-cream'
+                    : 'border-line bg-surface text-ink-soft hover:border-teal/35 hover:bg-sage hover:text-teal-deep'
+                }`}
+                onClick={() => setActiveIndex(ri)}
+                title={row.label}
+              >
+                <span className={`inline-flex h-[18px] w-[18px] items-center justify-center rounded-full text-[10.5px] font-bold transition-colors duration-[420ms] ${ri === activeIndex ? 'bg-cream/20 text-cream' : 'bg-[#ece4d6] text-ink-soft'}`}>{ri + 1}</span>
+                <span className="line-clamp-2 min-w-0 text-center leading-tight">{row.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {activeRow && (
@@ -108,20 +127,20 @@ export default function MetadataSheetGrid({
             )}
 
             {badgeCols.length > 0 && (
-              <div className="grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-2.5">
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 {badgeCols.map((c) => {
                   const missing = c.required && !(row.values[c.key] || '').trim()
                   return (
                   <label
                     key={c.key}
-                    className={`flex w-full items-center gap-2 rounded-[10px] border py-1.5 pl-3 pr-2 transition-colors focus-within:border-teal hover:border-[#c9bda6] ${
+                    className={`flex w-full min-w-0 flex-col gap-1 rounded-[10px] border px-3 py-2 transition-colors focus-within:border-teal hover:border-[#c9bda6] ${
                       missing ? 'border-[#e3b3ba] bg-[rgba(217,91,104,0.08)]' : 'border-line bg-[#F7F3EA]'
-                    } ${c.readOnly ? 'items-center' : ''}`}
+                    }`}
                   >
-                    <span className="flex-none self-center whitespace-nowrap font-label text-[11px] tracking-wide text-[#8E9398]">{c.label}{c.required && ' *'}</span>
+                    <span className="font-label text-[11px] tracking-wide text-[#8E9398]">{c.label}{c.required && ' *'}</span>
                     {c.readOnly ? (
                       <span
-                        className="block flex-1 truncate rounded-lg border border-solid border-line bg-cream px-2.5 py-1 font-sans text-[12.5px] font-medium text-ink outline-none focus:whitespace-normal focus:[overflow-wrap:anywhere] focus:break-words"
+                        className="block min-h-[34px] w-full [overflow-wrap:anywhere] break-words rounded-lg border border-solid border-line bg-cream px-2.5 py-1.5 font-sans text-[13px] font-medium leading-snug text-ink"
                         title={row.values[c.key] || ''}
                         tabIndex={0}
                       >
@@ -129,23 +148,20 @@ export default function MetadataSheetGrid({
                       </span>
                     ) : c.type === 'date' ? (
                       <input
-                        className="flex-1 rounded-lg border border-solid border-line bg-surface px-2.5 py-1 font-sans text-xs text-ink"
+                        className="box-border h-[34px] w-full rounded-lg border border-solid border-line bg-surface px-2.5 font-sans text-[13px] text-ink"
                         type="date"
                         value={row.values[c.key] || ''}
                         onChange={(e) => onChange(row.id, c.key, e.target.value)}
                       />
                     ) : (
                       <textarea
-                        className="block flex-1 resize-none overflow-hidden truncate whitespace-nowrap rounded-lg border border-dashed border-[#cfc6b4] bg-surface px-2.5 py-1 font-sans text-[12.5px] font-medium leading-snug text-ink placeholder:font-normal placeholder:text-[#a49c8e] hover:border-teal focus:overflow-visible focus:whitespace-pre-wrap focus:text-clip focus:[overflow-wrap:anywhere] focus:break-words focus:border-solid focus:border-teal focus:outline-none focus:ring-[3px] focus:ring-teal/10"
+                        className="box-border block min-h-[34px] w-full resize-none overflow-hidden whitespace-pre-wrap break-words rounded-lg border border-dashed border-[#cfc6b4] bg-surface px-2.5 py-1.5 font-sans text-[13px] font-medium leading-snug text-ink placeholder:font-normal placeholder:text-[#a49c8e] hover:border-teal focus:border-solid focus:border-teal focus:outline-none focus:ring-[3px] focus:ring-teal/10"
                         rows={1}
                         value={row.values[c.key] || ''}
                         placeholder={c.placeholder}
                         onChange={(e) => onChange(row.id, c.key, e.target.value)}
-                        onFocus={(e) => resizeBadgeInput(e.target, true)}
-                        onBlur={(e) => resizeBadgeInput(e.target, false)}
-                        onInput={(e) => {
-                          if (document.activeElement === e.target) resizeBadgeInput(e.target, true)
-                        }}
+                        onInput={(e) => resizeBadgeInput(e.target, true)}
+                        ref={(el) => resizeBadgeInput(el, true)}
                       />
                     )}
                   </label>

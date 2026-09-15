@@ -30,16 +30,16 @@ export default function FileUpload({
         disabled={loading}
       />
       <div
-        className={`overflow-hidden rounded-xl bg-teal shadow-card ${compact ? 'max-w-none' : 'max-w-[420px]'}`}
+        className={`overflow-hidden rounded-xl border border-line bg-white shadow-card ${compact ? 'max-w-none' : 'max-w-[420px]'}`}
       >
-        <div className="flex h-9 items-center border-b border-[#e6dcc8] bg-cream px-3">
+        <div className="flex h-9 items-center border-b border-line bg-mist px-3">
           <span className="text-[11px] font-bold uppercase tracking-wide text-ink-soft">Upload</span>
         </div>
         <div className="p-2.5">
           <div
             className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed px-4 transition-colors
               ${compact ? 'h-[72px]' : 'h-[84px]'}
-              ${dragging ? 'border-cream bg-forest-light/40' : 'border-white/25 bg-black/10 hover:border-cream/70 hover:bg-black/[.14]'}
+              ${dragging ? 'border-teal/50 bg-sage' : 'border-line bg-white hover:border-teal/40 hover:bg-sage'}
               ${loading ? 'cursor-not-allowed opacity-60' : ''}`}
             onClick={() => !loading && inputRef.current.click()}
             onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
@@ -50,8 +50,8 @@ export default function FileUpload({
               accept(e.dataTransfer.files[0])
             }}
           >
-            <div className="text-center text-[15px] font-semibold text-cream">{loading ? 'Processing…' : label}</div>
-            <div className="text-center text-[13px] text-cream/70">{selectedName || hint}</div>
+            <div className="text-center text-[15px] font-semibold text-ink">{loading ? 'Processing…' : label}</div>
+            <div className="text-center text-[13px] text-ink-soft">{selectedName || hint}</div>
           </div>
         </div>
       </div>

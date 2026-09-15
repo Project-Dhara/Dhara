@@ -101,9 +101,7 @@ export default function PdfProcessingPage() {
       <div className="mx-auto flex max-w-xl flex-col gap-8 py-8">
         <div>
           <div className="font-display text-xl font-medium text-ink">{job?.filename || 'Processing your document'}</div>
-          <div className="mt-1 text-sm text-ink-soft">
-            Processing your document — this can take a few minutes for large PDFs.
-          </div>
+          
         </div>
         <ProcessingStepper steps={buildSteps(job, sawValidateRef.current)} />
       </div>

@@ -40,11 +40,18 @@ def _iter_row_values(row: Any, col_names: list[str]) -> list[Any]:
     return [None] * len(col_names)
 
 
+def _safe_sheet_title(name: Any) -> str:
+    """Excel forbids \\ / ? * [ ] : in worksheet titles (max 31 chars)."""
+    cleaned = re.sub(r'[:\\/?*\[\]]+', ' ', str(name or 'Table'))
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip(" '") or 'Table'
+    return cleaned[:31] or 'Table'
+
+
 def table_to_excel_bytes(table: dict) -> bytes:
     wb = openpyxl.Workbook()
     ws = wb.active
     sheet_name = table.get("sheet") or table.get("title") or table.get("table_id") or "Table"
-    ws.title = str(sheet_name)[:31] or "Table"
+    ws.title = _safe_sheet_title(sheet_name)
 
     col_names = _column_names(table)
     rows = table.get("rows") or []

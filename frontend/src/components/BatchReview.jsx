@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, ArrowRight, Check, Info, X } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Check, Info } from 'lucide-react'
 import { withLlmKeyHeaders } from '../lib/llmKey'
 import { withAuthHeaders } from '../lib/auth'
 import { CLICK_THROUGH_ENABLED } from '../lib/clickThrough'
@@ -12,6 +12,7 @@ import NmdsGroupPanel from './NmdsGroupPanel'
 import ConsoleStatusPlaceholder from './ConsoleStatusPlaceholder'
 import Button from './ui/Button'
 import ErrorBanner from './ui/ErrorBanner'
+import Toast from './ui/Toast'
 import { STATUS_TRANSITIONS } from '../lib/consoleStatusTransitions'
 
 // A group whose auto-fill left every catalogue field blank (e.g. no metadata
@@ -35,6 +36,19 @@ function conceptGroupLabel(group, groupIndex) {
   return group?.metadata?.title || group?.metadata?.Indicator || group?.metadata?.Goal || group?.file_name || `Group ${groupIndex + 1}`
 }
 
+/** Keep steward overlays only — full rows are hydrated server-side from staging / pdf_store. */
+function slimTableForPush(table) {
+  if (!table || typeof table !== 'object') return table
+  const out = {}
+  ;[
+    '_uid', 'id', 'table_id', 'title', 'sheet',
+    'source_file', 'source_type', 'original_excel_url', 'source_excel_url',
+  ].forEach((key) => {
+    if (table[key] != null && table[key] !== '') out[key] = table[key]
+  })
+  return out
+}
+
 function seedConceptFieldsFromGroup(group, emptyFields, mergeConcepts) {
   const base = emptyFields()
   const conceptMeta = group?.concept_metadata
@@ -53,7 +67,7 @@ function seedConceptFieldsFromGroup(group, emptyFields, mergeConcepts) {
   return base
 }
 
-export default function BatchReview({ matchResult, metadataFiles, onDone, onCancel }) {
+export default function BatchReview({ matchResult, metadataFiles, onDone, onCancel, pdfJobId = null }) {
   const conceptConfig = useMemo(() => getConceptStandardConfig(getMetadataStandard()), [])
   const sheetColumns = conceptConfig.sheetColumns || METADATA_COLUMNS
   const sheetFieldKeys = useMemo(() => sheetColumns.map((c) => c.key), [sheetColumns])
@@ -309,6 +323,11 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
         if (u?.table?._uid) tablesByUid[u.table._uid] = u.table
       })
 
+      const batchId = matchResult.batch_id || null
+      const jobId = pdfJobId || matchResult.pdf_job_id || null
+      // Always slim groups_json so we stay under Starlette's 1MB form-part
+      // limit. Full rows come from staging / pdf_store, or a tables_blob file
+      // part (files are not subject to max_part_size).
       const finalGroups = groups.map((g, gi) => {
         const conceptFields = nmdsByGroup[gi]?.fields || emptyFields()
         const conceptList = fieldsToList(conceptFields)
@@ -329,7 +348,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
           metadata,
           matched_tables: g.matched_tables.map((mt) => ({
             ...mt,
-            table: tablesByUid[mt.table?._uid] || mt.table,
+            table: slimTableForPush(tablesByUid[mt.table?._uid] || mt.table),
           })),
           metadata_standard: standard,
           nmds_concepts: {
@@ -342,7 +361,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
         const target = assignments[idx]
         if (target !== undefined && target !== '') {
           finalGroups[Number(target)].matched_tables.push({
-            table: tablesByUid[u.table?._uid] || u.table,
+            table: slimTableForPush(tablesByUid[u.table?._uid] || u.table),
             confidence: 'manual',
           })
         }
@@ -350,6 +369,14 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
 
       const fd = new FormData()
       fd.append('groups_json', JSON.stringify(finalGroups))
+      if (batchId) fd.append('batch_id', batchId)
+      if (jobId) fd.append('pdf_job_id', jobId)
+      if (!batchId && !jobId) {
+        // In-progress sessions extracted before staging existed: ship full
+        // tables as a file part so hydration still works without re-extract.
+        const blob = new Blob([JSON.stringify(tablesByUid)], { type: 'application/json' })
+        fd.append('tables_blob', blob, 'tables.json')
+      }
       metadataFiles.forEach((f) => fd.append('metadata_files', f))
 
       const res = await fetch('/api/catalogue/batch-push', withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: fd })))
@@ -561,17 +588,11 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
       </div>
 
       {toast && (
-        <div
-          className={`fixed right-6 top-6 z-[1200] flex items-center gap-3 rounded-[10px] py-3 pl-[18px] pr-4 font-sans text-sm font-medium leading-snug shadow-lg ${
-            toast.type === 'success' ? 'bg-green text-white' : 'bg-warn-bg text-ink border border-yellow'
-          }`}
-          role="alert"
-        >
-          <span>{toast.message}</span>
-          <button type="button" className="flex h-6 w-6 items-center justify-center rounded px-0.5 text-current opacity-70 hover:opacity-100" onClick={() => setToast(null)} aria-label="Dismiss">
-            <X className="h-4 w-4" strokeWidth={1.75} />
-          </button>
-        </div>
+        <Toast
+          message={toast.message}
+          tone={toast.type === 'success' ? 'success' : 'warn'}
+          onDismiss={() => setToast(null)}
+        />
       )}
     </div>
   )

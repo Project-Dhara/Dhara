@@ -1,8 +1,12 @@
 'use client'
 
 import { useState } from 'react'
-import { ArrowRight, Check } from 'lucide-react'
+import { ArrowRight, AlertTriangle, Check, Sparkles } from 'lucide-react'
 import Button from './ui/Button'
+
+function hasAiFilledFields(t) {
+  return Boolean(t?.title_repaired_by_llm || t?.table_id_repaired_by_llm)
+}
 
 // Stage 2.5 — Reconcile Source Table ID / Title mismatches (see backend/dhara_dry_run.ipynb).
 // A table lands here when the code-based and prompt-based validators disagree
@@ -12,6 +16,10 @@ import Button from './ui/Button'
 // every table (not just flagged ones) so the user is always free to correct
 // a Source Table ID / Title that validation missed — only flagged tables are
 // required to be saved before continuing.
+//
+// Fields auto-filled by the LLM (`table_id_repaired_by_llm` /
+// `title_repaired_by_llm`) are highlighted for review even when validation
+// passed after the repair.
 //
 // Everything here keys off `_uid` (a plain per-file/per-position id the
 // backend assigns), not `t.id` -- `t.id` is the catalog/DDI-style code
@@ -27,6 +35,7 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
   // in view (falls back to all tables when no scope is given) — otherwise
   // it warns about mismatches in a dataset the user isn't even looking at.
   const scopedMismatched = (scopeTables || tables).filter((t) => t.id_title_mismatch)
+  const scopedAiFilled = (scopeTables || tables).filter((t) => hasAiFilledFields(t))
 
   const [drafts, setDrafts] = useState(() =>
     Object.fromEntries(
@@ -48,9 +57,16 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
   // deliberately click "Edit" to change a table's details again. Tables
   // that passed validation start locked too — the user must click "Edit"
   // before those fields (and the Save button) become usable, whereas a
-  // flagged table starts unlocked since it needs correcting right away.
+  // flagged or AI-filled table starts unlocked since it needs reviewing.
   const [lockedIds, setLockedIds] = useState(() => new Set(
-    tables.filter((t) => !t.id_title_mismatch || persistedSavedIds?.has(t._uid)).map((t) => t._uid)
+    tables
+      .filter((t) => {
+        if (persistedSavedIds?.has(t._uid)) return true
+        if (t.id_title_mismatch) return false
+        if (hasAiFilledFields(t)) return false
+        return true
+      })
+      .map((t) => t._uid)
   ))
 
   const updateDraft = (uid, field, value) => {
@@ -81,12 +97,12 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
     setLockedIds((prev) => new Set(prev).add(uid))
     onSave?.(uid, correction)
 
-    // Jump to the next flagged table that still needs saving, so the user
-    // works through every mismatch instead of having to hunt for the next one.
-    const idx = mismatched.findIndex((m) => m._uid === uid)
+    // Jump to the next flagged / AI-filled table that still needs saving.
+    const reviewQueue = tables.filter((m) => m.id_title_mismatch || hasAiFilledFields(m))
+    const idx = reviewQueue.findIndex((m) => m._uid === uid)
     if (idx !== -1) {
-      const after = mismatched.slice(idx + 1).find((m) => !newSaved.has(m._uid))
-      const before = mismatched.slice(0, idx).find((m) => !newSaved.has(m._uid))
+      const after = reviewQueue.slice(idx + 1).find((m) => !newSaved.has(m._uid))
+      const before = reviewQueue.slice(0, idx).find((m) => !newSaved.has(m._uid))
       const next = after || before
       if (next) onNavigate?.(next._uid)
     }
@@ -148,6 +164,20 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
     return { issues, idFlagged, titleFlagged }
   }
 
+  const fieldLabelClass = ({ needsFix, aiFilled }) => {
+    if (needsFix) return 'font-semibold text-coral'
+    if (aiFilled) return 'font-semibold text-[#2F6FED]'
+    return 'text-ink-soft'
+  }
+
+  const fieldInputClass = ({ needsFix, aiFilled, locked }) => {
+    const base = 'rounded-lg border px-2.5 py-2 font-sans text-[13.5px] text-ink focus:border-teal focus:outline-none read-only:cursor-default read-only:bg-mist read-only:text-ink-soft'
+    if (needsFix) return `${base} border-2 border-coral bg-error-bg`
+    if (aiFilled && !locked) return `${base} border-2 border-[#5B8DEF] bg-[#EEF4FF]`
+    if (aiFilled) return `${base} border-[#5B8DEF]/70 bg-[#EEF4FF]`
+    return `${base} border-line-strong`
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="mb-0.5 text-lg font-bold text-ink">Confirm Source Table Details</div>
@@ -165,15 +195,56 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
           </span>
         </div>
       )}
+      {scopedAiFilled.length > 0 && (
+        <div className="rounded-[10px] border border-[#5B8DEF]/45 bg-[#EEF4FF] px-4 py-3 text-sm text-ink">
+          <span className="inline-flex items-start gap-1.5">
+            <Sparkles className="mt-0.5 h-4 w-4 flex-none text-[#2F6FED]" strokeWidth={2} aria-hidden />
+            <span>
+              <span className="font-semibold text-[#2F6FED]">AI review:</span>{' '}
+              {scopedAiFilled.length} table{scopedAiFilled.length !== 1 ? 's' : ''} had Source Table ID and/or Table Title filled by AI — blue-highlighted fields below are worth a quick check.
+            </span>
+          </span>
+        </div>
+      )}
 
+      <div className="flex flex-wrap items-center gap-3 text-[12px] text-ink-soft">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-coral" aria-hidden />
+          Needs fixing
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-[#2F6FED]" aria-hidden />
+          AI review
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-green" aria-hidden />
+          Reviewed / OK
+        </span>
+      </div>
       <div className="flex flex-col gap-3.5">
         {visible.map((t) => {
           const locked = lockedIds.has(t._uid)
           const showReason = t.id_title_mismatch && !isSaved(t)
           const { issues, idFlagged, titleFlagged } = showReason ? mismatchInfo(t) : {}
+          const idAi = Boolean(t.table_id_repaired_by_llm) && !isSaved(t)
+          const titleAi = Boolean(t.title_repaired_by_llm) && !isSaved(t)
           return (
             <div className="flex flex-col gap-3 rounded-[10px] border border-line bg-white p-4 px-[18px]" key={t._uid}>
-              <div className="text-[13px] font-semibold text-ink">{t.id}</div>
+              <div className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-ink">
+                <span>{t.id}</span>
+                {showReason && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-coral/40 bg-error-bg px-2 py-0.5 text-[11px] font-semibold text-coral">
+                    <AlertTriangle className="h-3 w-3" strokeWidth={2} aria-hidden />
+                    Needs fixing
+                  </span>
+                )}
+                {hasAiFilledFields(t) && !isSaved(t) && !showReason && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-[#5B8DEF]/45 bg-[#EEF4FF] px-2 py-0.5 text-[11px] font-semibold text-[#2F6FED]">
+                    <Sparkles className="h-3 w-3" strokeWidth={2} aria-hidden />
+                    AI review
+                  </span>
+                )}
+              </div>
 
               {showReason && issues.length > 0 && (
                 <ul className="m-0 ml-[18px] mt-1 list-disc p-0 text-[12.5px] text-ink-soft">
@@ -182,20 +253,28 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
               )}
 
               <div className="flex flex-wrap gap-4">
-                <label className={`flex flex-1 basis-[260px] flex-col gap-1 text-xs ${showReason && idFlagged ? 'font-semibold text-coral' : 'text-ink-soft'}`}>
-                  <span>Source Table ID{showReason && idFlagged ? ' — needs fixing' : ''}</span>
+                <label className={`flex flex-1 basis-[260px] flex-col gap-1 text-xs ${fieldLabelClass({ needsFix: showReason && idFlagged, aiFilled: idAi })}`}>
+                  <span>
+                    Source Table ID
+                    {showReason && idFlagged ? ' — needs fixing' : ''}
+                    {!showReason && idAi ? ' — filled by AI' : ''}
+                  </span>
                   <input
-                    className={`rounded-lg border px-2.5 py-2 font-sans text-[13.5px] text-ink focus:border-teal focus:outline-none read-only:cursor-default read-only:bg-mist read-only:text-ink-soft ${showReason && idFlagged ? 'border-2 border-coral' : 'border-line-strong'}`}
+                    className={fieldInputClass({ needsFix: showReason && idFlagged, aiFilled: idAi, locked })}
                     value={drafts[t._uid]?.table_id ?? ''}
                     onChange={(e) => updateDraft(t._uid, 'table_id', e.target.value)}
                     readOnly={locked}
                     spellCheck={false}
                   />
                 </label>
-                <label className={`flex flex-1 basis-[260px] flex-col gap-1 text-xs ${showReason && titleFlagged ? 'font-semibold text-coral' : 'text-ink-soft'}`}>
-                  <span>Table Title{showReason && titleFlagged ? ' — needs fixing' : ''}</span>
+                <label className={`flex flex-1 basis-[260px] flex-col gap-1 text-xs ${fieldLabelClass({ needsFix: showReason && titleFlagged, aiFilled: titleAi })}`}>
+                  <span>
+                    Table Title
+                    {showReason && titleFlagged ? ' — needs fixing' : ''}
+                    {!showReason && titleAi ? ' — filled by AI' : ''}
+                  </span>
                   <input
-                    className={`rounded-lg border px-2.5 py-2 font-sans text-[13.5px] text-ink focus:border-teal focus:outline-none read-only:cursor-default read-only:bg-mist read-only:text-ink-soft ${showReason && titleFlagged ? 'border-2 border-coral' : 'border-line-strong'}`}
+                    className={fieldInputClass({ needsFix: showReason && titleFlagged, aiFilled: titleAi, locked })}
                     value={drafts[t._uid]?.title ?? ''}
                     onChange={(e) => updateDraft(t._uid, 'title', e.target.value)}
                     readOnly={locked}

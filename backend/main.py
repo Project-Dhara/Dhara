@@ -17,6 +17,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+import psycopg2.extras
 
 load_dotenv()
 
@@ -37,7 +38,12 @@ from metadata_llm import (
 from catalogue_matching import match_tables_to_metadata
 from table_export import table_to_excel_bytes, safe_download_stem
 from original_sheet_export import extract_sheet_with_formatting_from_bytes
-from validation import validate_table_fields_code, validate_table_fields_llm
+from validation import (
+    validate_table_fields_code,
+    validate_table_fields_llm,
+    repair_table_id_title_llm,
+    _title_looks_like_headers,
+)
 from sql_extract import extract_tables_from_sql
 
 
@@ -113,21 +119,91 @@ def _extractor_for(request: Request) -> TableExtractor:
     return TableExtractor(api_key=key, skip_llm=not key, provider=provider)
 
 
+def _title_context_rows_for(table: dict) -> list:
+    context = list(table.get("title_context_rows") or [])
+    if context:
+        return context
+    for row in (table.get("raw_header_rows") or [])[:4]:
+        if isinstance(row, (list, tuple)):
+            text = " ".join(str(c).strip() for c in row if c is not None and str(c).strip())
+        else:
+            text = str(row or "").strip()
+        if text:
+            context.append(text)
+    return context
+
+
+def _apply_llm_id_title_repair(table: dict, table_id: str, title: str) -> tuple:
+    """Apply LLM repair patches; returns (table_id, title, code_result)."""
+    repaired = repair_table_id_title_llm(
+        table_id,
+        title,
+        context_rows=_title_context_rows_for(table),
+        columns=table.get("columns") or [],
+    )
+    if not repaired:
+        return table_id, title, validate_table_fields_code(table_id, title)
+
+    if repaired.get("table_id") and repaired["table_id"] != (table_id or "").strip():
+        table["table_id"] = repaired["table_id"]
+        table_id = table["table_id"]
+        table["table_id_repaired_by_llm"] = True
+    if repaired.get("title") and repaired["title"] != (title or "").strip():
+        table["title"] = repaired["title"]
+        title = table["title"]
+        table["title_repaired_by_llm"] = True
+    return table_id, title, validate_table_fields_code(table_id, title)
+
+
 def _validate_table_id_title(table: dict) -> None:
     """Runs the code-based and prompt-based Source Table ID / Table Title validators
     on one extracted table (mirrors the notebook's Stage 2.5) and annotates
     the table in place with the results plus a `id_title_mismatch` flag the
-    frontend uses to decide which tables need manual reconciliation."""
+    frontend uses to decide which tables need manual reconciliation.
+
+    When the LLM auto-fills or corrects either field, sets
+    ``table_id_repaired_by_llm`` / ``title_repaired_by_llm`` so Preview can
+    highlight them for human review.
+    """
     table_id = table.get("table_id", "")
     title = table.get("title", "")
 
     code_result = validate_table_fields_code(table_id, title)
-    if not table_id.strip() and not title.strip():
+    needs_repair = (
+        (not (title or "").strip())
+        or (not (table_id or "").strip())
+        or _title_looks_like_headers(title, table.get("columns") or [])
+        or any("swap" in str(i).lower() for i in (code_result.get("issues") or []))
+        or any("title" in str(i).lower() and "missing" in str(i).lower() for i in (code_result.get("issues") or []))
+        or any("table id" in str(i).lower() and "missing" in str(i).lower() for i in (code_result.get("issues") or []))
+    )
+
+    if needs_repair:
+        table_id, title, code_result = _apply_llm_id_title_repair(table, table_id, title)
+
+    if not str(table_id or "").strip() and not str(title or "").strip():
         # Nothing to send the model -- both fields are already conclusively
         # invalid, so skip the LLM call rather than prompting it with two
         # empty strings.
         llm_result = {"valid": False, "issues": ["Source Table ID and Table Title are both missing"]}
     else:
+        try:
+            llm_result = validate_table_fields_llm(table_id, title)
+        except Exception as e:
+            llm_result = {"valid": None, "issues": [f"LLM validation skipped ({e})"]}
+
+    # If validation still says id/title is wrong, ask the model for a fix once.
+    llm_field_issue = any(
+        any(k in str(i).lower() for k in ("title", "table id", "swap", "header", "sl.no", "description", "missing"))
+        for i in (llm_result.get("issues") or [])
+    )
+    already_repaired = table.get("title_repaired_by_llm") or table.get("table_id_repaired_by_llm")
+    if (
+        not already_repaired
+        and llm_result.get("valid") is False
+        and llm_field_issue
+    ):
+        table_id, title, code_result = _apply_llm_id_title_repair(table, table_id, title)
         try:
             llm_result = validate_table_fields_llm(table_id, title)
         except Exception as e:
@@ -340,6 +416,28 @@ async def health():
         out["pgvector_error"] = str(exc)
     return out
 
+
+@app.get("/api/me")
+async def me(user_email: str = Depends(require_user)):
+    """Validate the current session and return the signed-in profile.
+    Used on app boot so a stale localStorage token after a backend restart
+    clears the client session and returns the user to login."""
+    def _run():
+        conn = _cat.get_connection()
+        try:
+            _cat.init_schema(conn)
+            return _cat.get_user_by_email(conn, user_email)
+        finally:
+            conn.close()
+
+    user = await asyncio.to_thread(_run)
+    if not user:
+        raise HTTPException(401, "Account not found — please sign in again")
+    return {
+        "email": user["email"],
+        "name": user.get("name") or user["email"],
+        "dept": user.get("dept") or "",
+    }
 
 @app.post("/api/signup")
 async def signup(request: Request):
@@ -560,7 +658,27 @@ async def batch_extract(request: Request, files: list[UploadFile] = File(...), u
         all_tables.extend(tables)
         per_file.append({"filename": filename, "table_count": len(tables)})
     await asyncio.to_thread(_validate_tables, all_tables)
-    return {"tables": all_tables, "per_file": per_file, "table_count": len(all_tables)}
+
+    # Stage full tables server-side so batch-push can send slim refs only
+    # (avoids Starlette's 1MB multipart part limit on groups_json).
+    import extract_staging as _staging
+
+    batch_id = _staging.new_batch_id()
+
+    def _stage():
+        conn = _cat.get_connection()
+        try:
+            return _staging.save_staging_tables(conn, batch_id, all_tables, user_email)
+        finally:
+            conn.close()
+
+    await asyncio.to_thread(_stage)
+    return {
+        "tables": all_tables,
+        "per_file": per_file,
+        "table_count": len(all_tables),
+        "batch_id": batch_id,
+    }
 
 
 @app.post("/api/catalogue/sql-extract")
@@ -616,11 +734,25 @@ async def sql_extract(request: Request, user_email: str = Depends(require_user))
         mode = "catalogue"
     else:
         mode = "auto"
+
+    import extract_staging as _staging
+
+    batch_id = _staging.new_batch_id()
+
+    def _stage():
+        conn = _cat.get_connection()
+        try:
+            return _staging.save_staging_tables(conn, batch_id, tables, user_email)
+        finally:
+            conn.close()
+
+    await asyncio.to_thread(_stage)
     return {
         "tables": tables,
         "per_file": [{"filename": source, "table_count": len(tables)}],
         "table_count": len(tables),
         "mode": mode,
+        "batch_id": batch_id,
     }
 
 
@@ -790,11 +922,20 @@ async def batch_push(
     request: Request,
     groups_json: str = Form(...),
     metadata_files: list[UploadFile] = File(None),
+    tables_blob: Optional[UploadFile] = File(None),
     nmds_concepts_json: Optional[str] = Form(None),
+    batch_id: Optional[str] = Form(None),
+    pdf_job_id: Optional[str] = Form(None),
     user_email: str = Depends(require_user),
 ):
     """Pushes a reviewed/confirmed batch mapping to the catalogue -- one
     metadata group + its matched tables per entry in `groups_json`.
+
+    `groups_json` should carry slim table refs (ids + steward overlays). Full
+    row payloads are loaded from extract_staging (`batch_id`), pdf_store
+    (`pdf_job_id`), or an optional `tables_blob` JSON file upload (used for
+    sessions extracted before staging existed). Legacy clients that still
+    embed full `rows` in groups_json continue to work.
 
     Two phases, deliberately kept separate: (1) slow work -- per-table LLM
     enrichment and optional GCS uploads, parallelized -- happens BEFORE any
@@ -805,12 +946,80 @@ async def batch_push(
     groups = _json.loads(groups_json)
     extractor = _extractor_for(request)
     nmds_concepts = _json.loads(nmds_concepts_json) if nmds_concepts_json else None
+    batch_id = (batch_id or "").strip() or None
+    pdf_job_id = (pdf_job_id or "").strip() or None
 
     metadata_by_index = {}
     if metadata_files:
         for i, f in enumerate(metadata_files):
             if f and f.filename:
                 metadata_by_index[i] = (f.filename, await f.read())
+
+    blob_by_uid: dict = {}
+    if tables_blob and tables_blob.filename:
+        try:
+            raw_blob = await tables_blob.read()
+            parsed_blob = _json.loads(raw_blob.decode("utf-8"))
+            if isinstance(parsed_blob, dict):
+                blob_by_uid = {
+                    str(k): v for k, v in parsed_blob.items() if isinstance(v, dict)
+                }
+        except Exception as e:
+            raise HTTPException(400, f"Invalid tables_blob: {e}")
+
+    def _load_sources():
+        staged: dict = {}
+        pdf_tables: dict = {}
+        conn = _cat.get_connection()
+        try:
+            _cat.init_schema(conn)
+            if batch_id:
+                import extract_staging as _staging
+                staged = _staging.load_staging_tables(conn, batch_id)
+            if pdf_job_id:
+                import pdf_store as _pdf_store
+                for t in _pdf_store.list_active_tables(conn, pdf_job_id):
+                    tid = str(t.get("id") or "")
+                    if tid:
+                        pdf_tables[tid] = t
+                        # MatchResult also keys PDF tables by _uid === id.
+                        pdf_tables[str(t.get("_uid") or tid)] = t
+        finally:
+            conn.close()
+        return staged, pdf_tables
+
+    staged_by_uid, pdf_by_id = await asyncio.to_thread(_load_sources)
+
+    _OVERLAY_KEYS = (
+        "_uid", "id", "table_id", "title", "sheet", "source_file", "source_type",
+        "original_excel_url", "source_excel_url",
+    )
+
+    def _hydrate_table(raw: dict) -> dict:
+        """Merge slim overlay onto staged/pdf/blob/full payload table."""
+        raw = raw if isinstance(raw, dict) else {}
+        uid = str(raw.get("_uid") or raw.get("id") or "").strip()
+        full = None
+        if uid and uid in staged_by_uid:
+            full = dict(staged_by_uid[uid])
+        elif uid and uid in pdf_by_id:
+            full = dict(pdf_by_id[uid])
+        elif uid and uid in blob_by_uid:
+            full = dict(blob_by_uid[uid])
+        elif raw.get("rows") is not None or raw.get("source_rows") is not None:
+            # Legacy: client still sent the full table inside groups_json.
+            full = dict(raw)
+        if full is None:
+            raise ValueError(
+                f"Missing staged table for uid={uid or '(empty)'}. "
+                "Re-run extract/preview so tables are stored before push."
+            )
+        for key in _OVERLAY_KEYS:
+            if raw.get(key) not in (None, ""):
+                full[key] = raw[key]
+        if not full.get("_uid") and uid:
+            full["_uid"] = uid
+        return full
 
     def _prep_table(t):
         # Preserve the extractor's own clean table structure as a
@@ -825,7 +1034,7 @@ async def batch_push(
         tables = []
         for mt in group.get("matched_tables", []):
             raw = mt.get("table") or {}
-            t = dict(raw)
+            t = _hydrate_table(raw)
             t["title"] = _catalogue_table_title(t, mt.get("inventory_item"))
             tables.append(t)
         if not tables:
@@ -911,6 +1120,268 @@ async def list_catalogue_datasets(user_email: str = Depends(require_user)):
 
     datasets = await asyncio.to_thread(_run)
     return {"datasets": datasets}
+
+
+def _pdf_dashboard_row(
+    job: Dict[str, Any],
+    grouping_status: Optional[str] = None,
+    pipeline_step: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """Map a PDF extraction job into a Dashboard readiness row.
+
+    Console steps: 1 Files → 2 Preview → 3 Grouping → 4 Metadata → 5 Classify → 6 Publish.
+    Returns None when the job should be represented by catalogue rows instead
+    (metadata already pushed / classify+).
+    """
+    job_id = job.get("job_id") or ""
+    name = (job.get("filename") or "PDF upload").rsplit("/", 1)[-1]
+    status = str(job.get("status") or "")
+    percent = int(job.get("percent") or 0)
+    needs_review = int(job.get("needs_review_count") or 0)
+    table_count = int(job.get("table_count") or 0)
+    gs = (grouping_status or "").strip().lower()
+    step = pipeline_step if pipeline_step is not None else job.get("pipeline_step")
+    try:
+        step = int(step) if step is not None else None
+    except (TypeError, ValueError):
+        step = None
+
+    base = {
+        "id": f"pdf:{job_id}",
+        "kind": "pdf_job",
+        "name": name,
+        "source": "PDF",
+        "product": "—",
+        "job_id": job_id,
+        "updated_at": job.get("created_at") or job.get("updated_at"),
+    }
+
+    if status in ("queued", "running"):
+        # Step 1 — extraction in progress (cap below Preview).
+        return {
+            **base,
+            "readiness_pct": max(5, min(int(round(percent * 0.2)), 20)),
+            "status": "Processing",
+            "status_key": "processing",
+            "action": "View",
+            "href": f"/console/processing/{job_id}",
+            "pipeline_step": 1,
+        }
+    if status == "error":
+        return {
+            **base,
+            "readiness_pct": max(5, min(percent, 20)),
+            "status": "Failed",
+            "status_key": "failed",
+            "action": "View",
+            "href": f"/console/processing/{job_id}",
+            "pipeline_step": 1,
+        }
+
+    # Infer step when not explicitly stored (older jobs).
+    if step is None:
+        if gs == "saved":
+            step = 4  # grouping finished → Metadata
+        elif grouping_status is not None:
+            step = 3  # persisted tables, grouping in progress
+        else:
+            step = 2  # extraction done, Preview
+    elif gs == "saved" and step < 4:
+        # Grouping Continue always advances into Metadata.
+        step = 4
+
+    # After Metadata push the catalogue rows are the accurate readiness view.
+    if step >= 5:
+        return None
+
+    if step >= 4:
+        return {
+            **base,
+            "readiness_pct": 67,
+            "status": "Metadata review",
+            "status_key": "metadata_review",
+            "action": "Review",
+            "href": f"/console/grouping/{job_id}",
+            "pipeline_step": 4,
+        }
+    if step >= 3:
+        return {
+            **base,
+            "readiness_pct": 50,
+            "status": "Harmonisation",
+            "status_key": "harmonisation",
+            "action": "Review",
+            "href": f"/console/grouping/{job_id}",
+            "pipeline_step": 3,
+        }
+
+    # Step 2 — Preview / table review
+    if table_count > 0:
+        cleared = max(0, table_count - needs_review)
+        pct = int(round(25 + (cleared / table_count) * 10))  # 25–35%
+    else:
+        pct = 30
+    label = "Table review" if needs_review > 0 else "Preview"
+    return {
+        **base,
+        "readiness_pct": pct,
+        "status": label,
+        "status_key": "table_review",
+        "action": "Review",
+        "href": f"/console/review/{job_id}",
+        "pipeline_step": 2,
+    }
+
+
+@app.patch("/api/pdf/jobs/{job_id}/pipeline")
+async def pdf_set_pipeline_step(job_id: str, request: Request, user_email: str = Depends(require_user)):
+    """Persist console pipeline step for dashboard readiness (steps 3–6)."""
+    import pdf_store
+
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(400, "Body must be a JSON object")
+    try:
+        step = int(body.get("step"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "step must be an integer 1–6")
+    if step < 1 or step > 6:
+        raise HTTPException(400, "step must be an integer 1–6")
+
+    def _run():
+        conn = _cat.get_connection()
+        try:
+            _cat.init_schema(conn)
+            pdf_store.init_pdf_schema(conn)
+            job_row = pdf_store.get_job(conn, job_id)
+            if not job_row or job_row.get("user_email") != user_email:
+                with _pdf_jobs_lock:
+                    mem = _get_pdf_job(job_id)
+                if not mem or mem.get("user_email") != user_email:
+                    return None
+                pdf_store.upsert_job(
+                    conn,
+                    job_id=job_id,
+                    user_email=user_email,
+                    filename=mem.get("filename"),
+                    status=mem.get("status") or "done",
+                )
+            pdf_store.set_pipeline_step(conn, job_id, step)
+            return pdf_store.get_pipeline_step(conn, job_id)
+        finally:
+            conn.close()
+
+    try:
+        saved = await asyncio.to_thread(_run)
+    except Exception as e:
+        raise HTTPException(500, f"Could not save pipeline step: {e}")
+    if saved is None:
+        raise HTTPException(404, "Job not found")
+
+    with _pdf_jobs_lock:
+        job = _get_pdf_job(job_id)
+        if job is not None:
+            job["pipeline_step"] = saved
+
+    return {"ok": True, "job_id": job_id, "pipeline_step": saved}
+
+
+@app.get("/api/dashboard")
+async def get_dashboard(user_email: str = Depends(require_user)):
+    """Dataset readiness for the Dashboard: catalogue groups + in-flight PDF jobs."""
+    import pdf_store
+
+    def _run():
+        conn = _cat.get_connection()
+        try:
+            _cat.init_schema(conn)
+            pdf_store.init_pdf_schema(conn)
+            base = _cat.list_dashboard(conn, user_email)
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT job_id, filename, status, grouping_status, pipeline_step,
+                           created_at, updated_at
+                    FROM pdf_jobs
+                    WHERE user_email = %s
+                    ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+                    """,
+                    (user_email,),
+                )
+                pdf_db = {r["job_id"]: dict(r) for r in cur.fetchall()}
+        finally:
+            conn.close()
+        return base, pdf_db
+
+    base, pdf_db = await asyncio.to_thread(_run)
+
+    with _pdf_jobs_lock:
+        _hydrate_user_pdf_jobs(user_email)
+        json_jobs = [
+            _pdf_job_public(j)
+            for j in _pdf_jobs.values()
+            if j.get("user_email") == user_email
+        ]
+
+    seen = set()
+    pdf_rows = []
+    for job in json_jobs:
+        jid = job.get("job_id")
+        if not jid:
+            continue
+        seen.add(jid)
+        db = pdf_db.get(jid) or {}
+        step = db.get("pipeline_step")
+        if step is None:
+            step = job.get("pipeline_step")
+        row = _pdf_dashboard_row(job, db.get("grouping_status"), step)
+        if row:
+            pdf_rows.append(row)
+
+    for jid, db in pdf_db.items():
+        if jid in seen:
+            continue
+        row = _pdf_dashboard_row({
+            "job_id": jid,
+            "filename": db.get("filename"),
+            "status": db.get("status") or "done",
+            "percent": 100,
+            "created_at": db.get("updated_at") or db.get("created_at"),
+            "needs_review_count": 0,
+            "pipeline_step": db.get("pipeline_step"),
+        }, db.get("grouping_status"), db.get("pipeline_step"))
+        if row:
+            pdf_rows.append(row)
+
+    awaiting_extra = sum(
+        1 for r in pdf_rows
+        if r.get("status_key") not in ("failed", "published")
+    )
+
+    rows = list(pdf_rows) + list(base.get("rows") or [])
+    stats = dict(base.get("stats") or {})
+    stats["awaiting_review"] = int(stats.get("awaiting_review") or 0) + awaiting_extra
+    stats["datasets"] = int(stats.get("datasets") or 0) + len(pdf_rows)
+
+    def _sort_key(r):
+        u = r.get("updated_at")
+        if isinstance(u, (int, float)):
+            return float(u)
+        if hasattr(u, "timestamp"):
+            try:
+                return float(u.timestamp())
+            except Exception:
+                return 0.0
+        if isinstance(u, str):
+            try:
+                from datetime import datetime
+                return datetime.fromisoformat(u.replace("Z", "+00:00")).timestamp()
+            except Exception:
+                return 0.0
+        return 0.0
+
+    rows.sort(key=_sort_key, reverse=True)
+    return {"stats": stats, "rows": rows}
 
 
 @app.get("/api/catalogue/metadata-groups/{metadata_id}/classifications")
@@ -1106,49 +1577,82 @@ def _upload_original_sheet_to_gcs(file_bytes: bytes, source_file: str, sheet: st
 # Unlike the xlsx batch-extract flow above, this can take several minutes
 # (pymupdf extraction + batched OpenAI reconstruction/classification -- see
 # sda_india_pdf_extraction.py), far longer than a synchronous request should
-# block for. Jobs live in memory and are also mirrored to data/pdf_jobs/ so a
-# uvicorn --reload keeps finished results available for review. A real
-# multi-process deployment would still want a proper queue + DB table.
+# block for. Jobs are cached in memory for live progress and persisted to
+# Postgres (pdf_store) — never under backend/data/. Pipeline runs use ephemeral
+# temp files that are deleted when extraction finishes.
+import tempfile
+
 import sda_india_pdf_extraction as _pdf_pipeline
+import pdf_store as _pdf_store
 
 _pdf_jobs: Dict[str, Dict[str, Any]] = {}
 _pdf_jobs_lock = threading.Lock()
-_pdf_upload_dir = pathlib.Path(__file__).parent / "data" / "pdf_uploads"
-# Job payloads (including finished results) are also written here so a
-# uvicorn --reload / container restart doesn't wipe in-progress review state.
-_pdf_jobs_dir = pathlib.Path(__file__).parent / "data" / "pdf_jobs"
 
 
-def _pdf_job_path(job_id: str) -> pathlib.Path:
-    return _pdf_jobs_dir / f"{job_id}.json"
+def _pdf_db_conn():
+    conn = _cat.get_connection()
+    _cat.init_schema(conn)
+    _pdf_store.init_pdf_schema(conn)
+    return conn
 
 
-def _save_pdf_job(job: Dict[str, Any]) -> None:
-    """Atomic JSON write; best-effort (disk full shouldn't crash the pipeline)."""
+def _save_pdf_job(
+    job: Dict[str, Any],
+    *,
+    pdf_bytes: Optional[bytes] = None,
+    clear_pdf_bytes: bool = False,
+) -> None:
+    """Persist working job state to Postgres (best-effort)."""
     try:
-        _pdf_jobs_dir.mkdir(parents=True, exist_ok=True)
-        path = _pdf_job_path(job["job_id"])
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(_json.dumps(job, default=str), encoding="utf-8")
-        tmp.replace(path)
+        conn = _pdf_db_conn()
+        try:
+            _pdf_store.save_working_job(
+                conn, job, pdf_bytes=pdf_bytes, clear_pdf_bytes=clear_pdf_bytes,
+            )
+        finally:
+            conn.close()
     except Exception as e:
         print(f"Warning: could not persist PDF job {job.get('job_id')}: {e}", flush=True)
 
 
 def _load_pdf_job(job_id: str) -> Optional[Dict[str, Any]]:
-    path = _pdf_job_path(job_id)
-    if not path.is_file():
-        return None
     try:
-        data = _json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else None
+        conn = _pdf_db_conn()
+        try:
+            return _pdf_store.load_working_job(conn, job_id)
+        finally:
+            conn.close()
     except Exception as e:
         print(f"Warning: could not load PDF job {job_id}: {e}", flush=True)
         return None
 
 
+def _list_pdf_jobs_for_user(user_email: str) -> List[Dict[str, Any]]:
+    try:
+        conn = _pdf_db_conn()
+        try:
+            return _pdf_store.list_working_jobs(conn, user_email)
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"Warning: could not list PDF jobs: {e}", flush=True)
+        return []
+
+
+def _get_pdf_bytes(job_id: str) -> Optional[bytes]:
+    try:
+        conn = _pdf_db_conn()
+        try:
+            return _pdf_store.get_pdf_bytes(conn, job_id)
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"Warning: could not load PDF bytes for {job_id}: {e}", flush=True)
+        return None
+
+
 def _get_pdf_job(job_id: str) -> Optional[Dict[str, Any]]:
-    """Prefer in-memory job; fall back to disk after a process restart."""
+    """Prefer in-memory job; fall back to Postgres after a process restart."""
     job = _pdf_jobs.get(job_id)
     if job is not None:
         return job
@@ -1158,11 +1662,25 @@ def _get_pdf_job(job_id: str) -> Optional[Dict[str, Any]]:
     return job
 
 
+def _hydrate_user_pdf_jobs(user_email: str) -> None:
+    """Ensure this user's Postgres jobs are present in the in-memory cache."""
+    for job in _list_pdf_jobs_for_user(user_email):
+        jid = job.get("job_id")
+        if not jid:
+            continue
+        # Prefer live in-memory progress over a stale DB snapshot.
+        if jid not in _pdf_jobs:
+            _pdf_jobs[jid] = job
+
+
 def _pdf_job_public(job: Dict[str, Any]) -> Dict[str, Any]:
     """Status view of a job -- everything except the (potentially large)
     result payload, which has its own endpoint."""
-    public = {k: v for k, v in job.items() if k not in ("result", "reviews", "deleted_table_ids")}
-    if job["status"] == "done" and job.get("result") is not None:
+    public = {
+        k: v for k, v in job.items()
+        if k not in ("result", "reviews", "deleted_table_ids", "pdf_bytes")
+    }
+    if job.get("status") == "done" and job.get("result") is not None:
         deleted = set(job.get("deleted_table_ids") or [])
         tables = []
         for page_num, page in job["result"].items():
@@ -1175,44 +1693,60 @@ def _pdf_job_public(job: Dict[str, Any]) -> Dict[str, Any]:
     return public
 
 
-def _run_pdf_job(job_id: str, pdf_path: pathlib.Path, api_key: Optional[str]) -> None:
+def _run_pdf_job(job_id: str, pdf_bytes: bytes, api_key: Optional[str]) -> None:
     """Runs synchronously (called via asyncio.to_thread from the upload
     endpoint) -- this thread just blocks for the pipeline's duration while
     the event loop keeps serving other requests, including this job's own
-    status-polling requests from the frontend."""
+    status-polling requests from the frontend.
+
+    Writes an ephemeral tempfile for pymupdf (deleted in finally); durable
+    state is Postgres only.
+    """
+    last_flush = {"stage": None, "bucket": -1}
+
     def on_progress(stage: str, percent: int, message: str) -> None:
         with _pdf_jobs_lock:
             job = _pdf_jobs.get(job_id)
             if job is not None:
                 job.update(status="running", stage=stage, percent=percent, message=message)
+                bucket = int(percent) // 10
+                if stage != last_flush["stage"] or bucket != last_flush["bucket"]:
+                    last_flush["stage"] = stage
+                    last_flush["bucket"] = bucket
+                    _save_pdf_job(job)
 
+    tmp_path: Optional[pathlib.Path] = None
     try:
-        result = _pdf_pipeline.run_pipeline(pdf_path, on_progress=on_progress, api_key=api_key)
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp.write(pdf_bytes)
+            tmp_path = pathlib.Path(tmp.name)
+        result = _pdf_pipeline.run_pipeline(tmp_path, on_progress=on_progress, api_key=api_key)
         with _pdf_jobs_lock:
             job = _pdf_jobs.get(job_id)
             if job is not None:
                 job.update(status="done", stage="done", percent=100, message="Complete", result=result)
-                _save_pdf_job(job)
+                # Keep source PDF bytes in Postgres for review snapshots.
+                _save_pdf_job(job, pdf_bytes=pdf_bytes)
     except Exception as e:
         print(f"PDF job {job_id} failed: {e}")
         with _pdf_jobs_lock:
             job = _pdf_jobs.get(job_id)
             if job is not None:
                 job.update(status="error", message=f"Failed: {e}", error=str(e))
-                _save_pdf_job(job)
+                _save_pdf_job(job, clear_pdf_bytes=True)
     finally:
-        try:
-            pdf_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 @app.post("/api/pdf/upload")
 async def pdf_upload(request: Request, file: UploadFile = File(...), user_email: str = Depends(require_user)):
-    """Accepts one PDF, saves it, and starts background processing
-    (sda_india_pdf_extraction.run_pipeline) without blocking the response --
-    returns a job_id immediately for the frontend to poll via
-    GET /api/pdf/jobs/{job_id}."""
+    """Accepts one PDF, stores working state in Postgres, and starts background
+    processing without blocking the response — returns a job_id immediately for
+    the frontend to poll via GET /api/pdf/jobs/{job_id}."""
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Only .pdf files are supported")
 
@@ -1221,9 +1755,6 @@ async def pdf_upload(request: Request, file: UploadFile = File(...), user_email:
         raise HTTPException(400, "Uploaded file is empty")
 
     job_id = uuid.uuid4().hex
-    _pdf_upload_dir.mkdir(parents=True, exist_ok=True)
-    pdf_path = _pdf_upload_dir / f"{job_id}.pdf"
-    pdf_path.write_bytes(content)
 
     # Same per-request LLM key convention as the rest of the app (see
     # _extractor_for) -- falls back to the server's OPENAI_API_KEY env var
@@ -1245,9 +1776,9 @@ async def pdf_upload(request: Request, file: UploadFile = File(...), user_email:
             "reviews": {},
             "deleted_table_ids": [],
         }
-        _save_pdf_job(_pdf_jobs[job_id])
+        _save_pdf_job(_pdf_jobs[job_id], pdf_bytes=content)
 
-    asyncio.create_task(asyncio.to_thread(_run_pdf_job, job_id, pdf_path, api_key))
+    asyncio.create_task(asyncio.to_thread(_run_pdf_job, job_id, content, api_key))
     return {"job_id": job_id}
 
 
@@ -1256,13 +1787,7 @@ async def pdf_jobs_list(user_email: str = Depends(require_user)):
     """Lists the caller's own PDF jobs, most recent first -- lets the
     frontend recover an in-progress/finished job after a page refresh."""
     with _pdf_jobs_lock:
-        if _pdf_jobs_dir.is_dir():
-            for path in _pdf_jobs_dir.glob("*.json"):
-                jid = path.stem
-                if jid not in _pdf_jobs:
-                    loaded = _load_pdf_job(jid)
-                    if loaded is not None:
-                        _pdf_jobs[jid] = loaded
+        _hydrate_user_pdf_jobs(user_email)
         mine = [_pdf_job_public(j) for j in _pdf_jobs.values() if j.get("user_email") == user_email]
     mine.sort(key=lambda j: j.get("created_at") or 0, reverse=True)
     return {"jobs": mine}
@@ -1287,7 +1812,7 @@ async def pdf_job_result(job_id: str, user_email: str = Depends(require_user)):
     with _pdf_jobs_lock:
         job = _get_pdf_job(job_id)
         if not job or job.get("user_email") != user_email:
-            raise HTTPException(404, "Job not found — it may have been cleared by a server restart. Please upload the PDF again.")
+            raise HTTPException(404, "Job not found. Please upload the PDF again.")
         if job["status"] != "done":
             raise HTTPException(409, f"Job not finished yet (status={job['status']})")
         reviews = dict(job.get("reviews") or {})
@@ -1308,10 +1833,8 @@ async def pdf_job_result(job_id: str, user_email: str = Depends(require_user)):
 
 @app.patch("/api/pdf/jobs/{job_id}/tables/{table_id}")
 async def pdf_review_table(job_id: str, table_id: str, request: Request, user_email: str = Depends(require_user)):
-    """Saves a reviewer's edits to one table's classification/columns (human
-    review, not data correction -- see the module docstring in
-    sda_india_pdf_extraction.py). The payload is merged onto the original
-    table when /result is next fetched; nothing here touches extracted rows."""
+    """Saves a reviewer's edits to one table (classification, columns, rows,
+    structure). Merged onto the original table when /result is next fetched."""
     payload = await request.json()
     if not isinstance(payload, dict):
         raise HTTPException(400, "Body must be a JSON object")
@@ -1322,6 +1845,90 @@ async def pdf_review_table(job_id: str, table_id: str, request: Request, user_em
         job.setdefault("reviews", {})[table_id] = {**job["reviews"].get(table_id, {}), **payload}
         _save_pdf_job(job)
     return {"ok": True}
+
+
+@app.get("/api/pdf/jobs/{job_id}/tables/{table_id}/snapshot")
+async def pdf_table_snapshot(job_id: str, table_id: str, user_email: str = Depends(require_user)):
+    """PNG crop of the source PDF region for this table (or the full page).
+
+    Used in review so humans can compare the extracted grid against the page.
+    Source PDF bytes are loaded from Postgres (not local disk).
+    """
+    import pymupdf
+
+    with _pdf_jobs_lock:
+        job = _get_pdf_job(job_id)
+        if not job or job.get("user_email") != user_email:
+            raise HTTPException(404, "Job not found")
+        if job.get("status") != "done":
+            raise HTTPException(409, f"Job not finished yet (status={job.get('status')})")
+        reviews = dict(job.get("reviews") or {})
+        deleted = set(job.get("deleted_table_ids") or [])
+        result = job.get("result") or {}
+
+    if table_id in deleted:
+        raise HTTPException(404, "Table was deleted")
+
+    try:
+        page_s, idx = _parse_pdf_table_id(table_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+    page_key = page_s if page_s in result else (int(page_s) if page_s.isdigit() and int(page_s) in result else None)
+    if page_key is None and page_s.isdigit():
+        # result keys may be ints or strings
+        for k in result:
+            if str(k) == page_s:
+                page_key = k
+                break
+    if page_key is None:
+        raise HTTPException(404, "Page not found in job result")
+
+    page_tables = (result.get(page_key) or {}).get("tables") or []
+    if idx < 0 or idx >= len(page_tables):
+        raise HTTPException(404, "Table not found")
+    table = {**page_tables[idx], **reviews.get(table_id, {})}
+
+    pdf_bytes = await asyncio.to_thread(_get_pdf_bytes, job_id)
+    if not pdf_bytes:
+        raise HTTPException(
+            404,
+            "Source PDF is no longer available for snapshots (re-upload the file to enable comparison).",
+        )
+
+    page_num = int(table.get("page") or page_s)
+    bbox = table.get("bbox")
+    try:
+        doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            if page_num < 1 or page_num > doc.page_count:
+                raise HTTPException(404, f"Page {page_num} out of range")
+            page = doc[page_num - 1]
+            clip = None
+            if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+                x0, y0, x1, y1 = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+                # Pad slightly so captions above the ruled grid stay visible.
+                pad = 8.0
+                clip = pymupdf.Rect(
+                    max(0, x0 - pad),
+                    max(0, y0 - pad),
+                    min(page.rect.x1, x1 + pad),
+                    min(page.rect.y1, y1 + pad),
+                )
+            pix = page.get_pixmap(clip=clip, dpi=144, alpha=False)
+            png = pix.tobytes("png")
+        finally:
+            doc.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Could not render snapshot: {e}") from e
+
+    return Response(
+        content=png,
+        media_type="image/png",
+        headers={"Cache-Control": "private, max-age=300"},
+    )
 
 
 @app.post("/api/pdf/jobs/{job_id}/tables/delete")
@@ -1629,8 +2236,8 @@ def _pdf_tables_from_job(job: Dict[str, Any]) -> list:
 @app.post("/api/pdf/jobs/{job_id}/persist-approved")
 async def pdf_persist_approved(job_id: str, request: Request, user_email: str = Depends(require_user)):
     """
-    Continue from Preview: write approved tables to Postgres, embed summaries
-    into pgvector, and propose similarity-based groups.
+    Continue from Preview: write approved tables to Postgres and propose
+    title-based groups (same base-title rule as Excel; SDG jobs by goal).
 
     Optional JSON body `{ "tables": [ { table_id, title, rows, columns, … } ] }`
     overlays the in-memory job reviews so Preview edits that haven't been
@@ -1738,7 +2345,7 @@ async def pdf_get_grouping(job_id: str, user_email: str = Depends(require_user))
 
 @app.post("/api/pdf/jobs/{job_id}/grouping/propose")
 async def pdf_propose_grouping(job_id: str, request: Request, user_email: str = Depends(require_user)):
-    """Re-run automatic pgvector clustering and overwrite saved groups."""
+    """Re-run automatic title-based grouping and overwrite saved groups."""
     import pdf_store
     import pdf_grouping
 

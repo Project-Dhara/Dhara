@@ -1,8 +1,10 @@
 """
-PDF Stage 5–7: semantic chunks → embeddings → similarity grouping proposals.
+PDF Stage 5–7: propose table groups for human review.
 
-pgvector finds candidate neighbours; clustering produces draft groups.
-Human review (frontend) remains authoritative.
+Default grouping matches Excel: tables that share a base title (trailing
+qualifiers like ``(URBAN)`` / ``(RURAL)`` stripped) land in one group.
+SDG indicator jobs still bucket by goal number. Embeddings remain a
+fallback for untitled leftovers only.
 """
 
 from __future__ import annotations
@@ -16,25 +18,26 @@ from typing import Any, Optional
 
 import pdf_store
 import vector_store as vs
+from catalogue_matching import _base_title, build_group_name
 
 EMBED_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
-# Cosine distance threshold for connecting two tables (pgvector <=> ).
-# Lower = stricter. ~0.35–0.45 works for table_summary chunks in practice.
+# Cosine distance threshold for connecting untitled leftovers (pgvector <=> ).
 DEFAULT_DISTANCE_THRESHOLD = float(os.environ.get("PDF_GROUP_DISTANCE", "0.42"))
 TOP_K = int(os.environ.get("PDF_GROUP_TOP_K", "8"))
 
 
 def build_table_summary_chunk(table: dict) -> str:
+    """Text used for leftover embedding fallback — title only (not subject)."""
+    title = str(table.get("title") or "").strip()
+    if title:
+        return title
+    # Untitled tables: fall back to a thin structural cue so they don't all
+    # collapse into one embedding neighbourhood.
     parts = [
-        table.get("title") or "",
+        table.get("table_id") or table.get("id") or "",
         table.get("domain") or "",
-        table.get("subject") or "",
         table.get("entity") or "",
         table.get("table_type") or "",
-        table.get("geography") or "",
-        table.get("time_period") or "",
-        table.get("frequency") or "",
-        table.get("unit") or "",
     ]
     return " | ".join(p for p in parts if p and str(p).strip())
 
@@ -223,16 +226,72 @@ def _cluster_by_distance(
 
 
 def _suggest_group_name(members: list[dict], index: int) -> str:
-    for key in ("subject", "domain", "entity", "title"):
+    # Prefer shared base title (Excel-style), never subject — subject is often
+    # a coarse LLM label that collapses unrelated tables into one bucket.
+    bases = []
+    for m in members:
+        title = str(m.get("title") or "").strip()
+        if title:
+            bases.append(_base_title(title))
+    if bases:
+        best = max(set(bases), key=bases.count)
+        if best:
+            return _clean_group_display_name(build_group_name(best))[:120]
+    for key in ("domain", "entity", "title"):
         vals = [str(m.get(key) or "").strip() for m in members]
         vals = [v for v in vals if v]
         if not vals:
             continue
-        # Most common non-empty
         best = max(set(vals), key=vals.count)
         if best:
             return _clean_group_display_name(best)[:80]
     return f"Group {index + 1}"
+
+
+def _propose_title_groups(tables: list[dict]) -> list[dict]:
+    """
+    Group by normalized title, same rule as Excel ``auto_group_tables``:
+    strip a trailing parenthetical qualifier so URBAN/RURAL/ALL variants
+    of the same caption share a group.
+    """
+    buckets: dict[str, list[dict]] = {}
+    order: list[str] = []
+    untitled: list[dict] = []
+
+    for t in tables:
+        title = str(t.get("title") or "").strip()
+        if not title:
+            untitled.append(t)
+            continue
+        key = _base_title(title)
+        if key not in buckets:
+            buckets[key] = []
+            order.append(key)
+        buckets[key].append(t)
+
+    groups: list[dict] = []
+    for i, key in enumerate(order):
+        members = buckets[key]
+        name = _clean_group_display_name(build_group_name(key))[:120]
+        groups.append(
+            {
+                "name": name or f"Group {i + 1}",
+                "tables": members,
+                "table_pks": [m["id"] for m in members],
+            }
+        )
+
+    # Untitled leftovers: each alone (caller may re-cluster via embeddings).
+    for j, t in enumerate(untitled):
+        label = str(t.get("table_id") or t.get("id") or j + 1)
+        groups.append(
+            {
+                "name": f"Untitled ({label})",
+                "tables": [t],
+                "table_pks": [t["id"]],
+            }
+        )
+    return groups
 
 
 # Merged multi-page tables append "(pages 1–2)" to the table title for
@@ -392,6 +451,158 @@ def _propose_sdg_groups(
     return groups
 
 
+def propose_groups_from_table_dicts(
+    tables: list[dict],
+    *,
+    embeddings: Optional[dict[str, list[float]]] = None,
+    threshold: float = DEFAULT_DISTANCE_THRESHOLD,
+) -> dict[str, Any]:
+    """
+    In-memory grouping used by every upload format (PDF / Excel / SQL).
+
+    Same rules as ``propose_groups`` for a PDF job, without requiring Postgres:
+      - SDG corpora → goal buckets (leftovers fall back to title groups)
+      - otherwise → base-title buckets (URBAN/RURAL/ALL variants merge)
+
+    Each input table must be identifiable via ``id``, ``_uid``, or ``table_id``.
+    """
+    if not tables:
+        return {
+            "groups": [],
+            "unmatched_tables": [],
+            "method": "empty",
+            "indexed": 0,
+        }
+
+    normalized: list[dict] = []
+    for i, raw in enumerate(tables):
+        t = dict(raw or {})
+        tid = t.get("id") or t.get("_uid") or t.get("table_id") or f"row-{i}"
+        t["id"] = str(tid)
+        if not t.get("_uid"):
+            t["_uid"] = t["id"]
+        normalized.append(t)
+
+    embeddings = embeddings or {}
+    if corpus_looks_like_sdg_indicator_tables(normalized):
+        if embeddings:
+            groups = _propose_sdg_groups(normalized, embeddings, threshold)
+        else:
+            # No vectors available (Excel/SQL): SDG buckets + title groups for leftovers.
+            by_goal: dict[int, list[dict]] = defaultdict(list)
+            leftovers: list[dict] = []
+            for t in normalized:
+                goal = detect_sdg_goal(t)
+                if goal is not None:
+                    by_goal[goal].append(t)
+                else:
+                    leftovers.append(t)
+            groups = []
+            for goal in sorted(by_goal.keys()):
+                members = by_goal[goal]
+                groups.append(
+                    {
+                        "name": f"SDG {goal}",
+                        "tables": members,
+                        "table_pks": [m["id"] for m in members],
+                    }
+                )
+            if leftovers:
+                groups.extend(_propose_title_groups(leftovers))
+        method = "sdg_goal"
+    else:
+        groups = _propose_title_groups(normalized)
+        method = "title_base"
+        if embeddings:
+            untitled_groups = [
+                g for g in groups if (g.get("name") or "").startswith("Untitled (")
+            ]
+            titled_groups = [
+                g for g in groups if not (g.get("name") or "").startswith("Untitled (")
+            ]
+            leftovers = [m for g in untitled_groups for m in (g.get("tables") or [])]
+            if len(leftovers) >= 2:
+                by_id = {t["id"]: t for t in leftovers}
+                clusters = _cluster_by_distance(
+                    [t["id"] for t in leftovers],
+                    embeddings,
+                    threshold,
+                )
+                titled_groups.extend(
+                    _groups_from_clusters(clusters, by_id, name_start_index=len(titled_groups))
+                )
+                groups = titled_groups
+                method = "title_base+embed_untitled"
+
+    groups.sort(key=lambda g: (-len(g["tables"]), (g.get("name") or "").lower()))
+    if method == "sdg_goal":
+        def _sdg_sort_key(g: dict) -> tuple:
+            m = re.match(r"^SDG\s+(\d+)$", g.get("name") or "", re.IGNORECASE)
+            if m:
+                return (0, int(m.group(1)))
+            return (1, 0, (g.get("name") or "").lower())
+
+        groups.sort(key=_sdg_sort_key)
+
+    return {
+        "groups": groups,
+        "unmatched_tables": [],
+        "method": method,
+        "indexed": 0,
+        "threshold": threshold,
+    }
+
+
+def proposal_to_catalogue_match_result(
+    proposal: dict,
+    *,
+    source_type: str = "xlsx",
+    default_source_file: str = "Dataset",
+) -> dict[str, Any]:
+    """Convert PDF-style ``{groups:[{name, tables}]}`` into batch-match shape."""
+    empty_meta = {
+        "title": "", "product": "", "category": "", "geography": "",
+        "frequency": "", "time_period": "", "data_source": "", "description": "",
+        "last_updated": "", "future_release": "", "key_statistics": "", "remarks": "",
+    }
+    out_groups = []
+    for wi, g in enumerate(proposal.get("groups") or []):
+        members = []
+        for t in g.get("tables") or []:
+            table = dict(t)
+            uid = table.get("_uid") or table.get("id") or table.get("table_id")
+            table["_uid"] = uid
+            table.setdefault("source_type", source_type)
+            table.setdefault(
+                "source_file",
+                table.get("source_file") or table.get("filename") or default_source_file,
+            )
+            table.setdefault("sheet", table.get("sheet") or table.get("title") or "data")
+            members.append(
+                {
+                    "table": table,
+                    "inventory_item": None,
+                    "confidence": source_type if source_type == "pdf" else "title_base",
+                }
+            )
+        out_groups.append(
+            {
+                "workbook_index": wi,
+                "file_name": g.get("name") or f"Group {wi + 1}",
+                "metadata": dict(empty_meta),
+                "concepts": [],
+                "classifications": {},
+                "matched_tables": members,
+            }
+        )
+    return {
+        "groups": out_groups,
+        "unmatched_tables": [],
+        "unmatched_inventory": [],
+        "method": proposal.get("method"),
+    }
+
+
 def propose_groups(
     conn,
     job_id: str,
@@ -401,10 +612,11 @@ def propose_groups(
     reindex: bool = False,
 ) -> dict[str, Any]:
     """
-    Ensure embeddings exist, cluster, return grouping payload + method used.
+    Propose grouping for a PDF job.
 
-    When the job looks like per-goal SDG indicator tables, groups are named
-    SDG 1 / SDG 2 / … instead of embedding clusters.
+    Prefer title-base buckets (Excel parity). SDG indicator corpora still use
+    goal numbers. Embeddings are only used to cluster untitled leftovers when
+    reindex/embeddings are available.
     """
     tables = pdf_store.list_active_tables(conn, job_id)
     if not tables:
@@ -415,55 +627,61 @@ def propose_groups(
             "indexed": 0,
         }
 
-    embeddings = _load_summary_embeddings(conn, job_id)
-    missing = [t for t in tables if t["id"] not in embeddings]
     indexed = 0
-    if reindex or missing:
-        indexed = index_tables(conn, job_id, tables if reindex else missing, api_key=api_key)
-        embeddings = _load_summary_embeddings(conn, job_id)
+    embeddings: dict[str, list[float]] = {}
 
-    method = "pgvector"
-    if len(embeddings) < len(tables):
-        # Fill gaps with pseudo vectors from summary text
-        for t in tables:
+    if corpus_looks_like_sdg_indicator_tables(tables):
+        embeddings = _load_summary_embeddings(conn, job_id)
+        missing = [t for t in tables if t["id"] not in embeddings]
+        if reindex or missing:
+            indexed = index_tables(conn, job_id, tables if reindex else missing, api_key=api_key)
+            embeddings = _load_summary_embeddings(conn, job_id)
+        if len(embeddings) < len(tables):
+            for t in tables:
+                if t["id"] not in embeddings:
+                    embeddings[t["id"]] = _pseudo_embedding(
+                        build_table_summary_chunk(t), vs.embedding_dim()
+                    )
+        result = propose_groups_from_table_dicts(
+            tables, embeddings=embeddings, threshold=threshold
+        )
+        result["indexed"] = indexed
+        return result
+
+    result = propose_groups_from_table_dicts(tables, threshold=threshold)
+    groups = result.get("groups") or []
+    method = result.get("method") or "title_base"
+    untitled_groups = [
+        g for g in groups if (g.get("name") or "").startswith("Untitled (")
+    ]
+    titled_groups = [
+        g for g in groups if not (g.get("name") or "").startswith("Untitled (")
+    ]
+    leftovers = [m for g in untitled_groups for m in (g.get("tables") or [])]
+    if len(leftovers) >= 2:
+        embeddings = _load_summary_embeddings(conn, job_id)
+        missing = [t for t in leftovers if t["id"] not in embeddings]
+        if reindex or missing:
+            indexed = index_tables(
+                conn,
+                job_id,
+                tables if reindex else leftovers,
+                api_key=api_key,
+            )
+            embeddings = _load_summary_embeddings(conn, job_id)
+        for t in leftovers:
             if t["id"] not in embeddings:
                 embeddings[t["id"]] = _pseudo_embedding(
                     build_table_summary_chunk(t), vs.embedding_dim()
                 )
-        method = "hybrid"
-
-    by_id = {t["id"]: t for t in tables}
-
-    if corpus_looks_like_sdg_indicator_tables(tables):
-        groups = _propose_sdg_groups(tables, embeddings, threshold)
-        method = "sdg_goal"
-    else:
-        clusters = _cluster_by_distance(
-            [t["id"] for t in tables],
-            embeddings,
-            threshold,
+        result = propose_groups_from_table_dicts(
+            tables, embeddings=embeddings, threshold=threshold
         )
-        # Prefer multi-table clusters as named groups; leave true singletons unmatched
-        # only when they didn't connect — still put each cluster as a group so
-        # Automatic mode matches Excel (everything grouped, user can edit).
-        groups = _groups_from_clusters(clusters, by_id)
+        result["indexed"] = indexed
+        return result
 
-    groups.sort(key=lambda g: (-len(g["tables"]), g["name"].lower()))
-    if method == "sdg_goal":
-        def _sdg_sort_key(g: dict) -> tuple:
-            m = re.match(r"^SDG\s+(\d+)$", g.get("name") or "", re.IGNORECASE)
-            if m:
-                return (0, int(m.group(1)))
-            return (1, 0, (g.get("name") or "").lower())
-
-        groups.sort(key=_sdg_sort_key)
-    return {
-        "groups": groups,
-        "unmatched_tables": [],
-        "method": method,
-        "indexed": indexed,
-        "threshold": threshold,
-    }
+    result["indexed"] = indexed
+    return result
 
 
 def apply_proposal_to_db(conn, job_id: str, proposal: dict) -> dict:

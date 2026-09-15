@@ -28,6 +28,8 @@ _ROWSPAN_STUBS = {
 }
 
 _COL_NUM_RE = re.compile(r"^\(\d+\)$")
+# Bare 1..N index strip under headers (no parentheses), common in CRS/statistical PDFs.
+_BARE_INDEX_RE = re.compile(r"^\d{1,2}$")
 # Comparator / open-ended codes: >8, <5, 65+, >=10 (still short header leaves).
 _OPEN_CODE_RE = re.compile(r"^[<>]=?\s*\d+\+?$|^\d+\+$")
 # Unit banners that often colspan measure columns.
@@ -40,6 +42,24 @@ _TABLE_BANNER_RE = re.compile(
     r"^(?:table\s*[:.\-–—]?\s*[a-z0-9][\w\s.\-–—/]*|"
     r"statement\s*[:.\-–—]?\s*\d+|"
     r"annex(?:ure)?\s*[:.\-–—]?\s*[a-z0-9]+)$",
+    re.IGNORECASE,
+)
+# Document-kind + short id only (e.g. "TABLE: B-6", "TABLE- B-1"), not the
+# descriptive title that often follows on the next full-width row.
+_DOC_KIND_RE = (
+    r"(?:TABLE|TAB\.?|STATEMENT|ANNEX(?:URE)?|SCHEDULE|EXHIBIT|APPENDIX)"
+)
+_TABLE_ID_TOKEN_RE = r"[A-Z0-9][\w.\-–—/]*"
+_TABLE_ID_ONLY_RE = re.compile(
+    rf"^{_DOC_KIND_RE}\s*[:.\-–—]?\s*{_TABLE_ID_TOKEN_RE}"
+    rf"(?:\s*\([^)]{{0,48}}\))?\s*$",
+    re.IGNORECASE,
+)
+# Id and descriptive title jammed into one full-width cell.
+_TABLE_ID_THEN_TITLE_RE = re.compile(
+    rf"^(?P<id>{_DOC_KIND_RE}\s*[:.\-–—]?\s*{_TABLE_ID_TOKEN_RE}"
+    rf"(?:\s*\([^)]{{0,48}}\))?)"
+    rf"(?:\s*[:.\-–—]\s*|\s+)(?P<title>\S.+)$",
     re.IGNORECASE,
 )
 
@@ -164,7 +184,7 @@ def _row_is_full_width_banner(row: Sequence[Any]) -> bool:
     column and surface it as a fake parent header_group in Preview.
     """
     cells = list(row)
-    if len(cells) < 3:
+    if len(cells) < 2:
         return False
     non_empty = [_cell_str(v) for v in cells if _cell_str(v)]
     if not non_empty:
@@ -177,9 +197,143 @@ def _row_is_full_width_banner(row: Sequence[Any]) -> bool:
     if len(non_empty) == 1:
         return True
     # Already-filled banner: every (or most) cells repeat the same caption.
-    if len(non_empty) >= max(3, int(len(cells) * 0.6)):
+    if len(non_empty) >= max(2, int(len(cells) * 0.6)):
         return bool(_TABLE_BANNER_RE.match(label)) or len(label) >= 28
     return bool(_TABLE_BANNER_RE.match(label)) and len(non_empty) >= len(cells) * 0.5
+
+
+def _row_banner_label(row: Sequence[Any]) -> Optional[str]:
+    """Text of a full-width in-grid banner, or None if the row is not one."""
+    if not _row_is_full_width_banner(row):
+        return None
+    non_empty = [_cell_str(v) for v in row if _cell_str(v)]
+    return non_empty[0] if non_empty else None
+
+
+def _is_table_id_only(label: str) -> bool:
+    """True for short document-id banners like ``TABLE: B-6`` / ``TABLE- B-1``."""
+    s = _cell_str(label)
+    return bool(s) and bool(_TABLE_ID_ONLY_RE.match(s))
+
+
+def _is_descriptive_in_grid_title(label: str) -> bool:
+    """
+    True when text looks like a descriptive table caption (not a short id,
+    unit strip, or stub header word).
+    """
+    s = _cell_str(label)
+    if not s:
+        return False
+    if _is_table_id_only(s):
+        return False
+    if _UNIT_GROUP_RE.match(s):
+        return False
+    m = _TABLE_ID_THEN_TITLE_RE.match(s)
+    if m:
+        s = _cell_str(m.group("title"))
+        if not s:
+            return False
+    words = s.split()
+    if len(s) < 18 and len(words) < 4:
+        return False
+    # Single/short stub labels that happen to colspan are not titles.
+    if len(words) <= 2 and len(s) < 30:
+        return False
+    letter_chars = sum(1 for c in s if c.isalpha())
+    if letter_chars < max(10, int(len(s) * 0.45)):
+        return False
+    if sum(1 for w in words if _is_numeric_cell(w)) >= max(2, len(words) // 2):
+        return False
+    return True
+
+
+def extract_in_grid_caption(
+    rows: Optional[List[List[Any]]],
+) -> dict:
+    """
+    Extract table id + descriptive title from leading full-width banner rows.
+
+    Common in CRS / vital-statistics tables where ``TABLE: B-12`` is the first
+    ruled row, the next full-width row is the long caption, and an optional
+    subtitle banner follows (e.g. ``MOTHER EDUCATION (NOT STATED)``).
+
+    Returns
+      title            – descriptive caption (subtitles joined with " — ")
+      table_id_label   – short TABLE/STATEMENT/… id when present
+      rows_consumed    – body start index (row after last consumed banner); 0 if none
+    """
+    out: dict = {"title": None, "table_id_label": None, "rows_consumed": 0}
+    if not rows:
+        return out
+    n_cols = max((len(r) for r in rows), default=0)
+    if n_cols < 2:
+        return out
+
+    banners: List[Tuple[int, str]] = []
+    for i, row in enumerate(rows[:12]):
+        padded = _pad_row(row, n_cols)
+        if _blank(padded):
+            continue
+        label = _row_banner_label(padded)
+        if label:
+            banners.append((i, label))
+            continue
+        break
+
+    if not banners:
+        return out
+
+    def _descriptive_run(start: int) -> List[Tuple[int, str]]:
+        """Consecutive descriptive banners starting at ``start`` (label index)."""
+        run: List[Tuple[int, str]] = []
+        for pair in banners[start:]:
+            _idx, b = pair
+            if _is_table_id_only(b) or _UNIT_GROUP_RE.match(b):
+                break
+            if _is_descriptive_in_grid_title(b):
+                run.append(pair)
+                continue
+            break
+        return run
+
+    def _finish(
+        table_id: Optional[str],
+        title_pairs: List[Tuple[int, str]],
+        fallback_end_i: int,
+    ) -> dict:
+        out["table_id_label"] = table_id
+        if title_pairs:
+            out["title"] = " — ".join(lab for _i, lab in title_pairs)
+            out["rows_consumed"] = title_pairs[-1][0] + 1
+        else:
+            out["rows_consumed"] = fallback_end_i + 1
+        return out
+
+    labels = [lab for _i, lab in banners]
+    first = labels[0]
+
+    if _is_table_id_only(first):
+        return _finish(first, _descriptive_run(1), banners[0][0])
+
+    combined = _TABLE_ID_THEN_TITLE_RE.match(first)
+    if combined:
+        title_part = _cell_str(combined.group("title"))
+        if _is_descriptive_in_grid_title(title_part):
+            # Treat combined cell as the first title part, then more banners.
+            rest = _descriptive_run(1)
+            pairs = [(banners[0][0], title_part)] + rest
+            return _finish(_cell_str(combined.group("id")), pairs, banners[0][0])
+
+    if _is_descriptive_in_grid_title(first):
+        return _finish(None, _descriptive_run(0), banners[0][0])
+
+    for i, b in enumerate(labels):
+        if not _is_table_id_only(b):
+            continue
+        return _finish(b, _descriptive_run(i + 1), banners[i][0])
+
+    # Leading full-width rows we couldn't classify — skip so they aren't headers.
+    return _finish(None, [], banners[-1][0])
 
 
 def _row_is_text_header(
@@ -448,6 +602,18 @@ def detect_header_rows(body: List[List[Any]], n_cols: int) -> Tuple[int, List[in
         col_nums = sum(1 for v in non_empty if _COL_NUM_RE.match(_cell_str(v)))
         if col_nums > len(non_empty) * 0.5:
             skip_rows.append(i)
+            continue
+        # Pure 1,2,3,…,N index row (no parentheses) sitting under the header.
+        if (
+            len(non_empty) >= max(3, int(n_cols * 0.6))
+            and all(_BARE_INDEX_RE.match(_cell_str(v)) for v in non_empty)
+        ):
+            try:
+                nums = [int(_cell_str(v)) for v in non_empty]
+            except ValueError:
+                nums = []
+            if nums and nums == list(range(1, len(nums) + 1)):
+                skip_rows.append(i)
 
     header_count = 0
     root_header_row: Optional[Sequence[Any]] = None
@@ -613,6 +779,196 @@ def _split_hybrid_leaf_data_row(
     return leaf_row, data_row
 
 
+def _row_table_id_label(row: Sequence[Any]) -> Optional[str]:
+    """Return the TABLE/STATEMENT/ANNEX id if this row is a caption marker."""
+    non_empty = [_cell_str(v) for v in row if _cell_str(v)]
+    if not non_empty:
+        return None
+    label = non_empty[0]
+    # Prefer the short id when id + title share one cell.
+    combined = _TABLE_ID_THEN_TITLE_RE.match(label)
+    if combined and _is_descriptive_in_grid_title(combined.group("title")):
+        return _cell_str(combined.group("id"))
+    if _is_table_id_only(label) or _TABLE_BANNER_RE.match(label):
+        return label
+    return None
+
+
+def _split_hybrid_table_marker_row(
+    row: Sequence[Any],
+) -> Tuple[Optional[List[Any]], Optional[List[Any]]]:
+    """
+    Detect a Y-collision row: table id on the left, measure values on the right
+    (previous table's last totals sharing a scanline with the next caption).
+
+    Returns (banner_row, numeric_tail_row). numeric_tail belongs to the
+    previous table; banner_row starts the next one.
+    """
+    cells = list(row)
+    if len(cells) < 3:
+        return None, None
+    label = _row_table_id_label(cells)
+    if not label:
+        return None, None
+    # Locate the banner cell; everything after the stub block may be numeric.
+    banner_idx = next((i for i, v in enumerate(cells) if _cell_str(v) == label), 0)
+    numeric_idxs = [
+        i for i in range(banner_idx + 1, len(cells))
+        if _cell_str(cells[i]) and _is_numeric_cell(cells[i])
+    ]
+    if len(numeric_idxs) < 2:
+        return None, None
+    # Require that non-banner non-empty cells are predominantly numeric.
+    other_nonempty = [
+        i for i, v in enumerate(cells)
+        if i != banner_idx and _cell_str(v)
+    ]
+    if not other_nonempty:
+        return None, None
+    num_frac = sum(1 for i in other_nonempty if _is_numeric_cell(cells[i])) / len(other_nonempty)
+    if num_frac < 0.75:
+        return None, None
+
+    banner_row = [None] * len(cells)
+    banner_row[banner_idx] = cells[banner_idx]
+    # Keep a short qualifier next to the id (e.g. "(RURAL)") if present.
+    for i in other_nonempty:
+        if not _is_numeric_cell(cells[i]) and len(_cell_str(cells[i])) <= 24:
+            banner_row[i] = cells[i]
+
+    numeric_row = [None] * len(cells)
+    for i in other_nonempty:
+        if _is_numeric_cell(cells[i]):
+            numeric_row[i] = cells[i]
+    return banner_row, numeric_row
+
+
+def _row_is_new_table_marker(row: Sequence[Any]) -> bool:
+    """True when a row is an in-grid TABLE/STATEMENT caption starting a block."""
+    if _row_table_id_label(row) is None:
+        return False
+    hybrid_banner, hybrid_nums = _split_hybrid_table_marker_row(row)
+    if hybrid_banner is not None:
+        return True
+    # Classic full-width / near-empty caption row (not a long descriptive title
+    # alone — those lack the TABLE/STATEMENT id matched above).
+    non_empty = [_cell_str(v) for v in row if _cell_str(v)]
+    if len(non_empty) == 1:
+        return True
+    # Id + short qualifier only.
+    if len(non_empty) <= 3 and all(len(s) <= 40 for s in non_empty[1:]):
+        return True
+    return _row_is_full_width_banner(row)
+
+
+def split_extracted_rows_on_table_markers(
+    rows: Optional[List[List[Any]]],
+) -> List[Tuple[List[List[Any]], int, int]]:
+    """
+    Split a pymupdf extract grid that glued consecutive physical tables.
+
+    Statistical PDFs often place two ruled tables on one page with only a thin
+    gap; pymupdf returns one bbox whose rows contain a second ``TABLE: …``
+    banner mid-grid. Without a split, auto-accept and the LLM both emit one
+    record with the second title/header sitting in the first table's body.
+
+    Returns a list of ``(segment_rows, start_idx, end_idx)`` covering
+    ``rows[start:end]`` (end exclusive). Single-table grids return one segment.
+    """
+    if not rows:
+        return []
+
+    n_cols = max((len(r) for r in rows), default=0)
+    if n_cols == 0:
+        return []
+    padded = [_pad_row(r, n_cols) for r in rows]
+
+    markers: List[int] = []
+    hybrid_fix: dict = {}
+    for i, row in enumerate(padded):
+        if not _row_is_new_table_marker(row):
+            continue
+        banner, numeric_tail = _split_hybrid_table_marker_row(row)
+        if banner is not None and numeric_tail is not None:
+            padded[i] = banner
+            hybrid_fix[i] = numeric_tail
+        markers.append(i)
+
+    if len(markers) <= 1 and (not markers or markers[0] == 0):
+        return [(padded, 0, len(padded))]
+
+    # Include a leading block that has no caption marker (rare).
+    starts = list(markers)
+    if starts[0] != 0:
+        starts = [0] + starts
+
+    segments: List[Tuple[List[List[Any]], int, int]] = []
+    for j, start in enumerate(starts):
+        end = starts[j + 1] if j + 1 < len(starts) else len(padded)
+        # Hybrid numeric tail at `end` belongs to this segment (previous table).
+        chunk = [list(r) for r in padded[start:end]]
+        if end in hybrid_fix and chunk:
+            # Marker row at `end` was replaced with banner-only; its numbers
+            # were captured in hybrid_fix and should close the prior table.
+            chunk.append(list(hybrid_fix[end]))
+        # Drop trailing blank rows.
+        while chunk and _blank(chunk[-1]):
+            chunk.pop()
+        # Drop leading blanks (gap between tables).
+        while chunk and _blank(chunk[0]):
+            chunk.pop(0)
+            start += 1
+        if len(chunk) >= 2:
+            segments.append((chunk, start, end))
+    return segments or [(padded, 0, len(padded))]
+
+
+def repair_glued_numeric_cells(rows: List[List[Any]]) -> List[List[Any]]:
+    """
+    Spread space-joined numbers into following empty cells.
+
+    pymupdf sometimes packs Sep–Dec (etc.) into one cell and leaves the next
+    month columns blank. Only expands when every token is numeric and there
+    are enough empty slots — skips catastrophic merges that won't fit.
+    """
+    if not rows:
+        return rows
+    n_cols = max((len(r) for r in rows), default=0)
+    out = [_pad_row(r, n_cols) for r in rows]
+    for row in out:
+        j = 0
+        while j < n_cols:
+            parts = _glued_numeric_parts(row[j])
+            if not parts:
+                j += 1
+                continue
+            empty_run = 0
+            for k in range(j + 1, n_cols):
+                if _cell_str(row[k]):
+                    break
+                empty_run += 1
+            slots = empty_run + 1
+            if len(parts) > slots:
+                j += 1
+                continue
+            for t, part in enumerate(parts):
+                row[j + t] = part
+            j += len(parts)
+    return out
+
+
+def _glued_numeric_parts(cell: Any) -> Optional[List[str]]:
+    s = _cell_str(cell)
+    if not s or " " not in s:
+        return None
+    parts = s.split()
+    if len(parts) < 2:
+        return None
+    if not all(_is_numeric_cell(p) for p in parts):
+        return None
+    return parts
+
+
 def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
     """
     Build a pandas DataFrame from a pymupdf `tab.extract()` grid, flattening
@@ -630,7 +986,7 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
     if n_cols == 0:
         return pd.DataFrame()
 
-    padded = [_pad_row(r, n_cols) for r in rows]
+    padded = repair_glued_numeric_cells([_pad_row(r, n_cols) for r in rows])
     header_count, skip_rows = detect_header_rows(padded, n_cols)
 
     root = None
@@ -687,14 +1043,22 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
         for i in range(header_count, len(padded))
         if i not in skip_rows and not _blank(padded[i])
     ]
+    caption = extract_in_grid_caption(padded)
+
+    def _attach_caption_attrs(frame):
+        frame.attrs["dhara_column_meta"] = column_meta
+        if caption.get("title"):
+            frame.attrs["dhara_table_caption"] = caption["title"]
+        if caption.get("table_id_label"):
+            frame.attrs["dhara_banner_table_id"] = caption["table_id_label"]
+        return frame
+
     if not body:
         df = pd.DataFrame(columns=leaf_names)
-        df.attrs["dhara_column_meta"] = column_meta
-        return df
+        return _attach_caption_attrs(df)
 
     clean_body: List[List[Any]] = [
         [_cell_str(v) or None for v in row] for row in body
     ]
     df = pd.DataFrame(clean_body, columns=leaf_names)
-    df.attrs["dhara_column_meta"] = column_meta
-    return df
+    return _attach_caption_attrs(df)

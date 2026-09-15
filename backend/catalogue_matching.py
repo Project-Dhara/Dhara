@@ -137,16 +137,15 @@ def build_group_name(base_title: str) -> str:
 
 
 def auto_group_tables(tables: list) -> list:
-    """Groups extracted tables automatically by title, with no metadata
-    workbook required -- ports the notebook's Stage 3 `auto_group_tables`,
-    extended to group across dataset files.
+    """Title-base buckets used when matching leftovers against inventory.
 
-    Tables sharing the same base title (title with a trailing qualifier like
-    "(URBAN)"/"(RURAL)" stripped) are grouped together, regardless of which
-    sheet or source file they came from -- so an urban/rural (or similarly
-    split) pair of tables lands in one group instead of two, and the same
-    table title appearing in two different uploaded dataset files is
-    recognized as one group spanning both files.
+    Primary no-metadata grouping for Excel/SQL/PDF now lives in
+    ``pdf_grouping.propose_groups_from_table_dicts`` (via
+    ``_groups_without_metadata``). This helper remains for inventory-match
+    disambiguation and client-side title re-homing.
+
+    Tables sharing the same base title (trailing URBAN/RURAL-style qualifier
+    stripped) land together across sheets and source files.
     """
     groups_dict: Dict[str, dict] = {}
     order = []
@@ -191,31 +190,32 @@ _EMPTY_METADATA = {
 
 
 def _groups_without_metadata(extracted_tables: list) -> dict:
-    """One group per auto-grouped table cluster (see `auto_group_tables`),
-    with empty catalogue fields, so the user can fill Product / Category /
-    Geography etc. by hand. Tables that share a sheet + base title (e.g. an
-    urban/rural split) land in the same group instead of being scattered
-    across one group per file."""
-    auto_groups = auto_group_tables(extracted_tables)
-    groups = [
-        {
-            "workbook_index": wi,
-            "file_name": build_group_name(ag["base_title"]),
-            "metadata": dict(_EMPTY_METADATA),
-            "concepts": [],
-            "classifications": {},
-            "matched_tables": [
-                {"table": t, "inventory_item": None, "confidence": ""}
-                for t in ag["tables"]
-            ],
-        }
-        for wi, ag in enumerate(auto_groups)
-    ]
-    return {
-        "groups": groups,
-        "unmatched_tables": [],
-        "unmatched_inventory": [],
-    }
+    """Propose catalogue groups when no metadata workbook was uploaded.
+
+    Uses the shared PDF title / SDG grouping rules (``pdf_grouping``) so
+    Excel, SQL, and PDF all bucket tables the same way after preview.
+    Lazy-import avoids a circular import with ``pdf_grouping``.
+    """
+    from pdf_grouping import (
+        propose_groups_from_table_dicts,
+        proposal_to_catalogue_match_result,
+    )
+
+    source_type = "xlsx"
+    default_source = "Dataset"
+    if extracted_tables:
+        first = extracted_tables[0] or {}
+        st = str(first.get("source_type") or "").lower()
+        if st in ("pdf", "sql", "xlsx", "xls"):
+            source_type = "xlsx" if st == "xls" else st
+        default_source = first.get("source_file") or first.get("filename") or default_source
+
+    proposal = propose_groups_from_table_dicts(extracted_tables)
+    return proposal_to_catalogue_match_result(
+        proposal,
+        source_type=source_type,
+        default_source_file=default_source,
+    )
 
 
 def match_tables_to_metadata(extracted_tables: list, metadata_workbooks: list) -> dict:

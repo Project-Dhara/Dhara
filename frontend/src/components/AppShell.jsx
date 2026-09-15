@@ -110,7 +110,7 @@ export default function AppShell({ screen, user, onNavigate, onSignOut, children
         {/* Padding lives on an inner wrapper (not the scrollport) so position:sticky
             children can stick flush to the top with no padding gap above them.
             has-[.cat-screen]: Catalogue.jsx manages its own internal scroll. */}
-        <div className="min-h-0 flex-1 overflow-y-auto scroll-smooth has-[.cat-screen]:flex has-[.cat-screen]:flex-col has-[.cat-screen]:overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-y-auto has-[.cat-screen]:flex has-[.cat-screen]:flex-col has-[.cat-screen]:overflow-hidden">
           <div
             key={screen}
             className="dhara-page-enter p-8 px-9 has-[.cat-screen]:flex has-[.cat-screen]:min-h-0 has-[.cat-screen]:flex-1 has-[.cat-screen]:flex-col has-[.cat-screen]:overflow-hidden"

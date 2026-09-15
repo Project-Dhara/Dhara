@@ -278,33 +278,25 @@ def _extract_clipped(
     pdf_path: str, page_num: int, clip: pymupdf.Rect, side: str
 ) -> List[Dict[str, Any]]:
     """Run both pymupdf strategies inside a clip rectangle."""
-    from pdf_header_utils import dataframe_from_extracted_rows
+    from pdf_extraction_workers import _candidates_from_pymupdf_table
 
     results: List[Dict[str, Any]] = []
     doc = pymupdf.open(pdf_path)
     try:
         page = doc[page_num - 1]
-        for strategy in ("lines_strict", "text"):
+        for strategy in ("lines_strict", "lines", "text"):
             try:
                 found = page.find_tables(strategy=strategy, clip=clip)
             except Exception:
                 continue
             for tab in found.tables:
-                rows = tab.extract()
-                if not rows:
-                    continue
-                df = dataframe_from_extracted_rows(rows)
-                if df is None or df.empty:
-                    continue
-                bb = tab.bbox
-                results.append(
-                    {
-                        "page": page_num,
-                        "method": f"pymupdf_{strategy}_{side}",
-                        "df": df,
-                        "bbox": [float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3])],
-                        "dual_half": side,
-                    }
+                results.extend(
+                    _candidates_from_pymupdf_table(
+                        tab,
+                        page_num=page_num,
+                        method=f"pymupdf_{strategy}_{side}",
+                        extra={"dual_half": side},
+                    )
                 )
     finally:
         doc.close()
@@ -325,8 +317,11 @@ def _clip_halves_from_midpage(
 
     left = _extract_clipped(pdf_path, page_num, left_clip, "left")
     right = _extract_clipped(pdf_path, page_num, right_clip, "right")
-    left_strict = [c for c in left if "lines_strict" in c.get("method", "")]
-    right_strict = [c for c in right if "lines_strict" in c.get("method", "")]
+    def _ruled(cands):
+        strict = [c for c in cands if "lines_strict" in c.get("method", "")]
+        return strict or [c for c in cands if c.get("method", "").startswith("pymupdf_lines_")]
+    left_strict = _ruled(left)
+    right_strict = _ruled(right)
     if not left_strict or not right_strict:
         return None
     dfl, dfr = left_strict[0]["df"], right_strict[0]["df"]
