@@ -370,6 +370,27 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
       rows,
       { markSavedName: entry.isAlias ? undefined : entry.sourceName },
     )
+    // Learn steward-verified occupation → NCO mappings for future Suggest runs.
+    if (isOccupationColumn(entry.sourceName) || isOccupationColumn(entry.name)) {
+      const matches = ncoMatchesByCol[entry.sourceName] || {}
+      const aliases = (rows || []).map((row) => {
+        const m = matches[row.value]
+        const level = m?.level || 'division'
+        return {
+          value: row.value,
+          code: String(row.code || '').trim(),
+          title: String(row.definition || m?.title || '').trim() || null,
+          level,
+        }
+      }).filter((a) => a.value && a.code)
+      if (aliases.length) {
+        fetch('/api/catalogue/nco-aliases', withAuthHeaders({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ aliases }),
+        })).catch(() => {})
+      }
+    }
   }
 
   const setHarmField = (entry, rowIndex, field, value) => {
@@ -397,6 +418,25 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
 
   const saveColumnCodes = () => {
     persistColumnCodes(activeColumn, columnCodes[selectedCol])
+    if (activeColumn && isOccupationColumn(activeColumn.name)) {
+      const matches = ncoMatchesByCol[activeColumn.name] || {}
+      const aliases = (columnCodes[activeColumn.name] || []).map((row) => {
+        const m = matches[row.value]
+        return {
+          value: row.value,
+          code: String(row.code || '').trim(),
+          title: String(row.definition || m?.title || '').trim() || null,
+          level: m?.level || 'division',
+        }
+      }).filter((a) => a.value && a.code)
+      if (aliases.length) {
+        fetch('/api/catalogue/nco-aliases', withAuthHeaders({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ aliases }),
+        })).catch(() => {})
+      }
+    }
   }
 
   const fillDefinitionsWithAi = () => {
@@ -442,12 +482,15 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
   const columnNeedsNcoReview = (sourceName) => {
     const matches = ncoMatchesByCol[sourceName]
     if (!matches) return false
-    return Object.values(matches).some((m) => m && m.needs_manual_review)
+    return Object.values(matches).some((m) => m && (m.needs_manual_review || m.auto_fill === false || m.confidence !== 'high'))
   }
   const ncoReviewCount = (sourceName) => {
     const matches = ncoMatchesByCol[sourceName] || {}
     const rows = columnCodes[sourceName] || []
-    return rows.filter((row) => matches[row.value]?.needs_manual_review).length
+    return rows.filter((row) => {
+      const m = matches[row.value]
+      return m && (m.needs_manual_review || m.auto_fill === false || m.confidence !== 'high')
+    }).length
   }
   const harmoniseEntries = flattenForHarmonise(classifiedColumns).filter((e) => e.isAlias)
   const entryNeedsVerify = (entry) => true
@@ -592,10 +635,12 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
                             const matches = data.matches || {}
                             setNcoMatchesByCol((prev) => ({ ...prev, [occName]: matches }))
                             if (!isOccupationColumn(occName)) return
+                            // Only auto-fill Code/Definition for high-confidence hits.
                             const rows = columnCodes[occName] || []
                             const nextRows = rows.map((row) => {
                               const m = matches[row.value]
-                              if (!m || m.code == null || m.code === '') return row
+                              if (!m || !m.auto_fill) return row
+                              if (m.code == null || m.code === '') return row
                               return {
                                 ...row,
                                 code: String(m.code),
@@ -684,7 +729,8 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
                                 {m && (
                                   <div className="mt-0.5 text-xs text-ink-soft">
                                     {m.confidence} confidence
-                                    {m.needs_manual_review ? ' · review' : ''}
+                                    {m.auto_fill ? ' · auto-filled' : ' · review before using'}
+                                    {m.source ? ` · ${m.source}` : ''}
                                     {m.codes?.length > 1 ? ' · both valid' : ''}
                                   </div>
                                 )}

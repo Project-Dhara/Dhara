@@ -1,50 +1,47 @@
-"""NCO 2015 matching at hierarchy level (division / subdivision / family).
+"""NCO 2015 matching — dynamic retrieval + constrained LLM (no hardcoded labels).
 
-Dataset occupation values are almost always broad categories, not job titles.
-This module therefore:
+Pipeline for each occupation value:
+  1. Normalize (case / punctuation / whitespace only)
+  2. Learned alias hit (steward verifies from Classify)
+  3. Shortlist hierarchy nodes via embeddings (OpenAI) or fuzzy+token score
+  4. LLM picks level/code from the shortlist only — trusted when valid
+  5. Else top shortlist hit as fallback
+  6. Confidence gate: auto_fill only when confidence is high
 
-  1. Indexes unique NCO *nodes* (division, subdivision, group, family) from
-     nco_2015_codes — not the 3,445 specific occupation codes.
-  2. Retrieves a shortlist with semantic similarity (OpenAI embeddings when
-     the caller is using OpenAI; otherwise content-word cosine — not
-     character-level fuzzy matching).
-  3. Picks the coarsest fitting level: division for a whole major group,
-     subdivision for a slice of one, family only when it uniquely fits.
-     Specific .xxxx jobs are never returned.
-
-Public API is still match_occupation / match_occupations.
+Indexes unique NCO hierarchy nodes (division / subdivision / group / family),
+never the 3,445 specific .xxxx occupation codes.
 """
+
+from __future__ import annotations
 
 import json
 import math
 import re
+from difflib import SequenceMatcher
 
 _CODES_CACHE = None
 _NODES_CACHE = None
-_EMBED_CACHE = None  # list of (node, vector) aligned with _NODES_CACHE
+_EMBED_CACHE = None  # list of vectors aligned with _NODES_CACHE
 
 _STOP = frozenset({
-    "a", "an", "and", "the", "of", "or", "etc", "other", "workers", "worker",
-    "officials", "official", "support", "related", "not", "elsewhere",
-    "classified", "nec", "skilled", "market", "oriented", "related",
+    "a", "an", "and", "the", "of", "or", "etc", "other", "not", "elsewhere",
+    "classified", "nec", "worker", "workers", "related", "support",
 })
-# Census-style labels use different words than NCO 2015 titles.
-_SYNONYMS = {
-    "farmer": ("agricultural", "agriculture"),
-    "farmers": ("agricultural", "agriculture"),
-    "fisherman": ("fishery", "fisher", "fishing"),
-    "fishermen": ("fishery", "fisher", "fishing"),
-    "hunter": ("hunting", "forestry"),
-    "hunters": ("hunting", "forestry"),
-    "clerical": ("clerk", "clerks"),
-    "sale": ("sales",),
-    "managerial": ("manager", "managers"),
-    "executive": ("executives", "chief"),
-    "professional": ("professionals",),
-    "technical": ("technician", "technicians"),
-}
 _PUNCT_RE = re.compile(r"[^a-z0-9\s]")
 _INPUT_SPLIT_RE = re.compile(r"[,/;]|\s+and\s+|\s+or\s+", re.I)
+
+# Tunable gates (not vocabulary) — auto_fill only above these.
+_EMBED_HIGH = 0.52
+_EMBED_MED = 0.38
+_FUZZY_HIGH = 0.55
+_FUZZY_MED = 0.38
+
+
+def normalize_occupation_value(text) -> str:
+    """Generic normalize for alias keys and comparison — no vocabulary maps."""
+    s = _PUNCT_RE.sub(" ", (text or "").lower())
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
 
 
 def _load_from_csv():
@@ -99,7 +96,7 @@ def _load_all_codes(conn):
 
 
 def _normalize(text):
-    return _PUNCT_RE.sub(" ", (text or "").lower()).strip()
+    return normalize_occupation_value(text)
 
 
 def _stem(token):
@@ -113,10 +110,10 @@ def _content_tokens(text):
     for t in _normalize(text).split():
         if not t or t in _STOP:
             continue
-        variants = [t, _stem(t), *(_SYNONYMS.get(t) or ())]
-        for v in variants:
-            if v and v not in _STOP:
-                out.append(v)
+        out.append(t)
+        st = _stem(t)
+        if st != t and st not in _STOP:
+            out.append(st)
     return out
 
 
@@ -191,21 +188,42 @@ def _cosine(a, b):
     return dot / (na * nb)
 
 
-def _semantic_score_tokens(query, node):
-    """Content-word cosine against the node's hierarchy titles.
+def _fuzzy_ratio(a, b):
+    if not a or not b:
+        return 0.0
+    return SequenceMatcher(None, a, b).ratio()
 
-    Phrases in a comma-joined input are scored separately and the best is
-    kept — closer to meaning than character-level fuzzy matching."""
-    node_vec = _token_vector(node["search_text"])
+
+def _dynamic_score(query, node):
+    """Score without a hardcoded synonym vocabulary: fuzzy + token cosine + coverage."""
+    node_title = _normalize(node.get("title") or "")
+    node_search = _normalize(node.get("search_text") or "")
     best = 0.0
-    for phrase in _input_phrases(query):
-        best = max(best, _cosine(_token_vector(phrase), node_vec))
-        best = max(best, _cosine(_token_vector(query), node_vec))
+    phrases = _input_phrases(query)
+    q_full = _normalize(query)
+
+    def _combo(phrase_norm, phrase_raw):
+        if not phrase_norm:
+            return 0.0
+        fuzzy = max(
+            _fuzzy_ratio(phrase_norm, node_title),
+            0.85 * _fuzzy_ratio(phrase_norm, node_search),
+        )
+        tok = _cosine(_token_vector(phrase_raw), _token_vector(node.get("title") or ""))
+        tok_s = _cosine(_token_vector(phrase_raw), _token_vector(node.get("search_text") or ""))
+        # Coverage: how many distinctive query tokens appear in the title.
+        qtok = set(_content_tokens(phrase_raw))
+        ttok = set(_content_tokens(node.get("title") or ""))
+        cov = (len(qtok & ttok) / len(qtok)) if qtok else 0.0
+        return 0.35 * fuzzy + 0.35 * max(tok, tok_s) + 0.30 * cov
+
+    for phrase in phrases + [query]:
+        best = max(best, _combo(_normalize(phrase), phrase))
+    best = max(best, _combo(q_full, query))
     return best
 
 
 def _embed_texts(extractor, texts):
-    """OpenAI embeddings when the extractors's client supports them."""
     if extractor is None or getattr(extractor, "skip_llm", False):
         return None
     if getattr(extractor, "provider", None) != "openai":
@@ -245,8 +263,8 @@ def _ensure_node_embeddings(extractor, nodes):
     return vectors
 
 
-def _shortlist_nodes(query, nodes, extractor=None, limit=12):
-    """Rank hierarchy nodes. Prefer OpenAI embeddings; else token cosine."""
+def _shortlist_nodes(query, nodes, extractor=None, limit=16):
+    """Rank hierarchy nodes. Prefer embeddings; else dynamic fuzzy+token score."""
     q_embed = None
     embed_nodes = None
     use_embed = (
@@ -266,11 +284,12 @@ def _shortlist_nodes(query, nodes, extractor=None, limit=12):
         if q_embed is not None:
             score = _vec_cosine(q_embed, embed_nodes[i])
         else:
-            score = _semantic_score_tokens(query, node)
-        if score > 0:
+            score = _dynamic_score(query, node)
+        if score > 0.05:
             scored.append((score, node))
     scored.sort(key=lambda t: t[0], reverse=True)
 
+    # Balanced sample across levels so LLM sees coarse and fine options.
     def _take(level, k):
         out, seen = [], set()
         for score, node in scored:
@@ -283,25 +302,38 @@ def _shortlist_nodes(query, nodes, extractor=None, limit=12):
         return out
 
     picked = (
-        _take("division", 3)
-        + _take("subdivision", 8)
-        + _take("group", 2)
-        + _take("family", max(4, limit // 3))
+        _take("division", 4)
+        + _take("subdivision", 6)
+        + _take("group", 3)
+        + _take("family", 4)
     )
-    return picked or scored[:limit]
+    # Dedupe by (level, code), keep highest score order
+    seen = set()
+    ordered = []
+    for item in sorted(picked + scored[: limit * 2], key=lambda t: t[0], reverse=True):
+        key = (item[1]["level"], item[1]["code"])
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(item)
+        if len(ordered) >= limit:
+            break
+    return ordered
 
 
 def _result_from_node(node, level=None, score=None):
     level = level or node["level"]
+    if level == "group":
+        level = "subdivision"
     result = {
         "level": level,
-        "nco_code": None,  # never a specific occupation .xxxx code
+        "nco_code": None,
         "code": None,
         "title": None,
         "family_code": node["family_code"] if level == "family" else None,
         "family_title": node["family_title"] if level == "family" else None,
-        "group_code": node["group_code"] if level in ("group", "family") else None,
-        "group_title": node["group_title"] if level in ("group", "family") else None,
+        "group_code": node["group_code"] if level in ("group", "family", "subdivision") else None,
+        "group_title": node["group_title"] if level in ("group", "family", "subdivision") else None,
         "subdivision_code": node["subdivision_code"] if level != "division" else None,
         "subdivision_title": node["subdivision_title"] if level != "division" else None,
         "division_code": node["division_code"],
@@ -311,12 +343,9 @@ def _result_from_node(node, level=None, score=None):
     if level == "family":
         result["code"] = str(node["family_code"] or "")
         result["title"] = node["family_title"]
-    elif level == "group":
-        result["code"] = str(node["group_code"] or "")
-        result["title"] = node["group_title"]
     elif level == "subdivision":
-        result["code"] = str(node["subdivision_code"] or "")
-        result["title"] = node["subdivision_title"]
+        result["code"] = str(node["subdivision_code"] or node["group_code"] or "")
+        result["title"] = node["subdivision_title"] or node["group_title"]
     else:
         result["code"] = str(node["division_code"] or "")
         result["title"] = node["division_title"]
@@ -332,7 +361,7 @@ def _alternatives(scored_nodes, chosen_code, limit=4):
         if str(node["code"]) == str(chosen_code):
             continue
         alts.append({
-            "level": node["level"],
+            "level": node["level"] if node["level"] != "group" else "subdivision",
             "code": node["code"],
             "title": node["title"],
             "score": round(float(score), 3),
@@ -342,162 +371,115 @@ def _alternatives(scored_nodes, chosen_code, limit=4):
     return alts
 
 
-def _title_score(query, node):
-    fake = dict(node, search_text=node.get("title") or "")
-    return _semantic_score_tokens(query, fake)
+def _confidence_from_score(score, used_embeddings):
+    if score is None:
+        return "low"
+    high = _EMBED_HIGH if used_embeddings else _FUZZY_HIGH
+    med = _EMBED_MED if used_embeddings else _FUZZY_MED
+    if score >= high:
+        return "high"
+    if score >= med:
+        return "medium"
+    return "low"
 
 
-def _token_overlap(query, title):
-    return len(set(_content_tokens(query)) & set(_content_tokens(title)))
-
-
-def _competing_divisions(query, div_nodes):
-    """If slash/comma-joined phrases map to different major groups, return both.
-
-    'PROFESSIONAL / TECHNICAL RELATED WORKERS' is NCO divisions 2 and 3.
-    """
-    phrases = _input_phrases(query)
-    if len(phrases) < 2:
+def _finalize(result, score=None, used_embeddings=False, source="retrieval"):
+    if not result:
         return None
-    picked, seen = [], set()
-    for phrase in phrases:
-        ranked = sorted(
-            ((_title_score(phrase, n), n) for n in div_nodes),
-            key=lambda t: t[0],
-            reverse=True,
-        )
-        if not ranked or ranked[0][0] <= 0:
-            continue
-        node = ranked[0][1]
-        if node["code"] in seen:
-            continue
-        seen.add(node["code"])
-        picked.append(ranked[0])
-    if len(picked) >= 2:
-        return picked
-    return None
-
-
-def _result_from_divisions(pairs, scored):
-    pairs = sorted(pairs, key=lambda t: str(t[1]["code"]))
-    codes = [str(n["code"]) for _, n in pairs]
-    titles = [n["title"] for _, n in pairs]
-    result = _result_from_node(pairs[0][1], level="division", score=pairs[0][0])
-    result["code"] = " or ".join(codes)
-    result["title"] = " / ".join(titles)
-    result["codes"] = codes
-    result["titles"] = titles
-    result["division_code"] = codes[0]
-    result["confidence"] = "medium"
-    result["alternatives"] = _alternatives(scored, result["code"])
-    result["needs_manual_review"] = True
+    conf = result.get("confidence")
+    if conf not in ("high", "medium", "low"):
+        conf = _confidence_from_score(score if score is not None else result.get("score"), used_embeddings)
+    result["confidence"] = conf
+    result["auto_fill"] = conf == "high"
+    result["needs_manual_review"] = conf != "high"
+    result["source"] = source
     return result
 
 
-def _choose_hierarchy_level(query, scored, all_nodes=None):
-    """Coarsest NCO level that still fits the category.
+def _alias_result(alias_row):
+    level = alias_row.get("level") or "division"
+    if level == "group":
+        level = "subdivision"
+    result = {
+        "level": level,
+        "nco_code": None,
+        "code": str(alias_row.get("code") or ""),
+        "title": alias_row.get("title") or "",
+        "family_code": None,
+        "family_title": None,
+        "group_code": None,
+        "group_title": None,
+        "subdivision_code": str(alias_row["code"]) if level == "subdivision" else None,
+        "subdivision_title": alias_row.get("title") if level == "subdivision" else None,
+        "division_code": str(alias_row["code"]) if level == "division" else None,
+        "division_title": alias_row.get("title") if level == "division" else None,
+        "occupation_title": None,
+        "score": 1.0,
+        "alternatives": [],
+    }
+    if level == "family":
+        result["family_code"] = result["code"]
+        result["family_title"] = result["title"]
+    return _finalize(result, score=1.0, used_embeddings=False, source="alias")
 
-    Division when the value is a whole major group (Clerical Workers;
-    Farmers, Fishermen, Hunters). Subdivision when it is a slice of a
-    major group (Sales Workers; Service Workers; Administrative /
-    Executive). Family only when one 4-digit family uniquely fits.
-    """
-    if not scored:
+
+def _lookup_alias(conn, occupation_text):
+    if conn is None:
         return None
-    pool = all_nodes or [n for _, n in scored]
-
-    div_nodes = [n for n in pool if n["level"] == "division"]
-    if not div_nodes:
-        score, node = scored[0]
-        level = node["level"] if node["level"] != "group" else "subdivision"
-        return node, level, score
-
-    div_ranked = sorted(
-        ((_title_score(query, n), n) for n in div_nodes),
-        key=lambda t: t[0],
-        reverse=True,
-    )
-    dscore, dnode = div_ranked[0]
-    competing_divs = _competing_divisions(query, div_nodes)
-    if competing_divs:
-        return competing_divs
-
-    dcode = dnode["code"]
-
-    sub_nodes = [n for n in pool if n["level"] == "subdivision" and n["division_code"] == dcode]
-    sub_ranked = sorted(
-        ((_title_score(query, n), n) for n in sub_nodes),
-        key=lambda t: t[0],
-        reverse=True,
-    )
-    competing = [x for x in sub_ranked if x[0] >= sub_ranked[0][0] * 0.85] if sub_ranked else []
-
-    extra = set(_content_tokens(dnode["title"])) - set(_content_tokens(query))
-    qtok = set(_content_tokens(query))
-    dtok = set(_content_tokens(dnode["title"]))
-    covered_by_div = bool(qtok) and (len(qtok & dtok) / len(qtok) >= 0.6)
-    spans_major_list = bool(re.search(r"\betc\b", query or "", re.I)) and len(_input_phrases(query)) >= 2
-    unique_sub = bool(sub_ranked) and len(competing) == 1 and sub_ranked[0][0] > 0
-
-    if spans_major_list and dscore > 0:
-        return dnode, "division", dscore
-
-    if covered_by_div and not extra and dscore > 0:
-        return dnode, "division", dscore
-
-    if unique_sub and sub_ranked[0][0] >= dscore * 0.9:
-        sscore, snode = sub_ranked[0]
-        return snode, "subdivision", sscore
-
-    if extra and sub_ranked:
-        sscore, snode = sub_ranked[0]
-        return snode, "subdivision", sscore
-
-    if sub_ranked and len(competing) >= 2:
-        sscore, snode = sub_ranked[0]
-        if _token_overlap(query, snode["title"]) > _token_overlap(query, dnode["title"]):
-            return snode, "subdivision", sscore
-        if dscore > 0:
-            return dnode, "division", dscore
-        return snode, "subdivision", sscore
-
-    if sub_ranked and sub_ranked[0][0] > dscore:
-        sscore, snode = sub_ranked[0]
-        return snode, "subdivision", sscore
-
-    if dscore > 0:
-        return dnode, "division", dscore
-    if sub_ranked:
-        sscore, snode = sub_ranked[0]
-        return snode, "subdivision", sscore
-    score, node = scored[0]
-    return node, node["level"], score
+    try:
+        import catalogue as _cat
+        return _cat.lookup_nco_alias(conn, normalize_occupation_value(occupation_text))
+    except Exception:
+        return None
 
 
 def _fallback_best_match(occupation_text, rows, extractor=None):
+    """Top shortlist hit — fully dynamic, no label-specific rules."""
     nodes = _hierarchy_nodes(rows)
     scored = _shortlist_nodes(occupation_text, nodes, extractor=extractor, limit=16)
     if not scored:
         return None
-    chosen = _choose_hierarchy_level(occupation_text, scored, all_nodes=nodes)
-    if not chosen:
-        return None
-    if isinstance(chosen, list):
-        return _result_from_divisions(chosen, scored)
-    node, level, score = chosen
-    if level == "group":
-        level = "subdivision"
+    # Always pick the highest-scoring node (shortlist is score-sorted).
+    score, node = scored[0]
+    level = node["level"]
+
+    # If several top phrases point at different divisions with similar strength,
+    # keep the single best node (LLM path can refine when available).
+    # Prefer a high-scoring subdivision/family over a weaker parent division
+    # already handled by score sort.
+
+    # Soft coarseness: if the winner is family/group but a parent at nearly
+    # the same score exists, prefer parent only when parent score is within 3%.
+    if level in ("family", "group"):
+        parent_level = "subdivision" if level == "family" else "division"
+        parent_code_key = "subdivision_code" if parent_level == "subdivision" else "division_code"
+        want = str(node.get(parent_code_key) or "")
+        for s, n in scored[1:8]:
+            if n["level"] == parent_level and str(n["code"]) == want and s >= score * 0.97:
+                node, level, score = n, parent_level, s
+                break
+
+    used_embed = (
+        extractor is not None
+        and not getattr(extractor, "skip_llm", False)
+        and getattr(extractor, "provider", None) == "openai"
+        and _EMBED_CACHE is not None
+    )
     result = _result_from_node(node, level=level, score=score)
-    result["confidence"] = "low"
     result["alternatives"] = _alternatives(scored, result["code"])
-    result["needs_manual_review"] = True
-    return result
+    return _finalize(result, score=score, used_embeddings=used_embed, source="fallback")
 
 
-def match_occupation(conn, occupation_text, extractor=None, shortlist_size=12):
-    """Match a category to the coarsest fitting NCO level (division, subdivision, or family)."""
-    if not occupation_text or not occupation_text.strip():
+def match_occupation(conn, occupation_text, extractor=None, shortlist_size=16):
+    """Match a category to the coarsest fitting NCO level (dynamic pipeline)."""
+    if not occupation_text or not str(occupation_text).strip():
         return None
+
+    occupation_text = str(occupation_text).strip()
+
+    alias = _lookup_alias(conn, occupation_text)
+    if alias and alias.get("code"):
+        return _alias_result(alias)
 
     rows = _load_all_codes(conn)
     if not rows:
@@ -507,6 +489,13 @@ def match_occupation(conn, occupation_text, extractor=None, shortlist_size=12):
     scored = _shortlist_nodes(occupation_text, nodes, extractor=extractor, limit=shortlist_size)
     if not scored:
         return None
+
+    used_embed = (
+        extractor is not None
+        and not getattr(extractor, "skip_llm", False)
+        and getattr(extractor, "provider", None) == "openai"
+        and _EMBED_CACHE is not None
+    )
 
     if extractor is None or getattr(extractor, "skip_llm", False):
         return _fallback_best_match(occupation_text, rows, extractor=extractor)
@@ -520,16 +509,15 @@ def match_occupation(conn, occupation_text, extractor=None, shortlist_size=12):
 
 Input value: "{occupation_text}"
 
-Pick the coarsest level that still fits:
-- division if the value names a whole major group or lists several kinds of
-  work in that group (e.g. "Clerical Workers"; "Farmers, Fishermen, Hunters")
-- if the value names two major groups (e.g. "Professional / Technical Workers"),
-  say so — that is divisions 2 and 3, not only 2
-- subdivision if the value is a slice of a major group
-  (e.g. "Sales Workers"; "Service Workers"; "Administrative, Executive and Managerial")
-- family only if one 4-digit family clearly fits
+Pick the coarsest level that still fits from the candidate list only:
+- division — whole major group or several kinds of work in one major group
+- subdivision — a clear slice of a major group
+- family — only if one 4-digit family clearly fits
 
-Do NOT pick a specific occupation (no .0100 / .9900 job codes).
+If the value spans two major groups, pick the single best candidate from the list
+(do not invent combined codes).
+
+Do NOT pick a specific occupation job code (no .0100 / .9900).
 
 Candidate nodes (level, code, title):
 {candidates_text}
@@ -550,33 +538,38 @@ Return ONLY JSON:
 
     level = decision.get("level")
     if level not in ("division", "subdivision", "family"):
-        level = "subdivision"
+        level = None
     code = str(decision.get("code") or "").strip()
-    node = next((n for _, n in scored if str(n["code"]) == code and n["level"] == level), None)
-    if node is None:
+    llm_conf = decision.get("confidence")
+    if llm_conf not in ("high", "medium", "low"):
+        llm_conf = None
+
+    # Trust LLM only when the pick is on the shortlist.
+    node = None
+    if level and code:
+        node = next((n for _, n in scored if str(n["code"]) == code and n["level"] == level), None)
+    if node is None and code:
         node = next((n for _, n in scored if str(n["code"]) == code), None)
+        if node is not None:
+            level = node["level"]
+
     if node is None:
-        node = scored[0][1]
-        level = node["level"]
-    chosen = _choose_hierarchy_level(occupation_text, scored, all_nodes=nodes)
-    if chosen and isinstance(chosen, list):
-        result = _result_from_divisions(chosen, scored)
-        result["confidence"] = decision.get("confidence", "medium")
-        return result
-    if chosen:
-        node, level, score = chosen
-    else:
-        score = next((s for s, n in scored if n is node), None)
-    if level == "group":
-        level = "subdivision"
-    result = _result_from_node(node, level=level, score=score)
-    result["confidence"] = decision.get("confidence", "medium")
+        return _fallback_best_match(occupation_text, rows, extractor=extractor)
+
+    score = next((s for s, n in scored if n is node), scored[0][0])
+    result = _result_from_node(node, level=level or node["level"], score=score)
     result["alternatives"] = _alternatives(scored, result["code"])
-    result["needs_manual_review"] = True
-    return result
+    if llm_conf:
+        result["confidence"] = llm_conf
+    return _finalize(
+        result,
+        score=score,
+        used_embeddings=used_embed,
+        source="llm",
+    )
 
 
-def match_occupations(conn, occupation_texts, extractor=None, shortlist_size=12):
+def match_occupations(conn, occupation_texts, extractor=None, shortlist_size=16):
     return {
         text: match_occupation(conn, text, extractor=extractor, shortlist_size=shortlist_size)
         for text in occupation_texts

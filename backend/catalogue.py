@@ -180,6 +180,17 @@ def init_schema(conn):
                 qp_nos_reference   TEXT
             )
         """)
+        # Steward-learned mappings from Classify verify — not a hardcoded label list.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS nco_value_aliases (
+                normalized_value TEXT PRIMARY KEY,
+                level            TEXT NOT NULL,
+                code             TEXT NOT NULL,
+                title            TEXT,
+                source           TEXT DEFAULT 'steward',
+                updated_at       TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
     conn.commit()
 
     # Stage 6 — pgvector embeddings store (ancillary to authoritative tables above).
@@ -271,6 +282,62 @@ def seed_nco_2015(conn, csv_path=NCO_2015_CSV_PATH):
         )
     conn.commit()
     return len(rows)
+
+
+def lookup_nco_alias(conn, normalized_value: str):
+    """Return a learned alias row dict or None."""
+    if not normalized_value:
+        return None
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT normalized_value, level, code, title, source
+              FROM nco_value_aliases
+             WHERE normalized_value = %s
+            """,
+            (normalized_value,),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def upsert_nco_aliases(conn, aliases: list, source: str = "steward") -> int:
+    """Persist steward-verified occupation → NCO mappings. Each item:
+    {normalized_value|value, level, code, title?}."""
+    if not aliases:
+        return 0
+    saved = 0
+    with conn.cursor() as cur:
+        for a in aliases:
+            if not isinstance(a, dict):
+                continue
+            raw = a.get("normalized_value") or a.get("value") or ""
+            # Lazy import to avoid circular import at module load.
+            from nco_matching import normalize_occupation_value
+            norm = normalize_occupation_value(raw)
+            level = str(a.get("level") or "").strip().lower()
+            code = str(a.get("code") or "").strip()
+            title = a.get("title")
+            if not norm or not code or level not in ("division", "subdivision", "group", "family"):
+                continue
+            if level == "group":
+                level = "subdivision"
+            cur.execute(
+                """
+                INSERT INTO nco_value_aliases (normalized_value, level, code, title, source, updated_at)
+                VALUES (%s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (normalized_value) DO UPDATE SET
+                    level = EXCLUDED.level,
+                    code = EXCLUDED.code,
+                    title = EXCLUDED.title,
+                    source = EXCLUDED.source,
+                    updated_at = NOW()
+                """,
+                (norm, level, code, title, source),
+            )
+            saved += 1
+    conn.commit()
+    return saved
 
 
 def save_kyds_entry(conn, responses, user=None):

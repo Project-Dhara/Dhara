@@ -1502,7 +1502,7 @@ async def fill_definitions(request: Request, user_email: str = Depends(require_u
 @app.post("/api/catalogue/match-nco")
 async def match_nco(request: Request, user_email: str = Depends(require_user)):
     """Suggest the coarsest fitting NCO 2015 level (division, subdivision, or family).
-    Does not return specific .xxxx job codes."""
+    Does not return specific .xxxx job codes. Dynamic: alias → embed/fuzzy → LLM."""
     import nco_matching as _nco
     data = await request.json()
     values = data.get("values") or []
@@ -1526,6 +1526,29 @@ async def match_nco(request: Request, user_email: str = Depends(require_user)):
 
     matches = await asyncio.to_thread(_run)
     return {"matches": matches, "llm_used": not extractor.skip_llm}
+
+
+@app.post("/api/catalogue/nco-aliases")
+async def save_nco_aliases(request: Request, user_email: str = Depends(require_user)):
+    """Learn occupation → NCO mappings from steward Verify in Classify."""
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(400, "Expected a JSON body")
+    aliases = data.get("aliases") if isinstance(data, dict) else None
+    if not isinstance(aliases, list):
+        raise HTTPException(400, "aliases must be a list")
+
+    def _run():
+        conn = _cat.get_connection()
+        try:
+            _cat.init_schema(conn)
+            return _cat.upsert_nco_aliases(conn, aliases, source="steward")
+        finally:
+            conn.close()
+
+    saved = await asyncio.to_thread(_run)
+    return {"saved": saved}
 
 
 def _upload_bytes_to_gcs(file_bytes: bytes, blob_name: str) -> Optional[str]:
