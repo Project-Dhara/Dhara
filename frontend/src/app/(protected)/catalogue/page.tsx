@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import Catalogue from '../../../components/Catalogue'
+import Catalogue from '../../../components/catalogue/Catalogue'
 import { useApp } from '../../../context/AppContext'
 
 export default function CataloguePage() {

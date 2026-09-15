@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { CheckCircle2, Clock } from 'lucide-react'
 import Button from './ui/Button'
-import { METADATA_COLUMNS } from './MetadataSheetGrid'
+import { METADATA_COLUMNS } from './console/MetadataSheetGrid'
 import {
   getDatasetIdConfig,
   setDatasetIdConfig as persistDatasetIdConfig,

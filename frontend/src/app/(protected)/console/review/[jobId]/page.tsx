@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import PdfReview from '../../../../../components/PdfReview'
+import PdfReview from '../../../../../components/pdf/PdfReview'
 import { withAuthHeaders } from '../../../../../lib/auth'
 import { clearConsoleSession } from '../../../../../lib/consoleSession'
 

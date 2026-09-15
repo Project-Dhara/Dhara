@@ -5,6 +5,60 @@
  * catalogue matchResult shape for: grouping → metadata → classify → publish.
  */
 
+/** Preview review status for Source Table ID / Title. */
+export function previewReviewStatus(t, savedIds) {
+  const saved = savedIds?.has?.(t._uid)
+  if (t.id_title_mismatch && !saved) return 'fix'
+  if ((t.title_repaired_by_llm || t.table_id_repaired_by_llm) && !saved) return 'ai'
+  return 'ok'
+}
+
+// Short government table code for a tab button — e.g. "Table : D-12 & D-13"
+// → "D12, D13" — pulled from the source's own table-label row (`table.title`,
+// which the extractor sets to that raw label, not a display title; see
+// backend/extraction/extractor.py's _build_ddi_id for the same
+// "letter-digits" pattern).
+export function tableCode(table) {
+  const src = table.title || ''
+  const matches = [...src.matchAll(/\b([A-Za-z])-?(\d+(?:\.\d+)?)\b/g)]
+  if (matches.length > 0) {
+    const codes = [...new Set(matches.map((m) => `${m[1].toUpperCase()}${m[2]}`))]
+    return codes.join(', ')
+  }
+  const sheet = String(table.sheet || '').trim()
+  const genericSheet = !sheet || /^(catalogue|query|table|view|data|base table)$/i.test(sheet)
+  if (!genericSheet) return sheet
+  const title = String(table.title || '').trim()
+  if (title) return title.length > 56 ? `${title.slice(0, 56)}…` : title
+  return table.table_id || table.id || 'Table'
+}
+
+export function tablePickerLabel(table) {
+  const code = tableCode(table)
+  const rows = table.row_count != null ? `${table.row_count} rows` : ''
+  return rows ? `${code} — ${rows}` : code
+}
+
+// Ports of backend title-base helpers — needed client-side so a title
+// correction on preview can re-home tables into shared grouping buckets.
+export function baseTitle(title) {
+  const base = (title || '').replace(/\s*\([^)]*\)\s*$/, '').trim().replace(/\s+/g, ' ').toUpperCase()
+  return base || (title || '').trim().toUpperCase()
+}
+
+const GROUP_NAME_NOISE = new Set(['sl', 'no'])
+
+export function buildGroupName(base) {
+  const title = (base || '').replace(/\s+/g, ' ').trim()
+  if (!title) return 'Untitled group'
+  const words = title.split(' ')
+  while (words.length && GROUP_NAME_NOISE.has(words[0].replace(/[.,]+$/, '').toLowerCase())) {
+    words.shift()
+  }
+  const cleaned = words.join(' ').trim().replace(/^[\s.,-]+|[\s.,-]+$/g, '') || title
+  return cleaned.replace(/\S+/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase())
+}
+
 export const EMPTY_GROUP_METADATA = {
   title: '', product: '', category: '', geography: '', frequency: '',
   time_period: '', data_source: '', description: '', last_updated: '',

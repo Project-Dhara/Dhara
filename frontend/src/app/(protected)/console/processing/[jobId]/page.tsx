@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import ProcessingStepper from '../../../../../components/ProcessingStepper'
-import PdfConsoleLayout from '../../../../../components/PdfConsoleLayout'
+import ProcessingStepper from '../../../../../components/console/ProcessingStepper'
+import PdfConsoleLayout from '../../../../../components/pdf/PdfConsoleLayout'
 import ErrorBanner from '../../../../../components/ui/ErrorBanner'
 import Button from '../../../../../components/ui/Button'
 import { withAuthHeaders } from '../../../../../lib/auth'

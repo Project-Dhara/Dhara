@@ -1,7 +1,7 @@
 'use client'
 
 import { useParams } from 'next/navigation'
-import { PdfTableEditorPage } from '@/components/PdfReview'
+import { PdfTableEditorPage } from '@/components/pdf/PdfReview'
 
 export default function PdfTableEditRoutePage() {
   const { jobId, tableId } = useParams<{ jobId: string; tableId: string }>()

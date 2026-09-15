@@ -16,23 +16,28 @@ dhara-poc/
 ├── Makefile                     make up / down / logs / psql / prod …
 ├── docker-compose.yml           postgres + backend + frontend (dev); app (prod)
 ├── Dockerfile                   Combined Next.js + FastAPI image (:8080)
+├── docs/ARCHITECTURE.md         Module/API map (keep in sync with code layout)
 ├── backend/                     FastAPI + openpyxl + LLM + Postgres + pgvector
-│   ├── main.py                  API routes
-│   ├── auth.py                  JWT login / signup
-│   ├── extractor.py             Claude/LLM table extraction from Excel
-│   ├── sql_extract.py           Read-only Postgres SELECT → Excel-shaped table
-│   ├── sda_india_pdf_extraction.py  PDF table extraction pipeline
-│   ├── pdf_store.py / pdf_grouping.py / pdf_dual_column.py
-│   ├── catalogue.py / catalogue_matching.py
-│   ├── vector_store.py          Stage 6 semantic_embeddings (pgvector)
-│   ├── create_user.py           Admin user provisioning CLI
+│   ├── main.py                  App setup + router registration (entrypoint)
+│   ├── routes/                  FastAPI routers: auth, kyds, catalogue, pdf, dashboard
+│   ├── core/                    auth.py, deps.py, gcs_utils.py, vector_store.py
+│   ├── catalogue/               query.py, datasets.py, catalogue.py (shim), matching, NCO, staging, …
+│   ├── pdf/                     sda_india_pdf_extraction.py, pdf_store.py, pdf_jobs.py, grouping, …
+│   ├── metadata/                metadata_excel.py, metadata_llm.py, metadata_fill.py, validation, …
+│   ├── extraction/              extractor.py, sql_extract.py, table_export.py, …
+│   ├── scripts/create_user.py   Admin user provisioning CLI
+│   ├── tests/                   test_nco_matching.py, test_pdf_pipeline.py
 │   ├── db/init-pgvector.sql     CREATE EXTENSION vector (first boot)
 │   └── requirements.txt
 └── frontend/                    Next.js 14 (App Router) + Tailwind + lucide-react
     └── src/
         ├── app/                 Routes: login, dashboard, console, catalogue, settings
-        ├── components/          Console pipeline, PdfReview/Grouping, Catalogue, Auth …
-        └── lib/                 auth, LLM key headers, settings
+        ├── components/
+        │   ├── console/         Excel/SQL Console + useConsolePipeline + step panels
+        │   ├── pdf/             PdfReview, PdfGrouping, upload/edit helpers
+        │   ├── catalogue/       Catalogue browse UI
+        │   └── …                Shared AppShell, Auth, Dashboard, Settings, ui/
+        └── lib/                 auth, llmKey, postPreview, pipeline.js, settings
 ```
 
 ## Flows
@@ -145,7 +150,7 @@ writes dataset/metadata rows; Excel file URLs stay empty until `ENABLE_GCS=true`
 Provision a user (when signup is disabled):
 
 ```bash
-cd backend && python create_user.py
+cd backend && python scripts/create_user.py
 ```
 
 ### 3. Backend
@@ -176,7 +181,7 @@ docker exec -it dhara-postgres psql -U dhara -d dhara -c '\dt'
 
 API routes (except health / login / signup) expect `Authorization: Bearer <JWT>`.
 Sign up via the UI when `ENABLE_SIGNUP=true`, or create accounts with
-`backend/create_user.py`.
+`backend/scripts/create_user.py`.
 
 ## Deployment
 

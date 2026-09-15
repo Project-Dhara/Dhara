@@ -128,7 +128,7 @@ The current implementation has progressed through PDF extraction, LLM-assisted r
 ✓ Continue → Grouping (/console/grouping/[jobId])
 ✓ Extraction guards (ungrounded Direction strip, column-alignment flag)
 ✓ pgvector-enabled Postgres (pgvector/pg16)
-✓ semantic_embeddings table + HNSW index (vector_store.py)
+✓ semantic_embeddings table + HNSW index (core/vector_store.py)
 ✓ pdf_jobs / pdf_tables / pdf_table_groups in PostgreSQL (SoT after Preview)
 ✓ Persist approved tables on Continue (POST …/persist-approved)
 ✓ Semantic chunking + embed (table_summary / column_meaning)
@@ -140,7 +140,7 @@ The current PDF pipeline uses PyMuPDF rather than Camelot/pdfplumber. The LLM st
 
 ### Console stages (Dataset Inventory)
 
-Excel (`Console.jsx`) and PDF (`PdfConsoleLayout` + `ConsoleStages.jsx`) use the same stage definitions:
+Excel (`components/console/Console.jsx`) and PDF (`components/pdf/PdfConsoleLayout` + `components/console/ConsoleStages.jsx`) use the same stage definitions:
 
 ```text
 1 Files     — upload / PDF processing
@@ -406,7 +406,7 @@ Save   PATCH /api/pdf/jobs/{job_id}/tables/{table_id}
 Delete POST /api/pdf/jobs/{job_id}/tables/delete
 ```
 
-`PdfReview` (`frontend/src/components/PdfReview.jsx`) provides:
+`PdfReview` (`frontend/src/components/pdf/PdfReview.jsx`) provides:
 
 ```text
 Expandable table cards with classification + column metadata edits
@@ -534,7 +534,7 @@ Initial architecture should avoid adding Elasticsearch/OpenSearch unless scale l
 ✓ CREATE EXTENSION vector (init SQL + catalogue.init_schema)
 ✓ semantic_embeddings table (chunk text + vector(1536) + object keys)
 ✓ HNSW cosine index for nearest-neighbour search
-✓ backend/vector_store.py — upsert_embedding / similarity_search
+✓ backend/core/vector_store.py — upsert_embedding / similarity_search
 ✓ GET /api/health reports pgvector readiness
 ```
 

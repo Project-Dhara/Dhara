@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import Console from '../../../components/Console'
+import Console from '../../../components/console/Console'
 import { useApp } from '../../../context/AppContext'
 import { clearConsoleSession } from '../../../lib/consoleSession'
 

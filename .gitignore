@@ -6,6 +6,7 @@ __pycache__/
 *.pyd
 *.egg-info/
 *.dist-info/
+.ipynb_checkpoints/
 
 # Python packages accidentally installed directly inside backend/
 backend/annotated_types/
@@ -63,3 +64,8 @@ frontend/out/
 frontend/.turbo/
 frontend/.vercel/
 frontend/.eslintcache
+frontend/tsconfig.tsbuildinfo
+
+# Generated test/tool output — not source
+backend/pdf_pipeline_test_report.json
+.playwright-mcp/
