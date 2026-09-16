@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowRight, CheckCircle2, Clock, Database, Package } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CheckCircle2, Clock, Database, Package } from 'lucide-react'
 import Button from './ui/Button'
 import { withAuthHeaders } from '../lib/auth'
+
+const PAGE_SIZE = 10
 
 const STAT_META = [
   { key: 'datasets', label: 'Datasets', color: '#F2C230', Icon: Database },
@@ -40,6 +42,7 @@ export default function Dashboard({ onStartFlow }) {
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [page, setPage] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -57,6 +60,7 @@ export default function Dashboard({ onStartFlow }) {
         if (cancelled) return
         setStats(data.stats || {})
         setRows(Array.isArray(data.rows) ? data.rows : [])
+        setPage(0)
       })
       .catch((err) => {
         if (!cancelled) setError(err.message || 'Could not load dashboard')
@@ -66,6 +70,12 @@ export default function Dashboard({ onStartFlow }) {
       })
     return () => { cancelled = true }
   }, [])
+
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
+  const currentPage = Math.min(page, pageCount - 1)
+  const pageStart = currentPage * PAGE_SIZE
+  const pageEnd = Math.min(pageStart + PAGE_SIZE, rows.length)
+  const pageRows = rows.slice(pageStart, pageEnd)
 
   const openRow = (row) => {
     if (row?.href) {
@@ -129,7 +139,7 @@ export default function Dashboard({ onStartFlow }) {
           </div>
         )}
 
-        {!loading && !error && rows.map((row) => {
+        {!loading && !error && pageRows.map((row) => {
           const pct = Math.max(0, Math.min(100, Number(row.readiness_pct) || 0))
           return (
             <div
@@ -162,6 +172,40 @@ export default function Dashboard({ onStartFlow }) {
           )
         })}
       </div>
+
+      {!loading && !error && rows.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="text-[12.5px] text-ink-soft">
+            Showing {pageStart + 1}–{pageEnd} of {rows.length}
+            {' · '}{PAGE_SIZE} per page
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line bg-white text-ink-soft hover:border-teal hover:text-teal disabled:cursor-not-allowed disabled:opacity-35"
+              disabled={currentPage <= 0}
+              aria-label="Previous page"
+              title="Previous page"
+              onClick={() => setPage((p) => Math.max(0, Math.min(p, pageCount - 1) - 1))}
+            >
+              <ArrowLeft className="h-4 w-4" strokeWidth={2} aria-hidden />
+            </button>
+            <span className="min-w-[5.5rem] text-center text-[12.5px] font-semibold tabular-nums text-ink">
+              {currentPage + 1} / {pageCount}
+            </span>
+            <button
+              type="button"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line bg-white text-ink-soft hover:border-teal hover:text-teal disabled:cursor-not-allowed disabled:opacity-35"
+              disabled={currentPage >= pageCount - 1}
+              aria-label="Next page"
+              title="Next page"
+              onClick={() => setPage((p) => Math.min(pageCount - 1, Math.min(p, pageCount - 1) + 1))}
+            >
+              <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -19,6 +19,9 @@ Postgres database that
 Upload Excel workbooks or PDF statistical reports, extract and review tables,
 harmonise classifications, and publish clean datasets into the catalogue.
 
+Full design, stage-by-stage pipeline, and deployment guides live under
+**[docs/](./docs/README.md)** (architecture, on-prem, cloud, configuration).
+
 ---
 
 ## What can be done with Dhara
@@ -62,6 +65,7 @@ harmonise classifications, and publish clean datasets into the catalogue.
 
 ```
 dhara-poc/
+├── docs/                        Architecture, pipeline stages, deployment
 ├── Makefile                     make up / down / logs / psql / prod …
 ├── docker-compose.yml           postgres + backend + frontend (dev); app (prod)
 ├── Dockerfile                   Combined Next.js + FastAPI image (:8080)
@@ -278,6 +282,17 @@ enrichment pass), and two downloadable Excel exports — `source_excel` (clean
 re-flattened table) and `original_excel` (source sheet with formatting
 preserved). `des-website` prefers `original_excel`, falling back to
 `source_excel` for older rows.
+
+## Documentation
+
+| Topic | Link |
+|-------|------|
+| Docs home | [docs/README.md](./docs/README.md) |
+| Architecture | [docs/architecture.md](./docs/architecture.md) |
+| Pipeline stages | [docs/pipeline/](./docs/pipeline/overview.md) |
+| On-prem deploy | [docs/deployment/on-prem.md](./docs/deployment/on-prem.md) |
+| Cloud deploy | [docs/deployment/cloud.md](./docs/deployment/cloud.md) |
+| Configuration | [docs/deployment/configuration.md](./docs/deployment/configuration.md) |
 
 ## License
 

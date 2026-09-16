@@ -1,5 +1,10 @@
 # DHARA — End-to-End Data Understanding, Harmonization & Interoperability Pipeline
 
+> **Canonical docs:** For architecture, stage-by-stage design (including planned
+> steps), and on-prem/cloud deployment, see [`docs/`](./docs/README.md). This
+> file remains a long-form design narrative; prefer `docs/` when something
+> conflicts with current code status.
+
 ## 1. Overview
 
 DHARA is designed as a data interoperability and AI-readiness layer for government data.
