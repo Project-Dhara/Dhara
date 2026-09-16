@@ -1,9 +1,15 @@
+'use client'
+
 import { useState } from 'react'
+import { Check, Download, Info, Loader2, X } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import { withLlmKeyHeaders } from '../llmKey'
+import { withLlmKeyHeaders } from '../lib/llmKey'
+import { withAuthHeaders } from '../lib/auth'
 
 
 const MAX_DISPLAY = 500
+
+const DATASET_ID_INFO = 'The Dataset ID is generated and is used for grouping and table identification.'
 
 function escape(v) {
   const s = v == null ? '' : String(v)
@@ -58,7 +64,7 @@ function numericStats(colName, rows) {
 async function downloadMetadataExcel(table, setLoading) {
   setLoading(true)
   try {
-    const res = await fetch('/api/table-metadata', withLlmKeyHeaders({
+    const res = await fetch('/api/table-metadata', withAuthHeaders(withLlmKeyHeaders({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -69,7 +75,7 @@ async function downloadMetadataExcel(table, setLoading) {
         sample_rows: table.rows.slice(0, 8),
         raw_notes: table.raw_notes || [],
       }),
-    }))
+    })))
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
       throw new Error(err.detail || 'Metadata extraction failed')
@@ -176,86 +182,119 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
     if (e.key === 'Escape') cancelEdit()
   }
 
+  const idInfoIcon = (
+    <span className="group relative inline-flex h-4 w-4 flex-shrink-0 cursor-help items-center justify-center rounded-full border border-line bg-[#F4EFE3] text-ink-soft">
+      <Info className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
+      <span className="pointer-events-none absolute bottom-[calc(100%+8px)] left-1/2 z-20 w-60 -translate-x-1/2 translate-y-1 rounded-md bg-ink px-2.5 py-2 text-left text-xs font-medium leading-snug text-white opacity-0 shadow-lg transition-all after:absolute after:left-1/2 after:top-full after:-translate-x-1/2 after:border-[5px] after:border-transparent after:border-t-ink group-hover:translate-y-0 group-hover:opacity-100">
+        {DATASET_ID_INFO}
+      </span>
+    </span>
+  )
+
   const editIdControl = editingId ? (
     <>
       <input
-        className="id-edit-input"
+        className="min-w-[320px] rounded-md border-[1.5px] border-teal px-2.5 py-[3px] font-mono text-xs font-bold tracking-wide text-ink outline-none"
         value={draftId}
         onChange={(e) => setDraftId(e.target.value)}
         onKeyDown={handleKeyDown}
         autoFocus
         spellCheck={false}
       />
-      <button className="id-edit-save" onClick={saveEdit} title="Save">✓</button>
-      <button className="id-edit-cancel" onClick={cancelEdit} title="Cancel">✕</button>
+      <button className="rounded bg-teal px-2 py-[3px] text-[13px] font-bold text-white transition-colors hover:bg-teal-dark" onClick={saveEdit} title="Save" aria-label="Save">
+        <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
+      </button>
+      <button className="rounded border border-line px-2 py-[3px] text-[13px] text-ink-soft transition-colors hover:bg-[#F4EFE3] hover:text-ink" onClick={cancelEdit} title="Cancel" aria-label="Cancel">
+        <X className="h-3.5 w-3.5" strokeWidth={2} />
+      </button>
     </>
   ) : (
-    <button className="id-edit-btn" onClick={startEdit} title="Edit dataset ID">Edit ID</button>
+    <button className="flex-shrink-0 whitespace-nowrap rounded border border-line bg-white px-2.5 py-[3px] text-[11px] font-semibold text-teal transition-colors hover:bg-[#F4EFE3] hover:border-teal" onClick={startEdit} title="Edit dataset ID">Edit ID</button>
   )
 
   const displayRows = table.rows.slice(0, MAX_DISPLAY)
   const truncated = table.rows.length > MAX_DISPLAY
   return (
-    <div className="table-viewer">
+    <div className="flex max-h-[calc(100vh-100px)] flex-col gap-4 overflow-hidden">
       {compact ? (
-        <div className="viewer-compact-header">
-          <div className="viewer-compact-title">{table.description || table.title}</div>
-          <div className="viewer-compact-meta">
-            Sheet: {table.sheet} · {table.row_count.toLocaleString()} rows · {table.columns.length} columns
+        <div className="flex flex-wrap items-end gap-x-4 gap-y-2 rounded-[10px] border border-line bg-surface p-3.5 px-[18px]">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <div className="inline-flex items-center rounded bg-[#e8f2f0] px-2 py-0.5 font-sans text-xs font-bold uppercase tracking-wide text-teal">Table Title</div>
+            <div className="min-w-0 flex-1 text-[12.5px] font-semibold leading-tight text-ink">{table.title}</div>
           </div>
-          <div className="viewer-compact-actions">
-            <button className="btn-csv" onClick={() => downloadCSV(table)}>Download CSV</button>
-            <button
-              className="btn-meta"
-              onClick={() => downloadMetadataExcel(table, setMetaLoading)}
-              disabled={metaLoading}
-            >
-              {metaLoading ? 'Analysing…' : 'Download Classifications'}
-            </button>
+          {table.description && <div className="text-[12.5px] leading-relaxed text-ink-soft">{table.description}</div>}
+          <div className="whitespace-nowrap font-sans text-xs text-ink-soft">
+            Sheet: {table.sheet} · {table.row_count.toLocaleString()} rows · {table.columns.length} columns
           </div>
         </div>
       ) : (
-        <div className="viewer-header">
-          <div className="viewer-title-row">
-            <span className="catalogue-id-chip" title="Dataset ID (editable)">{table.id}</span>
+        <div className="flex-shrink-0 rounded-[10px] border border-line bg-surface px-[22px] pb-3.5 pt-4">
+          <div className="mb-1.5 flex flex-wrap items-center gap-2">
+            <span className="flex-shrink-0 text-[12.5px] font-semibold leading-tight text-ink">{table.id}</span>
+            {idInfoIcon}
             {editIdControl}
           </div>
-          {table.description && <div className="viewer-desc">{table.description}</div>}
-          <div className="viewer-meta">
-            <span className="meta-chip">Sheet: {table.sheet}</span>
-            <span className="meta-chip">{table.row_count.toLocaleString()} rows</span>
-            <span className="meta-chip">{table.columns.length} columns</span>
-            <button className="btn-csv" onClick={() => downloadCSV(table)}>
-              ⬇ Download CSV
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <div className="inline-flex items-center rounded bg-[#e8f2f0] px-2 py-0.5 font-sans text-xs font-bold uppercase tracking-wide text-teal">Table Title</div>
+            <div className="min-w-0 flex-1 text-[12.5px] font-semibold leading-tight text-ink">{table.title}</div>
+          </div>
+          {table.description && <div className="mb-2.5 text-[12.5px] leading-relaxed text-ink-soft">{table.description}</div>}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full border border-line bg-[#FFFCF6] px-2.5 py-[3px] text-[11.5px] text-ink-soft">Sheet: {table.sheet}</span>
+            <span className="rounded-full border border-line bg-[#FFFCF6] px-2.5 py-[3px] text-[11.5px] text-ink-soft">{table.row_count.toLocaleString()} rows</span>
+            <span className="rounded-full border border-line bg-[#FFFCF6] px-2.5 py-[3px] text-[11.5px] text-ink-soft">{table.columns.length} columns</span>
+            <button className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-teal px-3.5 py-1.5 text-[12.5px] font-semibold text-white transition-colors hover:bg-teal-dark" onClick={() => downloadCSV(table)}>
+              <Download className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+              Download CSV
             </button>
             <button
-              className="btn-meta"
+              className="ml-2 inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-teal px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-teal-dark disabled:cursor-default disabled:opacity-60"
               onClick={() => downloadMetadataExcel(table, setMetaLoading)}
               disabled={metaLoading}
             >
-              {metaLoading ? '⏳ Analysing…' : '⬇ Download Classifications'}
+              {metaLoading ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} aria-hidden />
+                  Analysing…
+                </>
+              ) : (
+                <>
+                  <Download className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+                  Download Classifications
+                </>
+              )}
             </button>
           </div>
         </div>
       )}
 
-      <div className="table-scroll">
-        <table className="data-table">
+      <div className="flex-1 overflow-auto rounded-lg border border-[#cfc6b4] bg-surface">
+        <table className="w-full border-collapse text-[12.5px]">
           <thead>
             <tr>
               {table.columns.map((col) => (
-                <th key={col} title={col}>{col}</th>
+                <th
+                  key={col}
+                  title={col}
+                  className="sticky top-0 z-[2] max-w-[220px] overflow-hidden text-ellipsis whitespace-nowrap border-b border-[#d7cdb9] border-r border-line bg-[#F4EFE3] px-3.5 py-[11px] text-left font-sans font-medium tracking-wide text-[#5c6166]"
+                >
+                  {col}
+                </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {displayRows.map((row, i) => (
-              <tr key={i}>
+              <tr key={i} className={`${i % 2 === 0 ? 'bg-[#FFFCF6]' : 'bg-surface'} hover:bg-[#F4EFE3]`}>
                 {table.columns.map((col) => {
                   const val = row[col]
                   const isNull = val == null || val === ''
                   return (
-                    <td key={col} className={isNull ? 'null-cell' : ''} title={isNull ? '' : String(val)}>
+                    <td
+                      key={col}
+                      className={`max-w-[220px] overflow-hidden text-ellipsis whitespace-nowrap border-b border-[#f1ebdf] border-r border-[#f4efe3] px-3.5 py-2.5 ${isNull ? 'italic text-ink-muted' : 'text-ink'}`}
+                      title={isNull ? '' : String(val)}
+                    >
                       {isNull ? '—' : String(val)}
                     </td>
                   )
@@ -267,16 +306,40 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
       </div>
 
       {truncated && (
-        <div className="row-limit-note">
+        <div className="flex-shrink-0 rounded-lg border border-[#f5d9a8] bg-[#fef9f0] px-4 py-2 text-center text-xs text-ink-soft">
           Showing first {MAX_DISPLAY.toLocaleString()} of {table.row_count.toLocaleString()} rows — download CSV for full data.
         </div>
       )}
 
       {compact && (
-        <div className="viewer-id-footer">
-          <span className="viewer-id-footer-label">Dataset ID</span>
-          <span className="catalogue-id-chip" title="Dataset ID (editable)">{table.id}</span>
+        <div className="flex flex-wrap items-center gap-2.5 rounded-[10px] border border-line bg-surface px-[18px] py-3.5">
+          <span className="inline-flex items-center rounded bg-[#e8f2f0] px-2 py-0.5 font-sans text-xs font-bold uppercase tracking-wide text-teal">Dataset ID</span>
+          <span className="flex-shrink-0 text-[12.5px] font-semibold leading-tight text-ink">{table.id}</span>
+          {idInfoIcon}
           {editIdControl}
+          <div className="ml-auto flex items-center gap-2">
+            <button className="inline-flex items-center gap-1.5 rounded-md bg-teal px-3.5 py-1.5 text-[12.5px] font-semibold text-white transition-colors hover:bg-teal-dark" onClick={() => downloadCSV(table)}>
+              <Download className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+              Download CSV
+            </button>
+            <button
+              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-teal px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-teal-dark disabled:cursor-default disabled:opacity-60"
+              onClick={() => downloadMetadataExcel(table, setMetaLoading)}
+              disabled={metaLoading}
+            >
+              {metaLoading ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} aria-hidden />
+                  Analysing…
+                </>
+              ) : (
+                <>
+                  <Download className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+                  Download Classifications
+                </>
+              )}
+            </button>
+          </div>
         </div>
       )}
     </div>

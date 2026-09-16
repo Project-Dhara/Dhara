@@ -1,0 +1,251 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --dhara-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --dhara-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dhara-duration: 420ms;
+  --dhara-duration-fast: 240ms;
+  --dhara-duration-slow: 650ms;
+}
+
+html {
+  scroll-behavior: auto;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+/* Cream highlight on light surfaces; charcoal text for contrast. */
+::selection {
+  background: #E7F0DF;
+  color: #303337;
+}
+
+/* Dark panels (auth left rail, catalogue API blocks) invert selection. */
+.selection-invert ::selection {
+  background: #176B6B;
+  color: #FFF7EA;
+}
+
+/* Slim, warm-tinted scrollbars — native scroll behavior only. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d4c9b4 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: #d4c9b4;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+  transition: background-color var(--dhara-duration-fast) var(--dhara-ease);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: #c4b89e;
+}
+
+@layer base {
+  /* Quiet default motion for interactive chrome. */
+  button,
+  a,
+  [role='button'],
+  [role='tab'],
+  input,
+  select,
+  textarea {
+    transition-property: color, background-color, border-color, box-shadow, opacity, transform, filter;
+    transition-duration: var(--dhara-duration-fast);
+    transition-timing-function: var(--dhara-ease);
+  }
+}
+
+@layer components {
+  .dhara-page-title {
+    @apply font-display text-[26px] font-medium leading-tight tracking-tight text-ink;
+  }
+
+  .dhara-label {
+    @apply font-label text-[11px] font-medium uppercase tracking-[0.08em];
+  }
+
+  .dhara-page-sub {
+    @apply mt-1 text-[14.5px] leading-relaxed text-ink-soft;
+  }
+
+  /* Soft enter for main route / stage content. */
+  .dhara-page-enter {
+    animation: dhara-page-in var(--dhara-duration-slow) var(--dhara-ease-out) both;
+  }
+
+  /* Cards / panels that lift gently on hover. */
+  .dhara-surface {
+    transition:
+      transform var(--dhara-duration) var(--dhara-ease),
+      box-shadow var(--dhara-duration) var(--dhara-ease),
+      border-color var(--dhara-duration) var(--dhara-ease),
+      background-color var(--dhara-duration) var(--dhara-ease);
+  }
+
+  .dhara-surface:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 14px rgba(23, 107, 107, 0.08), 0 12px 28px rgba(23, 107, 107, 0.08);
+  }
+
+  /* Shared tab / chip chrome — deep fill + ivory text on active/hover. */
+  .dhara-tab {
+    @apply border;
+    transition:
+      color var(--dhara-duration) var(--dhara-ease),
+      background-color var(--dhara-duration) var(--dhara-ease),
+      border-color var(--dhara-duration) var(--dhara-ease),
+      box-shadow var(--dhara-duration) var(--dhara-ease),
+      opacity var(--dhara-duration) var(--dhara-ease),
+      transform var(--dhara-duration) var(--dhara-ease);
+  }
+
+  .dhara-tab-on {
+    @apply border-transparent bg-teal-deep text-cream;
+  }
+
+  .dhara-tab-off {
+    @apply border-transparent bg-transparent text-ink-soft hover:bg-sage hover:text-teal-deep;
+  }
+
+  .dhara-tab-panel {
+    animation: dhara-tab-in var(--dhara-duration) var(--dhara-ease) both;
+  }
+
+  /* Group detail panel — soft enter when switching groups */
+  .dhara-group-panel {
+    animation: dhara-group-in var(--dhara-duration-slow) var(--dhara-ease-out) both;
+  }
+}
+
+@keyframes dhara-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes dhara-tab-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes dhara-group-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes dhara-carousel-forward {
+  from {
+    opacity: 0;
+    transform: translateX(40px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes dhara-carousel-back {
+  from {
+    opacity: 0;
+    transform: translateX(-40px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.dhara-carousel-panel-forward {
+  animation: dhara-carousel-forward 520ms var(--dhara-ease) both;
+}
+
+.dhara-carousel-panel-back {
+  animation: dhara-carousel-back 520ms var(--dhara-ease) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dhara-duration: 1ms;
+    --dhara-duration-fast: 1ms;
+    --dhara-duration-slow: 1ms;
+  }
+
+  .dhara-tab,
+  .dhara-surface,
+  button,
+  a,
+  [role='button'],
+  [role='tab'],
+  input,
+  select,
+  textarea {
+    transition: none !important;
+  }
+
+  .dhara-page-enter,
+  .dhara-tab-panel,
+  .dhara-group-panel,
+  .dhara-carousel-panel-forward,
+  .dhara-carousel-panel-back,
+  .dhara-surface:hover {
+    animation: none !important;
+    transform: none !important;
+  }
+}
+
+/* Headings: Plus Jakarta Sans Medium. Unlayered so it wins over lighter utilities. */
+.font-display {
+  font-weight: 500;
+}
+
+/*
+ * Labels: DM Mono. Covers uppercase chrome, table headers, text-only field
+ * labels, and the caption span inside wrapping <label>s — without inheriting
+ * onto nested inputs (those keep font-sans / font-body).
+ */
+.uppercase,
+.dhara-label,
+th,
+label:not(:has(*)),
+label > span:first-child {
+  font-family: 'DM Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 500;
+}
