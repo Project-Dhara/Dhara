@@ -131,6 +131,11 @@ html {
   .dhara-tab-panel {
     animation: dhara-tab-in var(--dhara-duration) var(--dhara-ease) both;
   }
+
+  /* Group detail panel — soft enter when switching groups */
+  .dhara-group-panel {
+    animation: dhara-group-in var(--dhara-duration-slow) var(--dhara-ease-out) both;
+  }
 }
 
 @keyframes dhara-page-in {
@@ -148,6 +153,17 @@ html {
   from {
     opacity: 0;
     transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes dhara-group-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -206,6 +222,7 @@ html {
 
   .dhara-page-enter,
   .dhara-tab-panel,
+  .dhara-group-panel,
   .dhara-carousel-panel-forward,
   .dhara-carousel-panel-back,
   .dhara-surface:hover {

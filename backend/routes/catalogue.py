@@ -703,10 +703,111 @@ async def fill_definitions(request: Request, user_email: str = Depends(require_u
     return {"definitions": definitions}
 
 
+@router.get("/api/catalogue/classification-standards")
+async def get_classification_standards(user_email: str = Depends(require_user)):
+    """List steward-uploaded classification concordance standards."""
+
+    def _run():
+        conn = _cat.get_connection()
+        try:
+            _cat.init_schema(conn)
+            return _cat.list_classification_standards(conn)
+        finally:
+            conn.close()
+
+    standards = await asyncio.to_thread(_run)
+    return {"standards": standards}
+
+
+@router.post("/api/catalogue/classification-standards")
+async def upload_classification_standard(
+    name: str = Form(...),
+    file: UploadFile = File(...),
+    description: str = Form(""),
+    select: str = Form("true"),
+    user_email: str = Depends(require_user),
+):
+    """Upload a concordance CSV, name it, and optionally select it for Classify."""
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(400, "Empty file")
+    fname = file.filename or "concordance.csv"
+    if not fname.lower().endswith(".csv"):
+        raise HTTPException(400, "Upload a .csv file in the NCO concordance column layout")
+    do_select = str(select).strip().lower() not in ("0", "false", "no")
+
+    def _run():
+        conn = _cat.get_connection()
+        try:
+            _cat.init_schema(conn)
+            return _cat.create_classification_standard(
+                conn,
+                name=name,
+                csv_bytes=raw,
+                original_filename=fname,
+                description=description or None,
+                uploaded_by=user_email,
+                select=do_select,
+            )
+        finally:
+            conn.close()
+
+    try:
+        standard = await asyncio.to_thread(_run)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Failed to store classification standard: {e}")
+    return {"standard": standard}
+
+
+@router.post("/api/catalogue/classification-standards/{standard_id}/select")
+async def select_classification_standard_route(
+    standard_id: int,
+    user_email: str = Depends(require_user),
+):
+    """Make this uploaded standard the active source for occupation matching."""
+
+    def _run():
+        conn = _cat.get_connection()
+        try:
+            _cat.init_schema(conn)
+            return _cat.select_classification_standard(conn, standard_id)
+        finally:
+            conn.close()
+
+    try:
+        result = await asyncio.to_thread(_run)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return result
+
+
+@router.delete("/api/catalogue/classification-standards/{standard_id}")
+async def delete_classification_standard_route(
+    standard_id: int,
+    user_email: str = Depends(require_user),
+):
+    def _run():
+        conn = _cat.get_connection()
+        try:
+            _cat.init_schema(conn)
+            return _cat.delete_classification_standard(conn, standard_id)
+        finally:
+            conn.close()
+
+    try:
+        result = await asyncio.to_thread(_run)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return result
+
+
 @router.post("/api/catalogue/match-nco")
 async def match_nco(request: Request, user_email: str = Depends(require_user)):
     """Suggest the coarsest fitting NCO 2015 level (division, subdivision, or family).
-    Does not return specific .xxxx job codes. Dynamic: alias → embed/fuzzy → LLM."""
+    Does not return specific .xxxx job codes. Dynamic: alias → embed/fuzzy → LLM.
+    Codes come from the classification standard selected in Settings."""
     from catalogue import nco_matching as _nco
     data = await request.json()
     values = data.get("values") or []
@@ -723,7 +824,7 @@ async def match_nco(request: Request, user_email: str = Depends(require_user)):
         conn = _cat.get_connection()
         try:
             _cat.init_schema(conn)
-            _cat.seed_nco_2015(conn)
+            _cat.ensure_classification_standard_loaded(conn)
             return _nco.match_occupations(conn, unique, extractor=extractor)
         finally:
             conn.close()

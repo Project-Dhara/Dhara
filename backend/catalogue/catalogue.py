@@ -20,6 +20,13 @@ from catalogue.nco_aliases import (
     lookup_nco_alias,
     upsert_nco_aliases,
 )
+from catalogue.classification_standards import (
+    list_standards as list_classification_standards,
+    create_standard as create_classification_standard,
+    select_standard as select_classification_standard,
+    delete_standard as delete_classification_standard,
+    ensure_selected_loaded as ensure_classification_standard_loaded,
+)
 from catalogue.classifications import (
     get_metadata_group_classifications,
     get_definition_facts,
@@ -45,6 +52,11 @@ __all__ = [
     "seed_nco_2015",
     "lookup_nco_alias",
     "upsert_nco_aliases",
+    "list_classification_standards",
+    "create_classification_standard",
+    "select_classification_standard",
+    "delete_classification_standard",
+    "ensure_classification_standard_loaded",
     "get_metadata_group_classifications",
     "get_definition_facts",
     "get_recent_classification_columns",

@@ -8,6 +8,7 @@
   <img src="https://img.shields.io/badge/Backend-FastAPI-009688?style=flat-square" alt="FastAPI" />
   <img src="https://img.shields.io/badge/Database-Postgres_%2B_pgvector-336791?style=flat-square" alt="Postgres" />
   <img src="https://img.shields.io/badge/Deploy-Docker-2496ED?style=flat-square" alt="Docker" />
+  <img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square" alt="Apache 2.0" />
 </p>
 
 # DHARA: Data cataloguing for government statistical releases
@@ -225,6 +226,11 @@ curl http://localhost:8000/api/health
 docker exec -it dhara-postgres psql -U dhara -d dhara -c '\dt'
 ```
 
+Occupation matching needs a concordance CSV uploaded in **Settings →
+Classification code configuration** (columns match
+`backend/data/nco_2015_concordance.csv.example`). For offline golden tests
+only, you may also place a CSV at `backend/data/nco_2015_concordance.csv`.
+
 ## Auth
 
 API routes (except health / login / signup) expect `Authorization: Bearer <JWT>`.
@@ -272,3 +278,10 @@ enrichment pass), and two downloadable Excel exports — `source_excel` (clean
 re-flattened table) and `original_excel` (source sheet with formatting
 preserved). `des-website` prefers `original_excel`, falling back to
 `source_excel` for older rows.
+
+## License
+
+Copyright 2026 DHARA Authors
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](./LICENSE) and
+[NOTICE](./NOTICE) for details.

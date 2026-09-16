@@ -159,6 +159,43 @@ def init_schema(conn):
                 qp_nos_reference   TEXT
             )
         """)
+        # Steward-uploaded concordance files (Settings → Classification).
+        # Selecting one reloads nco_2015_codes for the existing match pipeline.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS classification_standards (
+                id                 SERIAL PRIMARY KEY,
+                name               TEXT NOT NULL UNIQUE,
+                description        TEXT,
+                original_filename  TEXT,
+                row_count          INTEGER NOT NULL DEFAULT 0,
+                is_selected        BOOLEAN NOT NULL DEFAULT FALSE,
+                uploaded_by        TEXT,
+                created_at         TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS classification_standard_codes (
+                id                 SERIAL PRIMARY KEY,
+                standard_id        INTEGER NOT NULL
+                                       REFERENCES classification_standards(id) ON DELETE CASCADE,
+                nco_code           TEXT NOT NULL,
+                occupation_title   TEXT NOT NULL,
+                division_code      TEXT,
+                division_title     TEXT,
+                subdivision_code   TEXT,
+                subdivision_title  TEXT,
+                group_code         TEXT,
+                group_title        TEXT,
+                family_code        TEXT,
+                family_title       TEXT,
+                qp_nos_reference   TEXT,
+                UNIQUE (standard_id, nco_code)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_classification_standard_codes_standard
+                ON classification_standard_codes (standard_id)
+        """)
         # Steward-learned mappings from Classify verify — not a hardcoded label list.
         cur.execute("""
             CREATE TABLE IF NOT EXISTS nco_value_aliases (

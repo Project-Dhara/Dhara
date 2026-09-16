@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { CheckCircle2, Clock } from 'lucide-react'
 import Button from './ui/Button'
 import { METADATA_COLUMNS } from './console/MetadataSheetGrid'
@@ -15,14 +15,11 @@ import {
   STATISTICS_OPTIONS,
 } from '../lib/settingsConfig'
 import { SDG_CONCEPT_TEMPLATE } from '../lib/sdgConcepts'
+import { withAuthHeaders } from '../lib/auth'
+import FileUpload from './FileUpload'
 
 const PROVIDERS = ['Anthropic', 'OpenAI', 'Self-hosted']
 const ROLES = ['Administrator', 'Data Steward', 'Data User']
-
-const STANDARDS = [
-  { key: 'nco', name: 'National Classification of Occupations (NCO 2015)', desc: 'Standard occupation codes used during harmonisation.' },
-  { key: 'nic', name: 'National Industrial Classification (NIC 2008)', desc: 'Standard industry codes used during harmonisation.' },
-]
 
 const SETTINGS_METADATA_FIELDS = [
   ...METADATA_COLUMNS.map((c) => ({
@@ -51,12 +48,22 @@ const CONFIG_TABS = [
   { key: 'classification', label: 'Classification code configuration' },
 ]
 
+function defaultNameFromFile(file) {
+  if (!file?.name) return ''
+  return file.name.replace(/\.csv$/i, '').replace(/[_-]+/g, ' ').trim()
+}
+
 // Mock LLM provider/key form + user info form. No persistence backend today
 // — `keySaved` is local state only, matching the mockup.
 export default function Settings({ settings, onSettingsChange, keySaved, onSaveKey, user, onUserChange }) {
   const [local, setLocal] = useState(settings)
-  const [customStandards, setCustomStandards] = useState([]) // saved custom standards: [{ name }]
-  const [pendingFile, setPendingFile] = useState(null) // just uploaded, not yet saved
+  const [standards, setStandards] = useState([])
+  const [standardsLoading, setStandardsLoading] = useState(false)
+  const [standardsError, setStandardsError] = useState('')
+  const [standardsBusy, setStandardsBusy] = useState(false)
+  const [addingStandard, setAddingStandard] = useState(false)
+  const [pendingFile, setPendingFile] = useState(null)
+  const [pendingName, setPendingName] = useState('')
   const [activeTab, setActiveTab] = useState('dataset')
   const [datasetIdConfig, setDatasetIdConfig] = useState(getDatasetIdConfig)
   const [savedDatasetIdConfig, setSavedDatasetIdConfig] = useState(getDatasetIdConfig)
@@ -82,6 +89,26 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
   const requiredFieldsDirty = JSON.stringify(extraRequiredFields) !== JSON.stringify(savedRequiredFields)
   const metadataStandardDirty = metadataStandard !== savedMetadataStandard
   const metadataConfigDirty = requiredFieldsDirty || metadataStandardDirty
+  const pendingDirty = Boolean(pendingFile && pendingName.trim())
+
+  const loadStandards = useCallback(async () => {
+    setStandardsLoading(true)
+    setStandardsError('')
+    try {
+      const res = await fetch('/api/catalogue/classification-standards', withAuthHeaders())
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || 'Failed to load classification standards')
+      setStandards(Array.isArray(data.standards) ? data.standards : [])
+    } catch (err) {
+      setStandardsError(err.message || 'Failed to load classification standards')
+    } finally {
+      setStandardsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (activeTab === 'classification') loadStandards()
+  }, [activeTab, loadStandards])
 
   const saveDatasetIdConfig = () => {
     persistDatasetIdConfig(datasetIdConfig)
@@ -95,10 +122,67 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
     setSavedMetadataStandard(metadataStandard)
   }
 
-  const saveCustomStandard = () => {
-    if (!pendingFile) return
-    setCustomStandards((prev) => [...prev, { name: pendingFile.name }])
+  const resetPendingUpload = () => {
     setPendingFile(null)
+    setPendingName('')
+    setAddingStandard(false)
+  }
+
+  const saveClassificationStandard = async () => {
+    if (!pendingFile || !pendingName.trim()) return
+    setStandardsBusy(true)
+    setStandardsError('')
+    try {
+      const fd = new FormData()
+      fd.append('name', pendingName.trim())
+      fd.append('file', pendingFile)
+      fd.append('select', 'true')
+      const res = await fetch('/api/catalogue/classification-standards', withAuthHeaders({ method: 'POST', body: fd }))
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Upload failed')
+      resetPendingUpload()
+      await loadStandards()
+    } catch (err) {
+      setStandardsError(err.message || 'Upload failed')
+    } finally {
+      setStandardsBusy(false)
+    }
+  }
+
+  const selectStandard = async (id) => {
+    setStandardsBusy(true)
+    setStandardsError('')
+    try {
+      const res = await fetch(
+        `/api/catalogue/classification-standards/${id}/select`,
+        withAuthHeaders({ method: 'POST' }),
+      )
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || 'Could not select standard')
+      await loadStandards()
+    } catch (err) {
+      setStandardsError(err.message || 'Could not select standard')
+    } finally {
+      setStandardsBusy(false)
+    }
+  }
+
+  const removeStandard = async (id) => {
+    setStandardsBusy(true)
+    setStandardsError('')
+    try {
+      const res = await fetch(
+        `/api/catalogue/classification-standards/${id}`,
+        withAuthHeaders({ method: 'DELETE' }),
+      )
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || 'Could not delete standard')
+      await loadStandards()
+    } catch (err) {
+      setStandardsError(err.message || 'Could not delete standard')
+    } finally {
+      setStandardsBusy(false)
+    }
   }
 
   const inputClass =
@@ -365,58 +449,142 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
 
         {activeTab === 'classification' && (
           <>
-            <div className="-mt-2.5 text-sm text-ink-soft">Current supported classification codes. Add your own if you need one that isn't listed.</div>
+            <div className="-mt-2.5 text-sm text-ink-soft">
+              Upload a CSV, give it a name, then select which standard Classify should use for occupation suggestions.
+              Columns must match the NCO layout (see <code className="text-[12px]">nco_2015_concordance.csv.example</code>).
+            </div>
 
             <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-white">
-              {STANDARDS.map((s) => (
-                <div key={s.key} className="flex cursor-default select-text items-start gap-3 border-b border-line bg-white px-4 py-3.5 last:border-b-0">
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-green" strokeWidth={1.75} />
-                  <div className="flex flex-1 flex-col gap-0.5">
-                    <div className="text-[15px] font-semibold text-ink">{s.name}</div>
-                    <div className="text-[13px] text-ink-soft">{s.desc}</div>
-                  </div>
+              {standardsLoading && standards.length === 0 && (
+                <div className="px-4 py-3.5 text-[13px] text-ink-soft">Loading standards…</div>
+              )}
+              {!standardsLoading && standards.length === 0 && !pendingFile && (
+                <div className="px-4 py-3.5 text-[13px] text-ink-soft">
+                  No classification standards yet. Upload a CSV to enable occupation matching.
                 </div>
-              ))}
-
-              {customStandards.map((s, i) => (
-                <div key={`${s.name}-${i}`} className="flex cursor-default select-text items-start gap-3 border-b border-line bg-white px-4 py-3.5 last:border-b-0">
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-green" strokeWidth={1.75} />
-                  <div className="flex flex-1 flex-col gap-0.5">
-                    <div className="text-[15px] font-semibold text-ink">{s.name}</div>
-                    <div className="text-[13px] text-ink-soft">Custom standard, uploaded by you.</div>
+              )}
+              {standards.map((s) => {
+                const selected = Boolean(s.is_selected)
+                return (
+                  <div
+                    key={s.id}
+                    className={`flex items-start gap-3 border-b border-line px-4 py-3.5 last:border-b-0 ${
+                      selected ? 'bg-sage/40' : 'bg-white'
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      className={`mt-0.5 flex h-5 w-5 flex-none items-center justify-center rounded-full border transition-colors disabled:cursor-default ${
+                        selected
+                          ? 'border-transparent bg-green text-white'
+                          : 'border-line bg-white text-transparent hover:border-teal'
+                      }`}
+                      aria-pressed={selected}
+                      aria-label={selected ? `${s.name} selected` : `Use ${s.name} for classification`}
+                      disabled={standardsBusy || selected}
+                      onClick={() => selectStandard(s.id)}
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={2.25} />
+                    </button>
+                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <div className="text-[15px] font-semibold text-ink">{s.name}</div>
+                      <div className="text-[13px] text-ink-soft">
+                        {selected ? 'Selected for classification. ' : 'Click the check to use this for classification. '}
+                        {(s.row_count ?? 0).toLocaleString()} codes
+                        {s.original_filename ? ` · ${s.original_filename}` : ''}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="flex-none rounded-md border border-line px-2.5 py-1 text-xs font-semibold text-ink-soft transition-colors hover:border-coral hover:text-coral disabled:opacity-45"
+                      disabled={standardsBusy}
+                      onClick={() => removeStandard(s.id)}
+                    >
+                      Remove
+                    </button>
                   </div>
-                </div>
-              ))}
+                )
+              })}
 
               {pendingFile && (
                 <div className="flex cursor-default select-text items-start gap-3 border-b border-line bg-[#fffaf1] px-4 py-3.5 last:border-b-0">
                   <Clock className="mt-0.5 h-4 w-4 flex-none text-yellow" strokeWidth={1.75} />
                   <div className="flex flex-1 flex-col gap-0.5">
-                    <div className="text-[15px] font-semibold text-ink">{pendingFile.name}</div>
-                    <div className="text-[13px] text-ink-soft">Not yet saved — click "Save configuration" to add it below.</div>
+                    <div className="text-[15px] font-semibold text-ink">{pendingName || pendingFile.name}</div>
+                    <div className="text-[13px] text-ink-soft">
+                      Not yet saved — name it below and click &quot;Save configuration&quot; to load into Postgres.
+                    </div>
                   </div>
                 </div>
               )}
             </div>
 
-            <div className="flex items-center gap-3">
-              <label className="inline-flex h-10 cursor-pointer items-center rounded-lg border border-teal bg-white px-4 text-sm font-semibold text-teal transition-colors duration-200 hover:bg-sage">
-                + Add custom standard
-                <input
-                  type="file"
-                  accept="application/pdf"
-                  style={{ display: 'none' }}
-                  onChange={(e) => setPendingFile(e.target.files[0] || null)}
-                />
-              </label>
-            </div>
+            {addingStandard || pendingFile ? (
+              <div className="flex flex-col gap-3 rounded-lg border border-line bg-white px-4 py-3.5">
+                <div className="text-[13px] font-semibold text-ink">New classification standard</div>
+                <div className="flex flex-col gap-1.5">
+                  <label className={fieldLabelClass}>Name</label>
+                  <input
+                    className={inputClass}
+                    type="text"
+                    value={pendingName}
+                    onChange={(e) => setPendingName(e.target.value)}
+                    placeholder="e.g. National Classification of Occupations (NCO 2015)"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className={fieldLabelClass}>Upload file</label>
+                  <FileUpload
+                    compact
+                    accept=".csv,text/csv"
+                    extensionRegex={/\.csv$/i}
+                    label="Drop your file here"
+                    hint="CSV — drag and drop or browse"
+                    selectedName={pendingFile?.name}
+                    loading={standardsBusy}
+                    onUpload={(file) => {
+                      setPendingFile(file)
+                      setPendingName((prev) => prev.trim() || defaultNameFromFile(file))
+                    }}
+                  />
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button disabled={!pendingDirty || standardsBusy} onClick={saveClassificationStandard}>
+                    {standardsBusy ? 'Saving…' : 'Save configuration'}
+                  </Button>
+                  <button
+                    type="button"
+                    className="text-[13px] font-semibold text-ink-soft hover:text-ink"
+                    disabled={standardsBusy}
+                    onClick={resetPendingUpload}
+                  >
+                    Cancel
+                  </button>
+                  <span className={pendingDirty ? statusToneClass.warn : statusToneClass.ok}>
+                    {pendingDirty ? 'Unsaved changes' : 'Name the standard and upload a file'}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  className="inline-flex h-10 cursor-pointer items-center rounded-lg border border-teal bg-white px-4 text-sm font-semibold text-teal transition-colors duration-200 hover:bg-sage"
+                  onClick={() => setAddingStandard(true)}
+                >
+                  + Add classification standard
+                </button>
+                {!standardsLoading && standards.length > 0 && (
+                  <span className={statusToneClass.ok}>
+                    {standards.some((s) => s.is_selected) ? 'Active standard saved in Postgres' : 'Select a standard to use for Classify'}
+                  </span>
+                )}
+              </div>
+            )}
 
-            <div className="flex items-center gap-3.5">
-              <Button disabled={!pendingFile} onClick={saveCustomStandard}>Save configuration</Button>
-              <span className={pendingFile ? statusToneClass.warn : statusToneClass.ok}>
-                {pendingFile ? 'Unsaved changes' : 'All standards saved'}
-              </span>
-            </div>
+            {standardsError && (
+              <div className="text-[13px] text-coral">{standardsError}</div>
+            )}
           </>
         )}
         </div>

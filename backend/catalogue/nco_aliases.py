@@ -7,7 +7,11 @@ NCO_2015_CSV_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "da
 
 
 def seed_nco_2015(conn, csv_path=NCO_2015_CSV_PATH):
-    """Load the concordance CSV into nco_2015_codes if the table is empty."""
+    """Optional local bootstrap: load a concordance CSV into nco_2015_codes if empty.
+
+    Production stewards should upload via Settings → Classification code
+    configuration instead. Kept for offline tests / one-off ops.
+    """
     import csv as _csv
     with conn.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM nco_2015_codes")

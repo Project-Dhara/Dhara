@@ -23,6 +23,14 @@ _CODES_CACHE = None
 _NODES_CACHE = None
 _EMBED_CACHE = None  # list of vectors aligned with _NODES_CACHE
 
+
+def clear_codes_cache():
+    """Drop in-memory indexes after Settings reloads nco_2015_codes."""
+    global _CODES_CACHE, _NODES_CACHE, _EMBED_CACHE
+    _CODES_CACHE = None
+    _NODES_CACHE = None
+    _EMBED_CACHE = None
+
 _STOP = frozenset({
     "a", "an", "and", "the", "of", "or", "etc", "other", "not", "elsewhere",
     "classified", "nec", "worker", "workers", "related", "support",
@@ -44,33 +52,8 @@ def normalize_occupation_value(text) -> str:
     return s
 
 
-def _load_from_csv():
-    import csv
-    import os
-    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "nco_2015_concordance.csv")
-    rows = []
-    with open(path, newline="", encoding="utf-8-sig") as f:
-        for r in csv.DictReader(f):
-            code = (r.get("NCO_2015_Code") or "").strip()
-            title = (r.get("Occupation_Title") or "").strip()
-            if not code or not title:
-                continue
-            rows.append({
-                "nco_code": code,
-                "occupation_title": title,
-                "division_code": (r.get("Division_Code") or "").strip(),
-                "division_title": (r.get("Division_Title") or "").strip(),
-                "subdivision_code": (r.get("SubDivision_Code") or "").strip(),
-                "subdivision_title": (r.get("SubDivision_Title") or "").strip(),
-                "group_code": (r.get("Group_Code") or "").strip(),
-                "group_title": (r.get("Group_Title") or "").strip(),
-                "family_code": (r.get("Family_Code") or "").strip(),
-                "family_title": (r.get("Family_Title") or "").strip(),
-            })
-    return rows
-
-
 def _load_all_codes(conn):
+    """Load active concordance rows from Postgres (populated via Settings upload)."""
     global _CODES_CACHE, _NODES_CACHE, _EMBED_CACHE
     if _CODES_CACHE is not None:
         return _CODES_CACHE
@@ -88,8 +71,6 @@ def _load_all_codes(conn):
             _CODES_CACHE = [dict(zip(cols, row)) for row in cur.fetchall()]
     except Exception:
         _CODES_CACHE = []
-    if not _CODES_CACHE:
-        _CODES_CACHE = _load_from_csv()
     _NODES_CACHE = None
     _EMBED_CACHE = None
     return _CODES_CACHE

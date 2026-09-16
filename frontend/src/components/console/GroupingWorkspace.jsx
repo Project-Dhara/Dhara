@@ -219,7 +219,8 @@ function TablesPanel({
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-lg border border-line bg-white">
+      <div className="overflow-hidden rounded-lg border border-line bg-white">
+        <div className="overflow-x-auto">
         <table className="w-full table-fixed border-collapse text-[13px]">
           <thead className="bg-cream/95">
             <tr>
@@ -251,13 +252,14 @@ function TablesPanel({
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => {
+            {rows.map((row, rowIndex) => {
               const tid = tableRowId(row.table)
               const checked = selectedIds.has(tid)
+              const isLast = rowIndex === rows.length - 1
               return (
                 <tr key={tid} className={editEnabled && checked ? 'bg-sage/40' : undefined}>
                   {editEnabled && (
-                    <td className="border-b border-line px-2 py-2 align-top">
+                    <td className={`${isLast ? '' : 'border-b border-line'} px-2 py-2 align-top`}>
                       <input
                         type="checkbox"
                         className="accent-teal"
@@ -267,12 +269,12 @@ function TablesPanel({
                       />
                     </td>
                   )}
-                  <td className="break-all border-b border-line px-3 py-2 align-top font-bold text-teal">
+                  <td className={`break-all ${isLast ? '' : 'border-b border-line'} px-3 py-2.5 align-top font-bold text-teal`}>
                     {displayTableId(row.table, preferTableId)}
                   </td>
-                  <td className="border-b border-line px-3 py-2 align-top">{row.table.title || '—'}</td>
+                  <td className={`${isLast ? '' : 'border-b border-line'} px-3 py-2.5 align-top`}>{row.table.title || '—'}</td>
                   {editEnabled && (
-                    <td className="border-b border-line px-3 py-2 align-top">
+                    <td className={`${isLast ? '' : 'border-b border-line'} px-3 py-2 align-top`}>
                       <Combobox
                         options={moveOptions}
                         value=""
@@ -294,6 +296,7 @@ function TablesPanel({
             })}
           </tbody>
         </table>
+        </div>
         {rows.length === 0 && (
           <p className="m-0 px-3 py-6 text-center text-xs italic text-ink-soft">
             {emptyHint || 'No tables in this group'}
@@ -559,25 +562,27 @@ export default function GroupingWorkspace({
             />
           )}
 
-          <div className="relative">
-            {/* Left list height tracks the right panel; scrolls on its own and does not inflate page height */}
-            <aside className="mb-3 flex max-h-[min(420px,55vh)] w-full flex-col overflow-hidden rounded-[10px] border border-line bg-white lg:absolute lg:bottom-0 lg:left-0 lg:top-0 lg:mb-0 lg:w-[360px] lg:max-h-none">
-              <div className="flex h-full min-h-0 flex-col overflow-hidden lg:sticky lg:top-4 lg:max-h-[calc(100vh-10rem)]">
-                <div className="border-b border-line p-3">
-                  <label className="flex items-center gap-2 rounded-lg border border-line bg-cream px-2.5 py-2 focus-within:border-teal focus-within:shadow-focus-ring">
+          <div className="flex flex-col gap-3 lg:h-[calc(100vh-11rem)] lg:flex-row lg:items-stretch lg:gap-3">
+            {/* Groups list — fixed height on desktop; only this column scrolls */}
+            <aside className="flex max-h-[min(420px,55vh)] w-full flex-none flex-col overflow-hidden rounded-[10px] border border-line bg-white lg:max-h-none lg:w-[340px]">
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                <div className="shrink-0 border-b border-line p-3">
+                  <label className="flex min-w-0 items-center gap-2 rounded-lg border border-line bg-cream px-2.5 py-2 focus-within:border-teal focus-within:shadow-focus-ring">
                     <Search className="h-4 w-4 flex-none text-ink-soft" strokeWidth={2} aria-hidden />
                     <input
-                      type="search"
+                      type="text"
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
                       placeholder="Search groups or tables…"
-                      className="min-w-0 flex-1 bg-transparent text-[13.5px] text-ink placeholder:text-ink-soft focus:outline-none"
+                      className="min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 text-[13.5px] text-ink shadow-none outline-none placeholder:text-ink-soft focus:outline-none focus:ring-0"
                       aria-label="Search groups or tables"
+                      autoComplete="off"
+                      spellCheck={false}
                     />
                     {query ? (
                       <button
                         type="button"
-                        className="text-ink-soft hover:text-teal"
+                        className="flex-none text-ink-soft hover:text-teal"
                         onClick={() => setQuery('')}
                         aria-label="Clear search"
                       >
@@ -598,7 +603,7 @@ export default function GroupingWorkspace({
                   </div>
                 </div>
 
-                <div className="min-h-0 flex-1 overflow-y-auto p-1.5" role="listbox" aria-label="Groups">
+                <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-1.5" role="listbox" aria-label="Groups">
                   {filteredGroupIndexes.length === 0 && !(showUnmatched && unmatchedMatchesQuery) ? (
                     <p className="m-0 px-3 py-8 text-center text-[13px] text-ink-soft">No groups match “{query.trim()}”.</p>
                   ) : null}
@@ -613,14 +618,14 @@ export default function GroupingWorkspace({
                         type="button"
                         role="option"
                         aria-selected={selected}
-                        className={`mb-1 flex w-full items-start gap-2 rounded-lg px-3 py-2.5 text-left transition-colors ${
+                        className={`mb-1 flex w-full min-w-0 items-start gap-2 overflow-hidden rounded-lg px-3 py-2.5 text-left transition-all duration-dhara ease-dhara ${
                           selected
-                            ? 'bg-teal-deep text-cream'
+                            ? 'bg-teal-deep text-cream shadow-sm'
                             : 'text-ink hover:bg-cream'
                         }`}
                         onClick={() => setSelectedKey(i)}
                       >
-                        <span className="min-w-0 flex-1">
+                        <span className="min-w-0 flex-1 overflow-hidden">
                           <span className={`block truncate text-[13.5px] font-semibold leading-snug ${selected ? 'text-cream' : 'text-ink'}`}>
                             {g.file_name || 'Untitled group'}
                           </span>
@@ -628,7 +633,7 @@ export default function GroupingWorkspace({
                             Group {i + 1}
                           </span>
                         </span>
-                        <span className={`mt-0.5 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                        <span className={`mt-0.5 flex-none whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ${
                           selected ? 'bg-cream/20 text-cream' : 'bg-cream text-ink-soft'
                         }`}>
                           {count}
@@ -642,21 +647,21 @@ export default function GroupingWorkspace({
                       type="button"
                       role="option"
                       aria-selected={selectedKey === 'unmatched'}
-                      className={`mb-1 flex w-full items-start gap-2 rounded-lg px-3 py-2.5 text-left transition-colors ${
+                      className={`mb-1 flex w-full min-w-0 items-start gap-2 overflow-hidden rounded-lg px-3 py-2.5 text-left transition-all duration-dhara ease-dhara ${
                         selectedKey === 'unmatched'
-                          ? 'bg-[#a15c00] text-cream'
+                          ? 'bg-[#a15c00] text-cream shadow-sm'
                           : 'bg-[#fffaf1] text-ink hover:bg-[#fff3d9]'
                       }`}
                       onClick={() => setSelectedKey('unmatched')}
                     >
                       <AlertTriangle className={`mt-0.5 h-4 w-4 flex-none ${selectedKey === 'unmatched' ? 'text-cream' : 'text-yellow'}`} strokeWidth={2} aria-hidden />
-                      <span className="min-w-0 flex-1">
+                      <span className="min-w-0 flex-1 overflow-hidden">
                         <span className="block truncate text-[13.5px] font-semibold">Unmatched tables</span>
                         <span className={`mt-0.5 block text-[11.5px] ${selectedKey === 'unmatched' ? 'text-cream/75' : 'text-ink-soft'}`}>
                           Not assigned to a group
                         </span>
                       </span>
-                      <span className={`mt-0.5 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                      <span className={`mt-0.5 flex-none whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ${
                         selectedKey === 'unmatched' ? 'bg-cream/20 text-cream' : 'bg-cream text-ink-soft'
                       }`}>
                         {unmatched.length}
@@ -667,8 +672,9 @@ export default function GroupingWorkspace({
               </div>
             </aside>
 
-            {/* Right panel sizes to its rows and drives overall page height */}
-            <section className="flex min-w-0 flex-col rounded-[10px] border border-line bg-white lg:ml-[372px]">
+            {/* Selected group tables — scrolls independently of the groups list */}
+            <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-line bg-white">
+              <div key={selectedKey ?? 'none'} className="dhara-group-panel flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
               {selectedKey === null ? (
                 <div className="px-6 py-10 text-center text-[14px] text-ink-soft">
                   Select a group to review its tables.
@@ -750,6 +756,7 @@ export default function GroupingWorkspace({
                   </div>
                 </>
               )}
+              </div>
             </section>
           </div>
 
