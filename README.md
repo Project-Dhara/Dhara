@@ -41,8 +41,6 @@ Full design, stage-by-stage pipeline, and deployment guides live under
   downstream consumers like des-website.
 - **Browse published datasets** — Catalogue UI lists what you have published,
   with access metadata and API-oriented previews.
-- **Secure the API** — JWT login; Swagger at `/docs` with Bearer auth for
-  exploring endpoints.
 
 ---
 
