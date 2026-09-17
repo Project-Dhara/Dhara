@@ -29,9 +29,9 @@ It is not a generic ETL product. It is shaped around:
         │                     │                     │
         ▼                     ▼                     ▼
 ┌───────────────┐   ┌─────────────────┐   ┌────────────────────┐
-│   Postgres    │   │  LLM providers  │   │  Object storage    │
-│  + pgvector   │   │  (optional)     │   │  GCS (optional)    │
-│  SoT tables   │   │  Claude / OpenAI│   │  Excel artifacts   │
+│   Postgres    │   │  MEITY-         │   │  Object storage    │
+│  + pgvector   │   │  empanelled LLM │   │  GCS (optional)    │
+│  SoT tables   │   │  (optional)     │   │  Excel artifacts   │
 └───────────────┘   └─────────────────┘   └────────────────────┘
 ```
 
@@ -103,10 +103,10 @@ classification review.
 
 ### 4. Bring your own keys
 
-LLM keys can be pasted in Settings (MEITY-empanelled providers). Server-side
-keys in `.env` are optional for local work. `SKIP_LLM=true` runs heuristic
-fallbacks without Claude.
-
+LLM keys can be pasted in Settings (**MEITY-empanelled LLM**). Server-side
+keys in `.env` are optional for local work. With no key, Excel uses structural
+heuristics; PDF uses PyMuPDF + heuristic accept for ambiguous pages (flagged
+for review).
 ### 5. Separation of concerns
 
 | Component | Responsibility |

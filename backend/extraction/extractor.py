@@ -88,8 +88,9 @@ def _build_ddi_id(tbl: dict) -> str:
 
 
 def _detect_provider(api_key: Optional[str]) -> str:
-    """Guess the LLM provider from an API key's prefix. Anthropic keys are
-    "sk-ant-..."; anything else is treated as an OpenAI key."""
+    """Guess the LLM provider from an API key's prefix. Anthropic-style keys
+    are \"sk-ant-...\"; anything else is treated as an OpenAI-compatible
+    MEITY-empanelled endpoint."""
     if api_key and api_key.startswith("sk-ant-"):
         return "anthropic"
     return "openai"

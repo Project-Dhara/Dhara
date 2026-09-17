@@ -45,7 +45,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [loggedIn, setLoggedIn] = useState(false)
   const [user, setUser] = useState<StoredUser>(EMPTY_USER)
   const [showKyds, setShowKyds] = useState(false)
-  const [settings, setSettings] = useState<Settings>({ provider: 'Anthropic', apiKey: '' })
+  const [settings, setSettings] = useState<Settings>({ provider: 'openai', apiKey: '' })
   const [keySaved, setKeySaved] = useState(false)
 
   useEffect(() => {
@@ -53,7 +53,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     async function restoreSession() {
       const savedKey = getLlmApiKey()
-      setSettings({ provider: getLlmProvider() || 'Anthropic', apiKey: savedKey })
+      const rawProvider = getLlmProvider() || 'openai'
+      // Migrate legacy Settings labels to API provider ids.
+      const provider = (
+        rawProvider === 'OpenAI' || rawProvider === 'Anthropic' || rawProvider === 'MEITY-empanelled LLM'
+          ? 'openai'
+          : rawProvider
+      )
+      setSettings({ provider, apiKey: savedKey })
       setKeySaved(!!savedKey)
 
       const token = getToken()

@@ -46,7 +46,14 @@ export function setLlmProvider(provider: string) {
 export function withLlmKeyHeaders(init: RequestInit = {}): RequestInit {
   const key = getLlmApiKey()
   if (!key) return init
-  const provider = getLlmProvider()
+  let provider = (getLlmProvider() || '').trim().toLowerCase()
+  if (provider === 'meity-empanelled llm' || provider === 'openai' || provider === '') {
+    provider = 'openai'
+  } else if (provider === 'anthropic') {
+    provider = 'anthropic'
+  } else if (provider === 'self-hosted') {
+    provider = ''
+  }
   return {
     ...init,
     headers: {

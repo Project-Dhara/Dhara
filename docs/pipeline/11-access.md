@@ -56,7 +56,7 @@ cd backend && python -m mcp_server
 | `get_metadata` | one dataset card |
 | `get_table` | paginated rows + optional column filter |
 
-Cursor / Claude Desktop example config:
+Cursor / MEITY-empanelled or desktop MCP client example config:
 
 ```json
 {

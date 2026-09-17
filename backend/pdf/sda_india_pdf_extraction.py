@@ -508,51 +508,13 @@ def split_by_confidence(
                     page_blocks_cache[page_num] = extract_page_text_blocks(doc, page_num)
                 page_blocks = page_blocks_cache.get(page_num)
                 outline_sections = outline_index.get(page_num, [])
-
-                # Keep every distinct ruled table on the page.
-                has_strict = any(c.get("method") == "pymupdf_lines_strict" for c in candidates)
-                ruled_methods = {"pymupdf_lines_strict"} if has_strict else {"pymupdf_lines"}
-                # If strict missed a second physical table that only `lines` saw,
-                # still include non-overlapping lines tables.
-                tables = []
-                taken_bboxes: List[List[float]] = []
-                ordered = [
-                    c for c in candidates
-                    if c.get("method") in ruled_methods
-                ] + (
-                    [c for c in candidates if c.get("method") == "pymupdf_lines"]
-                    if has_strict else []
+                tables = _ruled_tables_from_candidates(
+                    candidates,
+                    page_num=page_num,
+                    page_text=page_text.get(page_num, ""),
+                    page_blocks=page_blocks,
+                    outline_sections=outline_sections,
                 )
-                seen = set()
-                for c in ordered:
-                    cid = id(c)
-                    if cid in seen:
-                        continue
-                    seen.add(cid)
-                    df = c.get("df")
-                    if df is None or getattr(df, "empty", True):
-                        continue
-                    bb = c.get("bbox")
-                    if bb and any(_bboxes_same_table(bb, prev) for prev in taken_bboxes):
-                        continue
-                    bbox_f = None
-                    if bb and len(bb) >= 4:
-                        bbox_f = [float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3])]
-                    table = table_dict_from_df(
-                        df,
-                        page_text=page_text.get(page_num, ""),
-                        page_num=page_num,
-                        method=str(c.get("method") or "pymupdf_lines_strict"),
-                        bbox=bbox_f,
-                        page_blocks=page_blocks,
-                        outline_sections=outline_sections,
-                    )
-                    table["page"] = page_num
-                    if bbox_f:
-                        table["bbox"] = bbox_f
-                    tables.append(table)
-                    if bb:
-                        taken_bboxes.append(bb)
                 high_results[page_num] = {"tables": tables}
             else:
                 llm_pages[page_num] = candidates
@@ -564,10 +526,110 @@ def split_by_confidence(
     return high_results, llm_pages, reason_counts
 
 
-# ── Stage 3: OpenAI validation / restructuring ───────────────────────────
+# ── Stage 3: MEITY-empanelled LLM validation / restructuring ─────────────
 
 def df_to_text(df: pd.DataFrame, max_rows: int = 40) -> str:
     return df.head(max_rows).to_csv(index=False, header=False)
+
+
+def _ruled_tables_from_candidates(
+    candidates: List[Dict[str, Any]],
+    *,
+    page_num: int,
+    page_text: str = "",
+    page_blocks: Optional[List[Dict[str, float]]] = None,
+    outline_sections: Optional[List[str]] = None,
+    force_review: bool = False,
+    review_reason: str = "heuristic_no_llm",
+) -> List[Dict[str, Any]]:
+    """Build table dicts from ruled-border candidates (no LLM)."""
+    candidates = dedupe_candidates_by_bbox(list(candidates or []))
+    has_strict = any(c.get("method") == "pymupdf_lines_strict" for c in candidates)
+    ruled_methods = {"pymupdf_lines_strict"} if has_strict else {"pymupdf_lines"}
+    tables: List[Dict[str, Any]] = []
+    taken_bboxes: List[List[float]] = []
+    ordered = [
+        c for c in candidates
+        if c.get("method") in ruled_methods
+    ] + (
+        [c for c in candidates if c.get("method") == "pymupdf_lines"]
+        if has_strict else []
+    )
+    seen: set = set()
+    for c in ordered:
+        cid = id(c)
+        if cid in seen:
+            continue
+        seen.add(cid)
+        df = c.get("df")
+        if df is None or getattr(df, "empty", True):
+            continue
+        bb = c.get("bbox")
+        if bb and any(_bboxes_same_table(bb, prev) for prev in taken_bboxes):
+            continue
+        bbox_f = None
+        if bb and len(bb) >= 4:
+            bbox_f = [float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3])]
+        table = table_dict_from_df(
+            df,
+            page_text=page_text,
+            page_num=page_num,
+            method=str(c.get("method") or "pymupdf_lines_strict"),
+            bbox=bbox_f,
+            page_blocks=page_blocks,
+            outline_sections=outline_sections,
+        )
+        table["page"] = page_num
+        if bbox_f:
+            table["bbox"] = bbox_f
+        if force_review:
+            table["human_review_needed"] = True
+            table["human_review_reason"] = review_reason
+            table["semantic_status"] = "not_classified"
+            table["extraction"] = {
+                "method": str(c.get("method") or "pymupdf_lines_strict"),
+                "confidence": "heuristic_no_llm",
+            }
+        tables.append(table)
+        if bb:
+            taken_bboxes.append(bb)
+    return tables
+
+
+def heuristic_accept_pages(
+    pages_grouped: Dict[int, List[Dict[str, Any]]],
+    page_text: Optional[Dict[int, str]] = None,
+    *,
+    pdf_path: Optional[Path] = None,
+    outline_index: Optional[Dict[int, List[str]]] = None,
+    review_reason: str = "no_llm_key_heuristic",
+) -> Dict[int, Dict[str, Any]]:
+    """Accept LLM-bucket pages via PyMuPDF heuristics when no MEITY key is set."""
+    page_text = page_text or {}
+    outline_index = outline_index or {}
+    out: Dict[int, Dict[str, Any]] = {}
+    doc = None
+    if pdf_path and Path(pdf_path).is_file():
+        doc = pymupdf.open(pdf_path)
+    try:
+        for page_num, candidates in pages_grouped.items():
+            page_blocks = None
+            if doc is not None:
+                page_blocks = extract_page_text_blocks(doc, page_num)
+            tables = _ruled_tables_from_candidates(
+                candidates,
+                page_num=page_num,
+                page_text=page_text.get(page_num, ""),
+                page_blocks=page_blocks,
+                outline_sections=outline_index.get(page_num, []),
+                force_review=True,
+                review_reason=review_reason,
+            )
+            out[page_num] = {"tables": tables}
+    finally:
+        if doc is not None:
+            doc.close()
+    return out
 
 
 # Shared across the single-page and batched prompts (build_validation_prompt /
@@ -2298,7 +2360,7 @@ def validate_all_pages(pages_grouped: Dict[int, List[Dict[str, Any]]], page_text
     return validated
 
 
-# ── Stage 4: batched OpenAI validation (for the "needs LLM" bucket) ─────
+# ── Stage 4: batched MEITY-empanelled LLM validation (for the "needs LLM" bucket) ─
 
 def build_batch_validation_prompt(pages: List[int], pages_grouped: Dict[int, List[Dict[str, Any]]],
                                    page_text: Dict[int, str]) -> str:
@@ -2501,11 +2563,31 @@ def run_pipeline(pdf_path: Path, on_progress: Optional[Callable[[str, int, str],
 
     validated_by_page: Dict[int, Dict[str, Any]] = dict(high_results)
     if llm_pages:
-        llm_results = validate_all_pages_batched(
-            llm_pages, page_text, api_key=api_key,
-            progress_cb=lambda done, total: progress("validate", 55 + int(45 * done / total), f"AI-validated {done}/{total} page(s)"),
-        )
-        validated_by_page.update(llm_results)
+        key = (api_key or os.environ.get("OPENAI_API_KEY") or "").strip() or None
+        if key:
+            llm_results = validate_all_pages_batched(
+                llm_pages, page_text, api_key=key,
+                progress_cb=lambda done, total: progress(
+                    "validate",
+                    55 + int(45 * done / total),
+                    f"MEITY LLM validated {done}/{total} page(s)",
+                ),
+            )
+            validated_by_page.update(llm_results)
+        else:
+            progress(
+                "validate",
+                60,
+                f"No MEITY-empanelled LLM key — heuristic-accepting {len(llm_pages)} page(s) for review",
+            )
+            heuristic = heuristic_accept_pages(
+                llm_pages,
+                page_text,
+                pdf_path=pdf_path,
+                outline_index=outline_index,
+            )
+            validated_by_page.update(heuristic)
+            progress("validate", 95, f"Heuristic-accepted {len(heuristic)} page(s)")
 
     progress("done", 100, f"Pipeline complete -- {len(validated_by_page)} page(s) with tables")
     return dict(sorted(validated_by_page.items()))
