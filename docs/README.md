@@ -12,13 +12,13 @@ remembers the approved meaning.
 
 | Doc | What it covers |
 |-----|----------------|
-| [Architecture](./architecture.md) | System components, data stores, console stages, design principles |
-| [Pipeline overview](./pipeline/overview.md) | End-to-end flow and implementation status |
+| [Architecture](./architecture.md) | System components, **Configuration modules**, data stores, console stages, design principles |
+| [Pipeline overview](./pipeline/overview.md) | End-to-end flow, Configuration modules, implementation status |
 | [Pipeline stages](./pipeline/) | Design + behaviour for each step (including planned stages) |
 | [Deployment overview](./deployment/overview.md) | Choose on-prem vs cloud |
 | [On-prem deployment](./deployment/on-prem.md) | Docker Compose, host-run, air-gapped notes |
 | [Cloud deployment](./deployment/cloud.md) | Cloud Run, Render, managed Postgres, GCS |
-| [Configuration](./deployment/configuration.md) | Environment variables and secrets |
+| [Configuration](./deployment/configuration.md) | Environment variables and secrets (deploy-time; distinct from Settings modules) |
 
 ## Quick links
 

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ArrowRight } from 'lucide-react'
 import { withAuthHeaders } from '../../lib/auth'
 import { withLlmKeyHeaders } from '../../lib/llmKey'
@@ -13,6 +14,7 @@ import {
   cloneCodeRows,
   collapseEquivalentColumns,
   flattenForHarmonise,
+  clubHarmoniseEntries,
 } from '../../lib/classifyColumns'
 import Button from '../ui/Button'
 import ColumnChipGrid from './classify/ColumnChipGrid'
@@ -27,6 +29,23 @@ import HarmonisePanel from './classify/HarmonisePanel'
 // value is what was actually found in the source data, so it stays fixed.
 //
 // Pure column-collapsing/aliasing helpers live in ../lib/classifyColumns.js.
+
+function PublishConfirmDialog({ title, body, onCancel, onContinue }) {
+  if (typeof document === 'undefined') return null
+  return createPortal(
+    <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/35 p-4" role="dialog" aria-modal="true">
+      <div className="flex max-w-md flex-col gap-3.5 rounded-xl bg-surface p-5 shadow-dhara">
+        <div className="text-[16px] font-bold text-ink">{title}</div>
+        <div className="text-[14px] leading-snug text-ink-soft">{body}</div>
+        <div className="flex items-center justify-end gap-2.5">
+          <Button variant="secondary" onClick={onCancel}>Go back</Button>
+          <Button variant="primary" onClick={onContinue}>Publish anyway</Button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
 
 export default function Classify({ metadataIds, datasetLabel, onContinue }) {
   const [classified, setClassified] = useState(false)
@@ -51,6 +70,7 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
   const [fillAiError, setFillAiError] = useState('')
   const [publishing, setPublishing] = useState(false)
   const [publishError, setPublishError] = useState('')
+  const [publishConfirm, setPublishConfirm] = useState(null)
 
   useEffect(() => {
     const ids = Array.isArray(metadataIds) ? metadataIds.filter(Boolean) : [metadataIds].filter(Boolean)
@@ -102,8 +122,8 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
       setHarmDirty({})
       setRuleState({})
       const harm = {}
-      flattenForHarmonise(columns).forEach((e) => {
-        harm[e.id] = cloneCodeRows(codes[e.sourceName] || e.column.codes)
+      clubHarmoniseEntries(columns).forEach((club) => {
+        harm[club.id] = cloneCodeRows(codes[club.sourceName] || club.column?.codes)
       })
       setHarmRows(harm)
     }
@@ -194,10 +214,16 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
   }
 
   const persistHarmoniseEntry = (entry, rows) => {
+    const targets = entry.isClub
+      ? (entry.members || []).map((m) => ({
+          name: m.name,
+          _metadataId: m.metadataId || m.column?._metadataId,
+        }))
+      : [{ name: entry.name, _metadataId: entry.metadataId || entry.column?._metadataId }]
     persistTargets(
-      [{ name: entry.name, _metadataId: entry.metadataId || entry.column._metadataId }],
+      targets,
       rows,
-      { markSavedName: entry.isAlias ? undefined : entry.sourceName },
+      { markSavedName: entry.sourceName },
     )
     // Learn steward-verified occupation → NCO mappings for future Suggest runs.
     if (isOccupationColumn(entry.sourceName) || isOccupationColumn(entry.name)) {
@@ -211,7 +237,13 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
           title: String(row.definition || m?.title || '').trim() || null,
           level,
         }
-      }).filter((a) => a.value && a.code)
+      }).filter((a) => {
+        if (!a.value || !a.code) return false
+        // Only persist real NCO digit codes — never identity label→label maps.
+        if (!/^\d{1,4}(?:\.\d+)*$/.test(a.code)) return false
+        if (a.code.toLowerCase() === String(a.value).trim().toLowerCase()) return false
+        return true
+      })
       if (aliases.length) {
         fetch('/api/catalogue/nco-aliases', withAuthHeaders({
           method: 'POST',
@@ -226,20 +258,20 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
     setHarmDirty((prev) => ({ ...prev, [entry.id]: true }))
     setHarmRows((prev) => ({
       ...prev,
-      [entry.id]: (prev[entry.id] || []).map((row, i) => (i === rowIndex ? { ...row, [field]: value } : row)),
+      [entry.id]: (prev[entry.id] || columnCodes[entry.sourceName] || []).map((row, i) => (
+        i === rowIndex ? { ...row, [field]: value } : row
+      )),
     }))
-    if (!entry.isAlias) {
-      setCodeFieldFor(entry.sourceName, rowIndex, field, value)
-    }
+    setCodeFieldFor(entry.sourceName, rowIndex, field, value)
   }
 
   useEffect(() => {
     setHarmRows((prev) => {
       const next = { ...prev }
-      flattenForHarmonise(classifiedColumns).forEach((e) => {
-        if (harmDirty[e.id] || aliasVerified[e.id]) return
-        const source = columnCodes[e.sourceName]
-        if (source) next[e.id] = cloneCodeRows(source)
+      clubHarmoniseEntries(classifiedColumns).forEach((club) => {
+        if (harmDirty[club.id] || aliasVerified[club.id]) return
+        const source = columnCodes[club.sourceName]
+        if (source) next[club.id] = cloneCodeRows(source)
       })
       return next
     })
@@ -257,7 +289,12 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
           title: String(row.definition || m?.title || '').trim() || null,
           level: m?.level || 'division',
         }
-      }).filter((a) => a.value && a.code)
+      }).filter((a) => {
+        if (!a.value || !a.code) return false
+        if (!/^\d{1,4}(?:\.\d+)*$/.test(a.code)) return false
+        if (a.code.toLowerCase() === String(a.value).trim().toLowerCase()) return false
+        return true
+      })
       if (aliases.length) {
         fetch('/api/catalogue/nco-aliases', withAuthHeaders({
           method: 'POST',
@@ -308,21 +345,43 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
     const rows = columnCodes[name] || []
     return rows.length > 0 && rows.every(rowMapped)
   }
-  const harmoniseEntries = flattenForHarmonise(classifiedColumns).filter((e) => e.isAlias)
-  const entryReady = (entry) => {
-    if (ruleState[entry.id] === 'skip') return true
-    if (!aliasVerified[entry.id]) return false
-    const rows = harmRows[entry.id] || columnCodes[entry.sourceName] || []
+  const harmoniseClubs = clubHarmoniseEntries(classifiedColumns)
+  const clubReady = (club) => {
+    if (ruleState[club.id] === 'skip') return true
+    if (!aliasVerified[club.id]) return false
+    const rows = harmRows[club.id] || columnCodes[club.sourceName] || []
     return rows.length > 0 && rows.every(rowMapped)
   }
   const classReady = classified && classifiedColumns.length > 0
     && classifiedColumns.every((c) => columnMapped(c.name))
-    && harmoniseEntries.every(entryReady)
+    && harmoniseClubs.every(clubReady)
 
-  const publishRelease = async () => {
-    if (!classReady || publishing) return
+  const buildIncompleteSummary = () => {
+    let unfilledRows = 0
+    let incompleteColumns = 0
+    for (const col of classifiedColumns) {
+      const rows = columnCodes[col.name] || []
+      const missing = rows.filter((row) => !rowMapped(row)).length
+      if (missing > 0 || rows.length === 0) {
+        incompleteColumns += 1
+        unfilledRows += missing || (rows.length === 0 ? 1 : 0)
+      }
+    }
+    const pendingHarmonise = harmoniseClubs.filter((club) => !clubReady(club)).length
+    return {
+      unfilledRows,
+      incompleteColumns,
+      pendingHarmonise,
+      notClassified: !classified,
+      noColumns: classified && classifiedColumns.length === 0,
+    }
+  }
+
+  const runPublish = async () => {
+    if (publishing) return
     setPublishing(true)
     setPublishError('')
+    setPublishConfirm(null)
     try {
       await Promise.resolve(onContinue?.())
     } catch (e) {
@@ -330,6 +389,46 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
     } finally {
       setPublishing(false)
     }
+  }
+
+  const publishRelease = () => {
+    if (publishing) return
+    setPublishError('')
+    const summary = buildIncompleteSummary()
+    const issues = []
+    if (summary.notClassified) {
+      issues.push('Classification has not been run yet.')
+    } else if (summary.noColumns) {
+      issues.push('No classification columns were found for this dataset.')
+    }
+    if (summary.unfilledRows > 0) {
+      issues.push(
+        `${summary.unfilledRows} code/definition row${summary.unfilledRows === 1 ? '' : 's'} ` +
+        `${summary.unfilledRows === 1 ? 'is' : 'are'} still empty across ` +
+        `${summary.incompleteColumns} column${summary.incompleteColumns === 1 ? '' : 's'}.`,
+      )
+    }
+    if (summary.pendingHarmonise > 0) {
+      issues.push(
+        `${summary.pendingHarmonise} harmonisation club${summary.pendingHarmonise === 1 ? '' : 's'} ` +
+        `${summary.pendingHarmonise === 1 ? 'has' : 'have'} not been verified or skipped.`,
+      )
+    }
+    if (issues.length === 0) {
+      runPublish()
+      return
+    }
+    setPublishConfirm({
+      title: 'Classification is incomplete',
+      body: (
+        <div className="flex flex-col gap-2">
+          <p className="m-0">You can still publish, but the following is unfinished:</p>
+          <ul className="m-0 list-disc space-y-1 pl-5">
+            {issues.map((line) => <li key={line}>{line}</li>)}
+          </ul>
+        </div>
+      ),
+    })
   }
 
   const suggestNcoCodes = () => {
@@ -356,19 +455,31 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
         if (!isOccupationColumn(occName)) return
         // Only auto-fill Code/Definition for high-confidence hits.
         const rows = columnCodes[occName] || []
+        const isAggregateValue = (v) => {
+          const s = String(v || '').trim().toLowerCase().replace(/\s+/g, ' ')
+          return /^(all|total|grand total|sub ?total|overall|sum)(\s+(occupations|categories|workers|persons|people))?$/.test(s)
+        }
         const nextRows = rows.map((row) => {
+          // Aggregates must not keep a suggested NCO code.
+          if (isAggregateValue(row.value)) {
+            return { ...row, code: '', definition: '' }
+          }
           const m = matches[row.value]
           if (!m || !m.auto_fill) return row
           if (m.code == null || m.code === '') return row
+          const code = String(m.code).trim()
+          // Never auto-fill occupation labels into the Code column.
+          if (!/^\d{1,4}(?:\.\d+)*$/.test(code)) return row
           return {
             ...row,
-            code: String(m.code),
+            code,
             definition: m.title != null && m.title !== '' ? String(m.title) : row.definition,
           }
         })
         setColumnCodes((prev) => ({ ...prev, [occName]: nextRows }))
         setAliasVerified((prev) => {
           const next = { ...prev }
+          delete next[`club:${occName}`]
           flattenForHarmonise(classifiedColumns)
             .filter((e) => e.sourceName === occName)
             .forEach((e) => { delete next[e.id] })
@@ -376,6 +487,7 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
         })
         setHarmDirty((prev) => {
           const next = { ...prev }
+          delete next[`club:${occName}`]
           flattenForHarmonise(classifiedColumns)
             .filter((e) => e.sourceName === occName)
             .forEach((e) => { delete next[e.id] })
@@ -386,23 +498,33 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
       .finally(() => setNcoLoading(false))
   }
 
-  const toggleHarmoniseOpen = (id) => setOpenRule((prev) => (prev === id ? null : id))
+  const selectHarmoniseEntry = (id) => setOpenRule(id)
   const toggleHarmoniseSkip = (id) => setRuleState((prev) => ({ ...prev, [id]: prev[id] === 'skip' ? undefined : 'skip' }))
   const verifyAndSaveHarmoniseEntry = (entry, rows) => {
     persistHarmoniseEntry(entry, rows)
-    setAliasVerified((prev) => ({ ...prev, [entry.id]: true }))
+    setAliasVerified((prev) => {
+      const next = { ...prev, [entry.id]: true }
+      // Club verify covers every related table in one action.
+      ;(entry.members || []).forEach((m) => { next[m.id] = true })
+      const remaining = clubHarmoniseEntries(classifiedColumns).filter((club) => {
+        if (club.id === entry.id) return false
+        if (ruleState[club.id] === 'skip') return false
+        if (next[club.id]) return false
+        return true
+      })
+      if (remaining[0]) setOpenRule(remaining[0].id)
+      return next
+    })
     setHarmDirty((prev) => ({ ...prev, [entry.id]: false }))
   }
 
   const cardClass = 'overflow-hidden rounded-[10px] border border-line bg-white'
 
   return (
-    <div className="flex max-w-[900px] flex-col gap-4">
+    <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-4">
       <div className="flex items-center justify-between gap-6 rounded-[10px] border border-line bg-white px-[22px] py-[18px]">
         <div>
-          <div className="text-xs font-semibold uppercase tracking-wide text-[#8E9398]">{datasetLabel}</div>
           <div className="text-base font-semibold text-ink">Classify columns and harmonise values</div>
-          <div className="text-sm text-ink-soft">DHARA reads every column, proposes a standard concept and drafts code-list mappings for review.</div>
         </div>
         <Button
           disabled={classified || loading}
@@ -455,11 +577,11 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
           <HarmonisePanel
             classifiedColumns={classifiedColumns}
             columnCodes={columnCodes}
-            harmoniseEntries={harmoniseEntries}
+            harmoniseClubs={harmoniseClubs}
             harmRows={harmRows}
             savedCodes={savedCodes}
             openRule={openRule}
-            onToggleOpen={toggleHarmoniseOpen}
+            onSelectEntry={selectHarmoniseEntry}
             ruleState={ruleState}
             onToggleSkip={toggleHarmoniseSkip}
             aliasVerified={aliasVerified}
@@ -503,7 +625,7 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
       )}
 
       <div className="flex items-center gap-3.5">
-        <Button disabled={!classReady || publishing} onClick={publishRelease}>
+        <Button disabled={publishing} onClick={publishRelease}>
           {publishing ? 'Continuing…' : (
             <span className="inline-flex items-center gap-1.5">
               Continue to publish
@@ -515,10 +637,21 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
           {publishError
             ? publishError
             : classified
-              ? (classReady ? 'Catalogue already saved — continue to the publication confirmation.' : 'Map the classified columns, then verify or skip the remaining columns below.')
-              : 'Run classification to continue.'}
+              ? (classReady
+                ? 'Catalogue already saved — continue to the publication confirmation.'
+                : 'You can continue anytime. Incomplete codes or harmonisation will ask for confirmation.')
+              : 'Run classification when ready, or continue and confirm if details are still incomplete.'}
         </span>
       </div>
+
+      {publishConfirm && (
+        <PublishConfirmDialog
+          title={publishConfirm.title}
+          body={publishConfirm.body}
+          onCancel={() => setPublishConfirm(null)}
+          onContinue={runPublish}
+        />
+      )}
     </div>
   )
 }

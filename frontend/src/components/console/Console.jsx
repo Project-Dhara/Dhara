@@ -249,7 +249,9 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                   { id: 'fix', label: 'Needs fixing', count: unsavedMismatched.length, activeClass: 'bg-coral text-white', idleClass: 'border-coral/35 text-coral hover:bg-error-bg' },
                   { id: 'ai', label: 'AI review', count: unsavedAiFilled.length, activeClass: 'bg-[#2F6FED] text-white', idleClass: 'border-[#5B8DEF]/40 text-[#2F6FED] hover:bg-[#EEF4FF]' },
                   { id: 'ok', label: 'Reviewed / OK', count: okPreviewCount, activeClass: 'bg-green text-white', idleClass: 'border-green/40 text-green hover:bg-sage' },
-                ].map((f) => (
+                ]
+                  .filter((f) => f.id === 'all' || f.id === 'ok' || f.count > 0)
+                  .map((f) => (
                   <button
                     key={f.id}
                     type="button"

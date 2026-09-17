@@ -2,15 +2,14 @@
 
 import { useRouter } from 'next/navigation'
 import Dashboard from '../../../components/Dashboard'
-import { clearConsoleSession } from '../../../lib/consoleSession'
+import { goToConsoleFiles } from '../../../lib/consoleSession'
 
 export default function DashboardPage() {
   const router = useRouter()
   return (
     <Dashboard
       onStartFlow={() => {
-        clearConsoleSession()
-        router.push('/console')
+        goToConsoleFiles(router)
       }}
     />
   )

@@ -15,10 +15,11 @@ Cell fill rate · Header shape · Candidate agreement · Table structure
 
 ```text
 High confidence  → accept directly (may skip LLM)
-Lower confidence → LLM reconstruction queue
+Lower confidence → MEITY-empanelled LLM reconstruction queue
+                   (or heuristic accept + human review if no key)
 ```
 
-## Reconstruction (LLM)
+## Reconstruction (MEITY-empanelled LLM)
 
 When invoked, the model reconciles competing extractions into a logical table:
 
@@ -44,5 +45,9 @@ It does not yet answer: **Which official standard code applies?**
 ## In this codebase
 
 - `backend/pdf/pdf_table_confidence.py`
-- LLM path inside PDF extraction pipeline
-- `SKIP_LLM=true` uses heuristic structure instead of Claude
+- LLM path inside PDF extraction pipeline (MEITY-empanelled / compatible API)
+- No API key → heuristic accept of the LLM bucket with `human_review_needed`
+- Excel `TableExtractor` skips remote LLM when Settings/header key is absent
+
+LLM availability is controlled by the **MEITY-empanelled LLM** Configuration
+module in Settings (see [Configuration modules](./overview.md#configuration-modules)).

@@ -10,6 +10,7 @@ load_dotenv()
 
 from catalogue import catalogue as _cat
 from routes import auth as routes_auth
+from routes import access as routes_access
 from routes import catalogue as routes_catalogue
 from routes import dashboard as routes_dashboard
 from routes import kyds as routes_kyds
@@ -22,6 +23,7 @@ OPENAPI_TAGS = [
     {"name": "Catalogue", "description": "Excel/SQL extract → match → classify → publish. JWT required."},
     {"name": "PDF", "description": "PDF extract → preview → grouping. JWT required."},
     {"name": "Dashboard", "description": "Workspace readiness rows. JWT required."},
+    {"name": "Access", "description": "Published catalogue query API (v1) for apps and agents. JWT required. MCP tools mirror these routes."},
 ]
 
 app = FastAPI(
@@ -32,8 +34,14 @@ app = FastAPI(
         "1. Call **POST /api/login** with `{ \"email\", \"password\" }` (no token).\n"
         "2. Copy `token` from the response.\n"
         "3. Click **Authorize**, paste the token only (do not type `Bearer`).\n"
-        "4. Try authenticated endpoints. The token expires after 12 hours and is "
-        "invalidated when the backend process restarts."
+        "4. Try authenticated endpoints. The token expires after 12 hours "
+        "(or sooner if JWT_SECRET is rotated).\n\n"
+        "## Catalogue access (v1)\n\n"
+        "Published datasets: **GET /api/v1/datasets**, "
+        "**GET /api/v1/datasets/{id}**, "
+        "**GET /api/v1/datasets/{id}/rows**. "
+        "MCP: `python -m mcp_server` from `backend/` "
+        "(tools: search_datasets, get_metadata, get_table)."
     ),
     openapi_tags=OPENAPI_TAGS,
     swagger_ui_parameters={"persistAuthorization": True},
@@ -51,6 +59,7 @@ app.include_router(routes_kyds.router)
 app.include_router(routes_catalogue.router)
 app.include_router(routes_pdf.router)
 app.include_router(routes_dashboard.router)
+app.include_router(routes_access.router)
 
 
 @app.get("/api/health", tags=["Health"], summary="Health")

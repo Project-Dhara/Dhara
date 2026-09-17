@@ -1,10 +1,12 @@
 'use client'
 
 import { useState } from 'react'
-import { Check, Download, Info, Loader2, X } from 'lucide-react'
+import { Check, Download, Info, Loader2, Pencil, X } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { withLlmKeyHeaders } from '../lib/llmKey'
 import { withAuthHeaders } from '../lib/auth'
+import { openConsoleTableEditor } from '../lib/consoleTableEdit'
+import Button from './ui/Button'
 
 
 const MAX_DISPLAY = 500
@@ -218,13 +220,26 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
     <div className="flex max-h-[calc(100vh-100px)] flex-col gap-4 overflow-hidden">
       {compact ? (
         <div className="flex flex-wrap items-end gap-x-4 gap-y-2 rounded-[10px] border border-line bg-surface p-3.5 px-[18px]">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
             <div className="inline-flex items-center rounded bg-[#e8f2f0] px-2 py-0.5 font-sans text-xs font-bold uppercase tracking-wide text-teal">Table Title</div>
             <div className="min-w-0 flex-1 text-[12.5px] font-semibold leading-tight text-ink">{table.title}</div>
           </div>
-          {table.description && <div className="text-[12.5px] leading-relaxed text-ink-soft">{table.description}</div>}
-          <div className="whitespace-nowrap font-sans text-xs text-ink-soft">
-            Sheet: {table.sheet} · {table.row_count.toLocaleString()} rows · {table.columns.length} columns
+          {table.description && <div className="w-full text-[12.5px] leading-relaxed text-ink-soft">{table.description}</div>}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="whitespace-nowrap font-sans text-xs text-ink-soft">
+              {table.sheet ? `Sheet: ${table.sheet} · ` : ''}
+              {(table.row_count ?? table.rows?.length ?? 0).toLocaleString()} rows · {table.columns.length} columns
+            </div>
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              className="ml-auto"
+              onClick={() => openConsoleTableEditor(table)}
+            >
+              <Pencil className="h-3.5 w-3.5" strokeWidth={2.25} aria-hidden />
+              View/Edit table
+            </Button>
           </div>
         </div>
       ) : (
@@ -307,7 +322,9 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
 
       {truncated && (
         <div className="flex-shrink-0 rounded-lg border border-[#f5d9a8] bg-[#fef9f0] px-4 py-2 text-center text-xs text-ink-soft">
-          Showing first {MAX_DISPLAY.toLocaleString()} of {table.row_count.toLocaleString()} rows — download CSV for full data.
+          {compact
+            ? `Showing first ${MAX_DISPLAY.toLocaleString()} of ${table.row_count.toLocaleString()} rows — open View/Edit table to see and change all rows`
+            : `Showing first ${MAX_DISPLAY.toLocaleString()} of ${table.row_count.toLocaleString()} rows — download CSV for full data.`}
         </div>
       )}
 

@@ -70,7 +70,8 @@ dhara-poc/
 ├── Dhara_logo.png               Brand mark (README / docs)
 ├── backend/                     FastAPI + openpyxl + LLM + Postgres + pgvector
 │   ├── main.py                  App setup + router registration (entrypoint)
-│   ├── routes/                  FastAPI routers: auth, kyds, catalogue, pdf, dashboard
+│   ├── routes/                  FastAPI routers: auth, kyds, catalogue, pdf, dashboard, access
+│   ├── mcp_server/              stdio MCP (search_datasets, get_metadata, get_table)
 │   ├── core/                    auth.py, deps.py, gcs_utils.py, vector_store.py
 │   ├── catalogue/               query.py, datasets.py, catalogue.py (shim), matching, NCO, staging, …
 │   ├── pdf/                     sda_india_pdf_extraction.py, pdf_store.py, pdf_jobs.py, grouping, …
@@ -179,13 +180,14 @@ postgresql://dhara:dhara_local_password@localhost:5432/dhara
 Copy `backend/.env.example` to `backend/.env` and set at least:
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...          # optional if you paste a key in Settings
+ANTHROPIC_API_KEY=sk-ant-...          # optional MEITY-empanelled / Anthropic-compatible (or paste in Settings)
 DATABASE_URL=postgresql://dhara:dhara_local_password@localhost:5432/dhara
 JWT_SECRET=<random hex>               # required for login tokens
 ENABLE_GCS=false
 ENABLE_SIGNUP=true                    # self-serve signup; set false in locked-down deploys
-SKIP_LLM=false                        # true = heuristic/no-Claude mode
-# EMBEDDING_DIM=1536                  # optional; text-embedding-3-small width
+SKIP_LLM=false                        # no key → heuristic PDF/Excel; see docs/deployment/on-prem.md
+# OPENAI_API_KEY=...                  # optional MEITY-empanelled / OpenAI-compatible + embeddings
+# EMBEDDING_DIM=1536                  # optional embedding width
 ```
 
 Generate a JWT secret:
@@ -286,11 +288,12 @@ preserved). `des-website` prefers `original_excel`, falling back to
 | Topic | Link |
 |-------|------|
 | Docs home | [docs/README.md](./docs/README.md) |
-| Architecture | [docs/architecture.md](./docs/architecture.md) |
-| Pipeline stages | [docs/pipeline/](./docs/pipeline/overview.md) |
+| Architecture | [docs/architecture.md](./docs/architecture.md) (includes Configuration modules) |
+| Pipeline stages | [docs/pipeline/overview.md](./docs/pipeline/overview.md) |
+| Configuration modules | [Architecture](./docs/architecture.md#configuration-modules) · [Pipeline](./docs/pipeline/overview.md#configuration-modules) |
 | On-prem deploy | [docs/deployment/on-prem.md](./docs/deployment/on-prem.md) |
 | Cloud deploy | [docs/deployment/cloud.md](./docs/deployment/cloud.md) |
-| Configuration | [docs/deployment/configuration.md](./docs/deployment/configuration.md) |
+| Configuration (env) | [docs/deployment/configuration.md](./docs/deployment/configuration.md) |
 
 ## License
 

@@ -88,8 +88,9 @@ def _build_ddi_id(tbl: dict) -> str:
 
 
 def _detect_provider(api_key: Optional[str]) -> str:
-    """Guess the LLM provider from an API key's prefix. Anthropic keys are
-    "sk-ant-..."; anything else is treated as an OpenAI key."""
+    """Guess the LLM provider from an API key's prefix. Anthropic-style keys
+    are \"sk-ant-...\"; anything else is treated as an OpenAI-compatible
+    MEITY-empanelled endpoint."""
     if api_key and api_key.startswith("sk-ant-"):
         return "anthropic"
     return "openai"
@@ -298,37 +299,104 @@ class TableExtractor:
 
     # ── Block detection ───────────────────────────────────────────────────────
 
+    # Short CRS / vital-stats table codes used as full-width banners (D-14, B-6).
+    _SHORT_TABLE_CODE_RE = re.compile(
+        r"^(?:TABLE\s*[:.\-–—]?\s*)?"
+        r"(?P<code>[A-Z]{1,3})\s*[-–—]?\s*(?P<num>\d+(?:\.\d+)?)\s*$",
+        re.IGNORECASE,
+    )
+
     @staticmethod
     def _blank(row: List[Any]) -> bool:
         return all(v is None or str(v).strip() == "" for v in row)
 
     @staticmethod
-    def _has_table_marker(row: List[Any]) -> bool:
-        text = " ".join(str(v) for v in row if v is not None)
-        return bool(re.search(r"\bTABLE[\s:\-]", text, re.IGNORECASE))
+    def _row_unique_label(row: List[Any]) -> Optional[str]:
+        """Single repeated/non-empty label for a full-width banner row, else None."""
+        non_empty = [str(v).strip() for v in row if v is not None and str(v).strip()]
+        if not non_empty:
+            return None
+        unique = {s.upper() for s in non_empty}
+        if len(unique) != 1:
+            return None
+        return non_empty[0]
 
-    def _find_blocks(self, grid: List[List[Any]]) -> List[Tuple[int, int]]:
-        # Candidate marker rows: any row containing "TABLE <letter/digit>".
-        # Every such row is a genuine new-block start -- these source sheets
-        # routinely pack consecutive sub-tables (e.g. two "TABLE: D-18"
-        # blocks back to back) with zero or one blank row between them, not
-        # the two originally assumed here, which silently merged the second
-        # table's header + data rows into the first table's body instead of
-        # splitting them out.
-        markers = [i for i, r in enumerate(grid) if self._has_table_marker(r)]
+    @classmethod
+    def _has_table_marker(cls, row: List[Any]) -> bool:
+        """True for a row that *starts* a new table block.
 
-        if markers:
-            blocks = []
-            for j, start in enumerate(markers):
-                limit = markers[j + 1] if j + 1 < len(markers) else len(grid)
-                end = limit - 1
-                while end > start and self._blank(grid[end]):
+        Matches short id banners (``TABLE: D-12``, ``D-14``, ``TABLE B-6``).
+        Rejects column headers like ``Table Name`` and long footnotes that
+        merely mention a table code.
+        """
+        label = cls._row_unique_label(row)
+        if label is not None:
+            if len(label) <= 40 and cls._SHORT_TABLE_CODE_RE.match(label):
+                return True
+            if len(label) <= 48 and re.match(
+                r"^TABLE\s*[:.\-–—]\s*[A-Z0-9]", label, re.IGNORECASE
+            ):
+                return True
+            return False
+
+        # Single primary cell (rest empty) — still allow short TABLE ids.
+        non_empty = [str(v).strip() for v in row if v is not None and str(v).strip()]
+        if len(non_empty) != 1:
+            return False
+        label = non_empty[0]
+        if len(label) > 40:
+            return False  # footnotes / prose
+        if cls._SHORT_TABLE_CODE_RE.match(label):
+            return True
+        if re.match(r"^TABLE\s*[:.\-–—]\s*[A-Z0-9]", label, re.IGNORECASE):
+            return True
+        return False
+
+    @staticmethod
+    def _is_columnar_header_row(row: List[Any]) -> bool:
+        """True when a row looks like a real multi-column header, not a title banner."""
+        non_empty = [v for v in row if v is not None and str(v).strip()]
+        if len(non_empty) < 3:
+            return False
+        unique = {str(v).strip().upper() for v in non_empty}
+        if len(unique) < 3:
+            return False
+        # Banners are usually one long label; header labels stay relatively short.
+        longish = sum(1 for v in non_empty if len(str(v).strip()) > 48)
+        return longish <= max(1, len(non_empty) // 3)
+
+    def _blocks_from_markers(
+        self, grid: List[List[Any]], markers: List[int]
+    ) -> List[Tuple[int, int]]:
+        blocks = []
+        for j, start in enumerate(markers):
+            limit = markers[j + 1] if j + 1 < len(markers) else len(grid)
+            end = limit - 1
+            while end > start and self._blank(grid[end]):
+                end -= 1
+            # Drop trailing footnote prose (long single-cell notes).
+            while end > start:
+                row = grid[end]
+                if self._blank(row):
                     end -= 1
-                if end > start:
-                    blocks.append((start, end))
-            return blocks
+                    continue
+                cells = [str(v).strip() for v in row if v is not None and str(v).strip()]
+                text = " ".join(cells)
+                if (
+                    len(cells) <= 2
+                    and len(text) > 48
+                    and not self._is_columnar_header_row(row)
+                    and not self._has_table_marker(row)
+                ):
+                    end -= 1
+                    continue
+                break
+            if end > start:
+                blocks.append((start, end))
+        return blocks
 
-        # Fallback: blank-row based detection (sheets without TABLE markers)
+    def _blocks_from_blank_gaps(self, grid: List[List[Any]]) -> List[Tuple[int, int]]:
+        """Split on 2+ consecutive blank rows (multi-table sheets with gaps)."""
         blocks, current, blanks = [], None, 0
         for i, row in enumerate(grid):
             if self._blank(row):
@@ -349,6 +417,38 @@ class TableExtractor:
             if end > current:
                 blocks.append((current, end))
         return blocks
+
+    def _find_blocks(self, grid: List[List[Any]]) -> List[Tuple[int, int]]:
+        # 1) Short table-id banners (TABLE: D-12 / D-14) — strongest signal.
+        markers = [i for i, r in enumerate(grid) if self._has_table_marker(r)]
+        if markers:
+            blocks = self._blocks_from_markers(grid, markers)
+            if blocks:
+                return blocks
+
+        # 2) Blank-gap split when chunks look like separate titled tables
+        #    (id/title banner + columnar header). Skip for single inventory
+        #    sheets that only have decorative mid-grid blanks.
+        gap_blocks = self._blocks_from_blank_gaps(grid)
+        if len(gap_blocks) > 1:
+            strong = 0
+            for start, end in gap_blocks:
+                chunk = [r for r in grid[start : end + 1] if not self._blank(r)]
+                if len(chunk) < 3:
+                    continue
+                top = chunk[0]
+                titled = bool(self._has_table_marker(top) or self._row_unique_label(top))
+                if titled and any(self._is_columnar_header_row(r) for r in chunk[1:6]):
+                    strong += 1
+            if strong >= 2:
+                return gap_blocks
+
+        # 3) Whole sheet as one table (catalogue inventories, single grids).
+        non_blank = [i for i, r in enumerate(grid) if not self._blank(r)]
+        if not non_blank:
+            return []
+        start, end = non_blank[0], non_blank[-1]
+        return [(start, end)] if end >= start else []
 
     # ── Table extraction ──────────────────────────────────────────────────────
 
@@ -376,6 +476,28 @@ class TableExtractor:
         skip_set: set = set(structure.get("skip_rows", []))
         columns: List[str] = list(structure.get("columns", []))
 
+        # Clamp runaway multi-row headers on rectangular catalogue sheets
+        # (LLM + heuristic both used to swallow early data rows as headers).
+        try:
+            from metadata.metadata_llm import (
+                _looks_like_data_row,
+                _row_looks_like_column_labels,
+            )
+            if (
+                header_rows > 1
+                and body
+                and _row_looks_like_column_labels(body[0])
+                and any(_looks_like_data_row(r) for r in body[1:min(5, len(body))])
+            ):
+                header_rows = 1
+                skip_set = {i for i in skip_set if i < 1}
+                columns = [
+                    str(v).strip() if v is not None else f"Col_{i+1}"
+                    for i, v in enumerate(body[0][:n_cols])
+                ]
+        except Exception:
+            pass
+
         while len(columns) < n_cols:
             columns.append(f"Col_{len(columns)+1}")
         columns = columns[:n_cols]
@@ -391,6 +513,18 @@ class TableExtractor:
                 seen[col] = 0
                 deduped.append(col)
         columns = deduped
+
+        # Keep titles short and free of column-list suffixes before row build.
+        from metadata.validation import normalize_table_title
+        title = normalize_table_title(title, columns) or title
+        if not (title or "").strip():
+            title = sheet_name or f"Table {idx + 1}"
+        if not (table_id or "").strip() or table_id == title:
+            # Prefer a stable id when strip left the columnar header as "title".
+            if self._is_columnar_header_row(body[0] if body else []):
+                table_id = f"Table {idx + 1}"
+            elif not (table_id or "").strip():
+                table_id = f"Table {idx + 1}"
 
         rows = []
         for i, row in enumerate(body[header_rows:], start=header_rows):
@@ -521,29 +655,44 @@ class TableExtractor:
                 body_start += 1
             return table_id, title, body_start
 
-        # Legacy fallback: first non-blank → id-ish / title, second → description.
+        # Rectangular sheets (catalogue inventories, SQL dumps): keep the first
+        # multi-column header row inside the body so structure detection can use
+        # it. Peeling it as "title" + the next row as "description" drops early
+        # data rows and feeds data into the header flattener.
         non_blank = [(i, r) for i, r in enumerate(block) if not self._blank(r)]
         if not non_blank:
             return "", "", 0
 
         i0, r0 = non_blank[0]
+        if self._is_columnar_header_row(r0):
+            return "", "", i0
+
         first = row_text(r0)
         body_start = i0 + 1
         second = ""
 
         if len(non_blank) > 1:
             i1, r1 = non_blank[1]
-            text1 = row_text(r1)
-            non_none = [v for v in r1 if v is not None]
-            n_nums = sum(1 for v in non_none if isinstance(v, (int, float)))
-            if text1 and len(text1) > 10 and n_nums < len(non_none) / 2:
-                second = text1
-                body_start = i1 + 1
+            # Never swallow a dense data/header-looking row as a "description".
+            if not self._is_columnar_header_row(r1):
+                text1 = row_text(r1)
+                non_none = [v for v in r1 if v is not None and str(v).strip()]
+                unique = {str(v).strip().upper() for v in non_none}
+                n_nums = sum(1 for v in non_none if isinstance(v, (int, float)))
+                banner_like = len(unique) == 1 or len(non_none) <= 2
+                if (
+                    banner_like
+                    and text1
+                    and len(text1) > 10
+                    and n_nums < len(non_none) / 2
+                ):
+                    second = text1
+                    body_start = i1 + 1
 
-        # Prefer TABLE-marker row as id when present.
-        if re.search(r"\bTABLE[\s:\-]", first, re.IGNORECASE):
+        # Prefer true TABLE-id banners as id when present.
+        if self._has_table_marker(r0):
             table_id, title = first, second
-        elif second and re.search(r"\bTABLE[\s:\-]", second, re.IGNORECASE):
+        elif second and len(non_blank) > 1 and self._has_table_marker(non_blank[1][1]):
             table_id, title = second, first
         else:
             table_id, title = first, second
@@ -774,24 +923,7 @@ Return only valid JSON, no markdown fences, no explanation."""
 
     @staticmethod
     def _heuristic_structure(body: List[List[Any]], n_cols: int) -> Dict:
-        if not body:
-            return {"header_rows": 0, "skip_rows": [], "columns": [f"Col_{i+1}" for i in range(n_cols)]}
-        skip_rows = []
-        for i, row in enumerate(body[:6]):
-            non_none = [v for v in row if v is not None]
-            if not non_none:
-                continue
-            col_nums = sum(1 for v in non_none if re.match(r"^\(\d+\)$", str(v).strip()))
-            if col_nums > len(non_none) * 0.5:
-                skip_rows.append(i)
-        header_rows = 1
-        for i, row in enumerate(body[:5]):
-            non_none = [v for v in row if v is not None]
-            nums = sum(1 for v in non_none if isinstance(v, (int, float)))
-            if nums > len(non_none) * 0.4 and i > 0:
-                header_rows = i
-                break
-        columns = [str(v).strip() if v is not None else f"Col_{i+1}" for i, v in enumerate(body[0])]
-        while len(columns) < n_cols:
-            columns.append(f"Col_{len(columns)+1}")
-        return {"header_rows": header_rows, "skip_rows": skip_rows, "columns": columns}
+        # Use the richer multi-row header flattener shared with metadata facts —
+        # the local one-row heuristic left many scheme sheets under-extracted.
+        from metadata.metadata_llm import _heuristic_structure as _better_heuristic
+        return _better_heuristic(body, n_cols)

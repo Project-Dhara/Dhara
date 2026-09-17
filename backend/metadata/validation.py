@@ -185,12 +185,62 @@ def _title_looks_like_headers(title: str, columns: Optional[List] = None) -> boo
         return True
     if re.search(r"\bSL\.?\s*NO\.?\b", text, re.I):
         return True
-    cols = [str(c).strip().upper() for c in (columns or []) if str(c).strip()]
+    cols = [
+        str(c).strip().upper()
+        for c in (columns or [])
+        if str(c).strip() and len(str(c).strip()) >= 3
+    ]
     if len(cols) >= 2:
         hits = sum(1 for c in cols[:6] if c and c in text)
         if hits >= max(2, int(min(4, len(cols[:6])) * 0.5)):
             return True
     return False
+
+
+_TITLE_MAX_LEN = 90
+
+
+def _looks_like_column_list_phrase(text: str) -> bool:
+    """True for schema-like phrases such as ``Scheme name, beneficiaries, budget``."""
+    s = " ".join(str(text or "").split()).strip()
+    if not s:
+        return False
+    parts = [p.strip() for p in re.split(r"[,;/|]", s) if p.strip()]
+    if len(parts) < 2:
+        return False
+    shortish = sum(1 for p in parts if len(p) <= 40 and len(p.split()) <= 5)
+    return shortish >= max(2, len(parts) - 1) and len(s) <= 160
+
+
+def normalize_table_title(title: str, columns: Optional[List] = None) -> str:
+    """Keep a short descriptive caption; drop column-list / header suffixes."""
+    s = " ".join(str(title or "").split()).strip()
+    if not s:
+        return ""
+
+    for sep in (" — ", " – ", " —", " –"):
+        if sep not in s:
+            continue
+        left, right = s.split(sep, 1)
+        left, right = left.strip(), right.strip()
+        if not left:
+            break
+        if (
+            _title_looks_like_headers(right, columns)
+            or _looks_like_column_list_phrase(right)
+            or (len(s) > _TITLE_MAX_LEN and len(left) >= 12)
+        ):
+            s = left
+        break
+
+    if _title_looks_like_headers(s, columns) or _looks_like_column_list_phrase(s):
+        return ""
+
+    if len(s) > _TITLE_MAX_LEN:
+        cut = s[:_TITLE_MAX_LEN].rsplit(" ", 1)[0]
+        s = cut.rstrip(" ,;:—–-") if len(cut) >= 20 else s[:_TITLE_MAX_LEN].rstrip()
+
+    return s
 
 
 def repair_table_id_title_llm(
@@ -222,12 +272,15 @@ Source Table ID (current): {table_id!r}
 Table Title (current): {title!r}
 Leading rows:
 {context_block}
-Column headers (hint): {col_preview or "(unknown)"}
+Column headers (hint only — NEVER copy these into the title): {col_preview or "(unknown)"}
 
 Definitions:
 - Source Table ID = short identifier, usually containing TABLE plus a code (e.g. "TABLE: B-6", "Table : D-12").
-- Table Title = descriptive caption of what the table measures (not the TABLE id, not column headers like SL. NO. / AGE).
-- If a subtitle banner follows the main caption, join with " — ".
+- Table Title = short descriptive caption of what the table measures (preferably under 80 characters).
+  Prefer the main caption only (e.g. "Scheme Summary (Basic Statistics)").
+  Do NOT append column headers, field lists, or schema phrases (e.g. "Scheme name, beneficiaries, budget").
+  Do NOT join column names with " — ". Only join a genuine category/geography subtitle
+  (e.g. "URBAN") when it appears as its own banner row — never invent one from columns.
 - Keep original wording/casing from the leading rows when possible.
 - If a field is already correct, return it unchanged.
 - Respond with ONLY JSON: {{"table_id": "...", "title": "..."}}
@@ -250,11 +303,12 @@ Definitions:
         if repaired_id and repaired_id != table_id:
             out["table_id"] = repaired_id
 
-        repaired_title = str(parsed.get("title") or "").strip()
+        repaired_title = normalize_table_title(
+            str(parsed.get("title") or "").strip(),
+            columns,
+        )
         if repaired_title and repaired_title != title:
-            if _title_looks_like_headers(repaired_title, columns):
-                repaired_title = ""
-            elif TABLE_MARKER_RE.search(repaired_title) and len(repaired_title) < 48:
+            if TABLE_MARKER_RE.search(repaired_title) and len(repaired_title) < 48:
                 repaired_title = ""
             if repaired_title:
                 out["title"] = repaired_title

@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 
 from catalogue import catalogue as _cat
 from catalogue.catalogue_matching import match_tables_to_metadata
-from core.deps import _extractor_for, require_user
+from core.deps import LLM_KEY_HEADER, _extractor_for, require_user
 from core.gcs_utils import _upload_excel_to_gcs, _upload_original_sheet_to_gcs, _upload_table_excel_to_gcs
 from metadata.metadata_excel import parse_metadata_workbook, parse_concept_file
 from metadata.metadata_fill import (
@@ -239,6 +239,8 @@ async def batch_match(
     `dataset_files` is accepted for backwards compatibility but no longer
     triggers autofill here."""
     tables = _json.loads(tables_json)
+    # Same header as PDF grouping — browser LLM key preferred over env.
+    api_key = request.headers.get(LLM_KEY_HEADER, "").strip() or None
 
     metadata_payloads = []
     if metadata_files:
@@ -257,7 +259,7 @@ async def batch_match(
                 workbooks.append(parse_metadata_workbook(content, filename))
             except ValueError as e:
                 raise ValueError(f"{filename}: {e}")
-        result = match_tables_to_metadata(tables, workbooks)
+        result = match_tables_to_metadata(tables, workbooks, api_key=api_key)
         result["llm_autofill_skipped_no_key"] = False
         return result
 

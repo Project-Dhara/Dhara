@@ -65,9 +65,9 @@ JWT_SECRET=…
 ENABLE_SIGNUP=false
 ENABLE_GCS=true|false
 GCS_BUCKET_NAME=…                    # if ENABLE_GCS=true
-ANTHROPIC_API_KEY=…                  # optional
-OPENAI_API_KEY=…                     # embeddings / some LLM paths
-SKIP_LLM=false
+ANTHROPIC_API_KEY=…                  # optional MEITY-empanelled / Anthropic-compatible
+OPENAI_API_KEY=…                     # optional MEITY-empanelled / OpenAI-compatible + embeddings
+SKIP_LLM=false                       # prefer “no key” for heuristic PDF/Excel; see on-prem.md
 ```
 
 ### Cloud SQL
@@ -98,8 +98,8 @@ the runtime SA is granted access.
 type: web
 dockerfilePath: ./Dockerfile
 envVars:
-  ANTHROPIC_API_KEY   # sync: false → set in dashboard
-  OPENAI_API_KEY
+  ANTHROPIC_API_KEY   # MEITY-empanelled / Anthropic-compatible — sync: false → set in dashboard
+  OPENAI_API_KEY      # MEITY-empanelled / OpenAI-compatible
   DATABASE_URL        # e.g. Neon
   JWT_SECRET
   ENABLE_GCS: "false"

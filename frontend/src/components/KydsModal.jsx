@@ -228,10 +228,11 @@ function ExclusiveCheckboxGrid({ options, selected, onChange }) {
 }
 
 function Field({ label, hint, children }) {
+  // Use a div, not <label>: globals.css applies DM Mono to bare labels.
   return (
     <div className="mt-1 flex flex-col gap-1">
-      <label className="text-xs font-semibold text-ink">{label}</label>
-      {hint && <div className="text-xs text-ink-soft">{hint}</div>}
+      <div className="text-[13px] font-bold text-ink">{label}</div>
+      {hint && <div className="text-[13px] leading-snug text-ink-soft">{hint}</div>}
       {children}
     </div>
   )

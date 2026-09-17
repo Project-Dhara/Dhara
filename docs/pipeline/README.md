@@ -1,9 +1,11 @@
 # Pipeline stage docs
 
-See [overview.md](./overview.md) for the end-to-end diagram and status matrix.
+See [overview.md](./overview.md) for the end-to-end diagram, **Configuration
+modules**, and status matrix.
 
 | Stage | Doc |
 |-------|-----|
+| Configuration modules | [overview.md#configuration-modules](./overview.md#configuration-modules) |
 | 0 KYDS | [00-kyds.md](./00-kyds.md) |
 | 1 Extraction | [01-extraction.md](./01-extraction.md) |
 | 2 Reconstruction | [02-reconstruction.md](./02-reconstruction.md) |

@@ -7,6 +7,7 @@ import PdfConsoleLayout from '../../../../../components/pdf/PdfConsoleLayout'
 import ErrorBanner from '../../../../../components/ui/ErrorBanner'
 import Button from '../../../../../components/ui/Button'
 import { withAuthHeaders } from '../../../../../lib/auth'
+import { goToConsoleFiles } from '../../../../../lib/consoleSession'
 
 const POLL_INTERVAL_MS = 2000
 
@@ -89,7 +90,7 @@ export default function PdfProcessingPage() {
         <div className="mx-auto flex max-w-xl flex-col gap-4 py-8">
           <div className="font-display text-xl font-medium text-ink">Something went wrong</div>
           <ErrorBanner>{error}</ErrorBanner>
-          <Button variant="primary" className="self-start" onClick={() => router.push('/console')}>Upload a different PDF</Button>
+          <Button variant="primary" className="self-start" onClick={() => goToConsoleFiles(router)}>Upload a different PDF</Button>
         </div>
       </PdfConsoleLayout>
     )

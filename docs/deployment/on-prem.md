@@ -7,8 +7,22 @@ PaaS. All required services can run in Docker.
 
 - Docker Engine + Docker Compose v2
 - (Optional) Node 20+ and Python 3.11+ if running UI/API on the host
-- Outbound HTTPS only if you use cloud LLMs / embeddings; otherwise set
-  `SKIP_LLM=true` and skip embedding-heavy PDF grouping features
+- Outbound HTTPS only if you call a **MEITY-empanelled LLM** (or compatible
+  endpoint) and embeddings; otherwise omit the key / use Settings with no key
+
+## LLM and PDF extraction (important)
+
+DHARA does **not** need a public SaaS LLM vendor name — configure a
+**MEITY-empanelled LLM** API key in Settings (or `OPENAI_API_KEY` /
+`ANTHROPIC_API_KEY` in `.env` for an OpenAI-/Anthropic-compatible endpoint).
+
+| Mode | What happens |
+|------|----------------|
+| **With MEITY-empanelled LLM key** | Full PDF path: PyMuPDF candidates → confidence split → LLM reconstruct/classify for ambiguous pages; richer Excel assist, NCO suggest, singleton grouping merge |
+| **Without LLM key** | PyMuPDF still extracts ruled tables. **High-confidence** pages are auto-accepted. **Ambiguous** pages fall back to the same heuristic grid (`table_dict_from_df`) and are flagged for human review — no remote LLM call. Excel extract uses structural heuristics. Title-base grouping still works; embedding / LLM singleton merge is skipped |
+
+Air-gapped PDF ingest is therefore usable, but expect more steward review on
+complex multi-header pages than with a MEITY-empanelled model available.
 
 ## 1. Quick start (recommended)
 
@@ -16,7 +30,7 @@ From the repo root:
 
 ```bash
 cp backend/.env.example backend/.env
-# Edit JWT_SECRET, optional ANTHROPIC_API_KEY / OPENAI_API_KEY
+# Edit JWT_SECRET; optional MEITY-empanelled LLM key (OPENAI_API_KEY / ANTHROPIC_API_KEY)
 make up
 make urls
 ```
@@ -114,9 +128,9 @@ cd backend && python scripts/create_user.py
 |------|----------|
 | OS | Linux x86_64 with Docker |
 | Disk | Persist the `dhara_pg_data` volume; back it up |
-| Memory | PDF LLM extraction is the heavy path — size for concurrent jobs |
+| Memory | PDF + MEITY-empanelled LLM extraction is the heavy path — size for concurrent jobs |
 | CPU | Process-pool PDF workers benefit from multiple cores |
-| Network | Block public ingress; allow steward VPN / jump host |
+| Network | Block public ingress; allow steward VPN / jump host; allow egress only to your MEITY-empanelled endpoint if used |
 | Secrets | Mount `backend/.env` or inject env via orchestrator — never bake keys into images |
 | Updates | Rebuild images from the repo; keep Postgres volume across app upgrades |
 | pgvector | Use the provided image or install the extension on your Postgres |
@@ -136,7 +150,9 @@ dedicated database/role for DHARA.
 
 1. Build images on a connected machine; transfer tarballs (`docker save` /
    `docker load`).
-2. Set `SKIP_LLM=true` if no model endpoint is reachable.
+2. Omit MEITY-empanelled LLM keys (or leave Settings empty). PDF uses PyMuPDF +
+   heuristic accept for all candidate pages; stewards should review flagged
+   tables. Excel uses structural extract without remote LLM.
 3. Pre-load classification standards via Settings upload (CSV) on a machine that
    can receive the file by USB/secure copy.
 4. Disable GCS (`ENABLE_GCS=false`); catalogue rows still publish without file
@@ -147,5 +163,6 @@ dedicated database/role for DHARA.
 - Cloud Run / Render
 - GCS (optional)
 - Public DNS (internal hostname is fine)
+- A MEITY-empanelled LLM (optional — improves PDF reconstruction and assists)
 
 See [configuration](./configuration.md) for the full env list.

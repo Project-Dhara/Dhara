@@ -195,3 +195,28 @@ export function flattenForHarmonise(columns) {
   })
   return out
 }
+
+/**
+ * One list row per chip family: primary representation + related alias members
+ * that still need a single verify to push codes to every related table.
+ */
+export function clubHarmoniseEntries(columns) {
+  const aliases = flattenForHarmonise(columns).filter((e) => e.isAlias)
+  const bySource = new Map()
+  for (const entry of aliases) {
+    const key = entry.sourceName || entry.name
+    const list = bySource.get(key) || []
+    list.push(entry)
+    bySource.set(key, list)
+  }
+  return [...bySource.entries()].map(([sourceName, members]) => ({
+    id: `club:${sourceName}`,
+    name: sourceName,
+    sourceName,
+    members,
+    relatedCount: members.length,
+    column: members[0]?.column,
+    isAlias: true,
+    isClub: true,
+  }))
+}

@@ -63,9 +63,19 @@ def _is_numeric_cell(v: str) -> bool:
         return False
 
 
+_PLACEHOLDER_COL_RE = re.compile(r"^Col_\d+$", re.I)
+
+
+def _is_placeholder_column_name(name: str) -> bool:
+    s = (name or "").strip()
+    return (not s) or bool(_PLACEHOLDER_COL_RE.match(s))
+
+
 def clean_dataframe_light(df: pd.DataFrame) -> pd.DataFrame:
     """Whitespace-normalize cells, blank out empty strings, drop fully-empty
-    rows/columns. Pure Python cleanup -- no LLM, no restructuring."""
+    rows and placeholder-only empty columns. Named headers with no body values
+    (e.g. unused month columns) are kept so auto-accept does not collapse the
+    grid and mis-label later columns."""
     meta = None
     caption = None
     banner_id = None
@@ -78,13 +88,21 @@ def clean_dataframe_light(df: pd.DataFrame) -> pd.DataFrame:
     cleaned = df.map(lambda v: _cell_str(v) or None)
     cleaned.columns = [_cell_str(c) or f"Col_{i + 1}" for i, c in enumerate(cleaned.columns)]
     before_cols = list(cleaned.columns)
-    cleaned = cleaned.dropna(axis=0, how="all").dropna(axis=1, how="all")
+    cleaned = cleaned.dropna(axis=0, how="all")
+    keep_idx: List[int] = []
+    for i, name in enumerate(before_cols):
+        series = cleaned.iloc[:, i] if cleaned.shape[1] > i else None
+        all_null = series is None or bool(series.isna().all())
+        if all_null and _is_placeholder_column_name(str(name)):
+            continue
+        keep_idx.append(i)
+    if keep_idx:
+        cleaned = cleaned.iloc[:, keep_idx]
+    elif cleaned.shape[1]:
+        cleaned = cleaned.iloc[:, 0:0]
     cleaned = cleaned.reset_index(drop=True)
     if meta and len(meta) == len(before_cols):
-        kept = set(str(c) for c in cleaned.columns)
-        cleaned.attrs["dhara_column_meta"] = [
-            meta[i] for i, name in enumerate(before_cols) if str(name) in kept
-        ]
+        cleaned.attrs["dhara_column_meta"] = [meta[i] for i in keep_idx]
     elif meta:
         cleaned.attrs["dhara_column_meta"] = meta
     if caption:
@@ -96,7 +114,20 @@ def clean_dataframe_light(df: pd.DataFrame) -> pd.DataFrame:
 
 def profile_table(df: pd.DataFrame) -> Dict[str, Any]:
     n_rows, n_cols = df.shape
-    all_cells = [_cell_str(v) for row in df.values for v in row]
+    # Ignore all-null columns when scoring fill rate: they are often intentional
+    # empty measure periods (kept for header fidelity), not extraction failure.
+    active_cols = [
+        i for i in range(n_cols)
+        if any(_cell_str(v) for v in df.iloc[:, i].values)
+    ]
+    if active_cols:
+        all_cells = [
+            _cell_str(v)
+            for i in active_cols
+            for v in df.iloc[:, i].values
+        ]
+    else:
+        all_cells = [_cell_str(v) for row in df.values for v in row]
     nonempty = [c for c in all_cells if c]
     nonempty_ratio = (len(nonempty) / len(all_cells)) if all_cells else 0.0
 
@@ -237,12 +268,58 @@ _EXTENDED_CAPTION_RES = (
         re.I,
     ),
 )
+# Strip label words + numbering from inferred titles, e.g.
+# "Statement 4.6: Distribution of infant Deaths" → "Distribution of infant Deaths".
+# Separator deliberately excludes "." so "4.6" is not split mid-number.
+_CAPTION_LABEL_PREFIX_RE = re.compile(
+    r"^\s*(?:"
+    r"TABLE|TAB\.?|STATEMENT|ANNEX(?:URE)?|SCHEDULE|EXHIBIT|APPENDIX|"
+    r"FIG(?:URE)?|CHART|BOX"
+    r")\b\s*"
+    r"(?:[\w]+(?:[./\-][\w]+)*)?\s*"
+    r"[:\-–—]\s*",
+    re.I,
+)
+_CAPTION_LABEL_PREFIX_SPACE_RE = re.compile(
+    r"^\s*(?:"
+    r"TABLE|TAB\.?|STATEMENT|ANNEX(?:URE)?|SCHEDULE|EXHIBIT|APPENDIX|"
+    r"FIG(?:URE)?|CHART|BOX"
+    r")\b\s+"
+    r"[\w]+(?:[./\-][\w]+)*\s+",
+    re.I,
+)
 # Max vertical gap (PDF points) between caption/heading and table top.
 _BBOX_TITLE_MAX_GAP_PT = 140.0
 
 
 def _normalize_title_line(line: str) -> str:
     return re.sub(r"\s+", " ", (line or "").strip())
+
+
+def strip_caption_label_prefix(title: Optional[str]) -> Optional[str]:
+    """Remove leading Statement/Table/Annex/… labels from a caption title.
+
+    Keeps the descriptive remainder when present; otherwise returns the original.
+    """
+    if title is None:
+        return None
+    s = _normalize_title_line(title)
+    if not s:
+        return s
+    cleaned = _CAPTION_LABEL_PREFIX_RE.sub("", s, count=1).strip(" :.-–—")
+    if cleaned == s or len(cleaned) < 4:
+        cleaned2 = _CAPTION_LABEL_PREFIX_SPACE_RE.sub("", s, count=1).strip(" :.-–—")
+        if cleaned2 and len(cleaned2) >= 4:
+            cleaned = cleaned2
+    if cleaned and len(cleaned) >= 4 and cleaned.lower() != s.lower():
+        return cleaned
+    # "TABLE 2.1: Foo" via dedicated capture group when present.
+    m = _TABLE_CAPTION_RE.match(s)
+    if m:
+        rest = _normalize_title_line(m.group(2) or "")
+        if rest and len(rest) >= 4:
+            return rest
+    return s
 
 
 def _is_chrome_title_line(line: str) -> bool:
@@ -530,15 +607,15 @@ def infer_title_from_page_text(
     if bbox and page_blocks:
         title, source = _title_from_bbox_blocks(page_blocks, bbox, col_names)
         if title:
-            return title, source
+            return strip_caption_label_prefix(title), source
 
     title, source = _title_from_page_lines(lines, col_names)
     if title:
-        return title, source
+        return strip_caption_label_prefix(title), source
 
     title, source = _title_from_outline_sections(outline_sections, col_names)
     if title:
-        return title, source
+        return strip_caption_label_prefix(title), source
 
     return None, "heuristic_none"
 
@@ -601,9 +678,17 @@ def table_dict_from_df(
     path so Preview can treat both uniformly via semantic_status."""
     cleaned = clean_dataframe_light(df)
     col_names = [str(c) for c in cleaned.columns]
-    meta = []
+    # Prefer meta already aligned to cleaned columns (clean_dataframe_light
+    # drops placeholder empties by index). Falling back to the pre-clean meta
+    # by position mis-labels later columns when empty named months were kept
+    # or dropped — e.g. Sep–Dec values shown under Jan–Apr headers.
+    meta: List[Any] = []
     try:
-        meta = list(getattr(df, "attrs", {}).get("dhara_column_meta") or [])
+        cleaned_meta = list(getattr(cleaned, "attrs", {}).get("dhara_column_meta") or [])
+        if cleaned_meta and len(cleaned_meta) == len(col_names):
+            meta = cleaned_meta
+        else:
+            meta = list(getattr(df, "attrs", {}).get("dhara_column_meta") or [])
     except Exception:
         meta = []
     columns = []
@@ -644,7 +729,7 @@ def table_dict_from_df(
     # In-grid banners (TABLE id row + descriptive title row inside the ruled
     # border) beat page-text / outline heuristics — those look above the bbox.
     if in_grid_title:
-        title, title_source = in_grid_title, "heuristic_in_grid_banner"
+        title, title_source = strip_caption_label_prefix(in_grid_title), "heuristic_in_grid_banner"
     else:
         title, title_source = infer_title_from_page_text(
             page_text,
@@ -654,6 +739,8 @@ def table_dict_from_df(
             page_blocks=page_blocks,
             outline_sections=outline_sections,
         )
+    if title:
+        title = strip_caption_label_prefix(title)
     empty_field = {"value": None, "human_review_needed": False, "human_review_reason": None}
     result = {
         "title": title,

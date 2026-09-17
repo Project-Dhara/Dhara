@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation'
 import Console from '../../../components/console/Console'
 import { useApp } from '../../../context/AppContext'
-import { clearConsoleSession } from '../../../lib/consoleSession'
+import { goToConsoleFiles } from '../../../lib/consoleSession'
 
 // Console.jsx still manages its own step (1-6) state/rendering internally --
 // splitting it into real per-step routes is future work. This route just
@@ -18,8 +18,7 @@ export default function ConsolePage() {
       onGoDashboard={() => router.push('/dashboard')}
       onGoCatalogue={() => router.push('/catalogue')}
       onUploadAnother={() => {
-        clearConsoleSession()
-        router.push('/console')
+        goToConsoleFiles(router)
       }}
     />
   )

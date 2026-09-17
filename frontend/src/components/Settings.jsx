@@ -18,7 +18,10 @@ import { SDG_CONCEPT_TEMPLATE } from '../lib/sdgConcepts'
 import { withAuthHeaders } from '../lib/auth'
 import FileUpload from './FileUpload'
 
-const PROVIDERS = ['Anthropic', 'OpenAI', 'Self-hosted']
+const PROVIDERS = [
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'self-hosted', label: 'Self-hosted' },
+]
 const ROLES = ['Administrator', 'Data Steward', 'Data User']
 
 const SETTINGS_METADATA_FIELDS = [
@@ -197,17 +200,19 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
       </div>
 
       <div className="flex flex-col gap-[18px] rounded-2xl border border-line/90 bg-surface p-6">
-        <div className="text-[16px] font-semibold tracking-tight text-ink">LLM API key</div>
+        <div className="text-[16px] font-semibold tracking-tight text-ink">LLM</div>
         <div className="grid grid-cols-2 gap-4">
           <div className="flex flex-col gap-1.5">
             <label className={fieldLabelClass}>Provider</label>
             <select className={inputClass} value={local.provider} onChange={setField('provider')}>
-              {PROVIDERS.map((p) => <option key={p} value={p}>{p}</option>)}
+              {PROVIDERS.map((p) => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
             </select>
           </div>
           <div className="flex flex-col gap-1.5">
             <label className={fieldLabelClass}>API key</label>
-            <input className={inputClass} type="password" value={local.apiKey} onChange={setField('apiKey')} placeholder="sk-..." />
+            <input className={inputClass} type="password" value={local.apiKey} onChange={setField('apiKey')} placeholder="API key" />
           </div>
         </div>
         <div className="flex items-center gap-3.5">

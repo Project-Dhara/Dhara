@@ -1,26 +1,25 @@
 'use client'
 
-import { AlertTriangle, Check, ChevronDown, Minus } from 'lucide-react'
+import { useEffect } from 'react'
+import { AlertTriangle, Check, Minus } from 'lucide-react'
 import { isOccupationColumn, rowMapped } from '../../../lib/classifyColumns'
 
-const saveBtnClass = 'h-11 rounded-lg border-0 px-5 text-[15px] font-semibold text-white transition-colors bg-teal hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]'
-const cardHeadClass = 'flex items-center gap-2.5 border-b border-line px-[18px] py-3 text-[15px] font-semibold text-ink'
-const cardNoteClass = 'text-xs font-normal text-[#8E9398]'
+const saveBtnClass = 'h-8 rounded-md border-0 px-3.5 text-[12.5px] font-semibold text-white transition-colors bg-teal hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]'
+const ghostBtnClass = 'flex h-8 items-center rounded-md border border-line bg-white px-2.5 text-[12px] font-semibold text-ink-soft hover:border-teal/35 hover:text-teal disabled:cursor-default disabled:opacity-50'
+const fieldClass = 'box-border h-7 w-full min-w-0 rounded border border-line bg-cream px-1.5 font-sans text-[12px] text-ink placeholder:text-[#c2b8a6] focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal'
 
 /**
- * "Harmonisation" card: every classification column aliased across metadata
- * groups (or an occupation column needing NCO review) as a collapsible
- * verify-and-save row. All state lives in Classify.jsx; this component only
- * renders it and forwards the same callbacks the inline JSX used to call.
+ * One list row per clubbed column family. Verify once applies codes to every
+ * related table; the sidebar shows "+N to be harmonized" instead of N rows.
  */
 export default function HarmonisePanel({
   classifiedColumns,
   columnCodes,
-  harmoniseEntries,
+  harmoniseClubs,
   harmRows,
   savedCodes,
   openRule,
-  onToggleOpen,
+  onSelectEntry,
   ruleState,
   onToggleSkip,
   aliasVerified,
@@ -47,178 +46,271 @@ export default function HarmonisePanel({
       return m && (m.needs_manual_review || m.auto_fill === false || m.confidence !== 'high')
     }).length
   }
-  const entryReady = (entry) => {
-    if (ruleState[entry.id] === 'skip') return true
-    if (!aliasVerified[entry.id]) return false
-    const rows = harmRows[entry.id] || columnCodes[entry.sourceName] || []
-    return rows.length > 0 && rows.every(rowMapped)
+  const rowsFor = (club) => harmRows[club.id] || columnCodes[club.sourceName] || []
+  const clubMeta = (club) => {
+    const rows = rowsFor(club)
+    const skipped = ruleState[club.id] === 'skip'
+    const verified = Boolean(aliasVerified[club.id])
+    const mappedCount = rows.filter(rowMapped).length
+    const fullyMapped = rows.length > 0 && mappedCount === rows.length
+    const occ = isOccupationColumn(club.sourceName) || isOccupationColumn(club.name)
+    const ncoOpen = occ && columnNeedsNcoReview(club.sourceName) && !verified
+    const pendingVerify = !verified && !skipped
+    const done = skipped || (verified && fullyMapped)
+    const ready = done && !pendingVerify
+    const status = skipped ? 'Skipped' : pendingVerify || ncoOpen || !done ? 'Needs review' : 'Ready'
+    return {
+      rows,
+      skipped,
+      verified,
+      mappedCount,
+      fullyMapped,
+      occ,
+      ncoOpen,
+      reviewCount: ncoOpen ? ncoReviewCount(club.sourceName) : 0,
+      pendingVerify,
+      done,
+      ready,
+      status,
+      relatedCount: club.relatedCount || (club.members || []).length,
+      rowsDirty: JSON.stringify(rows) !== JSON.stringify(savedCodes[club.sourceName]),
+    }
   }
-  const entryNeedsVerify = () => true
+
+  const mappedLists = classifiedColumns.filter((c) => columnMapped(c.name)).length
+  const pendingCount = harmoniseClubs.filter((c) => {
+    const m = clubMeta(c)
+    return !m.ready && !m.skipped
+  }).length
+
+  const verifiableClubs = harmoniseClubs.filter((c) => {
+    const m = clubMeta(c)
+    return !m.skipped && m.fullyMapped && (m.pendingVerify || m.rowsDirty || harmDirty[c.id])
+  })
+
+  useEffect(() => {
+    if (!harmoniseClubs.length) return
+    if (openRule && harmoniseClubs.some((c) => c.id === openRule)) return
+    const firstPending = harmoniseClubs.find((c) => {
+      const m = clubMeta(c)
+      return !m.ready && !m.skipped
+    })
+    onSelectEntry((firstPending || harmoniseClubs[0]).id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [harmoniseClubs, openRule])
+
+  const active = harmoniseClubs.find((c) => c.id === openRule) || null
+  const activeMeta = active ? clubMeta(active) : null
+
+  const verifyAllReady = () => {
+    verifiableClubs.forEach((club) => {
+      onVerifyAndSave(club, rowsFor(club))
+    })
+  }
 
   return (
     <div className="overflow-hidden rounded-[10px] border border-line bg-white">
-      <div className={cardHeadClass}>
-        <span>Harmonisation</span>
-        <span className={cardNoteClass}>
-          {classifiedColumns.filter((c) => columnMapped(c.name)).length} of {classifiedColumns.length} lists mapped
-          {harmoniseEntries.length
-            ? ` · ${harmoniseEntries.length} other column${harmoniseEntries.length === 1 ? '' : 's'} to verify`
-            : ''}
+      <div className="flex flex-wrap items-center gap-2 border-b border-line px-[18px] py-2.5">
+        <span className="text-[14px] font-semibold text-ink">Harmonisation</span>
+        <span className="rounded-full bg-cream px-2 py-0.5 text-[11px] font-semibold tabular-nums text-ink-soft">
+          {mappedLists}/{classifiedColumns.length} mapped
         </span>
+        {harmoniseClubs.length > 0 && (
+          <span className="text-[12px] text-[#8E9398]">
+            · {pendingCount} club{pendingCount === 1 ? '' : 's'} to review
+          </span>
+        )}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {verifiableClubs.length > 0 && (
+            <button type="button" className={saveBtnClass} onClick={verifyAllReady}>
+              Verify all ready ({verifiableClubs.length})
+            </button>
+          )}
+        </div>
       </div>
-      {harmoniseEntries.length === 0 && (
-        <div className="border-b border-[#f1ebdf] last:border-b-0">
-          <div className="flex items-center gap-3 px-[18px] py-3.5" style={{ cursor: 'default' }}>
-            <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
-              <div className="text-[13px] text-ink-soft">No other classification columns besides the chips above.</div>
-            </div>
-          </div>
+
+      {harmoniseClubs.length === 0 && (
+        <div className="px-[18px] py-3 text-[12.5px] text-ink-soft">
+          No other classification columns besides the chips above.
         </div>
       )}
-      {harmoniseEntries.map((entry) => {
-        const { id, name, sourceName, isAlias } = entry
-        const rows = harmRows[id] || columnCodes[sourceName] || []
-        const open = openRule === id
-        const skipped = ruleState[id] === 'skip'
-        const mappedCount = rows.filter(rowMapped).length
-        const occ = isOccupationColumn(sourceName) || isOccupationColumn(name)
-        const needsVerify = entryNeedsVerify(entry)
-        const verified = Boolean(aliasVerified[id])
-        const pendingVerify = needsVerify && !verified && !skipped
-        const ncoOpen = occ && columnNeedsNcoReview(sourceName) && !verified
-        const reviewCount = ncoOpen ? ncoReviewCount(sourceName) : 0
-        const rowsDirty = JSON.stringify(rows) !== JSON.stringify(savedCodes[sourceName])
-        const done = entryReady(entry)
-        const detail = isAlias
-          ? (name === sourceName
-            ? `Same column in another group — review and verify`
-            : `Related to ${sourceName} — review and verify`)
-          : occ
-            ? 'Suggested NCO codes — review and verify'
-            : 'Value → code and definition from classification'
-        const status = skipped ? 'Skipped' : pendingVerify || ncoOpen || !done ? 'Needs review' : 'Ready'
-        const countLabel = occ && reviewCount > 0
-          ? `${reviewCount} needs review`
-          : `${mappedCount} of ${rows.length} mapped`
-        return (
-          <div className="border-b border-[#f1ebdf] last:border-b-0" key={id}>
-            <div className="flex cursor-pointer items-center gap-3 px-[18px] py-[13px] transition-colors hover:bg-[#FBF7EF]" onClick={() => onToggleOpen(id)}>
-              <span className={`h-2 w-2 flex-none rounded-full ${done && !pendingVerify ? 'bg-green' : 'bg-[rgba(242,194,48,0.7)]'}`} />
-              <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
-                <div className="text-sm font-semibold text-ink">{name}</div>
-                <div className="text-[13px] text-ink-soft">{detail}</div>
-              </div>
-              <span className={`whitespace-nowrap text-xs font-semibold ${done && !pendingVerify ? 'text-[#3d7a3d]' : 'text-[#9a7413]'}`}>
-                {status}
-              </span>
-              <span className="whitespace-nowrap text-xs text-[#8E9398]">{countLabel}</span>
-              <span className={`text-[#8E9398] transition-transform duration-300 ${open ? 'rotate-180' : ''}`}>
-                <ChevronDown className="h-4 w-4" strokeWidth={2} aria-hidden />
-              </span>
-            </div>
-            <div className="grid transition-[grid-template-rows] duration-300 ease-in-out" style={{ gridTemplateRows: open ? '1fr' : '0fr' }}>
-              <div
-                className={`min-h-0 overflow-hidden px-[18px] pb-4 transition-[opacity,transform] duration-300 ease-in-out ${open ? 'pointer-events-auto translate-y-0 opacity-100' : 'pointer-events-none -translate-y-1.5 opacity-0'}`}
-              >
-                <div className="flex items-center gap-2 pb-2.5">
+
+      {harmoniseClubs.length > 0 && (
+        <div className="grid min-h-[320px] grid-cols-1 md:grid-cols-[minmax(220px,280px)_1fr]">
+          <div className="max-h-[min(520px,60vh)] overflow-y-auto border-b border-line md:border-b-0 md:border-r md:border-line">
+            {harmoniseClubs.map((club) => {
+              const m = clubMeta(club)
+              const selected = club.id === openRule
+              return (
+                <button
+                  key={club.id}
+                  type="button"
+                  className={`flex w-full items-center gap-2 border-b border-[#f1ebdf] px-3 py-2.5 text-left transition-all duration-dhara ease-dhara last:border-b-0 ${
+                    selected ? 'bg-sage/60' : 'bg-white hover:bg-[#FBF7EF]'
+                  }`}
+                  onClick={() => onSelectEntry(club.id)}
+                >
+                  <span className={`h-1.5 w-1.5 flex-none rounded-full ${m.ready ? 'bg-green' : 'bg-[rgba(242,194,48,0.85)]'}`} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[12.5px] font-semibold text-ink">{club.name}</div>
+                    <div className="truncate text-[10.5px] text-[#8E9398]">
+                      {m.relatedCount > 0
+                        ? `+${m.relatedCount} to be harmonized`
+                        : `${m.mappedCount}/${m.rows.length} mapped`}
+                    </div>
+                  </div>
+                  <span
+                    className={`flex-none rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                      m.ready
+                        ? 'bg-sage text-[#3d7a3d]'
+                        : m.skipped
+                          ? 'bg-cream text-ink-soft'
+                          : 'bg-[rgba(242,194,48,0.22)] text-[#9a7413]'
+                    }`}
+                  >
+                    {m.status === 'Needs review' ? 'Review' : m.status}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="flex min-w-0 flex-col px-[18px] py-3">
+            {!active || !activeMeta ? (
+              <div className="py-8 text-[12.5px] text-ink-soft">Select a column family to review.</div>
+            ) : (
+              <div key={active.id} className="dhara-group-panel flex min-w-0 flex-col">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13px] font-semibold text-ink">
+                      {active.name}
+                      {activeMeta.relatedCount > 0 && (
+                        <span className="ml-1.5 text-[11.5px] font-semibold text-ink-soft">
+                          +{activeMeta.relatedCount} to be harmonized
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <span
+                    className={`flex-none rounded-full px-2 py-0.5 text-[10.5px] font-semibold ${
+                      activeMeta.ready
+                        ? 'bg-sage text-[#3d7a3d]'
+                        : activeMeta.skipped
+                          ? 'bg-cream text-ink-soft'
+                          : 'bg-[rgba(242,194,48,0.22)] text-[#9a7413]'
+                    }`}
+                  >
+                    {activeMeta.status}
+                  </span>
                   <button
                     type="button"
-                    className="flex h-8 items-center rounded-[5px] border border-line bg-white px-3 text-[13px] font-semibold text-ink-soft"
-                    onClick={() => onToggleSkip(id)}
+                    className={ghostBtnClass}
+                    onClick={() => onToggleSkip(active.id)}
                   >
-                    {skipped ? 'Unskip' : 'Skip this column'}
+                    {activeMeta.skipped ? 'Unskip' : 'Skip'}
                   </button>
-                  {needsVerify ? (
+                  <button
+                    type="button"
+                    className={saveBtnClass}
+                    disabled={activeMeta.verified && !harmDirty[active.id] && !activeMeta.rowsDirty}
+                    onClick={() => onVerifyAndSave(active, activeMeta.rows)}
+                  >
+                    {activeMeta.verified && !harmDirty[active.id]
+                      ? 'Verified'
+                      : activeMeta.relatedCount > 1
+                        ? `Verify & save all ${activeMeta.relatedCount}`
+                        : 'Verify & save'}
+                  </button>
+                  {!activeMeta.pendingVerify && activeMeta.rowsDirty && (
                     <button
                       type="button"
-                      className={`${saveBtnClass} h-11 !text-sm`}
-                      disabled={verified && !harmDirty[id]}
-                      onClick={() => onVerifyAndSave(entry, rows)}
-                    >
-                      {verified && !harmDirty[id] ? 'Verified' : 'Verify & save'}
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className={`${saveBtnClass} h-11 !text-sm`}
-                      disabled={!rowsDirty}
-                      onClick={() => onSaveChanges(entry, rows)}
+                      className={ghostBtnClass}
+                      onClick={() => onSaveChanges(active, activeMeta.rows)}
                     >
                       Save changes
                     </button>
                   )}
                 </div>
-                <p className="m-0 mb-2.5 text-[13px] leading-tight text-ink-soft">
-                  Value in file comes from the data and cannot be changed. Code and definition are editable.
-                </p>
-                <div className="overflow-hidden rounded-lg border border-[#cfc6b4]">
-                  <div className="grid grid-cols-[38px_1.2fr_0.7fr_1.4fr_64px] items-stretch border-b border-[#cfc6b4] bg-[#F4EFE3] [&>div]:border-l [&>div]:border-[#e0d7c4] [&>div]:px-3 [&>div]:py-2 [&>div]:font-label [&>div]:text-[11px] [&>div]:uppercase [&>div]:tracking-wide [&>div]:text-[#6E7378] [&>div:first-child]:border-l-0 [&>div:first-child]:text-center [&>div:last-child]:px-1 [&>div:last-child]:text-center">
-                    <div>#</div>
-                    <div>
-                      Value in file
-                      <span className="mt-0.5 block text-[10px] font-semibold tracking-wide text-[#c36637]">Fixed</span>
-                    </div>
-                    <div>
-                      Code
-                      <span className="mt-0.5 block text-[10px] font-semibold tracking-wide text-[#3d7a3d]">Editable</span>
-                    </div>
-                    <div>
-                      Definition
-                      <span className="mt-0.5 block text-[10px] font-semibold tracking-wide text-[#3d7a3d]">Editable</span>
-                    </div>
-                    <div>Match</div>
-                  </div>
-                  {rows.map((row, i) => {
-                    const m = occ ? (ncoMatchesByCol[sourceName] || {})[row.value] : null
-                    const filled = rowMapped(row)
-                    const rowReview = Boolean(m?.needs_manual_review) && !verified
-                    return (
-                      <div className="grid grid-cols-[38px_1.2fr_0.7fr_1.4fr_64px] items-stretch border-b border-[#f1ebdf] last:border-b-0" key={row.value || i}>
-                        <div className="flex items-center justify-center self-stretch bg-[#FBF7EF] text-[11px] text-[#a49c8e]">{i + 1}</div>
-                        <div className="flex cursor-default flex-col justify-center gap-0.5 border-l border-[#f1ebdf] bg-[#FBF7EF] px-3 py-2" title="From the data — not editable">
-                          <div>{row.value}</div>
-                          {m && (
-                            <div className="text-[11.5px] text-[#a49c8e]">
-                              {m.level}
-                              {rowReview ? ' · review' : ''}
-                              {m.codes?.length > 1 ? ' · both valid' : ''}
-                            </div>
-                          )}
-                        </div>
-                        <input
-                          className="box-border h-full min-h-[40px] w-full border-0 border-l border-[#f1ebdf] bg-white px-3 py-2 font-sans text-[13px] text-ink placeholder:text-[#c2b8a6] focus:relative focus:z-[1] focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal"
-                          type="text"
-                          value={row.code}
-                          placeholder="Edit code"
-                          title="Editable"
-                          onChange={(e) => onFieldChange(entry, i, 'code', e.target.value)}
-                        />
-                        <input
-                          className="box-border h-full min-h-[40px] w-full border-0 border-l border-[#f1ebdf] bg-white px-3 py-2 font-sans text-[13px] text-ink placeholder:text-[#c2b8a6] focus:relative focus:z-[1] focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal"
-                          type="text"
-                          value={row.definition}
-                          placeholder="Edit definition"
-                          title="Editable"
-                          onChange={(e) => onFieldChange(entry, i, 'definition', e.target.value)}
-                        />
-                        <div className={`flex items-center justify-center border-l border-[#f1ebdf] text-center text-sm leading-none ${rowReview ? 'text-[#9a7413]' : ''}`}>
-                          {rowReview ? (
-                            <AlertTriangle className="h-3.5 w-3.5 text-[#c45c4a]" strokeWidth={2.25} aria-hidden />
-                          ) : filled ? (
-                            <Check className="h-3.5 w-3.5 text-[#3d7a3d]" strokeWidth={2.5} aria-hidden />
-                          ) : (
-                            <Minus className="h-3.5 w-3.5 text-ink-soft" strokeWidth={2} aria-hidden />
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
+                <div className="mb-2 text-[11.5px] text-ink-soft">
+                  {activeMeta.mappedCount}/{activeMeta.rows.length} mapped · value fixed · one verify updates all related tables
+                </div>
+
+                <div className="max-h-[min(320px,45vh)] overflow-auto rounded-md border border-[#cfc6b4]">
+                  <table className="w-full min-w-[560px] table-fixed border-collapse text-left">
+                    <thead className="sticky top-0 z-[1]">
+                      <tr className="bg-[#F4EFE3] text-[10.5px] uppercase tracking-wide text-[#8E9398]">
+                        <th className="w-8 border-b border-[#d7cdb9] px-1.5 py-1.5 text-center font-semibold">#</th>
+                        <th className="w-[34%] border-b border-[#d7cdb9] px-2 py-1.5 font-semibold">
+                          Value
+                          <span className="ml-1 font-semibold normal-case tracking-normal text-[#c36637]">fixed</span>
+                        </th>
+                        <th className="w-[22%] border-b border-[#d7cdb9] px-2 py-1.5 font-semibold">Code</th>
+                        <th className="w-[34%] border-b border-[#d7cdb9] px-2 py-1.5 font-semibold">Definition</th>
+                        <th className="w-10 border-b border-[#d7cdb9] px-1 py-1.5 text-center font-semibold">Ok</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeMeta.rows.map((row, i) => {
+                        const m = activeMeta.occ
+                          ? (ncoMatchesByCol[active.sourceName] || {})[row.value]
+                          : null
+                        const filled = rowMapped(row)
+                        const rowReview = Boolean(m?.needs_manual_review) && !activeMeta.verified
+                        return (
+                          <tr className="border-b border-[#f1ebdf] bg-white last:border-b-0" key={row.value || i}>
+                            <td className="bg-[#FBF7EF] px-1.5 py-0.5 text-center text-[11px] tabular-nums text-[#a49c8e]">
+                              {i + 1}
+                            </td>
+                            <td className="bg-[#FBF7EF] px-2 py-0.5 align-middle" title="From the data — not editable">
+                              <div className="truncate text-[12.5px] font-medium text-ink">{row.value}</div>
+                              {m && (
+                                <div className="truncate text-[10px] leading-tight text-[#a49c8e]">
+                                  {m.level}
+                                  {rowReview ? ' · review' : ''}
+                                  {m.codes?.length > 1 ? ' · both valid' : ''}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-1 py-0.5 align-middle">
+                              <input
+                                className={fieldClass}
+                                type="text"
+                                value={row.code}
+                                placeholder="Code"
+                                title="Editable"
+                                onChange={(e) => onFieldChange(active, i, 'code', e.target.value)}
+                              />
+                            </td>
+                            <td className="px-1 py-0.5 align-middle">
+                              <input
+                                className={fieldClass}
+                                type="text"
+                                value={row.definition}
+                                placeholder="Definition"
+                                title="Editable"
+                                onChange={(e) => onFieldChange(active, i, 'definition', e.target.value)}
+                              />
+                            </td>
+                            <td className={`px-1 py-0.5 text-center ${rowReview ? 'text-[#9a7413]' : ''}`}>
+                              {rowReview ? (
+                                <AlertTriangle className="mx-auto h-3.5 w-3.5 text-[#c45c4a]" strokeWidth={2.25} aria-hidden />
+                              ) : filled ? (
+                                <Check className="mx-auto h-3.5 w-3.5 text-[#3d7a3d]" strokeWidth={2.5} aria-hidden />
+                              ) : (
+                                <Minus className="mx-auto h-3.5 w-3.5 text-ink-soft" strokeWidth={2} aria-hidden />
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </div>
-            </div>
+            )}
           </div>
-        )
-      })}
+        </div>
+      )}
     </div>
   )
 }

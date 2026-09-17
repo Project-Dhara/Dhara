@@ -55,7 +55,8 @@ Cloud Run / Render (root Dockerfile) · Neon or Cloud SQL · optional GCS
 - `DATABASE_URL` with pgvector available
 - `JWT_SECRET` for login tokens
 - `ENABLE_SIGNUP=false` on locked-down deployments
-- LLM keys only if you need LLM features (`SKIP_LLM=true` otherwise)
+- MEITY-empanelled LLM keys only if you need full AI reconstruction / assists
+  (see [on-prem](./on-prem.md) for what works without a key)
 
 ## Security checklist (any environment)
 

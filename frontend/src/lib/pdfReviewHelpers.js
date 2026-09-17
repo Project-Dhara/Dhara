@@ -122,7 +122,7 @@ export function collectReviewReasons(table) {
 
 
 // DEV-ONLY: semantic_status is 'classified' for any table that went through
-// the OpenAI validation step (single-page, batched, or alignment-guard
+// the LLM validation step (single-page, batched, or alignment-guard
 // fallback), and 'not_classified' for the deterministic no-LLM path. Lets a
 // developer isolate AI-classified output to spot-check reconstruction /
 // classification quality without wading through the auto-accepted tables.
@@ -661,8 +661,31 @@ export function buildBodyCellSpans(rows, columns) {
 }
 
 
+export function stripCaptionLabelPrefix(title) {
+  const raw = String(title || '').trim().replace(/\s+/g, ' ')
+  if (!raw) return raw
+  // "Statement 4.6: Distribution…" / "Table 2.1 — Foo"
+  const withSep = raw.replace(
+    /^(?:TABLE|TAB\.?|STATEMENT|ANNEX(?:URE)?|SCHEDULE|EXHIBIT|APPENDIX|FIG(?:URE)?|CHART|BOX)\b\s*(?:[\w]+(?:[./\-][\w]+)*)?\s*[:\-–—]\s*/i,
+    '',
+  ).replace(/^[:\-–—\s]+/, '').trim()
+  if (withSep && withSep.length >= 4 && withSep.toLowerCase() !== raw.toLowerCase()) {
+    return withSep
+  }
+  // "Statement 4.6 Distribution…" (space after number, no colon)
+  const withSpace = raw.replace(
+    /^(?:TABLE|TAB\.?|STATEMENT|ANNEX(?:URE)?|SCHEDULE|EXHIBIT|APPENDIX|FIG(?:URE)?|CHART|BOX)\b\s+[\w]+(?:[./\-][\w]+)*\s+/i,
+    '',
+  ).trim()
+  if (withSpace && withSpace.length >= 4 && withSpace.toLowerCase() !== raw.toLowerCase()) {
+    return withSpace
+  }
+  return raw
+}
+
+
 export function isUsableTableTitle(title, columns) {
-  const t = String(title || '').trim()
+  const t = stripCaptionLabelPrefix(String(title || '').trim())
   if (!t || t.length < 4) return false
   // Truncated PDF wrap leftovers like "Direc-"
   if (/[–—-]$/.test(t)) return false
@@ -682,14 +705,14 @@ export function isUsableTableTitle(title, columns) {
 
 
 export function displayTitle(table) {
-  const t = (table?.title || '').trim()
+  const t = stripCaptionLabelPrefix((table?.title || '').trim())
   if (isUsableTableTitle(t, table?.columns)) return t
   return null
 }
 
 
 export function titleForEdit(table) {
-  return displayTitle(table) || ''
+  return displayTitle(table) || stripCaptionLabelPrefix((table?.title || '').trim()) || ''
 }
 
 

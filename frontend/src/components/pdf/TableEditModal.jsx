@@ -76,7 +76,7 @@ export function TableEditModal({
   const [hdrSel, setHdrSel] = useState(null) // { start, end, levelIdx }
   const [dropHint, setDropHint] = useState(null) // { index, mode }
   const [comparePdf, setComparePdf] = useState(false)
-  const [showCompareTip, setShowCompareTip] = useState(variant === 'page')
+  const [showCompareTip, setShowCompareTip] = useState(variant === 'page' && Boolean(jobId))
   const [interactionMode, setInteractionMode] = useState('edit') // 'edit' | 'view'
   const canEdit = interactionMode === 'edit'
   const [splitPct, setSplitPct] = useState(42)
@@ -492,6 +492,7 @@ export function TableEditModal({
             </div>
           </div>
           <div className="flex items-center gap-1.5">
+            {jobId ? (
             <div className="relative">
           <button
             type="button"
@@ -532,6 +533,7 @@ export function TableEditModal({
                 </div>
               ) : null}
             </div>
+            ) : null}
             <button
               type="button"
               className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-ink-soft hover:bg-white hover:text-ink"

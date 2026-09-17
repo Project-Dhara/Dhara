@@ -46,6 +46,16 @@ NMDS · LGD · NCO · NIC · domain-specific lists
 NCO concordance files are **not** redistributed in the repo. Stewards upload
 them; see `backend/data/nco_2015_concordance.csv.example` for columns.
 
+### Configuration modules (required for this stage)
+
+| Module | Role |
+|--------|------|
+| **Classification code configuration** | Source of official / uploaded code lists used when mapping observed values |
+| **MEITY-empanelled LLM** | Optional assistance for occupation / alias matching when a key is set |
+
+Without uploaded classification standards, harmonisation has little or no code
+list to match against. See [Configuration modules](./overview.md#configuration-modules).
+
 ## Design / roadmap
 
 - Broader non-occupation standards UX

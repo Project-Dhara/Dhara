@@ -61,5 +61,5 @@ Embeddings are keyed by `object_type` / `object_id` / `chunk_kind` (and often
 
 ```text
 EMBEDDING_DIM=1536          # text-embedding-3-small width
-OPENAI_API_KEY=…            # typical embedding provider
+OPENAI_API_KEY=…            # MEITY-empanelled / OpenAI-compatible embedding endpoint
 ```
