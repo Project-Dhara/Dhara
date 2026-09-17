@@ -228,6 +228,8 @@ def _is_descriptive_in_grid_title(label: str) -> bool:
         return False
     if _UNIT_GROUP_RE.match(s):
         return False
+    if _looks_like_column_list_banner(s):
+        return False
     m = _TABLE_ID_THEN_TITLE_RE.match(s)
     if m:
         s = _cell_str(m.group("title"))
@@ -245,6 +247,18 @@ def _is_descriptive_in_grid_title(label: str) -> bool:
     if sum(1 for w in words if _is_numeric_cell(w)) >= max(2, len(words) // 2):
         return False
     return True
+
+
+def _looks_like_column_list_banner(label: str) -> bool:
+    """Comma/slash-separated field lists that belong in headers, not titles."""
+    s = _cell_str(label)
+    if not s:
+        return False
+    parts = [p.strip() for p in re.split(r"[,;/|]", s) if p.strip()]
+    if len(parts) < 2:
+        return False
+    shortish = sum(1 for p in parts if len(p) <= 40 and len(p.split()) <= 5)
+    return shortish >= max(2, len(parts) - 1) and len(s) <= 160
 
 
 def extract_in_grid_caption(
@@ -303,8 +317,27 @@ def extract_in_grid_caption(
     ) -> dict:
         out["table_id_label"] = table_id
         if title_pairs:
-            out["title"] = " — ".join(lab for _i, lab in title_pairs)
-            out["rows_consumed"] = title_pairs[-1][0] + 1
+            # Prefer a short primary caption. Do not swallow column-list banners
+            # (e.g. "Scheme name, beneficiaries, budget") into the title — those
+            # must remain in the body so headers/data extract correctly.
+            kept: List[Tuple[int, str]] = []
+            for i, pair in enumerate(title_pairs):
+                _idx, lab = pair
+                if i > 0:
+                    if _looks_like_column_list_banner(lab):
+                        break
+                    if len(lab) > 48 or lab.count(",") >= 2:
+                        break
+                    if kept:
+                        # At most one short genuine subtitle (e.g. URBAN).
+                        kept.append(pair)
+                        break
+                kept.append(pair)
+            if kept:
+                out["title"] = " — ".join(lab for _i, lab in kept)
+                out["rows_consumed"] = kept[-1][0] + 1
+            else:
+                out["rows_consumed"] = fallback_end_i + 1
         else:
             out["rows_consumed"] = fallback_end_i + 1
         return out

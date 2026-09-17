@@ -56,7 +56,16 @@ export function TableTitleDisplay({ table, className = '' }) {
 // Extracted-data preview + full-page structure editor. Numeric columns
 // (integer / decimal / percentage) stay read-only in the grid; rename /
 // reorder / add / delete / merge are edited with PDF + original snapshots.
-export function TableDetail({ table, jobId, onSave, onTitleLive, onTitleCommit, editorOnly = false }) {
+export function TableDetail({
+  table,
+  jobId,
+  onSave,
+  onTitleLive,
+  onTitleCommit,
+  editorOnly = false,
+  editorCloseHref = null,
+  editorFooterHint = null,
+}) {
   const [originalSnapshot] = useState(() => ({
     columns: cloneColumns(table.columns || []),
     rows: padRowsToColumns(table.rows || [], (table.columns || []).length),
@@ -630,8 +639,21 @@ export function TableDetail({ table, jobId, onSave, onTitleLive, onTitleCommit, 
     setSavingEditor(true)
     try {
       await onSave?.(edits)
-      notifyTableEdited(jobId, table.table_id, edits)
-      closeEditorWindow(jobId)
+      if (jobId) {
+        notifyTableEdited(jobId, table.table_id, edits)
+        closeEditorWindow(jobId)
+      } else if (editorCloseHref) {
+        try {
+          window.close()
+        } catch {
+          /* ignore */
+        }
+        window.setTimeout(() => {
+          if (!window.closed) window.location.assign(editorCloseHref)
+        }, 150)
+      } else {
+        closeEditorWindow(jobId)
+      }
     } catch (e) {
       window.alert(e?.message || 'Could not save table edits')
     } finally {
@@ -682,8 +704,23 @@ export function TableDetail({ table, jobId, onSave, onTitleLive, onTitleCommit, 
         {...editorProps}
         variant="page"
         doneLabel={savingEditor ? 'Saving…' : 'Save & close'}
-        footerHint="Saves to the review job, then closes this tab. The review page updates automatically."
-        onClose={() => closeEditorWindow(jobId)}
+        footerHint={
+          editorFooterHint
+          || (jobId
+            ? 'Saves to the review job, then closes this tab. The review page updates automatically.'
+            : 'Saves back to the preview page, then closes this tab.')
+        }
+        onClose={() => {
+          if (jobId) closeEditorWindow(jobId)
+          else if (editorCloseHref) {
+            try { window.close() } catch { /* ignore */ }
+            window.setTimeout(() => {
+              if (!window.closed) window.location.assign(editorCloseHref)
+            }, 150)
+          } else {
+            closeEditorWindow(jobId)
+          }
+        }}
         onDone={persistEditorAndClose}
       />
     )

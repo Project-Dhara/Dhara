@@ -51,3 +51,6 @@ Key module: `backend/extraction/sql_extract.py`. API:
 ## Console
 
 **Files** step: upload Excel / connect SQL / upload PDF → processing UI for PDF.
+
+Dataset ID display / minting rules come from **Settings → Dataset ID
+configuration** (see [Configuration modules](./overview.md#configuration-modules)).

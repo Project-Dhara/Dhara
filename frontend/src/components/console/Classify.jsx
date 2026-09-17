@@ -237,7 +237,13 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
           title: String(row.definition || m?.title || '').trim() || null,
           level,
         }
-      }).filter((a) => a.value && a.code)
+      }).filter((a) => {
+        if (!a.value || !a.code) return false
+        // Only persist real NCO digit codes — never identity label→label maps.
+        if (!/^\d{1,4}(?:\.\d+)*$/.test(a.code)) return false
+        if (a.code.toLowerCase() === String(a.value).trim().toLowerCase()) return false
+        return true
+      })
       if (aliases.length) {
         fetch('/api/catalogue/nco-aliases', withAuthHeaders({
           method: 'POST',
@@ -283,7 +289,12 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
           title: String(row.definition || m?.title || '').trim() || null,
           level: m?.level || 'division',
         }
-      }).filter((a) => a.value && a.code)
+      }).filter((a) => {
+        if (!a.value || !a.code) return false
+        if (!/^\d{1,4}(?:\.\d+)*$/.test(a.code)) return false
+        if (a.code.toLowerCase() === String(a.value).trim().toLowerCase()) return false
+        return true
+      })
       if (aliases.length) {
         fetch('/api/catalogue/nco-aliases', withAuthHeaders({
           method: 'POST',
@@ -444,13 +455,24 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
         if (!isOccupationColumn(occName)) return
         // Only auto-fill Code/Definition for high-confidence hits.
         const rows = columnCodes[occName] || []
+        const isAggregateValue = (v) => {
+          const s = String(v || '').trim().toLowerCase().replace(/\s+/g, ' ')
+          return /^(all|total|grand total|sub ?total|overall|sum)(\s+(occupations|categories|workers|persons|people))?$/.test(s)
+        }
         const nextRows = rows.map((row) => {
+          // Aggregates must not keep a suggested NCO code.
+          if (isAggregateValue(row.value)) {
+            return { ...row, code: '', definition: '' }
+          }
           const m = matches[row.value]
           if (!m || !m.auto_fill) return row
           if (m.code == null || m.code === '') return row
+          const code = String(m.code).trim()
+          // Never auto-fill occupation labels into the Code column.
+          if (!/^\d{1,4}(?:\.\d+)*$/.test(code)) return row
           return {
             ...row,
-            code: String(m.code),
+            code,
             definition: m.title != null && m.title !== '' ? String(m.title) : row.definition,
           }
         })

@@ -12,6 +12,7 @@ from metadata.validation import (
     validate_table_fields_code,
     validate_table_fields_llm,
     repair_table_id_title_llm,
+    normalize_table_title,
     _title_looks_like_headers,
 )
 
@@ -94,12 +95,20 @@ def _validate_table_id_title(table: dict) -> None:
     """
     table_id = table.get("table_id", "")
     title = table.get("title", "")
+    columns = table.get("columns") or []
+
+    # Deterministic cleanup: drop column-list / overlong " — " suffixes before
+    # deciding whether LLM repair is needed.
+    cleaned = normalize_table_title(title, columns)
+    if cleaned and cleaned != (title or "").strip():
+        table["title"] = cleaned
+        title = cleaned
 
     code_result = validate_table_fields_code(table_id, title)
     needs_repair = (
         (not (title or "").strip())
         or (not (table_id or "").strip())
-        or _title_looks_like_headers(title, table.get("columns") or [])
+        or _title_looks_like_headers(title, columns)
         or any("swap" in str(i).lower() for i in (code_result.get("issues") or []))
         or any("title" in str(i).lower() and "missing" in str(i).lower() for i in (code_result.get("issues") or []))
         or any("table id" in str(i).lower() and "missing" in str(i).lower() for i in (code_result.get("issues") or []))

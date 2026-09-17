@@ -40,6 +40,21 @@ Grouping (which persists approved tables).
 Console Preview + ID/title reconciliation (`ReconcileIds`) before grouping.
 Staging may use `extract_staging` between extract and catalogue push.
 
+Dataset IDs shown / edited in Preview follow **Settings → Dataset ID
+configuration** (prefix, separator, statistics). Full table structure edits use
+the shared View/Edit table editor.
+
+## Configuration modules
+
+Cross-cutting Settings that affect Preview:
+
+| Module | Effect |
+|--------|--------|
+| Dataset ID configuration | How dataset IDs are formed and labelled |
+| MEITY-empanelled LLM | Whether AI-filled ID/title repairs ran and need review |
+
+See [Configuration modules](./overview.md#configuration-modules).
+
 ## Design rules
 
 - Reviewers must see *why* something needs attention (`human_review_reason`)

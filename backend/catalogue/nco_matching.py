@@ -18,6 +18,7 @@ import json
 import math
 import re
 from difflib import SequenceMatcher
+from typing import Optional
 
 _CODES_CACHE = None
 _NODES_CACHE = None
@@ -37,6 +38,23 @@ _STOP = frozenset({
 })
 _PUNCT_RE = re.compile(r"[^a-z0-9\s]")
 _INPUT_SPLIT_RE = re.compile(r"[,/;]|\s+and\s+|\s+or\s+", re.I)
+# Hierarchy codes are 1–4 digits; specific occupations may be dotted (2.1.0100).
+_NCO_CODE_RE = re.compile(r"^\d{1,4}(?:\.\d+)*$")
+# Row totals / stub aggregates that appear in occupation columns — never map to NCO.
+_AGGREGATE_LABELS = frozenset({
+    "all",
+    "total",
+    "grand total",
+    "sub total",
+    "subtotal",
+    "overall",
+    "sum",
+    "all occupations",
+    "all categories",
+    "all workers",
+    "total workers",
+    "total occupations",
+})
 
 # Tunable gates (not vocabulary) — auto_fill only above these.
 _EMBED_HIGH = 0.52
@@ -50,6 +68,46 @@ def normalize_occupation_value(text) -> str:
     s = _PUNCT_RE.sub(" ", (text or "").lower())
     s = re.sub(r"\s+", " ", s).strip()
     return s
+
+
+def is_non_occupation_aggregate(text) -> bool:
+    """True for All / Total / similar stubs that must not receive an NCO code."""
+    n = normalize_occupation_value(text)
+    if not n:
+        return False
+    if n in _AGGREGATE_LABELS:
+        return True
+    # "All - Urban", "Total (persons)", etc.
+    if re.fullmatch(r"(?:all|total|overall|sum)(?:\s+\w+){0,3}", n):
+        # Keep real phrases like "total inspectors" out — only short stubs.
+        tokens = n.split()
+        if tokens and tokens[0] in {"all", "total", "overall", "sum"} and len(tokens) <= 2:
+            if len(tokens) == 1:
+                return True
+            # Allow "all occupations" / "total workers" via set; reject "all india" etc.
+            return n in _AGGREGATE_LABELS or tokens[1] in {
+                "occupations", "categories", "workers", "persons", "people",
+            }
+    return False
+
+
+def looks_like_nco_code(code) -> bool:
+    """True for real NCO codes (``2``, ``24``, ``2411``, ``2.1.0100``), not labels."""
+    s = str(code or "").strip()
+    return bool(s and _NCO_CODE_RE.match(s))
+
+
+def is_usable_nco_alias(alias_row, occupation_text=None) -> bool:
+    """Reject aliases that stored the occupation label as the code."""
+    if not isinstance(alias_row, dict):
+        return False
+    code = str(alias_row.get("code") or "").strip()
+    if not looks_like_nco_code(code):
+        return False
+    if occupation_text is not None:
+        if normalize_occupation_value(code) == normalize_occupation_value(occupation_text):
+            return False
+    return True
 
 
 def _load_all_codes(conn):
@@ -377,23 +435,27 @@ def _finalize(result, score=None, used_embeddings=False, source="retrieval"):
     return result
 
 
-def _alias_result(alias_row):
+def _alias_result(alias_row, conn=None):
     level = alias_row.get("level") or "division"
     if level == "group":
         level = "subdivision"
+    code = str(alias_row.get("code") or "").strip()
+    title = str(alias_row.get("title") or "").strip()
+    if not title and conn is not None:
+        title = _title_for_code(conn, code, level) or ""
     result = {
         "level": level,
         "nco_code": None,
-        "code": str(alias_row.get("code") or ""),
-        "title": alias_row.get("title") or "",
+        "code": code,
+        "title": title,
         "family_code": None,
         "family_title": None,
         "group_code": None,
         "group_title": None,
-        "subdivision_code": str(alias_row["code"]) if level == "subdivision" else None,
-        "subdivision_title": alias_row.get("title") if level == "subdivision" else None,
-        "division_code": str(alias_row["code"]) if level == "division" else None,
-        "division_title": alias_row.get("title") if level == "division" else None,
+        "subdivision_code": code if level == "subdivision" else None,
+        "subdivision_title": title if level == "subdivision" else None,
+        "division_code": code if level == "division" else None,
+        "division_title": title if level == "division" else None,
         "occupation_title": None,
         "score": 1.0,
         "alternatives": [],
@@ -402,6 +464,31 @@ def _alias_result(alias_row):
         result["family_code"] = result["code"]
         result["family_title"] = result["title"]
     return _finalize(result, score=1.0, used_embeddings=False, source="alias")
+
+
+def _title_for_code(conn, code: str, level: str) -> Optional[str]:
+    """Resolve a hierarchy title from the concordance when an alias omitted it."""
+    code = str(code or "").strip()
+    if not code:
+        return None
+    rows = _load_all_codes(conn)
+    level = (level or "division").lower()
+    if level == "group":
+        level = "subdivision"
+    field = {
+        "division": ("division_code", "division_title"),
+        "subdivision": ("subdivision_code", "subdivision_title"),
+        "family": ("family_code", "family_title"),
+    }.get(level)
+    if not field:
+        return None
+    code_key, title_key = field
+    for row in rows:
+        if str(row.get(code_key) or "").strip() == code:
+            title = str(row.get(title_key) or "").strip()
+            if title:
+                return title
+    return None
 
 
 def _lookup_alias(conn, occupation_text):
@@ -457,10 +544,14 @@ def match_occupation(conn, occupation_text, extractor=None, shortlist_size=16):
         return None
 
     occupation_text = str(occupation_text).strip()
+    # Aggregates like All / Total are stubs, not occupations.
+    if is_non_occupation_aggregate(occupation_text):
+        return None
 
     alias = _lookup_alias(conn, occupation_text)
-    if alias and alias.get("code"):
-        return _alias_result(alias)
+    # Skip poisoned aliases that stored the label text as the "code".
+    if alias and is_usable_nco_alias(alias, occupation_text):
+        return _alias_result(alias, conn=conn)
 
     rows = _load_all_codes(conn)
     if not rows:

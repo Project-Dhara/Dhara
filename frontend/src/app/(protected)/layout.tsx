@@ -32,8 +32,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     if (authChecked && !loggedIn) router.replace('/login')
   }, [authChecked, loggedIn, router])
 
-  // Remember deep console routes (PDF processing / review / grouping) so
-  // AppShell → Console returns to the in-progress job after Settings.
+  // Remember the latest Console location (main /console or PDF deep links) so
+  // AppShell → Console returns to where the user left off — not a stale job.
   useEffect(() => {
     if (pathname) rememberConsoleReturnPath(pathname)
   }, [pathname])
@@ -43,8 +43,10 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   // Full-page table editor: skip AppShell chrome for maximum workspace.
   const isTableEditor = Boolean(
     pathname
-    && pathname.includes('/console/review/')
-    && pathname.includes('/edit/'),
+    && (
+      (pathname.includes('/console/review/') && pathname.includes('/edit/'))
+      || pathname.includes('/console/preview/edit/')
+    ),
   )
   if (isTableEditor) {
     return <>{children}</>

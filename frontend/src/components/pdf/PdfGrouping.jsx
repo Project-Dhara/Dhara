@@ -6,7 +6,7 @@ import { ArrowLeft } from 'lucide-react'
 import { withAuthHeaders } from '../../lib/auth'
 import { withLlmKeyHeaders } from '../../lib/llmKey'
 import { getMetadataStandard } from '../../lib/settingsConfig'
-import { clearConsoleSession } from '../../lib/consoleSession'
+import { goToConsoleFiles } from '../../lib/consoleSession'
 import { useApp } from '../../context/AppContext'
 import PdfConsoleLayout from './PdfConsoleLayout'
 import GroupingWorkspace from '../console/GroupingWorkspace'
@@ -331,8 +331,7 @@ export default function PdfGrouping({ jobId }) {
 
   const goToPipelineStep = (targetStep) => {
     if (targetStep === 1) {
-      clearConsoleSession()
-      router.push('/console')
+      goToConsoleFiles(router)
       return
     }
     if (targetStep === 2) {
@@ -474,8 +473,7 @@ export default function PdfGrouping({ jobId }) {
           onGoCatalogue={() => router.push('/catalogue')}
           onUploadAnother={() => {
             clearPdfPipeline(jobId)
-            clearConsoleSession()
-            router.push('/console')
+            goToConsoleFiles(router)
           }}
         />
       )}

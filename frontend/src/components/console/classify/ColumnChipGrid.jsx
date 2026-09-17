@@ -25,7 +25,7 @@ export default function ColumnChipGrid({ columns, selectedCol, onSelect, saving 
             <button
               key={`${c._metadataId || ''}:${c.name}`}
               type="button"
-              className={`flex h-8 w-full min-w-0 items-center gap-1.5 rounded-full border px-2.5 text-left transition-colors ${
+              className={`flex h-8 w-full min-w-0 items-center gap-1.5 rounded-full border px-2.5 text-left transition-all duration-dhara ease-dhara ${
                 selected
                   ? 'border-teal bg-sage text-teal-deep'
                   : 'border-line bg-white text-ink hover:border-teal/40 hover:bg-cream'

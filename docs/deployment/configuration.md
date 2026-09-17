@@ -1,5 +1,11 @@
 # Configuration reference
 
+This page covers **deploy-time** environment variables and secrets
+(`backend/.env`). Steward-facing **Configuration modules** (Dataset ID,
+Metadata standard, Classification codes, MEITY LLM key) live in the app
+**Settings** UI — see [Architecture — Configuration modules](../architecture.md#configuration-modules)
+and [Pipeline overview](../pipeline/overview.md#configuration-modules).
+
 Primary template: `backend/.env.example`. Copy to `backend/.env` for local and
 Compose (Compose also overrides `DATABASE_URL` for the backend service).
 

@@ -122,7 +122,7 @@ export function collectReviewReasons(table) {
 
 
 // DEV-ONLY: semantic_status is 'classified' for any table that went through
-// the MEITY-empanelled LLM validation step (single-page, batched, or alignment-guard
+// the LLM validation step (single-page, batched, or alignment-guard
 // fallback), and 'not_classified' for the deterministic no-LLM path. Lets a
 // developer isolate AI-classified output to spot-check reconstruction /
 // classification quality without wading through the auto-accepted tables.

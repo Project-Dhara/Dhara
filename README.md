@@ -292,11 +292,12 @@ preserved). `des-website` prefers `original_excel`, falling back to
 | Topic | Link |
 |-------|------|
 | Docs home | [docs/README.md](./docs/README.md) |
-| Architecture | [docs/architecture.md](./docs/architecture.md) |
-| Pipeline stages | [docs/pipeline/](./docs/pipeline/overview.md) |
+| Architecture | [docs/architecture.md](./docs/architecture.md) (includes Configuration modules) |
+| Pipeline stages | [docs/pipeline/overview.md](./docs/pipeline/overview.md) |
+| Configuration modules | [Architecture](./docs/architecture.md#configuration-modules) · [Pipeline](./docs/pipeline/overview.md#configuration-modules) |
 | On-prem deploy | [docs/deployment/on-prem.md](./docs/deployment/on-prem.md) |
 | Cloud deploy | [docs/deployment/cloud.md](./docs/deployment/cloud.md) |
-| Configuration | [docs/deployment/configuration.md](./docs/deployment/configuration.md) |
+| Configuration (env) | [docs/deployment/configuration.md](./docs/deployment/configuration.md) |
 
 ## License
 

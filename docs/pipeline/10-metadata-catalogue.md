@@ -29,6 +29,17 @@ Standards · provenance · quality · access info
   (`fill-group-metadata`, BatchReview)
 - **Publish** / batch push writes to Postgres
 
+### Configuration modules
+
+| Module | Role |
+|--------|------|
+| **Metadata configuration** | Selects **NMDS** vs **SDG** field set; which fields are required before submit |
+| **Dataset ID configuration** | Identity conventions carried into catalogue records |
+| **MEITY-empanelled LLM** | Optional autofill of group metadata when a key is set |
+
+Configure these under **Settings** before publish. See
+[Configuration modules](./overview.md#configuration-modules).
+
 ## In this codebase
 
 | Piece | Location |
@@ -37,6 +48,7 @@ Standards · provenance · quality · access info
 | API | `POST /api/catalogue/batch-push` |
 | Tables | `metadata_groups`, `datasets`, `dataset_rows` |
 | Browse UI | Catalogue section in the frontend |
+| Settings prefs | `frontend/src/lib/settingsConfig.ts` (standard + required fields) |
 | Optional files | GCS when `ENABLE_GCS=true` |
 
 ### What gets pushed (typical)

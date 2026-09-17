@@ -23,6 +23,11 @@ Geography · Time period · Frequency · Source
 Existing metadata · Existing standards
 ```
 
+KYDS is complementary to **Settings → Metadata configuration** (NMDS / SDG
+schema and required fields). KYDS captures custodian narrative; Settings
+chooses which catalogue schema later Metadata / Publish steps enforce. See
+[Configuration modules](./overview.md#configuration-modules).
+
 ## Design
 
 KYDS does not replace Preview. It seeds later metadata fill and helps reviewers

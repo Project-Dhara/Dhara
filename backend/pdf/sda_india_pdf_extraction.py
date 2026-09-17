@@ -2570,7 +2570,7 @@ def run_pipeline(pdf_path: Path, on_progress: Optional[Callable[[str, int, str],
                 progress_cb=lambda done, total: progress(
                     "validate",
                     55 + int(45 * done / total),
-                    f"MEITY LLM validated {done}/{total} page(s)",
+                    f"Validated {done}/{total} page(s)",
                 ),
             )
             validated_by_page.update(llm_results)

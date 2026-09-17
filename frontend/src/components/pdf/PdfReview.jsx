@@ -501,7 +501,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
         label: id === 'needs_review' ? 'Review needed' : 'No review needed',
       })),
     ...(filterCounts.reviewed > 0 ? [{ id: 'reviewed', label: 'Reviewed' }] : []),
-    // DEV-ONLY: isolate tables that went through the MEITY-empanelled LLM classification
+    // DEV-ONLY: isolate tables that went through the LLM classification
     // step vs. the deterministic auto-accepted path, for QA'ing AI output.
     // Never shown in a production build.
     ...(process.env.NODE_ENV !== 'production' ? [

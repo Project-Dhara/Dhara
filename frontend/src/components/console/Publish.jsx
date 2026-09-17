@@ -79,7 +79,6 @@ export default function Publish({ datasetLabel, metadataId, onGoDashboard, onUpl
         <div>
           <div className="text-xs font-semibold uppercase tracking-wide text-[#4a5f3c]">{datasetLabel}</div>
           <div className="text-[19px] font-semibold text-[#3d5230]">Published to the catalogue</div>
-          <div className="text-sm text-[#4a5f3c]">This release is now discoverable via the API and MCP endpoint below.</div>
         </div>
         <button className="inline-flex h-10 items-center gap-1.5 rounded-md border border-[#b9cfa9] bg-white px-4 text-sm font-semibold text-[#3d5230]" onClick={onGoCatalogue}>
           Open in catalogue

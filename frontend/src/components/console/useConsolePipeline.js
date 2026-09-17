@@ -15,13 +15,19 @@ import {
   buildGroupName,
 } from '../../lib/postPreview'
 import { loadPersistedConsoleState, CONSOLE_STORAGE_KEY } from '../../lib/consolePersist'
+import { subscribeConsoleTableEdits } from '../../lib/consoleTableEdit'
 import { stepInfoFor } from './ConsoleUploadChoice'
 
 export function useConsolePipeline() {
   const persisted = loadPersistedConsoleState()
 
   const [step, setStep] = useState(persisted?.step ?? 1)
-  const [uploadChoice, setUploadChoice] = useState(null)
+  const [uploadChoice, setUploadChoice] = useState(() => {
+    if (persisted?.uploadChoice) return persisted.uploadChoice
+    // Older sessions didn't store the choice — if we're past Files, assume workbook.
+    if ((persisted?.step ?? 1) >= 2 && persisted?.matchResult) return 'xlsx'
+    return null
+  })
   const [step1MetadataFiles, setStep1MetadataFiles] = useState([])
   const [pendingDatasetFiles, setPendingDatasetFiles] = useState([])
   const [pdfUploading, setPdfUploading] = useState(false)
@@ -102,8 +108,18 @@ export function useConsolePipeline() {
 
   useEffect(() => {
     const toSave = {
-      step, matchResult, batchPreviewId, selectedDataset,
-      metaLabel, metadataId, metadataIds, pendingGroups, savedIds: [...savedIds], metadataStarted, maxStepReached,
+      step,
+      uploadChoice,
+      matchResult,
+      batchPreviewId,
+      selectedDataset,
+      metaLabel,
+      metadataId,
+      metadataIds,
+      pendingGroups,
+      savedIds: [...savedIds],
+      metadataStarted,
+      maxStepReached,
       autoMatchResult: autoMatchResultRef.current,
     }
     try {
@@ -111,7 +127,46 @@ export function useConsolePipeline() {
     } catch {
       // best-effort — e.g. storage full or unavailable
     }
-  }, [step, matchResult, batchPreviewId, selectedDataset, metaLabel, metadataId, metadataIds, pendingGroups, savedIds, metadataStarted, maxStepReached])
+  }, [step, uploadChoice, matchResult, batchPreviewId, selectedDataset, metaLabel, metadataId, metadataIds, pendingGroups, savedIds, metadataStarted, maxStepReached])
+
+  // Flush before the page is hidden (sidebar nav / refresh) so the latest
+  // step is always what comes back — don't rely only on the effect above.
+  useEffect(() => {
+    const flush = () => {
+      try {
+        const raw = sessionStorage.getItem(CONSOLE_STORAGE_KEY)
+        const prev = raw ? JSON.parse(raw) : {}
+        sessionStorage.setItem(CONSOLE_STORAGE_KEY, JSON.stringify({
+          ...prev,
+          step,
+          uploadChoice,
+          matchResult,
+          batchPreviewId,
+          selectedDataset,
+          metaLabel,
+          metadataId,
+          metadataIds,
+          pendingGroups,
+          savedIds: [...savedIds],
+          metadataStarted,
+          maxStepReached,
+          autoMatchResult: autoMatchResultRef.current,
+        }))
+      } catch {
+        // best-effort
+      }
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush()
+    }
+    window.addEventListener('pagehide', flush)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      flush()
+      window.removeEventListener('pagehide', flush)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [step, uploadChoice, matchResult, batchPreviewId, selectedDataset, metaLabel, metadataId, metadataIds, pendingGroups, savedIds, metadataStarted, maxStepReached])
 
   const revertToAutomaticBatchGrouping = () => {
     if (!autoMatchResultRef.current) return
@@ -255,6 +310,14 @@ export function useConsolePipeline() {
     })
   }
 
+  // Apply structure/title edits saved from the full-page View/Edit table tab.
+  const patchTablesRef = useRef(patchTables)
+  patchTablesRef.current = patchTables
+  useEffect(() => subscribeConsoleTableEdits(({ uid, edits }) => {
+    if (!uid || !edits) return
+    patchTablesRef.current({ [uid]: edits })
+  }), [])
+
   const applyReconcile = (corrections) => {
     patchTables(corrections)
     setManualGrouping(false)
@@ -293,6 +356,7 @@ export function useConsolePipeline() {
     setSavedIds(new Set())
     setMetadataStarted(false)
     setMaxStepReached(2)
+    setUploadChoice((c) => c || 'xlsx')
     setStep(2)
   }
 
@@ -439,6 +503,16 @@ export function useConsolePipeline() {
     return previewReviewStatus(t, savedIds) === previewReviewFilter
   })
   const filteredPreviewUidKey = filteredPreviewTables.map((t) => t._uid).join('|')
+
+  // Drop empty status filters so the chip row never shows "Needs fixing (0)" /
+  // "AI review (0)" and the user isn't stuck on an empty view.
+  useEffect(() => {
+    if (previewReviewFilter === 'fix' && unsavedMismatched.length === 0) {
+      setPreviewReviewFilter('all')
+    } else if (previewReviewFilter === 'ai' && unsavedAiFilled.length === 0) {
+      setPreviewReviewFilter('all')
+    }
+  }, [previewReviewFilter, unsavedMismatched.length, unsavedAiFilled.length])
 
   useEffect(() => {
     if (step !== 2 || !filteredPreviewUidKey) return

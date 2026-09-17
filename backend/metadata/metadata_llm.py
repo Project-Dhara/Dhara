@@ -193,6 +193,46 @@ def _row_is_header(row: List[Any]) -> bool:
     return nums <= len(non_empty) * 0.35
 
 
+_SERIAL_CELL_RE = re.compile(
+    r"^(?:\d+(?:\.\d+)?|\d+[A-Za-z]|[A-Za-z]\d+)$"
+)
+
+
+def _looks_like_serial_cell(v: Any) -> bool:
+    s = _cell_str(v)
+    if not s:
+        return False
+    return bool(_SERIAL_CELL_RE.match(s))
+
+
+def _looks_like_data_row(row: List[Any]) -> bool:
+    """True for catalogue/data rows (serial id in stub, long values, etc.)."""
+    non_empty = [v for v in row if _cell_str(v)]
+    if not non_empty:
+        return False
+    if _looks_like_serial_cell(non_empty[0]):
+        return True
+    # Dense rows with several long free-text cells are almost never header bands.
+    longish = sum(1 for v in non_empty if len(_cell_str(v)) > 32)
+    if longish >= 2 and len(non_empty) >= 4:
+        return True
+    return False
+
+
+def _row_looks_like_column_labels(row: List[Any]) -> bool:
+    """First-row column names: several distinct, mostly short labels."""
+    non_empty = [v for v in row if _cell_str(v)]
+    if len(non_empty) < 3:
+        return False
+    unique = {_cell_str(v).upper() for v in non_empty}
+    if len(unique) < 3:
+        return False
+    if _looks_like_serial_cell(non_empty[0]):
+        return False
+    shortish = sum(1 for v in non_empty if len(_cell_str(v)) <= 40)
+    return shortish >= max(3, int(len(non_empty) * 0.6))
+
+
 def _detect_header_rows(body: List[List[Any]], n_cols: int) -> Tuple[int, List[int]]:
     """Number of leading header rows in `body`, plus indices of rows to skip (e.g. "(1) (2) (3)" column-number rows)."""
     skip_rows: List[int] = []
@@ -204,13 +244,45 @@ def _detect_header_rows(body: List[List[Any]], n_cols: int) -> Tuple[int, List[i
         if col_nums > len(non_empty) * 0.5:
             skip_rows.append(i)
 
+    if not body:
+        return 0, skip_rows
+
+    # Common Excel inventory layout: one label row, then serialised data rows.
+    # Do not treat subsequent text-heavy data rows as multi-level headers.
+    first = body[0]
+    if _row_looks_like_column_labels(first):
+        for i, row in enumerate(body[1:6], start=1):
+            if i in skip_rows:
+                continue
+            if _blank(row):
+                break
+            if _looks_like_data_row(row):
+                return 1, skip_rows
+        # No clear data row yet — still prefer a single header for dense grids.
+        filled = sum(1 for v in first if _cell_str(v))
+        if filled >= max(3, int(n_cols * 0.5)):
+            return 1, skip_rows
+
     header_count = 0
     for i, row in enumerate(body[:6]):
         if i in skip_rows:
             continue
         if _blank(row):
             break
+        if _looks_like_data_row(row) and i > 0:
+            break
         if _row_is_header(row):
+            # Continuation rows after the first must look like short leaf/group
+            # bands, not another full prose data record.
+            if i > 0:
+                non_empty = [v for v in row if _cell_str(v)]
+                if not non_empty:
+                    break
+                if _looks_like_data_row(row):
+                    break
+                avg_len = sum(len(_cell_str(v)) for v in non_empty) / len(non_empty)
+                if avg_len > 28:
+                    break
             header_count = i + 1
         else:
             break

@@ -27,8 +27,10 @@ export default function CodeListEditor({
 }) {
   const occupation = isOccupationColumn(column.name)
 
+  const panelKey = `${column._metadataId || ''}:${column.name}`
+
   return (
-    <>
+    <div key={panelKey} className="dhara-group-panel">
       <div className="flex items-center justify-between gap-3 px-[18px] pb-2 pt-3.5">
         <div className="min-w-0">
           <span className="text-[16px] font-bold text-ink">{column.name}</span>
@@ -111,6 +113,6 @@ export default function CodeListEditor({
       {occupation && ncoPanelOpen && (
         <NcoSuggestPanel codes={codes} ncoError={ncoError} ncoLoading={ncoLoading} ncoMatches={ncoMatches} />
       )}
-    </>
+    </div>
   )
 }

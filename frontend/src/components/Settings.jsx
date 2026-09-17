@@ -19,7 +19,7 @@ import { withAuthHeaders } from '../lib/auth'
 import FileUpload from './FileUpload'
 
 const PROVIDERS = [
-  { value: 'openai', label: 'MEITY-empanelled LLM' },
+  { value: 'openai', label: 'OpenAI' },
   { value: 'self-hosted', label: 'Self-hosted' },
 ]
 const ROLES = ['Administrator', 'Data Steward', 'Data User']
@@ -200,7 +200,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
       </div>
 
       <div className="flex flex-col gap-[18px] rounded-2xl border border-line/90 bg-surface p-6">
-        <div className="text-[16px] font-semibold tracking-tight text-ink">MEITY-empanelled LLM</div>
+        <div className="text-[16px] font-semibold tracking-tight text-ink">LLM</div>
         <div className="grid grid-cols-2 gap-4">
           <div className="flex flex-col gap-1.5">
             <label className={fieldLabelClass}>Provider</label>
@@ -212,7 +212,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
           </div>
           <div className="flex flex-col gap-1.5">
             <label className={fieldLabelClass}>API key</label>
-            <input className={inputClass} type="password" value={local.apiKey} onChange={setField('apiKey')} placeholder="MEITY-empanelled API key" />
+            <input className={inputClass} type="password" value={local.apiKey} onChange={setField('apiKey')} placeholder="API key" />
           </div>
         </div>
         <div className="flex items-center gap-3.5">

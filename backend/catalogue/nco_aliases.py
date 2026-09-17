@@ -89,12 +89,25 @@ def upsert_nco_aliases(conn, aliases: list, source: str = "steward") -> int:
                 continue
             raw = a.get("normalized_value") or a.get("value") or ""
             # Lazy import to avoid circular import at module load.
-            from catalogue.nco_matching import normalize_occupation_value
+            from catalogue.nco_matching import (
+                is_non_occupation_aggregate,
+                is_usable_nco_alias,
+                looks_like_nco_code,
+                normalize_occupation_value,
+            )
             norm = normalize_occupation_value(raw)
             level = str(a.get("level") or "").strip().lower()
             code = str(a.get("code") or "").strip()
             title = a.get("title")
             if not norm or not code or level not in ("division", "subdivision", "group", "family"):
+                continue
+            if is_non_occupation_aggregate(raw):
+                continue
+            # Never learn identity mappings (label stored as code) — they break
+            # later Suggest runs by short-circuiting real NCO matching.
+            if not looks_like_nco_code(code):
+                continue
+            if not is_usable_nco_alias({"code": code}, raw):
                 continue
             if level == "group":
                 level = "subdivision"

@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { ConsoleStagesShell } from '../console/ConsoleStages'
+import { goToConsoleFiles } from '../../lib/consoleSession'
 
 /**
  * PDF pipeline stages map onto the same Console Stages numbers as Excel:
@@ -15,7 +16,9 @@ export default function PdfConsoleLayout({ jobId, step, maxStepReached, onGoToSt
 
   const defaultGoToStep = (targetStep) => {
     if (targetStep === 1) {
-      router.push('/console')
+      // Drop PDF return-path + Excel snapshots so Files is a clean start,
+      // and sidebar → Console won't bounce back to this job's preview.
+      goToConsoleFiles(router)
       return
     }
     if (!jobId) return

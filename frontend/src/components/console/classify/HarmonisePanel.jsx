@@ -145,7 +145,7 @@ export default function HarmonisePanel({
                 <button
                   key={club.id}
                   type="button"
-                  className={`flex w-full items-center gap-2 border-b border-[#f1ebdf] px-3 py-2.5 text-left transition-colors last:border-b-0 ${
+                  className={`flex w-full items-center gap-2 border-b border-[#f1ebdf] px-3 py-2.5 text-left transition-all duration-dhara ease-dhara last:border-b-0 ${
                     selected ? 'bg-sage/60' : 'bg-white hover:bg-[#FBF7EF]'
                   }`}
                   onClick={() => onSelectEntry(club.id)}
@@ -179,7 +179,7 @@ export default function HarmonisePanel({
             {!active || !activeMeta ? (
               <div className="py-8 text-[12.5px] text-ink-soft">Select a column family to review.</div>
             ) : (
-              <>
+              <div key={active.id} className="dhara-group-panel flex min-w-0 flex-col">
                 <div className="mb-2 flex flex-wrap items-center gap-2">
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[13px] font-semibold text-ink">
@@ -306,7 +306,7 @@ export default function HarmonisePanel({
                     </tbody>
                   </table>
                 </div>
-              </>
+              </div>
             )}
           </div>
         </div>

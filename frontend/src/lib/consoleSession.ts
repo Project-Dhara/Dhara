@@ -1,10 +1,21 @@
 const CONSOLE_RETURN_PATH_KEY = 'dhara_console_return_path'
 
+/** Full-page table editors — never treat these as the Console landing target. */
+function isConsoleEditorPath(pathname: string) {
+  return pathname.includes('/edit/')
+}
+
+/**
+ * Keep the latest Console location so AppShell → Console restores the same
+ * place (Excel/SQL `/console` step flow, or a PDF processing/review/grouping
+ * deep link). Visiting `/console` itself must overwrite any older PDF job
+ * path — otherwise sidebar return jumps back to a stale preview.
+ */
 export function rememberConsoleReturnPath(pathname: string) {
   try {
-    if (pathname.startsWith('/console/') && pathname !== '/console') {
-      sessionStorage.setItem(CONSOLE_RETURN_PATH_KEY, pathname)
-    }
+    if (!pathname.startsWith('/console')) return
+    if (isConsoleEditorPath(pathname)) return
+    sessionStorage.setItem(CONSOLE_RETURN_PATH_KEY, pathname)
   } catch {
     // best-effort
   }
@@ -12,7 +23,10 @@ export function rememberConsoleReturnPath(pathname: string) {
 
 export function getConsoleReturnPath(): string | null {
   try {
-    return sessionStorage.getItem(CONSOLE_RETURN_PATH_KEY)
+    const path = sessionStorage.getItem(CONSOLE_RETURN_PATH_KEY)
+    if (!path || !path.startsWith('/console')) return null
+    if (isConsoleEditorPath(path)) return '/console'
+    return path
   } catch {
     return null
   }
@@ -48,4 +62,11 @@ export function clearConsoleSession() {
   }
   clearConsoleReturnPath()
   clearAllPdfPipelineState()
+}
+
+/** Leave a PDF (or finished) job and open a fresh Files screen. */
+export function goToConsoleFiles(router: { push: (href: string) => void }) {
+  clearConsoleSession()
+  rememberConsoleReturnPath('/console')
+  router.push('/console')
 }
