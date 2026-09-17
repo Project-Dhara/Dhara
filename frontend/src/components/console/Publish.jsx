@@ -16,7 +16,7 @@ const PUBLISH_STEPS = [
 
 const MCP_TOOLS = ['search_datasets', 'get_table', 'get_metadata']
 
-export default function Publish({ datasetLabel, metadataId, hasKey, onGoSettings, onGoDashboard, onUploadAnother, onGoCatalogue }) {
+export default function Publish({ datasetLabel, metadataId, onGoDashboard, onUploadAnother, onGoCatalogue }) {
   const [publishing, setPublishing] = useState(true)
   const [doneSteps, setDoneSteps] = useState(0)
   const [access, setAccess] = useState('Public')
@@ -109,24 +109,6 @@ export default function Publish({ datasetLabel, metadataId, hasKey, onGoSettings
             {MCP_TOOLS.map((t) => <span className="rounded-full border border-line bg-cream px-2.5 py-1 text-[11.5px] text-ink-soft" key={t}>{t}</span>)}
           </div>
         </div>
-      </div>
-
-      <div className="flex flex-col gap-3 rounded-[10px] border border-line bg-white px-[22px] py-5">
-        <div className="flex items-center gap-2.5 text-xs uppercase tracking-wide text-[#8E9398]">
-          <span className="h-2 w-2 flex-none rounded-sm bg-yellow" />
-          <span>Metadata summary</span>
-          <span className="rounded-full bg-[rgba(242,194,48,0.28)] px-2.5 py-0.5 text-[11px] font-semibold normal-case tracking-normal text-[#6b5406]">{hasKey ? 'Model-generated' : 'Awaiting model key'}</span>
-        </div>
-        {hasKey ? (
-          <div className="text-[14.5px] leading-relaxed text-ink [text-wrap:pretty]">
-            Registered records for {datasetLabel}, harmonised to standard concepts and code lists during classification. Ready for downstream API and MCP consumption.
-          </div>
-        ) : (
-          <div className="flex items-center justify-between gap-5 rounded-lg border border-dashed border-line bg-cream px-4 py-3.5 text-sm text-ink-soft">
-            <span>A written summary is generated from the metadata with your own model key. The dataset publishes without it.</span>
-            <Button variant="secondary" size="sm" onClick={onGoSettings}>Add model key</Button>
-          </div>
-        )}
       </div>
 
       <div className="flex flex-col gap-3.5 rounded-[10px] border border-line bg-white px-[22px] py-5">

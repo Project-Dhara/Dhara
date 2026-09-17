@@ -18,11 +18,17 @@ import pymupdf
 from dotenv import load_dotenv
 
 from pdf.pdf_extraction_workers import extract_pymupdf_chunk
+from pdf.pdf_header_utils import (
+    _is_descriptive_in_grid_title,
+    _is_table_id_only,
+    extract_in_grid_caption,
+)
 from pdf.pdf_table_confidence import (
     build_pdf_outline_index,
     classify_page,
     dedupe_column_names,
     extract_page_text_blocks,
+    strip_caption_label_prefix,
     table_dict_from_df,
 )
 
@@ -600,7 +606,11 @@ TASK_A_RECONSTRUCTION_RULES = """TASK A -- RECONSTRUCT THE TABLE:
   column is a section heading for the rows below it, not a data point to discard. Keep it as its own
   row with the group label in place and null in the other columns -- do NOT silently drop it (that loses
   the grouping context for every row underneath) and do NOT invent values to fill it in.
-- Preserve a title/description if one is visible in the raw text.
+- For "title", use the descriptive caption visible in the table or page text
+  (e.g. "LIVE BIRTHS BY BIRTH ORDER AND BIRTH WEIGHT (URBAN)"). Do NOT use a short
+  table identifier alone as the title (e.g. "TABLE: B-22", "Table B-6", "Statement 4.1").
+  If both a short id row and a descriptive caption appear, put the id in "notes" as
+  "table_id: …" and the descriptive text in "title". Preserve a description if visible.
 - SYMBOLIC / ICON CELLS (especially Direction / Trend / Change columns):
   PDF extractors often emit private-use or icon-font glyphs for green/red trend arrows instead of real text.
   ONLY when a Direction / Trend / Change column is already present in the candidates or clearly visible
@@ -1252,6 +1262,98 @@ def _normalize_field(field: Any) -> Dict[str, Any]:
         "input_options": None,
         "human_review_reason": None,
     }
+
+
+def _llm_title_is_id_only(title: Optional[str]) -> bool:
+    """True when title is missing or only a TABLE/STATEMENT-style id label."""
+    s = (title or "").strip()
+    if not s:
+        return True
+    if _is_table_id_only(s):
+        return True
+    # strip_caption_label_prefix leaves a short token like "B-22" for id-only titles.
+    stripped = (strip_caption_label_prefix(s) or "").strip()
+    if stripped and stripped.lower() != s.lower() and _is_descriptive_in_grid_title(stripped):
+        return False
+    if stripped and len(stripped) < 18 and _is_table_id_only(s):
+        return True
+    return False
+
+
+def _prefer_descriptive_llm_title(
+    table: Dict[str, Any],
+    candidates: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """For AI-classified tables only: prefer a descriptive in-grid caption over
+    short ids like ``TABLE: B-22``. Does not change PDF extraction heuristics —
+    only post-processes LLM title / notes after reconstruction.
+    """
+    title = (table.get("title") or "").strip() or None
+
+    # Combined "TABLE 2.1: Live births…" → keep the descriptive remainder.
+    if title and not _is_table_id_only(title):
+        stripped = strip_caption_label_prefix(title)
+        if stripped and stripped != title:
+            table["title"] = stripped
+            table["title_source"] = table.get("title_source") or "llm_stripped_caption_label"
+        return table
+
+    if title and not _llm_title_is_id_only(title):
+        return table
+
+    replacement: Optional[str] = None
+    banner_id: Optional[str] = None
+    source: Optional[str] = None
+
+    matched = None
+    if candidates:
+        matched, _ = _best_matching_ruled_candidate(table, candidates, set())
+
+    seen_dfs: set = set()
+    for cand in ([matched] if matched else []) + list(candidates or []):
+        if not cand:
+            continue
+        df = cand.get("df")
+        if df is None:
+            continue
+        df_id = id(df)
+        if df_id in seen_dfs:
+            continue
+        seen_dfs.add(df_id)
+        attrs = getattr(df, "attrs", None) or {}
+        cap = (attrs.get("dhara_table_caption") or "").strip()
+        if not cap or _is_table_id_only(cap):
+            continue
+        replacement = strip_caption_label_prefix(cap) or cap
+        banner_id = (attrs.get("dhara_banner_table_id") or "").strip() or None
+        source = "llm_in_grid_caption_from_candidate"
+        break
+
+    if not replacement:
+        cap_info = extract_in_grid_caption(table.get("rows") or [])
+        cap_title = (cap_info.get("title") or "").strip()
+        if cap_title and not _is_table_id_only(cap_title):
+            replacement = strip_caption_label_prefix(cap_title) or cap_title
+            banner_id = (cap_info.get("table_id_label") or "").strip() or banner_id
+            source = "llm_in_grid_caption_from_rows"
+
+    if not replacement:
+        return table
+
+    if title and _is_table_id_only(title):
+        notes = list(table.get("notes") or [])
+        note = f"table_id: {title}"
+        if note not in notes:
+            notes.append(note)
+        table["notes"] = notes
+        if not banner_id:
+            banner_id = title
+
+    table["title"] = replacement
+    table["title_source"] = source
+    if banner_id:
+        table["banner_table_id"] = banner_id
+    return table
 
 
 def _normalize_table(table: Dict[str, Any]) -> Dict[str, Any]:
@@ -2017,8 +2119,15 @@ def _recover_missing_ruled_tables(
         # Prefer LLM semantics for the same ordinal when present.
         if i < len(tables):
             src = tables[i]
-            if (src.get("title") or "").strip():
+            llm_title = (src.get("title") or "").strip()
+            # Keep heuristic in-grid caption when the LLM only returned a
+            # TABLE/STATEMENT id (e.g. "TABLE: B-22").
+            if llm_title and not _llm_title_is_id_only(llm_title):
                 extra["title"] = src.get("title")
+                if src.get("title_source"):
+                    extra["title_source"] = src.get("title_source")
+            elif llm_title and not (extra.get("title") or "").strip():
+                extra["title"] = llm_title
                 if src.get("title_source"):
                     extra["title_source"] = src.get("title_source")
             if src.get("description"):
@@ -2054,6 +2163,7 @@ def _recover_missing_ruled_tables(
                 "method": f"pymupdf_recovered<{rc.get('method')}>",
                 "confidence": "alignment_guard_fallback",
             }
+        extra = _prefer_descriptive_llm_title(extra, candidates)
         extra["human_review_needed"], extra["human_review_reason"] = derive_human_review_needed(extra)
         out.append(extra)
 
@@ -2100,6 +2210,7 @@ def _stamp_llm_metadata(
                 normalized,
                 matched or _best_lines_strict_candidate(candidates),
             )
+        normalized = _prefer_descriptive_llm_title(normalized, candidates)
         normalized["human_review_needed"], normalized["human_review_reason"] = derive_human_review_needed(normalized)
         tables.append(normalized)
 

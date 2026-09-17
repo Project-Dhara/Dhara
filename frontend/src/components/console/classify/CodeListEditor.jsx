@@ -3,7 +3,8 @@
 import { isOccupationColumn, relatedAliasCount } from '../../../lib/classifyColumns'
 import NcoSuggestPanel from './NcoSuggestPanel'
 
-const saveBtnClass = 'h-11 rounded-lg border-0 px-5 text-[15px] font-semibold text-white transition-colors bg-teal hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]'
+const saveBtnClass = 'h-9 rounded-md border-0 px-4 text-[13px] font-semibold text-white transition-colors bg-teal hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]'
+const fieldClass = 'box-border h-8 w-full min-w-0 rounded border border-line bg-cream px-2 font-sans text-[12.5px] text-ink focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal'
 
 /**
  * Active column's editable code/value/definition table, its header
@@ -28,13 +29,13 @@ export default function CodeListEditor({
 
   return (
     <>
-      <div className="flex items-center justify-between gap-4 px-[18px] pb-3 pt-[18px]">
+      <div className="flex items-center justify-between gap-3 px-[18px] pb-2 pt-3.5">
         <div className="min-w-0">
-          <span className="text-xl font-bold text-ink">{column.name}</span>
+          <span className="text-[16px] font-bold text-ink">{column.name}</span>
           {column.concept && column.concept !== column.name && (
-            <span className="ml-2.5 text-sm text-ink-soft">{column.concept}</span>
+            <span className="ml-2 text-[12.5px] text-ink-soft">{column.concept}</span>
           )}
-          <div className="mt-0.5 text-[13px] text-ink-soft">
+          <div className="mt-0.5 text-[12px] text-ink-soft">
             {codes.length} values
             {relatedAliasCount(column) > 0
               ? ` · ${relatedAliasCount(column)} related in harmonisation`
@@ -45,7 +46,7 @@ export default function CodeListEditor({
         {!occupation ? (
           <button
             type="button"
-            className="h-[34px] flex-none rounded-md border-0 bg-teal px-3.5 text-[13px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]"
+            className="h-8 flex-none rounded-md border-0 bg-teal px-3 text-[12.5px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]"
             disabled={fillAiLoading || !codes.length}
             onClick={onFillAi}
           >
@@ -54,7 +55,7 @@ export default function CodeListEditor({
         ) : (
           <button
             type="button"
-            className="h-[34px] flex-none rounded-md border-0 bg-teal px-3.5 text-[13px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]"
+            className="h-8 flex-none rounded-md border-0 bg-teal px-3 text-[12.5px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]"
             disabled={ncoLoading || codes.length === 0}
             onClick={onSuggestNco}
           >
@@ -63,31 +64,47 @@ export default function CodeListEditor({
         )}
       </div>
 
-      <div className="mx-[18px] mb-4 overflow-hidden rounded-lg border border-[#cfc6b4]">
-        <div className="grid grid-cols-[1fr_1.1fr_1.6fr] items-center gap-3.5 border-b border-[#d7cdb9] bg-[#F4EFE3] px-4 py-2.5 font-sans text-[11.5px] uppercase tracking-wide text-[#8E9398]">
-          <div>Code</div><div>Value</div><div>Definition</div>
-        </div>
-        {codes.map((row, i) => (
-          <div className="grid grid-cols-[1fr_1.1fr_1.6fr] items-center gap-3.5 border-b border-[#f1ebdf] bg-white px-4 py-2.5 last:border-b-0" key={i}>
-            <input
-              className="box-border h-[38px] rounded-md border border-line bg-cream px-3 font-sans text-sm text-ink focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal"
-              type="text"
-              value={row.code}
-              onChange={(e) => onCodeFieldChange(i, 'code', e.target.value)}
-            />
-            <div className="text-sm font-semibold text-ink">{row.value}</div>
-            <input
-              className="box-border h-[38px] rounded-md border border-line bg-cream px-3 font-sans text-sm text-ink focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal"
-              type="text"
-              value={row.definition}
-              onChange={(e) => onCodeFieldChange(i, 'definition', e.target.value)}
-            />
-          </div>
-        ))}
+      <div className="mx-[18px] mb-3 max-h-[min(360px,50vh)] overflow-auto rounded-md border border-[#cfc6b4]">
+        <table className="w-full min-w-[520px] table-fixed border-collapse text-left">
+          <thead className="sticky top-0 z-[1]">
+            <tr className="bg-[#F4EFE3] text-[11px] uppercase tracking-wide text-[#8E9398]">
+              <th className="w-[28%] border-b border-[#d7cdb9] px-2.5 py-1.5 font-semibold">Code</th>
+              <th className="w-[32%] border-b border-[#d7cdb9] px-2.5 py-1.5 font-semibold">Value</th>
+              <th className="w-[40%] border-b border-[#d7cdb9] px-2.5 py-1.5 font-semibold">Definition</th>
+            </tr>
+          </thead>
+          <tbody>
+            {codes.map((row, i) => (
+              <tr className="border-b border-[#f1ebdf] bg-white last:border-b-0" key={i}>
+                <td className="px-2 py-1 align-middle">
+                  <input
+                    className={fieldClass}
+                    type="text"
+                    value={row.code}
+                    onChange={(e) => onCodeFieldChange(i, 'code', e.target.value)}
+                    title={row.code}
+                  />
+                </td>
+                <td className="px-2.5 py-1 align-middle text-[12.5px] font-medium leading-snug text-ink">
+                  <span className="line-clamp-2" title={row.value}>{row.value}</span>
+                </td>
+                <td className="px-2 py-1 align-middle">
+                  <input
+                    className={fieldClass}
+                    type="text"
+                    value={row.definition}
+                    onChange={(e) => onCodeFieldChange(i, 'definition', e.target.value)}
+                    title={row.definition}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
-      <div className="flex items-center justify-between gap-4 px-[18px] pb-[18px] pt-3.5">
-        <span className="text-sm text-ink-soft">Code and definition can be edited. Values come from the data and stay fixed.</span>
+      <div className="flex items-center justify-between gap-3 px-[18px] pb-3.5 pt-1">
+        <span className="text-[12.5px] text-ink-soft">Code and definition can be edited. Values come from the data and stay fixed.</span>
         <button className={saveBtnClass} disabled={!dirty} onClick={onSave}>Save changes</button>
       </div>
 

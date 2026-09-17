@@ -205,9 +205,8 @@ export default function Catalogue({ hasKey, onGoSettings }) {
               >
                 <div className="flex items-center gap-2">
                   <span className="h-1.5 w-1.5 rounded-full bg-green" />
-                  <span className="rounded-full border border-[#c9dcc0] bg-white px-2 py-0.5 text-[11px] font-semibold text-teal">{d.id}</span>
+                  <div className="text-[13.5px] font-semibold leading-snug text-ink">{d.title}</div>
                 </div>
-                <div className="text-[13.5px] font-semibold leading-snug text-ink">{d.title}</div>
                 <div className="text-[11.5px] text-[#8E9398]">
                   {[d.geo, d.freq].filter((x) => !isEmptyMeta(x)).join(' · ') || 'Published release'}
                 </div>
@@ -227,7 +226,6 @@ export default function Catalogue({ hasKey, onGoSettings }) {
           <div ref={detailScrollRef} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto rounded-[10px] border border-line bg-white">
             <div className="flex flex-col gap-3 border-b border-line px-[22px] pb-4 pt-5">
               <div className="flex items-center gap-2.5">
-                <span className="rounded-full border border-[#c9dcc0] bg-sage px-2.5 py-1 text-[12.5px] font-semibold text-teal">{sel.id}</span>
                 <span className={`rounded-full px-2.5 py-[3px] text-[11.5px] font-semibold ${access === 'restricted' ? 'bg-[rgba(217,91,104,0.16)] text-[#8c3540]' : 'bg-sage text-[#3d5230]'}`}>{sel.access || 'Public'}</span>
                 <span className="ml-auto text-[11.5px] text-[#8E9398]">v1</span>
               </div>
@@ -359,7 +357,6 @@ export default function Catalogue({ hasKey, onGoSettings }) {
               {tab === 'metadata' && (
                 <div className="flex flex-col gap-3.5">
                   <div className="flex flex-wrap items-center gap-2.5">
-                    <span className="rounded-full border border-[#c9dcc0] bg-sage px-[11px] py-[5px] text-[12.5px] font-semibold text-teal">{sel.id}</span>
                     <span className={`rounded-full px-2.5 py-[3px] text-[11.5px] font-semibold ${access === 'restricted' ? 'bg-[rgba(217,91,104,0.16)] text-[#8c3540]' : 'bg-sage text-[#3d5230]'}`}>{sel.access || 'Public'}</span>
                   </div>
                   <div className="grid grid-cols-2 gap-2.5">

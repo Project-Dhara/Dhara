@@ -33,7 +33,7 @@ for a human to review before anything is pushed.
 """
 
 import re
-from typing import Dict
+from typing import Dict, Optional
 
 ROMAN_TO_INT = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7, "VIII": 8, "IX": 9, "X": 10}
 
@@ -189,17 +189,25 @@ _EMPTY_METADATA = {
 }
 
 
-def _groups_without_metadata(extracted_tables: list) -> dict:
+def _groups_without_metadata(
+    extracted_tables: list,
+    *,
+    api_key: Optional[str] = None,
+) -> dict:
     """Propose catalogue groups when no metadata workbook was uploaded.
 
     Uses the shared PDF title / SDG grouping rules (``pdf_grouping``) so
     Excel, SQL, and PDF all bucket tables the same way after preview.
     Lazy-import avoids a circular import with ``pdf_grouping``.
+
+    ``api_key`` (browser header or caller) is preferred over ``OPENAI_API_KEY``
+    for the optional strict singleton LLM merge — same as PDF grouping.
     """
     from pdf.pdf_grouping import (
         propose_groups_from_table_dicts,
         proposal_to_catalogue_match_result,
     )
+    import os
 
     source_type = "xlsx"
     default_source = "Dataset"
@@ -210,7 +218,8 @@ def _groups_without_metadata(extracted_tables: list) -> dict:
             source_type = "xlsx" if st == "xls" else st
         default_source = first.get("source_file") or first.get("filename") or default_source
 
-    proposal = propose_groups_from_table_dicts(extracted_tables)
+    key = (api_key or os.environ.get("OPENAI_API_KEY") or "").strip() or None
+    proposal = propose_groups_from_table_dicts(extracted_tables, api_key=key)
     return proposal_to_catalogue_match_result(
         proposal,
         source_type=source_type,
@@ -218,7 +227,12 @@ def _groups_without_metadata(extracted_tables: list) -> dict:
     )
 
 
-def match_tables_to_metadata(extracted_tables: list, metadata_workbooks: list) -> dict:
+def match_tables_to_metadata(
+    extracted_tables: list,
+    metadata_workbooks: list,
+    *,
+    api_key: Optional[str] = None,
+) -> dict:
     """
     extracted_tables: [{id, table_id, title, sheet, source_file, ...}, ...]
     metadata_workbooks: [{file_name, summary, inventory, concepts, classifications}, ...]
@@ -233,7 +247,7 @@ def match_tables_to_metadata(extracted_tables: list, metadata_workbooks: list) -
       }
     """
     if not metadata_workbooks:
-        return _groups_without_metadata(extracted_tables)
+        return _groups_without_metadata(extracted_tables, api_key=api_key)
 
     exact_index = {}
     stem_index = {}
@@ -356,7 +370,10 @@ def match_tables_to_metadata(extracted_tables: list, metadata_workbooks: list) -
     # Dataset files that didn't match any metadata workbook still need a
     # metadata card (empty Product / Category / Geography etc.) so the user
     # can fill them in by hand — same as uploading with no metadata files.
-    leftover = _groups_without_metadata([u["table"] for u in still_unmatched])
+    leftover = _groups_without_metadata(
+        [u["table"] for u in still_unmatched],
+        api_key=api_key,
+    )
     base = len(groups)
     for g in leftover["groups"]:
         g["workbook_index"] = base + g["workbook_index"]

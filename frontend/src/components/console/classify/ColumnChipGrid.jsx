@@ -2,10 +2,10 @@
 
 import { relatedAliasCount } from '../../../lib/classifyColumns'
 
-const cardHeadClass = 'flex items-center gap-2.5 border-b border-line px-[18px] py-3 text-[15px] font-semibold text-ink'
-const cardNoteClass = 'text-xs font-normal text-[#8E9398]'
+const cardHeadClass = 'flex flex-wrap items-center gap-2 border-b border-line px-[18px] py-2.5 text-[14px] font-semibold text-ink'
+const cardNoteClass = 'text-[12px] font-normal text-[#8E9398]'
 
-/** Chip grid for picking one classified column to inspect below. */
+/** Evenly spaced chip grid for picking one classified column to inspect below. */
 export default function ColumnChipGrid({ columns, selectedCol, onSelect, saving }) {
   return (
     <>
@@ -17,26 +17,39 @@ export default function ColumnChipGrid({ columns, selectedCol, onSelect, saving 
         </span>
       </div>
 
-      <div className="grid grid-cols-1 gap-2.5 border-b border-line p-4 px-[18px] sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {columns.map((c) => (
-          <button
-            key={`${c._metadataId || ''}:${c.name}`}
-            type="button"
-            className={`flex min-w-0 w-full cursor-pointer flex-col gap-1 rounded-lg border px-3.5 py-2.5 text-left transition-colors hover:border-[#c9bda6] ${
-              c.name === selectedCol ? 'border-[#b9cfa9] bg-sage' : 'border-line bg-white'
-            }`}
-            onClick={() => onSelect(c.name)}
-            title={c.name}
-          >
-            <div className="truncate text-[14px] font-semibold text-ink">{c.name}</div>
-            <div className="truncate text-[12.5px] text-ink-soft">
-              {c.codes.length} code{c.codes.length === 1 ? '' : 's'}
-              {relatedAliasCount(c) > 0
-                ? ` · +${relatedAliasCount(c)} in harmonisation`
-                : ''}
-            </div>
-          </button>
-        ))}
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(10.75rem,1fr))] gap-2 border-b border-line px-[18px] py-3.5">
+        {columns.map((c) => {
+          const selected = c.name === selectedCol
+          const related = relatedAliasCount(c)
+          return (
+            <button
+              key={`${c._metadataId || ''}:${c.name}`}
+              type="button"
+              className={`flex h-8 w-full min-w-0 items-center gap-1.5 rounded-full border px-2.5 text-left transition-colors ${
+                selected
+                  ? 'border-teal bg-sage text-teal-deep'
+                  : 'border-line bg-white text-ink hover:border-teal/40 hover:bg-cream'
+              }`}
+              onClick={() => onSelect(c.name)}
+              title={
+                related > 0
+                  ? `${c.name} · ${c.codes.length} codes · +${related} in harmonisation`
+                  : `${c.name} · ${c.codes.length} codes`
+              }
+            >
+              <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold leading-none">
+                {c.name}
+              </span>
+              <span
+                className={`flex h-[18px] min-w-[18px] flex-none items-center justify-center rounded-full px-1.5 text-[10.5px] font-semibold tabular-nums leading-none ${
+                  selected ? 'bg-teal/15 text-teal-deep' : 'bg-cream text-ink-soft'
+                }`}
+              >
+                {c.codes.length}
+              </span>
+            </button>
+          )
+        })}
       </div>
     </>
   )

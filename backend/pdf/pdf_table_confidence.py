@@ -268,12 +268,58 @@ _EXTENDED_CAPTION_RES = (
         re.I,
     ),
 )
+# Strip label words + numbering from inferred titles, e.g.
+# "Statement 4.6: Distribution of infant Deaths" → "Distribution of infant Deaths".
+# Separator deliberately excludes "." so "4.6" is not split mid-number.
+_CAPTION_LABEL_PREFIX_RE = re.compile(
+    r"^\s*(?:"
+    r"TABLE|TAB\.?|STATEMENT|ANNEX(?:URE)?|SCHEDULE|EXHIBIT|APPENDIX|"
+    r"FIG(?:URE)?|CHART|BOX"
+    r")\b\s*"
+    r"(?:[\w]+(?:[./\-][\w]+)*)?\s*"
+    r"[:\-–—]\s*",
+    re.I,
+)
+_CAPTION_LABEL_PREFIX_SPACE_RE = re.compile(
+    r"^\s*(?:"
+    r"TABLE|TAB\.?|STATEMENT|ANNEX(?:URE)?|SCHEDULE|EXHIBIT|APPENDIX|"
+    r"FIG(?:URE)?|CHART|BOX"
+    r")\b\s+"
+    r"[\w]+(?:[./\-][\w]+)*\s+",
+    re.I,
+)
 # Max vertical gap (PDF points) between caption/heading and table top.
 _BBOX_TITLE_MAX_GAP_PT = 140.0
 
 
 def _normalize_title_line(line: str) -> str:
     return re.sub(r"\s+", " ", (line or "").strip())
+
+
+def strip_caption_label_prefix(title: Optional[str]) -> Optional[str]:
+    """Remove leading Statement/Table/Annex/… labels from a caption title.
+
+    Keeps the descriptive remainder when present; otherwise returns the original.
+    """
+    if title is None:
+        return None
+    s = _normalize_title_line(title)
+    if not s:
+        return s
+    cleaned = _CAPTION_LABEL_PREFIX_RE.sub("", s, count=1).strip(" :.-–—")
+    if cleaned == s or len(cleaned) < 4:
+        cleaned2 = _CAPTION_LABEL_PREFIX_SPACE_RE.sub("", s, count=1).strip(" :.-–—")
+        if cleaned2 and len(cleaned2) >= 4:
+            cleaned = cleaned2
+    if cleaned and len(cleaned) >= 4 and cleaned.lower() != s.lower():
+        return cleaned
+    # "TABLE 2.1: Foo" via dedicated capture group when present.
+    m = _TABLE_CAPTION_RE.match(s)
+    if m:
+        rest = _normalize_title_line(m.group(2) or "")
+        if rest and len(rest) >= 4:
+            return rest
+    return s
 
 
 def _is_chrome_title_line(line: str) -> bool:
@@ -561,15 +607,15 @@ def infer_title_from_page_text(
     if bbox and page_blocks:
         title, source = _title_from_bbox_blocks(page_blocks, bbox, col_names)
         if title:
-            return title, source
+            return strip_caption_label_prefix(title), source
 
     title, source = _title_from_page_lines(lines, col_names)
     if title:
-        return title, source
+        return strip_caption_label_prefix(title), source
 
     title, source = _title_from_outline_sections(outline_sections, col_names)
     if title:
-        return title, source
+        return strip_caption_label_prefix(title), source
 
     return None, "heuristic_none"
 
@@ -683,7 +729,7 @@ def table_dict_from_df(
     # In-grid banners (TABLE id row + descriptive title row inside the ruled
     # border) beat page-text / outline heuristics — those look above the bbox.
     if in_grid_title:
-        title, title_source = in_grid_title, "heuristic_in_grid_banner"
+        title, title_source = strip_caption_label_prefix(in_grid_title), "heuristic_in_grid_banner"
     else:
         title, title_source = infer_title_from_page_text(
             page_text,
@@ -693,6 +739,8 @@ def table_dict_from_df(
             page_blocks=page_blocks,
             outline_sections=outline_sections,
         )
+    if title:
+        title = strip_caption_label_prefix(title)
     empty_field = {"value": None, "human_review_needed": False, "human_review_reason": None}
     result = {
         "title": title,

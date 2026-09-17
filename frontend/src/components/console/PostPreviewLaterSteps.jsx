@@ -68,8 +68,6 @@ export default function PostPreviewLaterSteps({
         <Publish
           datasetLabel={metaLabel || datasetLabel || 'This dataset'}
           metadataId={metadataId}
-          hasKey={hasKey}
-          onGoSettings={onGoSettings}
           onGoDashboard={onGoDashboard}
           onGoCatalogue={onGoCatalogue}
           onUploadAnother={onUploadAnother}
