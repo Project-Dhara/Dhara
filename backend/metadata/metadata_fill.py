@@ -1,7 +1,7 @@
 """Stage 4 -- LLM metadata autofill for catalogue/PDF groups (mirrors the
 notebook's `generate_metadata_per_group`)."""
 import json as _json
-from typing import Optional
+from typing import Any, Optional
 
 from extraction.extractor import TableExtractor
 from metadata.metadata_llm import (
@@ -21,11 +21,109 @@ def _group_metadata_is_empty(metadata: Optional[dict], fields: Optional[list] = 
     return not any((metadata or {}).get(f) for f in keys)
 
 
+def _format_key_statistics(value: Any) -> Optional[str]:
+    """Turn LLM key_statistics into catalogue-ready plain text.
+
+    Models often dump sample_rows as a JSON array of objects; convert that into
+    short bullets instead of json.dumps for the metadata textarea.
+    """
+    if value is None or value == "":
+        return None
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text[0] in "[{":
+            try:
+                return _format_key_statistics(_json.loads(text))
+            except (_json.JSONDecodeError, TypeError, ValueError):
+                return text
+        return text
+
+    if isinstance(value, dict):
+        lines = []
+        for key, val in value.items():
+            if val is None or str(val).strip() == "":
+                continue
+            if isinstance(val, (dict, list)):
+                nested = _format_key_statistics(val)
+                if nested:
+                    lines.append(f"• {key}: {nested.replace(chr(10), ' ')}")
+            else:
+                lines.append(f"• {key}: {val}")
+        return "\n".join(lines) if lines else None
+
+    if isinstance(value, list):
+        lines = []
+        for item in value[:12]:
+            if isinstance(item, dict):
+                label = (
+                    item.get("Sub-Group")
+                    or item.get("sub_group")
+                    or item.get("subgroup")
+                    or item.get("Category")
+                    or item.get("category")
+                    or item.get("Item")
+                    or item.get("item")
+                    or item.get("name")
+                    or item.get("title")
+                    or item.get("Group")
+                    or item.get("group")
+                )
+                weight = item.get("Weight") if "Weight" in item else item.get("weight")
+                parts = []
+                if label is not None and str(label).strip():
+                    parts.append(str(label).strip())
+                group = item.get("Group") if label and "Group" in item else None
+                if group is not None and str(group).strip() and str(group) != str(label):
+                    parts[0] = f"{parts[0]} (Group {group})" if parts else f"Group {group}"
+                if weight is not None and str(weight).strip() != "":
+                    parts.append(f"weight {weight}")
+
+                skip = {
+                    "Group", "group", "Sub-Group", "sub_group", "subgroup",
+                    "Category", "category", "Item", "item", "name", "title",
+                    "Weight", "weight",
+                }
+                numeric = []
+                extras = []
+                for key, val in item.items():
+                    if key in skip or val is None or str(val).strip() == "":
+                        continue
+                    try:
+                        numeric.append((str(key), float(str(val).replace(",", ""))))
+                    except (TypeError, ValueError):
+                        extras.append(f"{key} {val}")
+                if numeric:
+                    first_k, first_v = numeric[0]
+                    last_k, last_v = numeric[-1]
+                    if first_k == last_k:
+                        parts.append(f"{first_k} {first_v:g}")
+                    else:
+                        parts.append(f"{first_k} {first_v:g} → {last_k} {last_v:g}")
+                parts.extend(extras[:3])
+                if parts:
+                    lines.append("• " + "; ".join(parts))
+                else:
+                    compact = ", ".join(f"{k}: {v}" for k, v in list(item.items())[:6])
+                    if compact:
+                        lines.append(f"• {compact}")
+            elif item is not None and str(item).strip():
+                lines.append(f"• {item}")
+        return "\n".join(lines) if lines else None
+
+    return str(value)
+
+
 def _stringify_field_values(metadata: dict, fields: list) -> dict:
     """Normalize LLM field values to plain strings for form inputs."""
     out = {}
     for field in fields:
         v = metadata.get(field)
+        if field == "key_statistics":
+            out[field] = _format_key_statistics(v)
+            continue
         if v is None or v == "":
             out[field] = None
         elif isinstance(v, (dict, list)):
@@ -36,10 +134,11 @@ def _stringify_field_values(metadata: dict, fields: list) -> dict:
 
 
 def _stringify_metadata_values(metadata: dict) -> dict:
-    """The LLM can return a structured value for a field like `key_statistics`
-    (see the notebook's own example output, a JSON object of headline
-    numbers) -- normalize every field to a plain string so it renders safely
-    in a text input/textarea on the frontend."""
+    """Normalize every field to a plain string for text inputs/textareas.
+
+    ``key_statistics`` is specially formatted as readable bullets when the LLM
+    returns structured JSON instead of prose.
+    """
     return _stringify_field_values(metadata, METADATA_FIELDS)
 
 

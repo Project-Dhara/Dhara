@@ -635,7 +635,11 @@ Rules:
 * Prefer explicit evidence in the facts over inference.
 * Do not contradict explicit KYDS information.
 * Generate concise, catalogue-ready values.
-* `key_statistics` should contain only statistics that can be directly calculated or clearly identified from the provided facts.
+* `key_statistics` MUST be a short plain-text summary for catalogue display
+  (2–6 bullets or short sentences). Highlight a few headline figures only
+  (e.g. top categories, weights, notable highs/lows, or period-end values).
+  Do NOT return JSON, do NOT return an array/object of table rows, and do NOT
+  dump `sample_rows` or full month-by-month grids into this field.
 * `last_updated` and `future_release` must be `null` unless explicitly supported by the inputs.
 * `product` should identify the dataset/product represented by the source, not the file format.
 * `remarks` should contain relevant caveats, limitations, or contextual notes supported by the inputs.

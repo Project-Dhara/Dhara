@@ -41,6 +41,8 @@ Full design, stage-by-stage pipeline, and deployment guides live under
   downstream consumers like des-website.
 - **Browse published datasets** — Catalogue UI lists what you have published,
   with access metadata and API-oriented previews.
+- **Query via REST and MCP** — `GET /api/v1/datasets` (+ rows) with JWT; agents
+  can use `python -m mcp_server` (`search_datasets`, `get_metadata`, `get_table`).
 - **Secure the API** — JWT login; Swagger at `/docs` with Bearer auth for
   exploring endpoints.
 
@@ -72,7 +74,8 @@ dhara-poc/
 ├── Dhara_logo.png               Brand mark (README / docs)
 ├── backend/                     FastAPI + openpyxl + LLM + Postgres + pgvector
 │   ├── main.py                  App setup + router registration (entrypoint)
-│   ├── routes/                  FastAPI routers: auth, kyds, catalogue, pdf, dashboard
+│   ├── routes/                  FastAPI routers: auth, kyds, catalogue, pdf, dashboard, access
+│   ├── mcp_server/              stdio MCP (search_datasets, get_metadata, get_table)
 │   ├── core/                    auth.py, deps.py, gcs_utils.py, vector_store.py
 │   ├── catalogue/               query.py, datasets.py, catalogue.py (shim), matching, NCO, staging, …
 │   ├── pdf/                     sda_india_pdf_extraction.py, pdf_store.py, pdf_jobs.py, grouping, …

@@ -63,9 +63,19 @@ def _is_numeric_cell(v: str) -> bool:
         return False
 
 
+_PLACEHOLDER_COL_RE = re.compile(r"^Col_\d+$", re.I)
+
+
+def _is_placeholder_column_name(name: str) -> bool:
+    s = (name or "").strip()
+    return (not s) or bool(_PLACEHOLDER_COL_RE.match(s))
+
+
 def clean_dataframe_light(df: pd.DataFrame) -> pd.DataFrame:
     """Whitespace-normalize cells, blank out empty strings, drop fully-empty
-    rows/columns. Pure Python cleanup -- no LLM, no restructuring."""
+    rows and placeholder-only empty columns. Named headers with no body values
+    (e.g. unused month columns) are kept so auto-accept does not collapse the
+    grid and mis-label later columns."""
     meta = None
     caption = None
     banner_id = None
@@ -78,13 +88,21 @@ def clean_dataframe_light(df: pd.DataFrame) -> pd.DataFrame:
     cleaned = df.map(lambda v: _cell_str(v) or None)
     cleaned.columns = [_cell_str(c) or f"Col_{i + 1}" for i, c in enumerate(cleaned.columns)]
     before_cols = list(cleaned.columns)
-    cleaned = cleaned.dropna(axis=0, how="all").dropna(axis=1, how="all")
+    cleaned = cleaned.dropna(axis=0, how="all")
+    keep_idx: List[int] = []
+    for i, name in enumerate(before_cols):
+        series = cleaned.iloc[:, i] if cleaned.shape[1] > i else None
+        all_null = series is None or bool(series.isna().all())
+        if all_null and _is_placeholder_column_name(str(name)):
+            continue
+        keep_idx.append(i)
+    if keep_idx:
+        cleaned = cleaned.iloc[:, keep_idx]
+    elif cleaned.shape[1]:
+        cleaned = cleaned.iloc[:, 0:0]
     cleaned = cleaned.reset_index(drop=True)
     if meta and len(meta) == len(before_cols):
-        kept = set(str(c) for c in cleaned.columns)
-        cleaned.attrs["dhara_column_meta"] = [
-            meta[i] for i, name in enumerate(before_cols) if str(name) in kept
-        ]
+        cleaned.attrs["dhara_column_meta"] = [meta[i] for i in keep_idx]
     elif meta:
         cleaned.attrs["dhara_column_meta"] = meta
     if caption:
@@ -96,7 +114,20 @@ def clean_dataframe_light(df: pd.DataFrame) -> pd.DataFrame:
 
 def profile_table(df: pd.DataFrame) -> Dict[str, Any]:
     n_rows, n_cols = df.shape
-    all_cells = [_cell_str(v) for row in df.values for v in row]
+    # Ignore all-null columns when scoring fill rate: they are often intentional
+    # empty measure periods (kept for header fidelity), not extraction failure.
+    active_cols = [
+        i for i in range(n_cols)
+        if any(_cell_str(v) for v in df.iloc[:, i].values)
+    ]
+    if active_cols:
+        all_cells = [
+            _cell_str(v)
+            for i in active_cols
+            for v in df.iloc[:, i].values
+        ]
+    else:
+        all_cells = [_cell_str(v) for row in df.values for v in row]
     nonempty = [c for c in all_cells if c]
     nonempty_ratio = (len(nonempty) / len(all_cells)) if all_cells else 0.0
 
@@ -601,9 +632,17 @@ def table_dict_from_df(
     path so Preview can treat both uniformly via semantic_status."""
     cleaned = clean_dataframe_light(df)
     col_names = [str(c) for c in cleaned.columns]
-    meta = []
+    # Prefer meta already aligned to cleaned columns (clean_dataframe_light
+    # drops placeholder empties by index). Falling back to the pre-clean meta
+    # by position mis-labels later columns when empty named months were kept
+    # or dropped — e.g. Sep–Dec values shown under Jan–Apr headers.
+    meta: List[Any] = []
     try:
-        meta = list(getattr(df, "attrs", {}).get("dhara_column_meta") or [])
+        cleaned_meta = list(getattr(cleaned, "attrs", {}).get("dhara_column_meta") or [])
+        if cleaned_meta and len(cleaned_meta) == len(col_names):
+            meta = cleaned_meta
+        else:
+            meta = list(getattr(df, "attrs", {}).get("dhara_column_meta") or [])
     except Exception:
         meta = []
     columns = []

@@ -70,7 +70,7 @@ Excel/SQL and PDF share the same stage rail:
 | **Dataset Inventory** | Files → Preview | Ingest and human-edit extracted tables |
 | **Metadata Workspace** | Grouping → Metadata | Relate tables; fill catalogue fields |
 | **Transformation & Harmonisation** | Classification | Code lists, NCO-style matching |
-| **Dataset Publication** | Publish | Confirm push; surface API/MCP access (MCP planned) |
+| **Dataset Publication** | Publish | Confirm push; surface `/api/v1` + MCP access |
 
 Intake differs; after Preview they converge on the same catalogue path.
 
@@ -117,7 +117,7 @@ fallbacks without Claude.
 | pgvector | Find similar semantic chunks |
 | Human | Approve meaning and groupings |
 | Catalogue / API | Discoverability and access |
-| MCP (planned) | Agent-oriented access to approved data |
+| MCP | Agent-oriented access via `python -m mcp_server` (stdio) |
 
 ## Data model (essentials)
 

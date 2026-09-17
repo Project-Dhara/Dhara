@@ -925,11 +925,13 @@ def split_extracted_rows_on_table_markers(
 
 def repair_glued_numeric_cells(rows: List[List[Any]]) -> List[List[Any]]:
     """
-    Spread space-joined numbers into following empty cells.
+    Spread space-joined numbers into adjacent empty cells.
 
-    pymupdf sometimes packs Sep–Dec (etc.) into one cell and leaves the next
-    month columns blank. Only expands when every token is numeric and there
-    are enough empty slots — skips catastrophic merges that won't fit.
+    pymupdf sometimes packs several measure values into one cell and leaves
+    neighbouring period columns blank. Prefer expanding into following empty
+    cells; if those are insufficient, use preceding empties (or the combined
+    empty window). Only expands when every token is numeric and there are
+    enough empty slots — skips catastrophic merges that won't fit.
     """
     if not rows:
         return rows
@@ -942,18 +944,36 @@ def repair_glued_numeric_cells(rows: List[List[Any]]) -> List[List[Any]]:
             if not parts:
                 j += 1
                 continue
-            empty_run = 0
+            n_parts = len(parts)
+            empty_after = 0
             for k in range(j + 1, n_cols):
                 if _cell_str(row[k]):
                     break
-                empty_run += 1
-            slots = empty_run + 1
-            if len(parts) > slots:
+                empty_after += 1
+            empty_before = 0
+            for k in range(j - 1, -1, -1):
+                if _cell_str(row[k]):
+                    break
+                empty_before += 1
+
+            if n_parts <= empty_after + 1:
+                start = j
+            elif n_parts <= empty_before + 1:
+                start = j - (n_parts - 1)
+            elif n_parts <= empty_before + empty_after + 1:
+                # Right-align into the empty window around the glued cell so
+                # leading blanks (unused earlier periods) stay empty.
+                window_end = j + empty_after
+                start = window_end - n_parts + 1
+            else:
                 j += 1
                 continue
+
             for t, part in enumerate(parts):
-                row[j + t] = part
-            j += len(parts)
+                row[start + t] = part
+            if not (start <= j < start + n_parts):
+                row[j] = None
+            j = start + n_parts
     return out
 
 

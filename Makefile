@@ -18,6 +18,7 @@ urls: ## Print local service URLs
 	@echo "  Dev API:     $(BACKEND_URL)"
 	@echo "  API docs:    $(API_DOCS)"
 	@echo "  Health:      $(BACKEND_URL)/api/health"
+	@echo "  Access API:  $(BACKEND_URL)/api/v1"
 	@echo "  Prod (all):  $(PROD_URL)"
 	@echo ""
 
@@ -27,6 +28,7 @@ up: ## Start Postgres, backend (:8000), and frontend (:3000)
 	@echo "  UI:      $(FRONTEND_URL)"
 	@echo "  Backend: $(BACKEND_URL)"
 	@echo "  Docs:    $(API_DOCS)"
+	@echo "  Access:  $(BACKEND_URL)/api/v1"
 	@echo ""
 
 down: ## Stop containers (keeps the database volume)

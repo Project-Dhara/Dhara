@@ -69,8 +69,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
 
       try {
-        // Confirm the token is still valid for this backend process. A
-        // restart rotates AUTH_INSTANCE_ID and returns 401 here.
+        // Confirm the token is still valid. An expired/invalid JWT returns 401 here.
         const res = await fetch('/api/me', withAuthHeaders())
         if (!res.ok) throw new Error('session invalid')
         const data = await res.json()
