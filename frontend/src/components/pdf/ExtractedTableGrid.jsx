@@ -271,7 +271,7 @@ export function ExtractedDataCell({
   const display = value === null || value === undefined || value === '' ? null : String(value)
   return (
     <span
-      className={`block min-w-0 whitespace-normal break-words [overflow-wrap:anywhere] leading-snug ${display == null ? 'italic text-[#a49c8e]' : 'text-ink'}`}
+      className={`block min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-snug ${display == null ? 'italic text-[#a49c8e]' : 'text-ink'}`}
       title={display || ''}
     >
       {display == null ? '—' : display}

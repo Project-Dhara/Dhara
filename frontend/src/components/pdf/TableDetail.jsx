@@ -93,6 +93,8 @@ export function TableDetail({
   const actionFlashRef = useRef(null)
   const undoStackRef = useRef([])
   const redoStackRef = useRef([])
+  // Title value when the field was focused — blur only commits if it changed.
+  const titleAtFocusRef = useRef(null)
   draftRef.current = draft
   actionFlashRef.current = actionFlash
   undoStackRef.current = undoStack
@@ -739,14 +741,20 @@ export function TableDetail({
           className="min-h-[2.5rem] w-full resize-y rounded-md border border-line bg-white px-2.5 py-1.5 text-[13.5px] font-semibold leading-snug text-ink outline-none focus:border-teal"
           value={draft.title}
           placeholder="Add a table title"
+          onFocus={(e) => {
+            titleAtFocusRef.current = (e.target.value || '').trim() || null
+          }}
           onChange={(e) => {
             const nextTitle = e.target.value
             markDirty()
             setDraft((prev) => ({ ...prev, title: nextTitle }))
             onTitleLive?.(nextTitle.trim() || null)
           }}
-          onBlur={() => {
-            onTitleCommit?.(draft.title.trim() || null)
+          onBlur={(e) => {
+            const next = (e.target.value || '').trim() || null
+            if (next === titleAtFocusRef.current) return
+            onTitleCommit?.(next)
+            titleAtFocusRef.current = next
           }}
         />
       </label>

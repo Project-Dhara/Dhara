@@ -297,9 +297,8 @@ export default function PdfReview({ jobId, filename, onDone }) {
     }
   }, [jobId])
 
-  const saveReview = async (tableId, edits) => {
+  const patchTable = async (tableId, edits) => {
     setTables((prev) => prev.map((t) => (t.table_id === tableId ? { ...t, ...edits } : t)))
-    setReviewedIds((prev) => new Set(prev).add(tableId))
     try {
       await fetch(`/api/pdf/jobs/${jobId}/tables/${tableId}`, withAuthHeaders({
         method: 'PATCH',
@@ -310,6 +309,11 @@ export default function PdfReview({ jobId, filename, onDone }) {
       // Local state already reflects the edit; a failed PATCH just means it
       // won't persist server-side if the page is reloaded -- non-fatal here.
     }
+  }
+
+  const saveReview = async (tableId, edits) => {
+    await patchTable(tableId, edits)
+    setReviewedIds((prev) => new Set(prev).add(tableId))
   }
 
   const confirmDelete = async () => {
@@ -923,7 +927,9 @@ export default function PdfReview({ jobId, filename, onDone }) {
                         row.table_id === t.table_id ? { ...row, title } : row
                       )))
                     }}
-                    onTitleCommit={(title) => saveReview(t.table_id, { title })}
+                    // Title blur persists text only — do not mark reviewed
+                    // (that is reserved for "Save review").
+                    onTitleCommit={(title) => patchTable(t.table_id, { title })}
                   />
                 </TableExpandPanel>
               </div>
