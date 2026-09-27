@@ -3,7 +3,7 @@
  * Reuses the PDF TableDetail / TableEditModal UI; tables live in session
  * storage (not a PDF job API).
  */
-import { TABLE_EDIT_CHANNEL } from './pdfReviewHelpers'
+import { TABLE_EDIT_CHANNEL, columnHeaderPath } from './pdfReviewHelpers'
 
 export const CONSOLE_TABLE_EDIT_CHANNEL = 'dhara-console-table-edit'
 export const CONSOLE_TABLE_DRAFT_PREFIX = 'dhara_console_table_edit_v1_'
@@ -12,16 +12,85 @@ export function consoleTableDraftKey(uid) {
   return `${CONSOLE_TABLE_DRAFT_PREFIX}${uid}`
 }
 
+function cellStr(v) {
+  if (v == null) return ''
+  return String(v).trim()
+}
+
+/** Forward-fill empties left→right (mirrors Excel merge / metadata_llm fill). */
+function forwardFillRow(row, nCols) {
+  const out = []
+  let last = ''
+  for (let i = 0; i < nCols; i += 1) {
+    const s = cellStr(row?.[i])
+    if (s) {
+      last = s
+      out.push(s)
+    } else {
+      out.push(last)
+    }
+  }
+  return out
+}
+
+function collapseConsecutive(parts) {
+  const out = []
+  for (const p of parts) {
+    if (!p) continue
+    if (out.length && out[out.length - 1].toLowerCase() === p.toLowerCase()) continue
+    out.push(p)
+  }
+  return out
+}
+
+/**
+ * Build PDF-style column objects (header_path) from Excel raw_header_rows so
+ * merged group bands render with colspan in preview / View-Edit.
+ */
+export function headerColumnsFromRawRows(rawHeaderRows, flatNames) {
+  const names = (flatNames || []).map((c) => (
+    typeof c === 'string' ? c : String(c?.name || '').trim() || 'Column'
+  ))
+  const nCols = names.length
+  const matrix = (rawHeaderRows || []).filter(
+    (r) => Array.isArray(r) && r.some((v) => cellStr(v)),
+  )
+  if (!nCols) return []
+  if (matrix.length < 2) {
+    return names.map((name) => {
+      // Fallback: flattened "Group / Leaf" names from the extractor.
+      const parts = String(name).split(/\s*\/\s*/).map((s) => s.trim()).filter(Boolean)
+      const path = parts.length >= 2 ? parts : [name]
+      return {
+        name,
+        header_group: path.length >= 2 ? path[path.length - 2] : null,
+        header_path: path,
+      }
+    })
+  }
+  const filled = matrix.map((r) => forwardFillRow(r, nCols))
+  return names.map((name, i) => {
+    const path = collapseConsecutive(filled.map((row) => row[i]))
+    const finalPath = path.length ? path : [name]
+    return {
+      name,
+      header_group: finalPath.length >= 2 ? finalPath[finalPath.length - 2] : null,
+      header_path: finalPath,
+    }
+  })
+}
+
 /** Convert console (Excel/SQL) table → PDF editor shape. */
 export function toEditorTable(table) {
   if (!table) return null
   const colNames = (table.columns || []).map((c) => (
     typeof c === 'string' ? c : String(c?.name || '').trim() || 'Column'
   ))
-  const columns = colNames.map((name) => ({
-    name,
-    header_group: null,
-    header_path: [name],
+  const fromRaw = headerColumnsFromRawRows(table.raw_header_rows, colNames)
+  const columns = fromRaw.map((col, i) => ({
+    name: colNames[i],
+    header_group: col.header_group,
+    header_path: col.header_path,
     role: 'unknown',
     concept: '',
     description: '',
@@ -47,9 +116,35 @@ export function toEditorTable(table) {
   }
 }
 
+/** Rebuild raw_header_rows matrix from editor header_path columns. */
+function rawHeaderRowsFromEditorColumns(columns) {
+  const cols = columns || []
+  if (!cols.length) return []
+  const paths = cols.map((c) => columnHeaderPath(c))
+  const depth = Math.max(1, ...paths.map((p) => p.length))
+  if (depth <= 1) {
+    return [cols.map((c) => (typeof c === 'string' ? c : String(c?.name || '')))]
+  }
+  // Emit a filled matrix: group labels repeated across colspan; stubs repeat vertically.
+  const matrix = Array.from({ length: depth }, () => Array(cols.length).fill(''))
+  paths.forEach((path, c) => {
+    const extra = Math.max(0, depth - path.length)
+    let row = 0
+    path.forEach((label, i) => {
+      const span = i === 0 ? 1 + extra : 1
+      for (let k = 0; k < span; k += 1) {
+        matrix[row + k][c] = label
+      }
+      row += span
+    })
+  })
+  return matrix
+}
+
 /** Map editor Save payload back onto a console table patch. */
 export function applyEditorEditsToConsoleTable(table, edits) {
-  const colNames = (edits?.columns || []).map((c) => {
+  const editCols = edits?.columns || []
+  const colNames = editCols.map((c) => {
     const name = typeof c === 'string' ? c : String(c?.name || '').trim()
     return name || 'Column'
   })
@@ -64,6 +159,7 @@ export function applyEditorEditsToConsoleTable(table, edits) {
     columns: colNames,
     rows,
     row_count: rows.length,
+    raw_header_rows: rawHeaderRowsFromEditorColumns(editCols),
   }
   if (edits?.title != null) {
     patch.title = edits.title

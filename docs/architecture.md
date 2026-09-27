@@ -93,8 +93,8 @@ dhara-poc/
 ├── backend/
 │   ├── routes/        HTTP API
 │   ├── catalogue/     catalogue DB, matching, classifications, NCO
-│   ├── pdf/           PDF extraction, jobs, grouping
-│   ├── extraction/    Excel + SQL extractors
+│   ├── pdf/           PDF jobs, store, grouping
+│   ├── extraction/    Excel + SQL + PDF extractors
 │   ├── metadata/      metadata fill / validation / LLM helpers
 │   └── core/          auth, deps, vector_store, GCS
 ├── docker-compose.yml Dev stack + prod profile

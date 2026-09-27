@@ -595,12 +595,11 @@ export default function KydsModal({ onSkip, onSave, initialForm = null, editing 
     <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-[rgba(16,64,63,0.52)] p-5" role="dialog" aria-modal="true" aria-labelledby="kyds-title">
       <div className="flex h-[min(720px,90vh)] w-[min(860px,calc(100vw-2.5rem))] flex-none flex-col overflow-hidden rounded-[14px] bg-surface shadow-dhara">
         <div className="relative flex flex-shrink-0 items-center justify-center bg-cream px-12 pb-4 pt-5 text-center">
+          <span className="absolute left-4 top-4 inline-flex items-center rounded-full border border-green/35 bg-sage px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-green">Optional</span>
           <div>
-            <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-teal">Optional · Know Your Dataset</div>
             <div id="kyds-title" className="text-2xl font-bold tracking-tight text-ink">{editing ? 'Edit KYDS Entry' : 'KYDS Entry'}</div>
             <div className="mt-1.5 text-[13.5px] leading-relaxed text-ink-soft">
               Record modality, sensitivity, access, granularity, retention and storage.
-              {editing ? ' Update any fields below and save.' : ' You can skip this and continue — none of these fields are required.'}
             </div>
           </div>
           <button type="button" className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-md text-ink-soft hover:bg-white/60 hover:text-ink" onClick={onSkip} aria-label={editing ? 'Close' : 'Skip KYDS form'}>

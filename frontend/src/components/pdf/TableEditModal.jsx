@@ -446,7 +446,11 @@ export function TableEditModal({
         <div className="flex flex-shrink-0 items-center justify-between gap-3 border-b border-line bg-cream px-3 py-2 sm:px-4">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <div className="min-w-0 flex-1">
-              <div id="table-edit-title" className={`truncate text-[15px] font-bold tracking-tight sm:text-base ${displayTitle(table) ? 'text-ink' : 'italic text-ink-soft'}`}>
+              <div
+                id="table-edit-title"
+                className={`whitespace-normal break-words text-[15px] font-bold leading-snug tracking-tight sm:text-base ${displayTitle(table) ? 'text-ink' : 'italic text-ink-soft'}`}
+                title={displayTitle(table) || undefined}
+              >
                 {displayTitle(table) || 'No title — review'}
               </div>
               <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-ink-soft">

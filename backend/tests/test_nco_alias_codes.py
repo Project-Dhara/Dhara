@@ -29,6 +29,34 @@ def test_aggregate_labels_get_no_code():
     assert not is_non_occupation_aggregate("SERVICE WORKERS")
 
 
+def test_residual_labels_get_no_code():
+    """Others / Not stated catch-alls must not map onto NEC family codes."""
+    from catalogue.nco_matching import is_non_occupation_aggregate, match_occupation
+
+    residuals = (
+        "OTHERS/NOT STATED",
+        "Others/Not stated",
+        "Others",
+        "OTHER",
+        "Not stated",
+        "Not reported",
+        "N.A.",
+        "NA",
+        "Unknown",
+        "Not elsewhere classified",
+        "Others (specify)",
+        "Miscellaneous",
+    )
+    for label in residuals:
+        assert is_non_occupation_aggregate(label), label
+        assert match_occupation(conn=None, occupation_text=label) is None
+
+    # Real occupations that merely contain "other" / "not" stay matchable.
+    assert not is_non_occupation_aggregate("Other clerical workers")
+    assert not is_non_occupation_aggregate("SERVICE WORKERS")
+    assert not is_non_occupation_aggregate("CLERICAL WORKERS")
+
+
 def test_poisoned_alias_is_rejected():
     assert not is_usable_nco_alias(
         {"code": "CLERICAL WORKERS", "level": "division", "title": ""},

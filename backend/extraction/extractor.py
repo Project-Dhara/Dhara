@@ -476,25 +476,23 @@ class TableExtractor:
         skip_set: set = set(structure.get("skip_rows", []))
         columns: List[str] = list(structure.get("columns", []))
 
-        # Clamp runaway multi-row headers on rectangular catalogue sheets
-        # (LLM + heuristic both used to swallow early data rows as headers).
+        # Clamp runaway multi-row headers when a *claimed* header row is
+        # clearly data (LLM/heuristic swallowed early records). Do not use
+        # later body rows — genuine group+leaf headers are followed by data.
         try:
-            from metadata.metadata_llm import (
-                _looks_like_data_row,
-                _row_looks_like_column_labels,
-            )
-            if (
-                header_rows > 1
-                and body
-                and _row_looks_like_column_labels(body[0])
-                and any(_looks_like_data_row(r) for r in body[1:min(5, len(body))])
-            ):
-                header_rows = 1
-                skip_set = {i for i in skip_set if i < 1}
-                columns = [
-                    str(v).strip() if v is not None else f"Col_{i+1}"
-                    for i, v in enumerate(body[0][:n_cols])
-                ]
+            from metadata.metadata_llm import _looks_like_data_row
+            if header_rows > 1 and body:
+                claimed = body[1:header_rows]
+                if any(
+                    (not self._blank(r)) and _looks_like_data_row(r)
+                    for r in claimed
+                ):
+                    header_rows = 1
+                    skip_set = {i for i in skip_set if i < 1}
+                    columns = [
+                        str(v).strip() if v is not None else f"Col_{i+1}"
+                        for i, v in enumerate(body[0][:n_cols])
+                    ]
         except Exception:
             pass
 
@@ -615,7 +613,7 @@ class TableExtractor:
         Falls back to the legacy first/second-row heuristic when no banner
         pattern is detected.
         """
-        from pdf.pdf_header_utils import extract_in_grid_caption
+        from extraction.pdf_header_utils import extract_in_grid_caption
 
         def row_text(row):
             seen_vals, parts = set(), []

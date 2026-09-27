@@ -12,7 +12,7 @@ import { goToConsoleFiles } from '../../../../../lib/consoleSession'
 const POLL_INTERVAL_MS = 2000
 
 // (key, label, [rangeLow, rangeHigh]) -- ranges mirror the exact percent
-// values sda_india_pdf_extraction.py's run_pipeline() reports for each
+// values extraction/pdf_extraction.py's run_pipeline() reports for each
 // stage, used to scale the backend's single global percent into a per-row
 // local 0-100% fill.
 const STAGES = [

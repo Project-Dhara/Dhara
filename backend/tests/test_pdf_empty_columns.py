@@ -9,8 +9,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from pdf.pdf_header_utils import repair_glued_numeric_cells
-from pdf.pdf_table_confidence import (
+from extraction.pdf_header_utils import repair_glued_numeric_cells
+from extraction.pdf_table_confidence import (
     clean_dataframe_light,
     classify_page,
     profile_table,

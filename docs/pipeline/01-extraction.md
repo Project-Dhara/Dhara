@@ -16,7 +16,7 @@ PDF → PyMuPDF page inspection → find_tables()
     → lines_strict + text-based candidates → candidate tables
 ```
 
-Key modules: `backend/pdf/sda_india_pdf_extraction.py`, workers,
+Key modules: `backend/extraction/pdf_extraction.py`, workers,
 `pdf_table_confidence.py`, `pdf_dual_column.py`. Jobs are orchestrated via
 `backend/pdf/pdf_jobs.py` and `backend/routes/pdf.py`.
 

@@ -105,7 +105,7 @@ function AddGroupModal({ tables, onCreate, onClose, idField = 'id', allowEmpty =
   if (typeof document === 'undefined') return null
   return createPortal(
     <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/35 p-4" role="dialog" aria-modal="true">
-      <div className="flex max-h-[85vh] w-full max-w-lg flex-col gap-3.5 overflow-hidden rounded-xl bg-surface p-5 shadow-dhara">
+      <div className="flex max-h-[85vh] w-full max-w-3xl flex-col gap-3.5 overflow-hidden rounded-xl bg-surface p-5 shadow-dhara">
         <div className="text-[16px] font-bold text-ink">Add group</div>
         <label className="flex flex-col gap-1.5 text-[13px] text-ink-soft">
           <span>Group name</span>
@@ -126,19 +126,37 @@ function AddGroupModal({ tables, onCreate, onClose, idField = 'id', allowEmpty =
             {tables.length === 0 ? (
               <p className="m-0 px-3 py-4 text-[13px] text-ink-soft">No ungrouped tables remaining.</p>
             ) : (
-              tables.map((t) => {
-                const key = tableKey(t)
-                return (
-                  <label
-                    key={key}
-                    className="flex cursor-pointer items-center gap-2.5 border-b border-cream px-3 py-2 text-[13px] last:border-b-0 hover:bg-cream"
-                  >
-                    <input type="checkbox" checked={selected.has(key)} onChange={() => toggle(key)} />
-                    <span className="font-semibold text-teal">{t.table_id || t.id}</span>
-                    <span className="truncate text-ink">{t.title || '—'}</span>
-                  </label>
-                )
-              })
+              <table className="w-full border-collapse text-[13px]">
+                <tbody>
+                  {tables.map((t) => {
+                    const key = tableKey(t)
+                    return (
+                      <tr
+                        key={key}
+                        className="cursor-pointer border-b border-cream last:border-b-0 hover:bg-cream"
+                        onClick={() => toggle(key)}
+                      >
+                        <td className="w-0 whitespace-nowrap px-3 py-2.5 align-top">
+                          <input
+                            type="checkbox"
+                            className="mt-0.5 shrink-0"
+                            checked={selected.has(key)}
+                            onChange={() => toggle(key)}
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label={`Select ${t.table_id || t.id}`}
+                          />
+                        </td>
+                        <td className="w-0 whitespace-nowrap py-2.5 pr-3 align-top font-semibold text-teal">
+                          {t.table_id || t.id}
+                        </td>
+                        <td className="min-w-0 py-2.5 pr-3 align-top leading-snug break-words text-ink">
+                          {t.title || '—'}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             )}
           </div>
         </div>
@@ -196,23 +214,22 @@ function TablesPanel({
 
   return (
     <div className={`flex flex-col gap-2 ${panelClassName}`}>
-      {editEnabled && rows.length > 0 && (
+      {editEnabled && rows.length > 0 && selectedCount > 1 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-cream/70 px-3 py-2">
           <span className="text-[12.5px] font-semibold text-ink-soft">
-            {selectedCount > 0 ? `${selectedCount} selected` : 'Select tables to move'}
+            {selectedCount} selected
           </span>
           <div className="min-w-[220px] flex-1 sm:max-w-sm sm:flex-none">
             <Combobox
               options={moveOptions}
               value=""
               onChange={(target) => {
-                if (selectedCount === 0) return
                 const ids = allIds.filter((id) => selectedIds.has(id))
                 onMoveTables(ids, target === 'unmatched' ? 'unmatched' : Number(target))
               }}
-              placeholder={selectedCount > 0 ? 'Move selected to group…' : 'Select tables first'}
+              placeholder="Move selected to group…"
               ariaLabel="Move selected tables to group"
-              disabled={selectedCount === 0 || moveOptions.length === 0}
+              disabled={moveOptions.length === 0}
               menuMinWidth={480}
             />
           </div>
@@ -284,9 +301,9 @@ function TablesPanel({
                             target === 'unmatched' ? 'unmatched' : Number(target),
                           )
                         }}
-                        placeholder="Choose group…"
+                        placeholder={checked ? 'Choose group…' : 'Select to move'}
                         ariaLabel={`Move ${displayTableId(row.table, preferTableId)} to group`}
-                        disabled={moveOptions.length === 0}
+                        disabled={!checked || moveOptions.length === 0}
                         menuMinWidth={480}
                       />
                     </td>
@@ -727,7 +744,7 @@ export default function GroupingWorkspace({
                     {editEnabled && (
                       <button
                         type="button"
-                        className="flex items-center justify-center rounded border border-line px-1.5 py-1 text-xs text-ink-soft transition-colors duration-200 hover:border-coral hover:bg-error-bg hover:text-coral"
+                        className="inline-flex items-center gap-1.5 rounded border border-line px-2 py-1 text-xs font-semibold text-ink-soft transition-colors duration-200 hover:border-coral hover:bg-error-bg hover:text-coral"
                         onClick={() => {
                           setMatch(deleteMatchGroup(matchResult, selectedKey))
                           setSelectedKey(null)
@@ -735,6 +752,7 @@ export default function GroupingWorkspace({
                         title="Delete group"
                         aria-label="Delete group"
                       >
+                        <span>Delete</span>
                         <Trash2 className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
                       </button>
                     )}
@@ -760,7 +778,7 @@ export default function GroupingWorkspace({
             </section>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center justify-end gap-4">
             {editingGroups ? (
               <Button variant="primary" onClick={finishEditing}>Done editing</Button>
             ) : (

@@ -15,6 +15,7 @@ import {
   columnHeaderPath,
   columnParentPath,
   displayTitle,
+  summarizeUncertainCellNotes,
   invertActionFlash,
   isNumericColumn,
   materializeCellMerges,
@@ -41,13 +42,16 @@ export function TableTitleDisplay({ table, className = '' }) {
   const title = displayTitle(table)
   if (title) {
     return (
-      <div className={`min-w-0 truncate text-[14px] font-semibold leading-snug text-ink ${className}`}>
+      <div
+        className={`min-w-0 whitespace-normal break-words text-[14px] font-semibold leading-snug text-ink ${className}`}
+        title={title}
+      >
         {title}
       </div>
     )
   }
   return (
-    <div className={`min-w-0 truncate text-[14px] font-semibold italic leading-snug text-ink-soft ${className}`}>
+    <div className={`min-w-0 text-[14px] font-semibold italic leading-snug text-ink-soft ${className}`}>
       No title — review
     </div>
   )
@@ -60,8 +64,8 @@ export function TableDetail({
   table,
   jobId,
   onSave,
-  onTitleLive,
-  onTitleCommit,
+  onTitleLive = undefined,
+  onTitleCommit = undefined,
   editorOnly = false,
   editorCloseHref = null,
   editorFooterHint = null,
@@ -730,9 +734,9 @@ export function TableDetail({
     <div className="flex flex-col gap-3 border-t border-line px-3.5 pb-3.5 pt-3">
       <label className="flex flex-col gap-1">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-teal">Table title</span>
-        <input
-          type="text"
-          className="rounded-md border border-line bg-white px-2.5 py-1.5 text-[13.5px] font-semibold text-ink outline-none focus:border-teal"
+        <textarea
+          rows={Math.min(4, Math.max(2, Math.ceil(((draft.title || '').length || 1) / 56)))}
+          className="min-h-[2.5rem] w-full resize-y rounded-md border border-line bg-white px-2.5 py-1.5 text-[13.5px] font-semibold leading-snug text-ink outline-none focus:border-teal"
           value={draft.title}
           placeholder="Add a table title"
           onChange={(e) => {
@@ -761,7 +765,9 @@ export function TableDetail({
         <>
           <div className="text-[11px] font-bold uppercase tracking-wide text-ink-soft">Extraction uncertainties</div>
           <ul className="list-disc pl-5 text-[13px] text-ink">
-            {table.uncertain_cells.map((note, i) => <li key={i}>{note}</li>)}
+            {summarizeUncertainCellNotes(table.uncertain_cells).map((note, i) => (
+              <li key={i}>{note}</li>
+            ))}
           </ul>
         </>
       )}

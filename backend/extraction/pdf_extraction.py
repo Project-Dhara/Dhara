@@ -1,5 +1,5 @@
 """
-Run (from backend/): python -m pdf.sda_india_pdf_extraction [--pages N] [--limit N]
+Run (from backend/): python -m extraction.pdf_extraction [--pages N] [--limit N]
 """
 
 import argparse
@@ -10,20 +10,20 @@ import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import openai
 import pandas as pd
 import pymupdf
 from dotenv import load_dotenv
 
-from pdf.pdf_extraction_workers import extract_pymupdf_chunk
-from pdf.pdf_header_utils import (
+from extraction.pdf_extraction_workers import extract_pymupdf_chunk
+from extraction.pdf_header_utils import (
     _is_descriptive_in_grid_title,
     _is_table_id_only,
     extract_in_grid_caption,
 )
-from pdf.pdf_table_confidence import (
+from extraction.pdf_table_confidence import (
     build_pdf_outline_index,
     classify_page,
     dedupe_column_names,
@@ -34,8 +34,9 @@ from pdf.pdf_table_confidence import (
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
+# Local CLI sample only (`python -m extraction.pdf_extraction`). Uploaded PDFs go through run_pipeline().
 PDF_PATH = Path(__file__).parent.parent.parent / "SDA_INDIA_0.pdf"
-OUTPUT_DIR = Path(__file__).parent.parent / "data" / "sda_india_extraction"
+OUTPUT_DIR = Path(__file__).parent.parent / "data" / "pdf_extraction"
 
 TEXT_MIN_CHARS = 20
 CPU_WORKERS = 3 #Changed from min(os.cpu_count() or 4, 8), since pc has only 8gb RAM.
@@ -161,15 +162,22 @@ def filter_candidate_pages(pages_grouped: Dict[int, List[Dict[str, Any]]]) -> Di
 
     Drops text-only false positives (prose misread as tables) while retaining
     real grids whose lines are too light/partial for lines_strict alone.
+    Also drops chart/figure false positives (wide numeric crumb grids).
     """
-    return {
-        page_num: candidates
-        for page_num, candidates in pages_grouped.items()
+    from extraction.pdf_table_confidence import looks_like_chart_candidate
+
+    out: Dict[int, List[Dict[str, Any]]] = {}
+    for page_num, candidates in pages_grouped.items():
+        kept = [
+            c for c in candidates
+            if not looks_like_chart_candidate(c.get("df"), bbox=c.get("bbox"))[0]
+        ]
         if any(
             str(c.get("method") or "") in ("pymupdf_lines_strict", "pymupdf_lines")
-            for c in candidates
-        )
-    }
+            for c in kept
+        ):
+            out[page_num] = kept
+    return out
 
 
 _METHOD_RANK = {
@@ -328,7 +336,17 @@ def _score_candidate_for_table_shape(
         return float("-inf")
     n_cols = len(table.get("columns") or [])
     n_rows = len(table.get("rows") or [])
-    score = -abs(int(df.shape[1]) - n_cols) * 12.0
+    n_cand = int(df.shape[1])
+    delta = n_cand - n_cols
+    # When the LLM dropped leading S.No./Name stubs and starts at Sex, a wider
+    # ruled grid is the real table — do not prefer a same-width fragment.
+    if delta >= 2 and (
+        _llm_starts_at_sex_column(table.get("columns") or [])
+        or _llm_missing_identity_stubs(table, cand)
+    ):
+        score = -abs(delta) * 1.5 + float(delta) * 5.0
+    else:
+        score = -abs(delta) * 12.0
     score -= abs(int(df.shape[0]) - n_rows) * 0.4
     score += _dataframe_numeric_fill_ratio(df) * 2.0
     if cand.get("method") == "pymupdf_lines_strict":
@@ -336,6 +354,64 @@ def _score_candidate_for_table_shape(
     elif cand.get("method") == "pymupdf_lines":
         score += 0.1
     return score
+
+
+_STUB_HEADER_RE = re.compile(
+    r"(s\.?\s*no\.?|sl\.?\s*no\.?|^sno$|name of|disease|particulars|"
+    r"^name$|^cause$|^indicator$|^description$)",
+    re.I,
+)
+_SEX_HEADER_NAME_RE = re.compile(r"^(sex|gender)$", re.I)
+
+
+def _llm_starts_at_sex_column(columns: List[Dict[str, Any]]) -> bool:
+    if not columns:
+        return False
+    name = str(columns[0].get("name") or "").strip()
+    return bool(_SEX_HEADER_NAME_RE.match(name))
+
+
+def _candidate_leading_stub_keys(cand: Dict[str, Any]) -> List[str]:
+    df = cand.get("df")
+    if df is None or getattr(df, "empty", True):
+        return []
+    meta = _candidate_column_meta(df)
+    keys: List[str] = []
+    for i in range(min(3, int(df.shape[1]))):
+        m = meta[i] if i < len(meta) else {}
+        leaf = str(m.get("name") or df.columns[i] or "").strip()
+        path = m.get("header_path") or []
+        blob = " ".join([str(p) for p in (path if isinstance(path, (list, tuple)) else [])] + [leaf])
+        if _STUB_HEADER_RE.search(blob) or _STUB_HEADER_RE.search(leaf):
+            key = _norm_header_key(leaf)
+            if key:
+                keys.append(key)
+    return keys
+
+
+def _llm_missing_identity_stubs(
+    table: Dict[str, Any],
+    cand: Dict[str, Any],
+) -> bool:
+    """True when the ruled grid has S.No./Name stubs the LLM omitted."""
+    df = cand.get("df")
+    if df is None or getattr(df, "empty", True):
+        return False
+    llm_cols = table.get("columns") or []
+    n_llm = len(llm_cols)
+    n_cand = int(df.shape[1])
+    if n_cand < n_llm + 1:
+        return False
+    llm_keys = {_norm_header_key(c.get("name")) for c in llm_cols if c.get("name")}
+    stub_keys = _candidate_leading_stub_keys(cand)
+    if stub_keys:
+        def _covered(sk: str) -> bool:
+            return sk in llm_keys or any(sk in lk or lk in sk for lk in llm_keys if lk)
+        missing = [sk for sk in stub_keys if not _covered(sk)]
+        if missing:
+            return True
+    # Heuristic: LLM grid starts at Sex while candidate is wider by ≥2.
+    return n_cand >= n_llm + 2 and _llm_starts_at_sex_column(llm_cols)
 
 
 def _best_matching_ruled_candidate(
@@ -402,7 +478,7 @@ def resolve_dual_column_pages(
     page title says "Performance by Indicators" but only one wide table was
     found, fall back to mid-page clip re-detect for that page only.
     """
-    from pdf import pdf_dual_column as _dual
+    from extraction import pdf_dual_column as _dual
 
     page_text = page_text or {}
     resolved: Dict[int, List[Dict[str, Any]]] = {}
@@ -668,6 +744,24 @@ TASK_A_RECONSTRUCTION_RULES = """TASK A -- RECONSTRUCT THE TABLE:
   column is a section heading for the rows below it, not a data point to discard. Keep it as its own
   row with the group label in place and null in the other columns -- do NOT silently drop it (that loses
   the grouping context for every row underneath) and do NOT invent values to fill it in.
+- BLANK-STUB / PERCENTAGE CONTINUATION ROWS: when a ruled table alternates a labelled row (e.g. Year
+  "1991" with absolute counts) with a following row whose first cell is empty but other cells hold
+  values — especially parenthetical shares like "(10.6)", "(13.6)", or "*(45.18)" — that second row is
+  REAL DATA, not a footnote and not a "(1)(2)(3)" column-index strip. You MUST emit it as its own row
+  with null/empty in the blank stub column and the parenthetical values preserved exactly (including
+  parentheses and leading "*"). Never collapse it into the previous year row and never omit it.
+- SEX-PAIR ROWS (M then F): cause-of-death and similar tables list each disease twice — Male then Female.
+  The Female row often has empty S.No. / disease-name cells. Candidates may also arrive with M/F and age
+  values already split into separate rows. You MUST keep one output row per sex line (never merge M and F
+  into one cell, never stack "M F M F" or multiple age values inside a single cell). Preserve empty stub
+  cells on the F row.
+- AGE-BAND COLUMNS: when the PDF grid shows many age columns (<1, 1-4, …, Not stated) plus Total under an
+  "Age in Years" group, emit EVERY leaf as its own column (typically ~11 age bands + Total). Do NOT collapse
+  them into one "Age" column or pack multiple numbers into the last cell.
+- IDENTITY STUB COLUMNS: keep S.No. / serial and Name of the Disease (or equivalent label columns) as their
+  own columns to the left of Sex. Never drop them and start the table at Sex — that loses the disease
+  hierarchy and makes every measure row ambiguous. Also keep section banner rows (e.g. "I CERTAIN INFECTIOUS
+  AND PARASITIC DISEASES …") that have labels in the stub columns and blank measures.
 - For "title", use the descriptive caption visible in the table or page text
   (e.g. "LIVE BIRTHS BY BIRTH ORDER AND BIRTH WEIGHT (URBAN)"). Do NOT use a short
   table identifier alone as the title (e.g. "TABLE: B-22", "Table B-6", "Statement 4.1").
@@ -865,11 +959,22 @@ def _cell_is_empty(value: Any) -> bool:
     return str(value).strip().lower() in _EMPTY_TOKENS
 
 
+def _cell_is_column_index_echo(value: Any, col_index: int) -> bool:
+    """True when a cell merely repeats the 1-based column number (index-strip bleed)."""
+    if _cell_is_empty(value) or col_index < 0:
+        return False
+    s = str(value).strip()
+    expected = str(col_index + 1)
+    return s == expected or s == f"({expected})"
+
+
 def _cell_is_numeric(value: Any) -> Optional[bool]:
     """True/False for clearly numeric vs non-numeric; None if empty/placeholder."""
     if _cell_is_empty(value):
         return None
-    s = str(value).strip().replace(",", "").replace("%", "").strip()
+    s = str(value).strip().replace(",", "").replace("%", "").replace("*", "").strip()
+    if len(s) >= 3 and s.startswith("(") and s.endswith(")"):
+        s = s[1:-1].strip()
     if not s or s.lower() in _EMPTY_TOKENS:
         return None
     try:
@@ -898,13 +1003,68 @@ def _column_structural_kind(col: Dict[str, Any]) -> str:
         "state", "geography", "states/uts",
     ):
         return "geo"
+    # TOTAL / Grand Total are measure columns even when LLM leaves role unknown.
+    # "Adjusted …" mid-year sub-headers are measures too (often wiped to dashes
+    # while the index strip bleeds 7/8 into the first body row).
     if (
-        role == "measure"
+        name in ("total", "totals", "grand total", "all")
+        or re.search(r"\b(total|totals)\b", name)
+        or role == "measure"
         or dt in _NUMERIC_DATA_TYPES
-        or any(k in name for k in ("percent", "percentage", "index score", "score", "kg/", "gva", "rate"))
+        or any(
+            k in name
+            for k in (
+                "percent", "percentage", "index score", "score", "kg/", "gva",
+                "rate", "adjusted",
+            )
+        )
     ):
         return "measure"
     return "other"
+
+
+def _format_row_span_label(row_nums_1based: List[int], nrows: int) -> str:
+    """Compact 'rows 1–12' / 'all 12 data rows' / 'rows 2, 5, 7' label."""
+    if not row_nums_1based:
+        return "no rows"
+    if len(row_nums_1based) == nrows and nrows > 0:
+        return f"all {nrows} data row{'s' if nrows != 1 else ''}"
+    if len(row_nums_1based) == 1:
+        return f"row {row_nums_1based[0]}"
+    consecutive = row_nums_1based == list(range(row_nums_1based[0], row_nums_1based[-1] + 1))
+    if consecutive and len(row_nums_1based) >= 3:
+        return f"rows {row_nums_1based[0]}–{row_nums_1based[-1]}"
+    if len(row_nums_1based) <= 8:
+        return "rows " + ", ".join(str(r) for r in row_nums_1based)
+    head = ", ".join(str(r) for r in row_nums_1based[:5])
+    return f"rows {head}, … ({len(row_nums_1based)} of {nrows})"
+
+
+def _sample_cell_values(values: List[Any], limit: int = 3) -> str:
+    samples: List[str] = []
+    for v in values:
+        if _cell_is_empty(v):
+            continue
+        s = str(v).strip()
+        if len(s) > 40:
+            s = s[:37] + "…"
+        samples.append(s)
+        if len(samples) >= limit:
+            break
+    return ", ".join(samples)
+
+
+def _sex_crossed_into_header(name: str) -> bool:
+    """True when a header looks like Male/Female×age pivoted into columns."""
+    n = str(name or "")
+    if not re.search(r"(?i)\b(male|female)\b", n):
+        return False
+    if not re.search(
+        r"(?i)(<\s*\d|\d+\s*[-–—]\s*\d|>=?\s*\d|not\s*stated|total|age)",
+        n,
+    ):
+        return False
+    return True
 
 
 def _detect_column_alignment_issues(
@@ -914,41 +1074,90 @@ def _detect_column_alignment_issues(
 
     Catches shifted grids like SDG state tables where Direction up/down lands
     under States/UTs, S.No. is glued to the state name, and measure columns
-    are left empty. Returns a list of {col_index, name, detail} issues.
+    are left empty. Returns issues with pattern/name/col_index for compact
+    user-facing summaries (see _summarize_alignment_issue_notes).
     """
     issues: List[Dict[str, Any]] = []
     if not columns or not rows:
         return issues
 
     nrows = len(rows)
+    has_index_strip = bool(rows) and _row_is_column_index_strip(rows[0])
     for idx, col in enumerate(columns):
         kind = _column_structural_kind(col)
         vals = [row[idx] if idx < len(row) else None for row in rows]
-        non_empty = [v for v in vals if not _cell_is_empty(v)]
-        name = col.get("name") or f"col_{idx}"
+        # Index-strip bleed (Total="7", Adjusted="8") is not real measure content.
+        def _effectively_empty(v: Any, _idx: int = idx) -> bool:
+            if _cell_is_empty(v):
+                return True
+            return has_index_strip and _cell_is_column_index_echo(v, _idx)
+
+        empty_rows_1based = [r + 1 for r, v in enumerate(vals) if _effectively_empty(v)]
+        non_empty = [v for v in vals if not _effectively_empty(v)]
+        name = col.get("name") or f"Column {idx + 1}"
         empty_rate = 1.0 - (len(non_empty) / nrows) if nrows else 0.0
+        col_pos = idx + 1
 
         if kind == "measure" and nrows >= 5:
             if empty_rate >= 0.7:
                 issues.append({
-                    "col_index": idx, "name": name, "kind": kind,
-                    "detail": f"measure column mostly empty ({empty_rate:.0%} blank)",
+                    "col_index": idx,
+                    "name": name,
+                    "kind": kind,
+                    "pattern": "empty_measure",
+                    "sex_age": _sex_crossed_into_header(str(name)),
+                    "detail": (
+                        f'Column {col_pos} ("{name}"): blank '
+                        f"({_format_row_span_label(empty_rows_1based, nrows)})"
+                    ),
                 })
                 continue
             numeric_flags = [_cell_is_numeric(v) for v in non_empty]
             judged = [f for f in numeric_flags if f is not None]
             if judged and (sum(1 for f in judged if f) / len(judged)) < 0.5:
+                bad_examples: List[str] = []
+                for r_i, v in enumerate(vals):
+                    if _cell_is_empty(v):
+                        continue
+                    if _cell_is_numeric(v) is False:
+                        shown = str(v).strip()
+                        if len(shown) > 24:
+                            shown = shown[:21] + "…"
+                        bad_examples.append(f'row {r_i + 1}="{shown}"')
+                        if len(bad_examples) >= 3:
+                            break
+                examples = f" — e.g. {'; '.join(bad_examples)}" if bad_examples else ""
                 issues.append({
-                    "col_index": idx, "name": name, "kind": kind,
-                    "detail": "measure column values are mostly non-numeric",
+                    "col_index": idx,
+                    "name": name,
+                    "kind": kind,
+                    "pattern": "non_numeric_measure",
+                    "detail": (
+                        f'Column {col_pos} ("{name}"): expected numbers{examples}'
+                    ),
                 })
             direction_hits = sum(
                 1 for v in non_empty if str(v).strip().lower() in _DIRECTION_TOKENS
             )
             if non_empty and direction_hits / len(non_empty) >= 0.4:
+                dir_rows = [
+                    r + 1 for r, v in enumerate(vals)
+                    if not _cell_is_empty(v) and str(v).strip().lower() in _DIRECTION_TOKENS
+                ]
+                sample = _sample_cell_values(
+                    [v for v in vals if not _cell_is_empty(v)
+                     and str(v).strip().lower() in _DIRECTION_TOKENS]
+                )
                 issues.append({
-                    "col_index": idx, "name": name, "kind": kind,
-                    "detail": "measure column contains Direction up/down tokens",
+                    "col_index": idx,
+                    "name": name,
+                    "kind": kind,
+                    "pattern": "direction_in_measure",
+                    "detail": (
+                        f'Column {col_pos} ("{name}"): up/down markers in '
+                        f"{_format_row_span_label(dir_rows, nrows)}"
+                        + (f" ({sample})" if sample else "")
+                    ),
                 })
 
         elif kind == "geo" and non_empty:
@@ -956,21 +1165,78 @@ def _detect_column_alignment_issues(
                 1 for v in non_empty if str(v).strip().lower() in _DIRECTION_TOKENS
             )
             if direction_hits / len(non_empty) >= 0.4:
+                dir_rows = [
+                    r + 1 for r, v in enumerate(vals)
+                    if not _cell_is_empty(v) and str(v).strip().lower() in _DIRECTION_TOKENS
+                ]
+                sample = _sample_cell_values(
+                    [v for v in vals if not _cell_is_empty(v)
+                     and str(v).strip().lower() in _DIRECTION_TOKENS]
+                )
                 issues.append({
-                    "col_index": idx, "name": name, "kind": kind,
-                    "detail": "States/geo column filled with Direction up/down values",
+                    "col_index": idx,
+                    "name": name,
+                    "kind": kind,
+                    "pattern": "direction_in_geo",
+                    "detail": (
+                        f'Column {col_pos} ("{name}"): up/down markers in '
+                        f"{_format_row_span_label(dir_rows, nrows)}"
+                        + (f" ({sample})" if sample else "")
+                    ),
                 })
 
         elif kind == "serial" and non_empty:
-            # e.g. "1, Andhra Pradesh" -- serial number glued to the next field
-            glued = sum(
-                1 for v in non_empty
-                if isinstance(v, str) and re.match(r"^\d+\s*,\s*\S", v.strip())
-            )
-            if glued / len(non_empty) >= 0.3:
+            glued_rows: List[int] = []
+            glued_samples: List[str] = []
+            for r_i, v in enumerate(vals):
+                if _cell_is_empty(v):
+                    continue
+                if isinstance(v, str) and re.match(r"^\d+\s*,\s*\S", v.strip()):
+                    glued_rows.append(r_i + 1)
+                    if len(glued_samples) < 2:
+                        shown = v.strip()
+                        if len(shown) > 40:
+                            shown = shown[:37] + "…"
+                        glued_samples.append(shown)
+            if non_empty and len(glued_rows) / len(non_empty) >= 0.3:
+                examples = f" — e.g. {', '.join(glued_samples)}" if glued_samples else ""
                 issues.append({
-                    "col_index": idx, "name": name, "kind": kind,
-                    "detail": "S.No./serial values look glued to the next column",
+                    "col_index": idx,
+                    "name": name,
+                    "kind": kind,
+                    "pattern": "glued_serial",
+                    "detail": (
+                        f'Column {col_pos} ("{name}"): serial stuck to next field'
+                        f" in {_format_row_span_label(glued_rows, nrows)}{examples}"
+                    ),
+                })
+
+    # Index-strip values (1..N) leaked into the first body row under measure
+    # headers — classic swap signal when LLM keeps the strip but shifts cells.
+    if has_index_strip and nrows >= 3 and len(columns) >= 4:
+        first_body = rows[1]
+        leak_idxs: List[int] = []
+        for idx, col in enumerate(columns):
+            if idx >= len(first_body):
+                continue
+            if _column_structural_kind(col) not in ("measure", "other"):
+                continue
+            if _cell_is_column_index_echo(first_body[idx], idx):
+                leak_idxs.append(idx)
+        if len(leak_idxs) >= 2:
+            for idx in leak_idxs:
+                if any(i.get("col_index") == idx for i in issues):
+                    continue
+                name = columns[idx].get("name") or f"Column {idx + 1}"
+                issues.append({
+                    "col_index": idx,
+                    "name": name,
+                    "kind": "measure",
+                    "pattern": "index_value_leak",
+                    "detail": (
+                        f'Column {idx + 1} ("{name}"): column-index value '
+                        f'"{idx + 1}" landed in the first data row'
+                    ),
                 })
 
     return issues
@@ -1015,8 +1281,143 @@ def _dataframe_numeric_fill_ratio(df: pd.DataFrame) -> float:
     return ok / total
 
 
+def _candidate_restores_blank_measures(
+    columns: List[Dict[str, Any]],
+    issues: List[Dict[str, Any]],
+    cand_df: Optional[pd.DataFrame],
+) -> bool:
+    """True when the ruled grid has numeric values in measure cols the LLM wiped.
+
+    Global fill ratios stay high when only TOTAL is dashes — compare those
+    blank columns directly instead of requiring cand_fill >> llm_fill.
+
+    Also accepts sparse restores (Vital Stats: mostly NA + one footer TOTAL)
+    once the leading 1..N index strip is ignored. Columns that are blank in
+    *both* grids (e.g. Adjusted) are ignored so they don't block a restore.
+    """
+    blank_idxs = [
+        int(i["col_index"])
+        for i in issues
+        if i.get("pattern") == "empty_measure" and int(i.get("col_index", -1)) >= 0
+    ]
+    if not blank_idxs or cand_df is None or cand_df.empty:
+        return False
+    # Same-width grids only — avoid remapping when structure differs.
+    if int(cand_df.shape[1]) != len(columns):
+        return False
+    skip_first = bool(len(cand_df)) and _row_is_column_index_strip(
+        cand_df.iloc[0].tolist()
+    )
+    restored_any = False
+    for idx in blank_idxs:
+        if idx >= int(cand_df.shape[1]):
+            return False
+        col_vals = cand_df.iloc[:, idx].tolist()
+        if skip_first:
+            col_vals = col_vals[1:]
+        nonempty = [v for v in col_vals if not _cell_is_empty(v)]
+        if not nonempty:
+            # Candidate is also blank here — nothing to restore; don't block.
+            continue
+        numeric = sum(1 for v in nonempty if _cell_is_numeric(v) is True)
+        if numeric < 1:
+            return False
+        # Dense restore (literacy TOTAL wiped to dashes).
+        dense_ok = (
+            len(nonempty) >= max(3, int(0.35 * len(col_vals)))
+            and numeric / len(nonempty) >= 0.7
+        )
+        # Sparse restore: footer figure under NA/-- body (still better than blank).
+        sparse_ok = numeric >= 1 and numeric / len(nonempty) >= 0.5
+        if not (dense_ok or sparse_ok):
+            return False
+        restored_any = True
+    return restored_any
+
+
+def _table_body_fill_ratio(columns: List[Dict[str, Any]], rows: List[List[Any]]) -> float:
+    """Share of non-empty cells in the LLM reconstruction (0..1)."""
+    if not columns or not rows:
+        return 0.0
+    ncol = len(columns)
+    total = 0
+    filled = 0
+    for row in rows:
+        for i in range(ncol):
+            total += 1
+            v = row[i] if i < len(row) else None
+            if not _cell_is_empty(v):
+                filled += 1
+    return filled / total if total else 0.0
+
+
+def _dataframe_body_fill_ratio(df: pd.DataFrame) -> float:
+    """Share of non-empty cells in a candidate DataFrame (0..1)."""
+    if df is None or getattr(df, "empty", True):
+        return 0.0
+    total = 0
+    filled = 0
+    for row in df.values.tolist():
+        for v in row:
+            total += 1
+            if not _cell_is_empty(v):
+                filled += 1
+    return filled / total if total else 0.0
+
+
+def _empty_row_fraction(rows: List[List[Any]]) -> float:
+    if not rows:
+        return 0.0
+    empty = 0
+    for row in rows:
+        if not row or all(_cell_is_empty(v) for v in row):
+            empty += 1
+    return empty / len(rows)
+
+
+def _row_is_placeholder_only(row: Sequence[Any]) -> bool:
+    """True when every cell is empty or a dash/NA placeholder."""
+    if not row:
+        return True
+    for v in row:
+        if _cell_is_empty(v):
+            continue
+        s = str(v).strip().lower()
+        if s in {"-", "—", "–", "--", "na", "n/a", "n.a.", "n.a", "nil", "."}:
+            continue
+        return False
+    return True
+
+
+def _count_substantive_data_rows(
+    rows: Sequence[Sequence[Any]],
+) -> int:
+    """Count real data rows (skip column-index strips and placeholder-only rows)."""
+    n = 0
+    for row in rows:
+        if not row:
+            continue
+        if _row_is_column_index_strip(row):
+            continue
+        if _row_is_placeholder_only(row):
+            continue
+        n += 1
+    return n
+
+
+def _dataframe_substantive_row_count(df: pd.DataFrame) -> int:
+    if df is None or getattr(df, "empty", True):
+        return 0
+    return _count_substantive_data_rows(df.values.tolist())
+
+
 def _best_lines_strict_candidate(candidates: Optional[List[Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
-    """Prefer lines_strict; fall back to looser lines (not text) when strict missed."""
+    """Prefer lines_strict; fall back to looser lines (not text) when strict missed.
+
+    Among ruled candidates, prefer wider grids with decent numeric fill so a
+    collapsed 4-col LLM reconstruction is rebuilt from the full ~15-col grid
+    rather than a sparse fragment.
+    """
     if not candidates:
         return None
     strict = [c for c in candidates if c.get("method") == "pymupdf_lines_strict" and c.get("df") is not None]
@@ -1024,7 +1425,14 @@ def _best_lines_strict_candidate(candidates: Optional[List[Dict[str, Any]]]) -> 
     pool = strict or lines
     if not pool:
         return None
-    return max(pool, key=lambda c: _dataframe_numeric_fill_ratio(c["df"]))
+    return max(
+        pool,
+        key=lambda c: (
+            int(c["df"].shape[1]),
+            int(c["df"].shape[0]) * int(c["df"].shape[1]),
+            _dataframe_numeric_fill_ratio(c["df"]),
+        ),
+    )
 
 
 def _is_direction_like_column(col: Dict[str, Any]) -> bool:
@@ -1108,6 +1516,92 @@ def _strip_ungrounded_direction_columns(
     return table
 
 
+def _list_column_names(names: List[str], limit: int = 6) -> str:
+    clean = [str(n).strip() or "unnamed" for n in names]
+    if len(clean) <= limit:
+        return ", ".join(clean)
+    shown = ", ".join(clean[: limit - 1])
+    return f"{shown}, +{len(clean) - (limit - 1)} more"
+
+
+def _summarize_alignment_issue_notes(issues: List[Dict[str, Any]]) -> List[str]:
+    """Collapse many similar alignment issues into a few short steward notes."""
+    if not issues:
+        return []
+
+    notes: List[str] = []
+    empty = [i for i in issues if i.get("pattern") == "empty_measure"]
+    other = [i for i in issues if i.get("pattern") != "empty_measure"]
+
+    if empty:
+        names = [
+            str(i.get("name") or f"Column {(i.get('col_index') or 0) + 1}")
+            for i in empty
+        ]
+        sex_age = any(i.get("sex_age") for i in empty)
+        if len(empty) == 1:
+            note = f"Blank value column: {names[0]}."
+        else:
+            note = f"Blank value columns ({len(empty)}): {_list_column_names(names)}."
+        if sex_age:
+            note += " Sex looks mixed into age headers — use M/F as row labels instead."
+        notes.append(note)
+
+    for issue in other:
+        detail = str(issue.get("detail") or "").strip()
+        if detail:
+            notes.append(detail)
+        else:
+            notes.append(_format_alignment_issue_note(issue))
+
+    return notes
+
+
+def _format_alignment_issue_note(issue: Dict[str, Any]) -> str:
+    """Fallback single-issue note (prefer _summarize_alignment_issue_notes)."""
+    detail = str(issue.get("detail") or "").strip()
+    if detail:
+        return detail
+    name = str(issue.get("name") or "Column").strip() or "Column"
+    idx = int(issue.get("col_index", -1))
+    if idx < 0:
+        return f'Issue in column "{name}".'
+    return f'Column {idx + 1} ("{name}"): needs review.'
+
+
+def _uncertain_note_is_alignment_mismatch(note: Any) -> bool:
+    """True for alignment-guard notes (legacy codes or human-readable wording)."""
+    s = str(note or "").lower()
+    if not s:
+        return False
+    if "column_alignment_mismatch" in s:
+        return True
+    if "added guard" in s and ("alignment" in s or "mismatch" in s):
+        return True
+    markers = (
+        "values may sit under the wrong header",
+        "values may be shifted under the wrong headers",
+        "column headers and values did not line up",
+        "rebuilt from the pdf",
+        "multi-level headers may have been collapsed",
+        "leading s.no./name columns were dropped",
+        "sparse reconstruction",
+        "title or caption line may have been treated as column headers",
+        "column layout check found",
+        "looks like a value column but is mostly empty",
+        "looks like a value column but most cells are not numbers",
+        "serial numbers appear stuck to the next column",
+        "serial stuck to next field",
+        "contains up/down trend markers",
+        "every cell is blank",
+        "blank value column",
+        "expected numbers",
+        "sex looks mixed into age headers",
+        "up/down markers in",
+    )
+    return any(m in s for m in markers)
+
+
 def _apply_column_alignment_guard(
     table: Dict[str, Any],
     candidates: Optional[List[Dict[str, Any]]] = None,
@@ -1130,24 +1624,88 @@ def _apply_column_alignment_guard(
     matched_cand, matched_idx = _best_matching_ruled_candidate(
         table, candidates, used_candidates
     )
-    best_cand = matched_cand or (
-        _best_lines_strict_candidate(candidates) if candidates else None
-    )
-    if best_cand is not None:
-        cand_ncols = int(best_cand["df"].shape[1])
+    # Prefer the widest ruled grid for structure checks — shape-matching alone
+    # latches onto a Sex+measures fragment that mirrors a stub-dropping LLM.
+    wide_cand = _best_lines_strict_candidate(candidates) if candidates else None
+    best_cand = matched_cand or wide_cand
+    structure_cand = wide_cand or matched_cand
+    if structure_cand is not None:
+        cand_ncols = int(structure_cand["df"].shape[1])
         if cand_ncols >= 2 and len(columns) >= max(6, cand_ncols * 2):
             issues.append({
                 "col_index": -1, "name": "(table structure)", "kind": "structure",
-                "detail": f"reconstructed {len(columns)} columns vs {cand_ncols} in the "
-                          "ruled-border candidate -- likely a title/caption line misread as headers",
+                "pattern": "structure",
+                "detail": (
+                    f"Too many columns ({len(columns)} vs ~{cand_ncols} in the PDF grid) "
+                    "— a title/caption may have been treated as headers."
+                ),
             })
         elif cand_ncols >= 4 and len(columns) <= max(2, cand_ncols // 2):
             issues.append({
                 "col_index": -1, "name": "(table structure)", "kind": "structure",
-                "detail": f"reconstructed only {len(columns)} columns vs {cand_ncols} in the "
-                          "ruled-border candidate -- likely a multi-level header collapsed too far, "
-                          "losing a real column split (e.g. per-year values)",
+                "pattern": "structure",
+                "detail": (
+                    f"Too few columns ({len(columns)} vs ~{cand_ncols} in the PDF grid) "
+                    "— multi-level headers may have been collapsed."
+                ),
             })
+        elif (
+            cand_ncols >= len(columns) + 2
+            and _llm_missing_identity_stubs(table, structure_cand)
+        ):
+            issues.append({
+                "col_index": -1, "name": "(table structure)", "kind": "structure",
+                "pattern": "structure",
+                "detail": (
+                    f"Too few columns ({len(columns)} vs ~{cand_ncols} in the PDF grid) "
+                    "— leading S.No./Name columns were dropped from the reconstruction."
+                ),
+            })
+        else:
+            # Same width but hollow body: LLM kept headers/S.No. labels while
+            # dropping most measure rows (blank mid-table, values dumped at end).
+            llm_body = _table_body_fill_ratio(columns, rows)
+            cand_body = _dataframe_body_fill_ratio(structure_cand["df"])
+            empty_frac = _empty_row_fraction(rows)
+            if (
+                len(rows) >= 8
+                and cand_body >= 0.25
+                and (
+                    (empty_frac >= 0.35 and cand_body > llm_body + 0.12)
+                    or (llm_body <= 0.18 and cand_body > llm_body + 0.18)
+                )
+            ):
+                issues.append({
+                    "col_index": -1, "name": "(table structure)", "kind": "structure",
+                    "pattern": "structure",
+                    "detail": (
+                        f"Sparse reconstruction ({empty_frac:.0%} empty rows, "
+                        f"body fill {llm_body:.0%} vs PDF grid {cand_body:.0%}) "
+                        "— most values were dropped or crammed into trailing rows."
+                    ),
+                })
+            else:
+                # LLM dropped whole data rows (e.g. footer TOTAL) or left
+                # placeholder-only ghosts while the ruled grid is complete.
+                llm_n = _count_substantive_data_rows(rows)
+                cand_n = _dataframe_substantive_row_count(structure_cand["df"])
+                blank_measure_hit = any(
+                    i.get("pattern") == "empty_measure" for i in issues
+                )
+                # +2 alone is enough; +1 also fires when a measure col is blank
+                # (Vital Stats: missing TOTAL row with wiped Total column).
+                if cand_n >= 4 and (
+                    cand_n >= llm_n + 2
+                    or (blank_measure_hit and cand_n >= llm_n + 1)
+                ):
+                    issues.append({
+                        "col_index": -1, "name": "(table structure)", "kind": "structure",
+                        "pattern": "structure",
+                        "detail": (
+                            f"Missing data rows ({llm_n} kept vs ~{cand_n} in the PDF grid) "
+                            "— a TOTAL/summary or mid-table block was dropped."
+                        ),
+                    })
 
     if not issues:
         return table
@@ -1164,16 +1722,12 @@ def _apply_column_alignment_guard(
 
     notes = list(table.get("notes") or [])
     uncertain = list(table.get("uncertain_cells") or [])
-    for issue in issues:
-        note = (
-            f"column_alignment_mismatch: col {issue['col_index']} "
-            f"{issue['name']!r} -- {issue['detail']}"
-        )
+    for note in _summarize_alignment_issue_notes(issues):
         if note not in uncertain:
             uncertain.append(note)
     summary = (
-        "ADDED guard: reconstructed table failed column-alignment checks "
-        f"({len(issues)} column(s)); values may be shifted across headers."
+        f"Column layout check found {len(issues)} issue(s); "
+        "values may be shifted under the wrong headers."
     )
     if summary not in notes:
         notes.append(summary)
@@ -1181,12 +1735,25 @@ def _apply_column_alignment_guard(
     severe = any(i["kind"] in ("geo", "serial", "structure") for i in issues) or sum(
         1 for i in issues if i["kind"] == "measure"
     ) >= 2
+    # A single wiped measure column (e.g. TOTAL → all "—") is enough to rebuild
+    # when the ruled candidate still has dense numbers.
+    has_blank_measure = any(i.get("pattern") == "empty_measure" for i in issues)
 
     has_structure_issue = any(i["kind"] == "structure" for i in issues)
 
     fallback_used = False
-    if severe and candidates:
+    if (severe or has_blank_measure) and candidates:
         cand, cand_idx = matched_cand, matched_idx
+        # Structure repairs (dropped stubs / collapsed headers) must use the
+        # widest ruled grid, not a fragment that matches the LLM's wrong width.
+        if (has_structure_issue or has_blank_measure) and wide_cand is not None:
+            cand = wide_cand
+            cand_idx = None
+            if candidates:
+                for i, c in enumerate(candidates):
+                    if c is cand:
+                        cand_idx = i
+                        break
         if cand is None:
             cand = _best_lines_strict_candidate(candidates)
             cand_idx = None
@@ -1198,7 +1765,18 @@ def _apply_column_alignment_guard(
         if cand is not None:
             llm_fill = _measure_numeric_fill_ratio(columns, rows)
             cand_fill = _dataframe_numeric_fill_ratio(cand["df"])
-            if has_structure_issue or (cand_fill >= 0.5 and cand_fill > llm_fill + 0.25):
+            # Structure mismatch (e.g. 4 LLM cols vs ~15 grid): always prefer the
+            # wider ruled grid. Sparse F-row stubs drag fill down without meaning
+            # the candidate is wrong; don't require cand_fill >= 0.5 in that case.
+            restores_blank = has_blank_measure and _candidate_restores_blank_measures(
+                columns, issues, cand.get("df")
+            )
+            take_fallback = has_structure_issue or restores_blank or (
+                has_blank_measure and cand_fill >= 0.35 and cand_fill > llm_fill + 0.12
+            ) or (
+                cand_fill >= 0.5 and cand_fill > llm_fill + 0.25
+            )
+            if take_fallback:
                 fallback = table_dict_from_df(
                     cand["df"],
                     method=str(cand.get("method") or "pymupdf_lines_strict"),
@@ -1211,9 +1789,9 @@ def _apply_column_alignment_guard(
                     "confidence": "alignment_guard_fallback",
                 }
                 fallback_note = (
-                    "ADDED guard: replaced LLM rows/columns with "
-                    f"{cand.get('method')} candidate after alignment mismatch "
-                    f"(candidate numeric fill {cand_fill:.0%} vs LLM {llm_fill:.0%})."
+                    "Rebuilt from the PDF ruled grid after column layout mismatch "
+                    f"(grid fill {cand_fill:.0%}; earlier reconstruction {llm_fill:.0%}). "
+                    "Verify values sit under the right headers."
                 )
                 notes.append(fallback_note)
                 uncertain.append(fallback_note)
@@ -1223,6 +1801,17 @@ def _apply_column_alignment_guard(
                     used_candidates.add(cand_idx)
                 # Re-detect on fallback grid (usually clean); keep prior notes.
                 issues = _detect_column_alignment_issues(table["columns"], table["rows"])
+                if not any(i.get("pattern") == "empty_measure" for i in issues):
+                    # Drop stale "Blank value column: TOTAL" notes the rebuild fixed.
+                    def _is_blank_col_note(n: Any) -> bool:
+                        return isinstance(n, str) and n.lower().startswith("blank value column")
+                    notes = [n for n in notes if not _is_blank_col_note(n)]
+                    uncertain = [u for u in uncertain if not _is_blank_col_note(u)]
+                    # Keep the rebuild explanation.
+                    if fallback_note not in notes:
+                        notes.append(fallback_note)
+                    if fallback_note not in uncertain:
+                        uncertain.append(fallback_note)
                 if issues:
                     for idx, col in enumerate(table["columns"]):
                         if idx in {i["col_index"] for i in issues}:
@@ -1542,15 +2131,20 @@ def derive_human_review_needed(table: Dict[str, Any]) -> tuple[bool, Optional[st
     uncertain_cells = table.get("uncertain_cells") or []
     rows = table.get("rows") or []
     if uncertain_cells:
-        if any("column_alignment_mismatch" in str(note) for note in uncertain_cells):
-            # ADDED: notes written by _apply_column_alignment_guard.
+        if any(_uncertain_note_is_alignment_mismatch(note) for note in uncertain_cells):
+            # Notes written by _apply_column_alignment_guard (legacy + human wording).
             reasons_present.add("column_alignment_mismatch")
         if any(_looks_garbled(note) for note in uncertain_cells) or _rows_look_garbled(rows):
             reasons_present.add("garbled_extracted_value")
-        elif any(" vs " in str(note) for note in uncertain_cells):
+        elif any(
+            " vs " in str(note) and not _uncertain_note_is_alignment_mismatch(note)
+            for note in uncertain_cells
+        ):
             # Matches this pipeline's own uncertain_cells note format (see
             # TASK_A_RECONSTRUCTION_RULES / uncertain_cells example) --
             # "row X, col Y: candidateA=... vs candidateB=...".
+            # Alignment-guard notes are excluded so fill-rate comparisons are
+            # not misread as cell conflicts.
             reasons_present.add("conflicting_extraction")
         elif "column_alignment_mismatch" not in reasons_present:
             reasons_present.add("uncertain_extraction")
@@ -1696,9 +2290,17 @@ def _score_candidate_for_llm_table(table: Dict[str, Any], cand: Dict[str, Any]) 
     n_llm = len(llm_cols)
     n_cand = int(df.shape[1])
     score = 0.0
-    score -= abs(n_llm - n_cand) * 3.0
-    if n_llm == n_cand:
-        score += 12.0
+    delta = n_cand - n_llm
+    if delta >= 2 and (
+        _llm_starts_at_sex_column(llm_cols) or _llm_missing_identity_stubs(table, cand)
+    ):
+        # Reward recovering dropped S.No./Name stubs instead of matching width.
+        score -= abs(delta) * 1.0
+        score += float(delta) * 4.0
+    else:
+        score -= abs(delta) * 3.0
+        if n_llm == n_cand:
+            score += 12.0
     llm_keys = {_norm_header_key(c.get("name")) for c in llm_cols if c.get("name")}
     cand_keys: set = set()
     for i, name in enumerate(df.columns):
@@ -1912,6 +2514,178 @@ def _restore_body_merge_empties_from_df(table: Dict[str, Any], df: pd.DataFrame)
         if changed:
             rows[r] = row
     table["rows"] = rows
+
+
+_COL_INDEX_STRIP_RE = re.compile(r"^\(\d+\)$")
+_BARE_COL_INDEX_RE = re.compile(r"^\d{1,2}$")
+
+
+def _row_is_column_index_strip(row: Sequence[Any]) -> bool:
+    """True for header '(1)(2)(3)' or bare 1..N index strips — not data rows.
+
+    Birth-order / count rows like ``1, 0, 633, 6322, …`` must stay False.
+    """
+    non_empty = [v for v in row if not _cell_is_empty(v)]
+    if len(non_empty) < 2:
+        return False
+    paren_hits = sum(
+        1 for v in non_empty
+        if _COL_INDEX_STRIP_RE.match(str(v).strip())
+    )
+    if paren_hits > len(non_empty) * 0.5:
+        return True
+    # Bare 1,2,3,…,N under headers (common in CRS PDFs). Require almost-full
+    # coverage so a real data row with small integers is never treated as an index.
+    if len(non_empty) < 3:
+        return False
+    if not all(_BARE_COL_INDEX_RE.match(str(v).strip()) for v in non_empty):
+        return False
+    try:
+        nums = [int(str(v).strip()) for v in non_empty]
+    except ValueError:
+        return False
+    return bool(nums) and nums == list(range(1, len(nums) + 1))
+
+
+def _row_has_measure_like_values(row: Sequence[Any]) -> bool:
+    non_empty = [v for v in row if not _cell_is_empty(v)]
+    if len(non_empty) < 2:
+        return False
+    nums = sum(1 for v in non_empty if _cell_is_numeric(v) is True)
+    return nums >= max(2, int(len(non_empty) * 0.5))
+
+
+def _row_content_fingerprint(row: Sequence[Any]) -> Tuple[str, ...]:
+    return tuple(
+        _norm_header_key(v)
+        for v in row
+        if not _cell_is_empty(v)
+    )
+
+
+def _restore_missing_data_rows_from_candidate(
+    table: Dict[str, Any],
+    df: pd.DataFrame,
+) -> None:
+    """Re-insert blank-stub / column-number rows the LLM dropped.
+
+    Ruled candidates often keep alternating Year / blank-Year percentage rows,
+    and CRS-style 1..N / (1)(2)(3) reference strips under headers. Prefer
+    candidate order when reconstructing.
+    """
+    columns = table.get("columns") or []
+    llm_rows = [list(r) if isinstance(r, list) else [] for r in (table.get("rows") or [])]
+    if not columns or not llm_rows or df is None or getattr(df, "empty", True):
+        return
+
+    ncol = len(columns)
+    cand_width = int(df.shape[1])
+    # Pad/trim at most one phantom leaf; larger width mismatches are unsafe.
+    if abs(cand_width - ncol) > 1:
+        return
+
+    def _pad(row: Sequence[Any]) -> List[Any]:
+        cells = list(row[:ncol]) + [None] * max(0, ncol - len(row))
+        return cells[:ncol]
+
+    cand_rows = [_pad(r) for r in df.values.tolist()]
+    llm_rows = [_pad(r) for r in llm_rows]
+    if len(cand_rows) <= len(llm_rows):
+        return
+
+    used_cand: set = set()
+    llm_to_cand: List[Optional[int]] = [None] * len(llm_rows)
+
+    # Stub-key match: skip 1..N index strips — their first cell is also "1",
+    # which would steal the real birth-order / category row keyed "1".
+    cand_by_key: Dict[str, int] = {}
+    for i, row in enumerate(cand_rows):
+        if _row_is_column_index_strip(row):
+            continue
+        key = _norm_header_key(row[0] if row else "")
+        if key and key not in cand_by_key:
+            cand_by_key[key] = i
+    for li, row in enumerate(llm_rows):
+        if _row_is_column_index_strip(row):
+            continue
+        key = _norm_header_key(row[0] if row else "")
+        if not key:
+            continue
+        ci = cand_by_key.get(key)
+        if ci is not None and ci not in used_cand:
+            llm_to_cand[li] = ci
+            used_cand.add(ci)
+
+    cand_by_fp: Dict[Tuple[str, ...], int] = {}
+    for i, row in enumerate(cand_rows):
+        if i in used_cand:
+            continue
+        fp = _row_content_fingerprint(row)
+        if fp and fp not in cand_by_fp:
+            cand_by_fp[fp] = i
+    for li, row in enumerate(llm_rows):
+        if llm_to_cand[li] is not None:
+            continue
+        fp = _row_content_fingerprint(row)
+        if not fp:
+            continue
+        ci = cand_by_fp.get(fp)
+        if ci is not None and ci not in used_cand:
+            llm_to_cand[li] = ci
+            used_cand.add(ci)
+
+    # Keep leading 1..N / (1)(2)(3) reference strips under headers, and any
+    # blank-stub measure rows the LLM dropped. Mid-table index strips (between
+    # year rows) stay dropped — those are not body data.
+    def _is_leading_index_strip(idx: int) -> bool:
+        if not _row_is_column_index_strip(cand_rows[idx]):
+            return False
+        for j in range(idx):
+            if not _row_is_column_index_strip(cand_rows[j]):
+                return False
+        return True
+
+    insert_idxs = {
+        i
+        for i, row in enumerate(cand_rows)
+        if i not in used_cand
+        and (
+            _is_leading_index_strip(i)
+            or (
+                _row_has_measure_like_values(row)
+                and not _row_is_column_index_strip(row)
+            )
+        )
+    }
+    if not insert_idxs:
+        return
+
+    cand_to_llm = {ci: li for li, ci in enumerate(llm_to_cand) if ci is not None}
+    new_rows: List[List[Any]] = []
+    for ci, crow in enumerate(cand_rows):
+        if ci in cand_to_llm:
+            new_rows.append(llm_rows[cand_to_llm[ci]])
+        elif ci in insert_idxs:
+            new_rows.append([
+                None if _cell_is_empty(v) else str(v)
+                for v in crow
+            ])
+    for li, row in enumerate(llm_rows):
+        if llm_to_cand[li] is None:
+            new_rows.append(row)
+
+    if len(new_rows) <= len(llm_rows):
+        return
+
+    table["rows"] = new_rows
+    notes = list(table.get("notes") or [])
+    note = (
+        "ADDED: restored blank-stub data row(s) from pymupdf candidate "
+        "that the LLM reconstruction omitted (e.g. parenthetical percentage rows)."
+    )
+    if note not in notes:
+        notes.append(note)
+    table["notes"] = notes
 
 
 def _stamp_header_meta_on_column(col: Dict[str, Any], m: Dict[str, Any]) -> None:
@@ -2143,6 +2917,9 @@ def _attach_structure_from_candidates(
         _stamp_header_meta_on_column(col, meta[meta_i])
     table["columns"] = columns
 
+    # Prefer candidate body geometry: re-insert blank-stub percentage rows the
+    # LLM omitted, then clear forward-filled merge empties on sparse stubs.
+    _restore_missing_data_rows_from_candidate(table, df)
     _restore_body_merge_empties_from_df(table, df)
     return table
 
@@ -2292,7 +3069,7 @@ def build_validation_prompt(page_num: int, candidates: List[Dict[str, Any]], tex
         if ruled_n else ""
     )
 
-    return f"""You are processing page {page_num} of an Indian government survey PDF (SDA_INDIA). You have two jobs on
+    return f"""You are processing page {page_num} of a government statistical PDF. You have two jobs on
 this page, in order, in this same response:
 
 A. RECONSTRUCT each table on the page.
@@ -2382,7 +3159,7 @@ def build_batch_validation_prompt(pages: List[int], pages_grouped: Dict[int, Lis
             f"{count_hint}"
         )
 
-    return f"""You are processing {len(pages)} pages of an Indian government survey PDF (SDA_INDIA). For each page you
+    return f"""You are processing {len(pages)} pages of a government statistical PDF. For each page you
 have two jobs, in order, in this same response: A) reconstruct each table on that page, B) understand what each
 reconstructed table means (initial semantic classification only).
 

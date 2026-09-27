@@ -233,6 +233,17 @@ def _row_looks_like_column_labels(row: List[Any]) -> bool:
     return shortish >= max(3, int(len(non_empty) * 0.6))
 
 
+def _row_looks_like_header_band(row: List[Any]) -> bool:
+    """Leaf/group continuation under a merged group row (short labels, not data)."""
+    if not _row_is_header(row) or _looks_like_data_row(row):
+        return False
+    non_empty = [v for v in row if _cell_str(v)]
+    if not non_empty:
+        return False
+    avg_len = sum(len(_cell_str(v)) for v in non_empty) / len(non_empty)
+    return avg_len <= 28
+
+
 def _detect_header_rows(body: List[List[Any]], n_cols: int) -> Tuple[int, List[int]]:
     """Number of leading header rows in `body`, plus indices of rows to skip (e.g. "(1) (2) (3)" column-number rows)."""
     skip_rows: List[int] = []
@@ -249,8 +260,11 @@ def _detect_header_rows(body: List[List[Any]], n_cols: int) -> Tuple[int, List[i
 
     # Common Excel inventory layout: one label row, then serialised data rows.
     # Do not treat subsequent text-heavy data rows as multi-level headers.
+    # Keep multi-row merged group headers (URBAN|URBAN / Male|Female) intact —
+    # only collapse when the next non-blank row is clearly data.
     first = body[0]
     if _row_looks_like_column_labels(first):
+        saw_header_band = False
         for i, row in enumerate(body[1:6], start=1):
             if i in skip_rows:
                 continue
@@ -258,10 +272,13 @@ def _detect_header_rows(body: List[List[Any]], n_cols: int) -> Tuple[int, List[i
                 break
             if _looks_like_data_row(row):
                 return 1, skip_rows
-        # No clear data row yet — still prefer a single header for dense grids.
-        filled = sum(1 for v in first if _cell_str(v))
-        if filled >= max(3, int(n_cols * 0.5)):
-            return 1, skip_rows
+            if _row_looks_like_header_band(row):
+                saw_header_band = True
+                break
+        if not saw_header_band:
+            filled = sum(1 for v in first if _cell_str(v))
+            if filled >= max(3, int(n_cols * 0.5)):
+                return 1, skip_rows
 
     header_count = 0
     for i, row in enumerate(body[:6]):
@@ -714,6 +731,7 @@ Rules:
   dump `sample_rows` or full month-by-month grids into this field.
 * `last_updated` and `future_release` must be `null` unless explicitly supported by the inputs.
 * `product` should identify the dataset/product represented by the source, not the file format.
+* For `data_source`, prefer KYDS `department` (`dataset_context.department`) — the holding department/ministry. Never use a workbook filename, sheet name, table id, path-like string, or other Excel file evidence for `data_source`. Different groups may have different agency Sources when supported by the inputs, but filename is never a valid Source.
 * `remarks` should contain relevant caveats, limitations, or contextual notes supported by the inputs.
 * When `excel_facts.source_kind` is `"tables"` (e.g. SQL extract), treat table titles, column names, and sample rows as the workbook evidence.
 

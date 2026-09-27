@@ -14,10 +14,25 @@ Catalogue → API → MCP (agents)
 
 | Surface | Behaviour |
 |---------|-----------|
-| **Catalogue UI** | Browse published datasets / metadata |
-| **REST API (v1)** | JWT-protected query routes under `/api/v1` |
+| **Catalogue UI** | Browse **published groups (releases)**; download ZIP of all tables + classifications |
+| **REST API (v1)** | JWT-protected query routes under `/api/v1` (tables still addressable by dataset id) |
 | **MCP (stdio)** | `python -m mcp_server` from `backend/` |
 | **des-website** | External consumer of the same catalogue DB |
+
+### Catalogue group download
+
+`GET /api/catalogue/groups/{metadata_id}/download` returns a ZIP of the
+group’s tables only. Each table has `*_Code` and `*_Definition` columns
+appended after every classified / harmonised dimension (looked up from the
+steward code lists).
+
+```text
+Live_births.xlsx   — State | Occupation | Occupation_Code | Occupation_Definition | …
+Still_births.xlsx
+```
+
+List releases with `GET /api/catalogue/groups` (one card per `metadata_groups` row).
+Table-level listing remains at `GET /api/catalogue/datasets` for API consumers.
 
 ## REST (`/api/v1`)
 

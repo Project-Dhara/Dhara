@@ -35,7 +35,7 @@ export default function Publish({ datasetLabel, metadataId, onGoDashboard, onUpl
   }, [publishing, doneSteps])
 
   const idBase = metadataId || 'DHARA_NEW_RELEASE'
-  const apiUrl = `https://catalogue.dhara.people+ai.org/api/datasets/${idBase}`
+  const apiUrl = `https://catalogue.dhara.people+ai.org/api/v1/datasets?metadata_id=${encodeURIComponent(idBase)}`
   const mcpUrl = 'https://catalogue.dhara.people+ai.org/mcp'
 
   const copy = (label, text) => {
@@ -89,7 +89,7 @@ export default function Publish({ datasetLabel, metadataId, onGoDashboard, onUpl
       <div className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-3.5">
         <div className="flex min-w-0 flex-col gap-3 rounded-[10px] border border-line bg-white p-5">
           <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-[#8E9398]"><span className="h-2 w-2 flex-none rounded-sm bg-green" />API endpoint</div>
-          <div className="text-sm leading-relaxed text-ink-soft">Fetch the harmonised table as JSON or CSV.</div>
+          <div className="text-sm leading-relaxed text-ink-soft">List tables in this published group as JSON.</div>
           <div className="flex items-center gap-2">
             <div className="flex-1 truncate rounded-md border border-line bg-[#F7F3EA] px-2.5 py-2.5 text-[11.5px] text-ink">{apiUrl}</div>
             <button className="flex h-[34px] flex-none items-center rounded-md border border-line bg-white px-3.5 text-[13px] font-semibold text-teal" onClick={() => copy('api', apiUrl)}>{copied === 'api' ? 'Copied' : 'Copy'}</button>

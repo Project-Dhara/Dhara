@@ -1,6 +1,6 @@
 """
 Worker functions for parallel table extraction, run inside a
-ProcessPoolExecutor from sda_india_pdf_extraction.py.
+ProcessPoolExecutor from extraction.pdf_extraction.
 
 Pulled out into their own module (rather than defined inline in the calling
 script) because ProcessPoolExecutor on macOS uses the "spawn" start method,
@@ -60,9 +60,12 @@ def _candidates_from_pymupdf_table(
     page_num: int,
     method: str,
     extra: Optional[Dict[str, Any]] = None,
+    page: Any = None,
+    page_text: str = "",
 ) -> List[Dict[str, Any]]:
     """Build one candidate per physical table; split glued multi-TABLE grids."""
-    from pdf.pdf_header_utils import dataframe_from_extracted_rows, split_extracted_rows_on_table_markers
+    from extraction.pdf_header_utils import dataframe_from_extracted_rows, split_extracted_rows_on_table_markers
+    from extraction.pdf_table_confidence import looks_like_chart_candidate
 
     rows = tab.extract()
     if not rows:
@@ -75,13 +78,20 @@ def _candidates_from_pymupdf_table(
         df = dataframe_from_extracted_rows(seg_rows)
         if df is None or getattr(df, "empty", True):
             continue
+        bbox = _bbox_for_row_slice(tab, start, end, fallback)
+        is_chart, reason = looks_like_chart_candidate(
+            df, page=page, bbox=bbox, page_text=page_text,
+        )
+        if is_chart:
+            print(f"[pymupdf:{method}] page {page_num} skipped chart-like region: {reason}")
+            continue
         cand: Dict[str, Any] = {
             "page": page_num,
             "method": method,
             "df": df,
             # Needed to detect side-by-side dual-column stacks and
             # to clip left/right halves without re-detecting.
-            "bbox": _bbox_for_row_slice(tab, start, end, fallback),
+            "bbox": bbox,
         }
         if extra:
             cand.update(extra)
@@ -101,6 +111,10 @@ def extract_pymupdf_chunk(pdf_path: str, pages: List[int]) -> List[Dict[str, Any
     try:
         for page_num in pages:
             page = doc[page_num - 1]
+            try:
+                page_text = page.get_text("text") or ""
+            except Exception:
+                page_text = ""
             for strategy in ("lines_strict", "lines", "text"):
                 try:
                     found = page.find_tables(strategy=strategy)
@@ -116,6 +130,8 @@ def extract_pymupdf_chunk(pdf_path: str, pages: List[int]) -> List[Dict[str, Any
                             tab,
                             page_num=page_num,
                             method=f"pymupdf_{strategy}",
+                            page=page,
+                            page_text=page_text,
                         )
                     )
     finally:

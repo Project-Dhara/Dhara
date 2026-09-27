@@ -278,12 +278,16 @@ def _extract_clipped(
     pdf_path: str, page_num: int, clip: pymupdf.Rect, side: str
 ) -> List[Dict[str, Any]]:
     """Run both pymupdf strategies inside a clip rectangle."""
-    from pdf.pdf_extraction_workers import _candidates_from_pymupdf_table
+    from extraction.pdf_extraction_workers import _candidates_from_pymupdf_table
 
     results: List[Dict[str, Any]] = []
     doc = pymupdf.open(pdf_path)
     try:
         page = doc[page_num - 1]
+        try:
+            page_text = page.get_text("text") or ""
+        except Exception:
+            page_text = ""
         for strategy in ("lines_strict", "lines", "text"):
             try:
                 found = page.find_tables(strategy=strategy, clip=clip)
@@ -296,6 +300,8 @@ def _extract_clipped(
                         page_num=page_num,
                         method=f"pymupdf_{strategy}_{side}",
                         extra={"dual_half": side},
+                        page=page,
+                        page_text=page_text,
                     )
                 )
     finally:

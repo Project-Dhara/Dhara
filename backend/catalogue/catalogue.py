@@ -39,10 +39,13 @@ from catalogue.datasets import (
 )
 from catalogue.query import (
     get_catalogue_dataset,
+    get_catalogue_group,
     list_catalogue_datasets,
+    list_catalogue_groups,
     query_dataset_rows,
     search_catalogue_datasets,
 )
+from catalogue.group_export import build_group_download_zip
 from catalogue.dashboard import list_dashboard
 
 __all__ = [
@@ -68,8 +71,11 @@ __all__ = [
     "update_metadata_group_classification_column",
     "STANDARD_CONCEPTS",
     "list_catalogue_datasets",
+    "list_catalogue_groups",
     "search_catalogue_datasets",
     "get_catalogue_dataset",
+    "get_catalogue_group",
+    "build_group_download_zip",
     "query_dataset_rows",
     "push_to_catalogue",
     "list_dashboard",

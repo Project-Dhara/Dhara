@@ -505,8 +505,8 @@ export default function PdfReview({ jobId, filename, onDone }) {
     // step vs. the deterministic auto-accepted path, for QA'ing AI output.
     // Never shown in a production build.
     ...(process.env.NODE_ENV !== 'production' ? [
-      { id: 'dev_ai_classified', label: 'Dev: AI classified' },
-      { id: 'dev_auto_extracted', label: 'Dev: Auto-extracted' },
+      { id: 'dev_ai_classified', label: 'AI classified' },
+      { id: 'dev_auto_extracted', label: 'Auto-extracted' },
     ] : []),
   ]
 
@@ -859,11 +859,11 @@ export default function PdfReview({ jobId, filename, onDone }) {
             const selected = selectedIds.has(t.table_id)
             return (
               <div key={t.table_id} className={`overflow-hidden rounded-lg border bg-surface transition-[border-color] duration-300 ease-out ${isOpen ? 'border-teal' : selectMode && selected ? 'border-teal/50' : 'border-line'}`}>
-                <div className="flex items-center gap-2.5 px-3.5 py-2.5 hover:bg-cream">
+                <div className="flex items-start gap-2.5 px-3.5 py-2.5 hover:bg-cream">
                   {selectMode && (
                     <input
                       type="checkbox"
-                      className="h-3.5 w-3.5 flex-none accent-teal"
+                      className="mt-1 h-3.5 w-3.5 flex-none accent-teal"
                       checked={selected}
                       aria-label={`Select ${displayTitle(t) || `page ${t.page} table`}`}
                       onChange={() => toggleSelected(t.table_id)}
@@ -871,7 +871,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
                     />
                   )}
                   <div
-                    className="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-3"
+                    className="flex min-w-0 flex-1 cursor-pointer items-start justify-between gap-3"
                     onClick={() => setExpanded(isOpen ? null : t.table_id)}
                   >
                     <div className="min-w-0 flex-1">

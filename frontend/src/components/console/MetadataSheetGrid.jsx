@@ -3,13 +3,17 @@
 import { useEffect, useMemo, useState } from 'react'
 import Combobox from '../ui/Combobox'
 
+// Coral wash for required fields that are still empty.
+export const REQUIRED_EMPTY_FIELD_CLASS = 'border-coral/50 bg-[rgba(217,91,104,0.08)]'
+export const REQUIRED_EMPTY_INPUT_CLASS = 'border-coral/55 bg-[rgba(217,91,104,0.06)]'
+
 // Metadata entry, one card per table/metadata group. Field set mirrors what
-// the backend's /api/catalogue/batch-push accept
-// (see BatchReview.jsx) — only `title` is actually required.
+// the backend's /api/catalogue/batch-push accepts (see BatchReview.jsx).
+// Which fields are required comes from Settings → Metadata configuration
+// (merged onto these column defs in BatchReview).
 // Short categorical / date fields share a wide 2-column card grid so values
 // stay readable; free-text fields get their own full-width row.
 export const METADATA_COLUMNS = [
-  { key: 'title', label: 'Title', type: 'primary', placeholder: 'Dataset / table title', required: true },
   { key: 'product', label: 'Product', type: 'badge', placeholder: 'e.g. Population_Data' },
   { key: 'category', label: 'Category', type: 'badge', placeholder: 'e.g. Demographics' },
   { key: 'geography', label: 'Geography', type: 'badge', placeholder: 'e.g. India' },
@@ -29,13 +33,25 @@ function resizeBadgeInput(el, expanded) {
   el.style.height = `${Math.max(expanded ? el.scrollHeight : 34, 34)}px`
 }
 
+export function applyRequiredFieldsToColumns(columns, requiredMap) {
+  if (!requiredMap || typeof requiredMap !== 'object') return columns
+  return columns.map((c) => ({
+    ...c,
+    required: c.key in requiredMap ? Boolean(requiredMap[c.key]) : Boolean(c.required),
+  }))
+}
+
+export function missingRequiredSheetFields(values, columns) {
+  return columns.filter((c) => c.required && !(values?.[c.key] || '').trim())
+}
+
 export default function MetadataSheetGrid({
   rows,
   columns = METADATA_COLUMNS,
   onChange,
   renderGroupFooter,
+  renderGroupHeaderActions,
 }) {
-  const primaryCol = columns.find((c) => c.type === 'primary')
   const badgeCols = columns.filter((c) => c.type === 'badge' || c.type === 'date')
   const longCols = columns.filter((c) => c.type === 'long')
 
@@ -49,7 +65,7 @@ export default function MetadataSheetGrid({
   const groupOptions = useMemo(
     () => rows.map((row, ri) => ({
       value: ri,
-      label: `${ri + 1}. ${row.label || `Group ${ri + 1}`}`,
+      label: `${ri + 1}. ${row.label || row.values?.title || `Group ${ri + 1}`}`,
     })),
     [rows],
   )
@@ -59,9 +75,6 @@ export default function MetadataSheetGrid({
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-baseline justify-between gap-3">
           <h3 className="m-0 font-sans text-[13px] font-bold uppercase tracking-wide text-ink">Available Groups</h3>
-          <span className="text-[13px] leading-snug text-ink-soft">
-            {rows.length} metadata group{rows.length !== 1 ? 's' : ''} — select to review
-          </span>
         </div>
         {useDropdown ? (
           <div className="w-full">
@@ -75,7 +88,9 @@ export default function MetadataSheetGrid({
           </div>
         ) : (
           <div className="grid grid-cols-4 gap-x-4 gap-y-3.5 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
-            {rows.map((row, ri) => (
+            {rows.map((row, ri) => {
+              const chipLabel = row.label || row.values?.title
+              return (
               <button
                 key={row.id}
                 type="button"
@@ -85,12 +100,13 @@ export default function MetadataSheetGrid({
                     : 'border-line bg-surface text-ink-soft hover:border-teal/35 hover:bg-sage hover:text-teal-deep'
                 }`}
                 onClick={() => setActiveIndex(ri)}
-                title={row.label}
+                title={chipLabel}
               >
                 <span className={`inline-flex h-[18px] w-[18px] items-center justify-center rounded-full text-[10.5px] font-bold transition-colors duration-[420ms] ${ri === activeIndex ? 'bg-cream/20 text-cream' : 'bg-[#ece4d6] text-ink-soft'}`}>{ri + 1}</span>
-                <span className="line-clamp-2 min-w-0 text-center leading-tight">{row.label}</span>
+                <span className="line-clamp-2 min-w-0 text-center leading-tight">{chipLabel}</span>
               </button>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
@@ -103,30 +119,25 @@ export default function MetadataSheetGrid({
               const ri = activeIndex
               return (
             <div className="flex min-w-0 flex-col gap-3 [overflow-wrap:anywhere] rounded-[10px] border border-line bg-surface p-4 px-[18px]" key={row.id}>
-            <div className="flex items-baseline gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
               <span className="flex-none font-sans text-xs text-[#8E9398]">{ri + 1}</span>
-              <span className="text-[15px] font-semibold text-ink" title={row.label}>{row.label}</span>
+              <span className="min-w-0 flex-1 text-[15px] font-semibold text-ink" title={row.label}>
+                {row.label || 'Untitled group'}
+              </span>
               {row.manual && (
                 <span
-                  className="rounded-md border border-[#f0d6a3] bg-[#fdf0d8] px-2 py-0.5 font-sans text-[11.5px] font-semibold text-[#a15c00]"
+                  className="flex-none rounded-md border border-[#f0d6a3] bg-[#fdf0d8] px-2 py-0.5 font-sans text-[11.5px] font-semibold text-[#a15c00]"
                   title="No metadata was auto-mapped for this group — fill in the fields below by hand"
                 >
                   Not auto-mapped — fill in manually
                 </span>
               )}
+              {renderGroupHeaderActions && (
+                <div className="ml-auto flex flex-none flex-wrap items-center gap-2">
+                  {renderGroupHeaderActions(row, ri)}
+                </div>
+              )}
             </div>
-
-            {primaryCol && (
-              <input
-                className={`box-border h-[42px] w-full rounded-lg border px-3.5 font-sans text-[15px] font-medium text-ink placeholder:text-[#a49c8e] focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal ${
-                  primaryCol.required && !(row.values[primaryCol.key] || '').trim() ? 'border-[#e3b3ba] bg-[rgba(217,91,104,0.06)]' : 'border-line bg-cream'
-                }`}
-                type="text"
-                value={row.values[primaryCol.key] || ''}
-                placeholder={`${primaryCol.placeholder}${primaryCol.required ? ' *' : ''}`}
-                onChange={(e) => onChange(row.id, primaryCol.key, e.target.value)}
-              />
-            )}
 
             {badgeCols.length > 0 && (
               <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
@@ -136,7 +147,7 @@ export default function MetadataSheetGrid({
                   <label
                     key={c.key}
                     className={`flex w-full min-w-0 flex-col gap-1 rounded-[10px] border px-3 py-2 transition-colors focus-within:border-teal hover:border-[#c9bda6] ${
-                      missing ? 'border-[#e3b3ba] bg-[rgba(217,91,104,0.08)]' : 'border-line bg-[#F7F3EA]'
+                      missing ? REQUIRED_EMPTY_FIELD_CLASS : 'border-line bg-[#F7F3EA]'
                     }`}
                   >
                     <span className="font-label text-[11px] tracking-wide text-[#8E9398]">{c.label}{c.required && ' *'}</span>
@@ -154,6 +165,7 @@ export default function MetadataSheetGrid({
                         type="date"
                         value={row.values[c.key] || ''}
                         onChange={(e) => onChange(row.id, c.key, e.target.value)}
+                        aria-required={c.required || undefined}
                       />
                     ) : (
                       <textarea
@@ -164,6 +176,7 @@ export default function MetadataSheetGrid({
                         onChange={(e) => onChange(row.id, c.key, e.target.value)}
                         onInput={(e) => resizeBadgeInput(e.target, true)}
                         ref={(el) => resizeBadgeInput(el, true)}
+                        aria-required={c.required || undefined}
                       />
                     )}
                   </label>
@@ -173,7 +186,9 @@ export default function MetadataSheetGrid({
 
             {longCols.length > 0 && (
               <div className="flex flex-col gap-2.5">
-                {longCols.map((c) => (
+                {longCols.map((c) => {
+                  const missing = c.required && !(row.values[c.key] || '').trim()
+                  return (
                   <label key={c.key} className="flex flex-col gap-1">
                     <span className="font-sans text-[11px] font-semibold uppercase tracking-wide text-[#8E9398]">
                       {c.label}
@@ -181,14 +196,18 @@ export default function MetadataSheetGrid({
                       {c.required ? ' *' : ''}
                     </span>
                     <textarea
-                      className="box-border min-h-[44px] w-full resize-y rounded-lg border border-line bg-cream px-3 py-2 font-sans text-[13.5px] leading-relaxed text-ink placeholder:text-[#a49c8e] focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal"
+                      className={`box-border min-h-[44px] w-full resize-y rounded-lg border px-3 py-2 font-sans text-[13.5px] leading-relaxed text-ink placeholder:text-[#a49c8e] focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal ${
+                        missing ? REQUIRED_EMPTY_INPUT_CLASS : 'border-line bg-cream'
+                      }`}
                       rows={3}
                       value={row.values[c.key] || ''}
                       placeholder={c.placeholder}
                       onChange={(e) => onChange(row.id, c.key, e.target.value)}
+                      aria-required={c.required || undefined}
                     />
                   </label>
-                ))}
+                  )
+                })}
               </div>
             )}
 

@@ -1,5 +1,6 @@
-"""Dataset readiness snapshot for the Dashboard (catalogue groups only)."""
+"""Upload readiness snapshot for the Dashboard (catalogue groups + file type)."""
 import json
+import os
 from typing import Optional
 
 import psycopg2.extras
@@ -7,28 +8,63 @@ import psycopg2.extras
 from catalogue.classifications import _classification_fill_ratio
 
 
-def _infer_source_label(data_source: Optional[str], fallback: str = "—") -> str:
-    s = str(data_source or "").strip()
+def _basename(value: Optional[str]) -> str:
+    s = str(value or "").strip()
     if not s:
-        return fallback
-    low = s.lower()
-    if "pdf" in low:
-        return "PDF"
-    if low.endswith(".xlsx") or low.endswith(".xls") or "excel" in low or "xlsx" in low:
-        return "XLSX"
-    if low.endswith(".csv") or "csv" in low:
-        return "CSV"
-    if "sql" in low or "postgres" in low or "database" in low:
-        return "SQL"
-    return s[:32]
+        return ""
+    return os.path.basename(s.replace("\\", "/"))
+
+
+def _infer_source_label(*candidates: Optional[str], fallback: str = "—") -> str:
+    """Return a file-type label (PDF / XLSX / CSV / SQL) or fallback.
+
+    Ignores descriptive ``data_source`` text (agency names, report titles,
+    doubled OCR) so the Dashboard Source column stays scannable.
+    """
+    for raw in candidates:
+        s = str(raw or "").strip()
+        if not s:
+            continue
+        low = s.lower()
+        base = _basename(s).lower()
+        # Prefer extension / explicit type tokens over substring matches on prose.
+        if base.endswith(".pdf") or low == "pdf" or low.startswith("pdf "):
+            return "PDF"
+        if (
+            base.endswith((".xlsx", ".xls"))
+            or low in ("xlsx", "xls", "excel")
+            or "spreadsheet" in low
+        ):
+            return "XLSX"
+        if base.endswith(".csv") or low == "csv":
+            return "CSV"
+        if (
+            low in ("sql", "postgres", "postgresql", "database")
+            or base.endswith((".sql", ".dump"))
+            or low.startswith("postgres://")
+            or low.startswith("postgresql://")
+        ):
+            return "SQL"
+        # Narrow keyword hits only when the whole field is short (type-like).
+        if len(s) <= 12:
+            if "pdf" in low:
+                return "PDF"
+            if "xlsx" in low or "xls" in low or "excel" in low:
+                return "XLSX"
+            if "csv" in low:
+                return "CSV"
+            if "sql" in low:
+                return "SQL"
+    return fallback
 
 
 def list_dashboard(conn, user_email: str) -> dict:
     """
-    Dataset readiness snapshot for the Dashboard.
+    Catalogue-side readiness for the Dashboard.
 
-    Catalogue metadata groups only exist after the Metadata push (console
-    step 4), so they are always at Classification (5) or Published (6).
+    Used for data-product / published stats and for Excel/SQL rows that have
+    no ``pdf_jobs`` upload record. PDF uploads are listed from ``pdf_jobs``
+    in ``routes/dashboard.py`` (one row per uploaded file).
     """
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute("""
@@ -38,6 +74,7 @@ def list_dashboard(conn, user_email: str) -> dict:
               m.catalogue_product,
               m.product,
               m.data_source,
+              m.metadata_excel,
               m.classifications,
               m.last_updated_date,
               m.user_email,
@@ -47,11 +84,6 @@ def list_dashboard(conn, user_email: str) -> dict:
             ORDER BY m.last_updated_date DESC NULLS LAST, m.metadata_id DESC
         """, (user_email,))
         groups = [dict(r) for r in cur.fetchall()]
-
-        cur.execute("""
-            SELECT COUNT(*)::int FROM datasets WHERE user_email = %s
-        """, (user_email,))
-        dataset_count = cur.fetchone()["count"]
 
     products = set()
     rows = []
@@ -70,8 +102,13 @@ def list_dashboard(conn, user_email: str) -> dict:
         product = (g.get("catalogue_product") or g.get("product") or "").strip()
         if product:
             products.add(product)
+
+        meta_excel = g.get("metadata_excel")
+        source = _infer_source_label(meta_excel, g.get("data_source"), fallback="—")
+        # Prefer an uploaded workbook name when we have one; else group title.
+        file_name = _basename(meta_excel)
         title = (g.get("title") or g["metadata_id"]).strip()
-        source = _infer_source_label(g.get("data_source"), "Catalogue")
+        name = file_name or title
         ds_n = int(g.get("dataset_count") or 0)
 
         # Metadata already pushed → never "Metadata review".
@@ -95,7 +132,7 @@ def list_dashboard(conn, user_email: str) -> dict:
         rows.append({
             "id": g["metadata_id"],
             "kind": "catalogue_group",
-            "name": title,
+            "name": name,
             "source": source,
             "product": product or "—",
             "readiness_pct": pct,
@@ -110,7 +147,8 @@ def list_dashboard(conn, user_email: str) -> dict:
 
     return {
         "stats": {
-            "datasets": dataset_count,
+            # Placeholder — routes/dashboard.py sets this to upload count.
+            "datasets": 0,
             "data_products": len(products),
             "awaiting_review": awaiting,
             "published": published,

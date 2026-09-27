@@ -19,7 +19,7 @@ export default function Toast({
     tone === 'success'
       ? 'bg-green text-white'
       : tone === 'warn'
-        ? 'border border-yellow bg-warn-bg text-ink'
+        ? 'border border-yellow bg-[#fff8e8] text-ink'
         : 'border border-[#c9610f] bg-[#e2711d] text-[#111]'
 
   return createPortal(

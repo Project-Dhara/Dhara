@@ -44,7 +44,7 @@ It does not yet answer: **Which official standard code applies?**
 
 ## In this codebase
 
-- `backend/pdf/pdf_table_confidence.py`
+- `backend/extraction/pdf_table_confidence.py`
 - LLM path inside PDF extraction pipeline (MEITY-empanelled / compatible API)
 - No API key → heuristic accept of the LLM bucket with `human_review_needed`
 - Excel `TableExtractor` skips remote LLM when Settings/header key is absent

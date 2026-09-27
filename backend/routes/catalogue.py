@@ -7,6 +7,7 @@ import json as _json
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import Response
 
 from catalogue import catalogue as _cat
 from catalogue.catalogue_matching import match_tables_to_metadata
@@ -577,7 +578,7 @@ async def batch_push(
 
 @router.get("/api/catalogue/datasets")
 async def list_catalogue_datasets(user_email: str = Depends(require_user)):
-    """Published datasets for the Catalogue page."""
+    """Published tables (dataset rows). Prefer /api/catalogue/groups for the UI."""
     def _run():
         conn = _cat.get_connection()
         try:
@@ -588,6 +589,66 @@ async def list_catalogue_datasets(user_email: str = Depends(require_user)):
 
     datasets = await asyncio.to_thread(_run)
     return {"datasets": datasets}
+
+
+@router.get("/api/catalogue/groups")
+async def list_catalogue_groups(user_email: str = Depends(require_user)):
+    """Published releases for the Catalogue page — one card per metadata group."""
+    def _run():
+        conn = _cat.get_connection()
+        try:
+            _cat.init_schema(conn)
+            return _cat.list_catalogue_groups(conn)
+        finally:
+            conn.close()
+
+    groups = await asyncio.to_thread(_run)
+    return {"groups": groups}
+
+
+@router.get("/api/catalogue/groups/{metadata_id}")
+async def get_catalogue_group(metadata_id: str, user_email: str = Depends(require_user)):
+    """One published metadata group (release) with its linked tables."""
+    def _run():
+        conn = _cat.get_connection()
+        try:
+            _cat.init_schema(conn)
+            return _cat.get_catalogue_group(conn, metadata_id)
+        finally:
+            conn.close()
+
+    group = await asyncio.to_thread(_run)
+    if not group:
+        raise HTTPException(404, f"No published group found for {metadata_id}")
+    return group
+
+
+@router.get("/api/catalogue/groups/{metadata_id}/download")
+async def download_catalogue_group(metadata_id: str, user_email: str = Depends(require_user)):
+    """ZIP of every table in the group, each with Code and Definition
+    columns appended after classified / harmonised dimension columns."""
+    def _run():
+        conn = _cat.get_connection()
+        try:
+            _cat.init_schema(conn)
+            return _cat.build_group_download_zip(conn, metadata_id)
+        finally:
+            conn.close()
+
+    try:
+        result = await asyncio.to_thread(_run)
+    except Exception as e:
+        raise HTTPException(500, f"Could not build group download: {e}")
+    if not result:
+        raise HTTPException(404, f"No published group found for {metadata_id}")
+    payload, filename = result
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
 
 
 @router.get("/api/catalogue/metadata-groups/{metadata_id}/classifications")

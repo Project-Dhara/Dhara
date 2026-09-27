@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import { X } from 'lucide-react'
+import { Plus, X } from 'lucide-react'
 import Button from '../ui/Button'
 import ErrorBanner from '../ui/ErrorBanner'
 
@@ -29,8 +29,13 @@ export function stepInfoFor(step) {
       next: 'Next: map columns to standard concepts and code lists.',
     },
     {
-      title: 'Classification and harmonisation',
+      title: 'Classification',
       purpose: 'Map columns to standard concepts and code lists.',
+      next: 'Next: harmonise values across related tables.',
+    },
+    {
+      title: 'Harmonisation',
+      purpose: 'Verify clubbed values and set catalogue placement.',
       next: 'Next: publish this release.',
     },
     {
@@ -42,7 +47,13 @@ export function stepInfoFor(step) {
 }
 
 export const BACK_LABELS = [
-  '', 'Choose another method', 'Change files', 'Back to preview', 'Back to grouping', 'Back to metadata',
+  '',
+  '',
+  'Back to files',
+  '',
+  'Back to grouping',
+  '',
+  'Back to classification',
 ]
 
 export function MetadataFileList({ files, onRemove }) {
@@ -70,11 +81,36 @@ export function MetadataFileList({ files, onRemove }) {
   )
 }
 
+function DatasetFileList({ files, onRemove }) {
+  if (files.length === 0) return null
+  return (
+    <ul className="flex list-none flex-col gap-1.5">
+      {files.map((f, i) => (
+        <li key={`${f.name}-${i}`} className="flex items-center justify-between gap-2 rounded-md border border-line/70 bg-cream/95 px-2.5 py-1.5 text-[12.5px] text-ink">
+          <span className="min-w-0 truncate">{f.name}</span>
+          <button
+            type="button"
+            className="flex h-6 w-6 flex-none items-center justify-center rounded text-ink-soft hover:bg-white hover:text-[#b91c1c]"
+            onClick={() => onRemove(i)}
+            title="Remove"
+            aria-label="Remove file"
+          >
+            <X className="h-3.5 w-3.5" strokeWidth={2} />
+          </button>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 // Step 1: two equal cards — dataset (PDF / XLSX / SQL tabs) and metadata tag files.
 export function UploadChoice({
   choice,
   onChoose,
   onDatasetFile,
+  onDatasetFilesAdd,
+  onDatasetFileRemove,
+  datasetFiles = [],
   onPdfFile,
   pdfUploading,
   pdfError,
@@ -89,16 +125,31 @@ export function UploadChoice({
   const [datasetDragging, setDatasetDragging] = useState(false)
   const [metadataDragging, setMetadataDragging] = useState(false)
 
-  const routeDatasetFile = (file) => {
-    if (!file || pdfUploading) return
-    if (/\.pdf$/i.test(file.name)) {
-      onPdfFile(file)
+  const hasDatasetFiles = datasetFiles.length > 0
+
+  const routeDatasetFiles = (fileList) => {
+    if (pdfUploading) return
+    const files = Array.from(fileList || [])
+    if (!files.length) return
+
+    // Once XLSX workbooks are queued, only accept more XLSX — keep adding under this box.
+    if (hasDatasetFiles) {
+      const xlsx = files.filter((f) => /\.(xlsx|xls)$/i.test(f.name))
+      if (xlsx.length) onDatasetFilesAdd?.(xlsx)
       return
     }
-    if (/\.(xlsx|xls)$/i.test(file.name)) {
-      onDatasetFile('xlsx', file)
+
+    const first = files[0]
+    if (/\.pdf$/i.test(first.name)) {
+      onPdfFile(first)
       return
     }
+    const xlsx = files.filter((f) => /\.(xlsx|xls)$/i.test(f.name))
+    if (xlsx.length === 1 && onDatasetFile) {
+      onDatasetFile('xlsx', xlsx[0])
+      return
+    }
+    if (xlsx.length) onDatasetFilesAdd?.(xlsx)
   }
 
   const takeMetadataFiles = (fileList) => {
@@ -111,7 +162,7 @@ export function UploadChoice({
     `flex min-h-[168px] flex-1 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed px-5 py-6 text-center transition-colors ${
       dragging
         ? 'border-teal/40 bg-sage'
-        : 'border-line bg-white hover:border-line hover:bg-mist/80'
+        : 'border-line bg-white hover:border-teal/40 hover:bg-sage/70'
     }`
 
   const datasetCardClass = 'dhara-surface flex min-h-[240px] w-full flex-col overflow-hidden rounded-card border border-teal/20 bg-white'
@@ -126,11 +177,12 @@ export function UploadChoice({
       <input
         ref={datasetInputRef}
         type="file"
-        accept=".pdf,.xlsx,.xls"
+        accept={hasDatasetFiles ? '.xlsx,.xls' : '.pdf,.xlsx,.xls'}
+        multiple={hasDatasetFiles}
         className="hidden"
         disabled={pdfUploading}
         onChange={(e) => {
-          routeDatasetFile(e.target.files?.[0])
+          routeDatasetFiles(e.target.files)
           e.target.value = ''
         }}
       />
@@ -159,7 +211,10 @@ export function UploadChoice({
               aria-selected={fileTab}
               disabled={pdfUploading}
               className={`${tabBase} ${fileTab ? tabActive : tabIdle}`}
-              onClick={() => choice === 'sql' && onChoose(null)}
+              onClick={() => {
+                if (choice !== 'sql') return
+                onChoose(datasetFiles.length ? 'xlsx' : null)
+              }}
             >
               File upload
             </button>
@@ -175,7 +230,7 @@ export function UploadChoice({
             </button>
           </div>
           {fileTab ? (
-            <div key="file-tab" className="dhara-tab-panel flex flex-1 flex-col p-3">
+            <div key="file-tab" className="dhara-tab-panel flex flex-1 flex-col gap-2 p-3">
               <div
                 role="button"
                 tabIndex={0}
@@ -186,19 +241,30 @@ export function UploadChoice({
                 onDrop={(e) => {
                   e.preventDefault()
                   setDatasetDragging(false)
-                  routeDatasetFile(e.dataTransfer.files?.[0])
+                  routeDatasetFiles(e.dataTransfer.files)
                 }}
                 className={`${dropZoneClass(datasetDragging)} ${pdfUploading ? 'pointer-events-none opacity-60' : ''}`}
               >
-                <div className="text-[15px] font-semibold tracking-tight text-ink">
-                  {pdfUploading ? 'Uploading PDF…' : 'Upload dataset files'}
-                </div>
-                <div className="max-w-[280px] text-[13px] leading-snug text-ink-soft">
-                  {pdfUploading
-                    ? 'Starting extraction…'
-                    : 'Click or drop PDF reports or XLSX workbooks — the matching pipeline runs automatically.'}
-                </div>
+                <Plus className="h-5 w-5 text-teal" strokeWidth={2} aria-hidden />
+                {pdfUploading ? (
+                  <>
+                    <div className="text-[15px] font-semibold tracking-tight text-ink">Uploading PDF…</div>
+                    <div className="max-w-[280px] text-[13px] leading-snug text-ink-soft">Starting extraction…</div>
+                  </>
+                ) : hasDatasetFiles ? (
+                  <div className="text-[15px] font-semibold tracking-tight text-ink">XLSX — drag and drop or browse</div>
+                ) : (
+                  <>
+                    <div className="text-[15px] font-semibold tracking-tight text-ink">Upload dataset files</div>
+                    <div className="max-w-[280px] text-[13px] leading-snug text-ink-soft">
+                      Click or drop PDF reports or XLSX workbooks — the matching pipeline runs automatically.
+                    </div>
+                  </>
+                )}
               </div>
+              {hasDatasetFiles && (
+                <DatasetFileList files={datasetFiles} onRemove={onDatasetFileRemove} />
+              )}
             </div>
           ) : (
             <div key="sql-tab" className="dhara-tab-panel flex flex-1 flex-col p-3">
@@ -228,6 +294,7 @@ export function UploadChoice({
               }}
               className={`${dropZoneClass(metadataDragging)} ${pdfUploading ? 'pointer-events-none opacity-60' : ''}`}
             >
+              <Plus className="h-5 w-5 text-ink-soft" strokeWidth={2} aria-hidden />
               <div className="text-[15px] font-semibold tracking-tight text-ink">Upload metadata tag files</div>
               <div className="max-w-[280px] text-[13px] leading-snug text-ink-soft">
                 Optional XLSX metadata workbooks — matched against your dataset tables during grouping.

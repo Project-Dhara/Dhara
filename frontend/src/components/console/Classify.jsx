@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowRight } from 'lucide-react'
 import { withAuthHeaders } from '../../lib/auth'
@@ -30,16 +30,16 @@ import HarmonisePanel from './classify/HarmonisePanel'
 //
 // Pure column-collapsing/aliasing helpers live in ../lib/classifyColumns.js.
 
-function PublishConfirmDialog({ title, body, onCancel, onContinue }) {
+function ConfirmDialog({ title, body, onCancel, onContinue, continueLabel = 'Continue anyway' }) {
   if (typeof document === 'undefined') return null
   return createPortal(
     <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/35 p-4" role="dialog" aria-modal="true">
-      <div className="flex max-w-md flex-col gap-3.5 rounded-xl bg-surface p-5 shadow-dhara">
+      <div className="flex max-h-[min(560px,85vh)] w-full max-w-lg flex-col gap-3.5 rounded-xl bg-surface p-5 shadow-dhara">
         <div className="text-[16px] font-bold text-ink">{title}</div>
-        <div className="text-[14px] leading-snug text-ink-soft">{body}</div>
-        <div className="flex items-center justify-end gap-2.5">
+        <div className="min-h-0 overflow-y-auto text-[14px] leading-snug text-ink-soft">{body}</div>
+        <div className="flex flex-none items-center justify-end gap-2.5">
           <Button variant="secondary" onClick={onCancel}>Go back</Button>
-          <Button variant="primary" onClick={onContinue}>Publish anyway</Button>
+          <Button variant="primary" onClick={onContinue}>{continueLabel}</Button>
         </div>
       </div>
     </div>,
@@ -47,9 +47,16 @@ function PublishConfirmDialog({ title, body, onCancel, onContinue }) {
   )
 }
 
-export default function Classify({ metadataIds, datasetLabel, onContinue }) {
-  const [classified, setClassified] = useState(false)
-  const [loading, setLoading] = useState(false)
+export default function Classify({
+  metadataIds,
+  datasetLabel,
+  phase = 'classification',
+  onPhaseChange,
+  onClassificationCompleteChange,
+  onRegisterGoToHarmonisation,
+  onContinue,
+}) {
+  const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [classifiedColumns, setClassifiedColumns] = useState([])
   const [selectedCol, setSelectedCol] = useState(null)
@@ -71,6 +78,8 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
   const [publishing, setPublishing] = useState(false)
   const [publishError, setPublishError] = useState('')
   const [publishConfirm, setPublishConfirm] = useState(null)
+  const [harmoniseConfirm, setHarmoniseConfirm] = useState(null)
+  const [highlightIncomplete, setHighlightIncomplete] = useState(false)
 
   useEffect(() => {
     const ids = Array.isArray(metadataIds) ? metadataIds.filter(Boolean) : [metadataIds].filter(Boolean)
@@ -352,19 +361,51 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
     const rows = harmRows[club.id] || columnCodes[club.sourceName] || []
     return rows.length > 0 && rows.every(rowMapped)
   }
-  const classReady = classified && classifiedColumns.length > 0
+  const classReady = !loading && !loadError && classifiedColumns.length > 0
     && classifiedColumns.every((c) => columnMapped(c.name))
     && harmoniseClubs.every(clubReady)
+
+  // Classification page is complete when every column has code + definition.
+  const classificationComplete = !loading && !loadError
+    && classifiedColumns.length > 0
+    && classifiedColumns.every((c) => columnMapped(c.name))
+
+  // Unlock Harmonisation navigation once columns are loaded (incomplete codes warn first).
+  const canOpenHarmonisation = !loading && !loadError && classifiedColumns.length > 0
+
+  useEffect(() => {
+    onClassificationCompleteChange?.(canOpenHarmonisation)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canOpenHarmonisation])
 
   const buildIncompleteSummary = () => {
     let unfilledRows = 0
     let incompleteColumns = 0
+    const columnDetails = []
     for (const col of classifiedColumns) {
       const rows = columnCodes[col.name] || []
-      const missing = rows.filter((row) => !rowMapped(row)).length
-      if (missing > 0 || rows.length === 0) {
+      const gaps = []
+      rows.forEach((row, index) => {
+        const missingCode = !String(row?.code || '').trim()
+        const missingDefinition = !String(row?.definition || '').trim()
+        if (!missingCode && !missingDefinition) return
+        const fields = []
+        if (missingCode) fields.push('code')
+        if (missingDefinition) fields.push('definition')
+        gaps.push({
+          index,
+          value: String(row?.value || '').trim() || `Row ${index + 1}`,
+          fields,
+        })
+      })
+      if (gaps.length > 0 || rows.length === 0) {
         incompleteColumns += 1
-        unfilledRows += missing || (rows.length === 0 ? 1 : 0)
+        unfilledRows += gaps.length || (rows.length === 0 ? 1 : 0)
+        columnDetails.push({
+          name: col.name,
+          emptyList: rows.length === 0,
+          gaps,
+        })
       }
     }
     const pendingHarmonise = harmoniseClubs.filter((club) => !clubReady(club)).length
@@ -372,10 +413,28 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
       unfilledRows,
       incompleteColumns,
       pendingHarmonise,
-      notClassified: !classified,
-      noColumns: classified && classifiedColumns.length === 0,
+      columnDetails,
+      noColumns: !loading && !loadError && classifiedColumns.length === 0,
     }
   }
+
+  const incompleteColumnNames = useMemo(() => {
+    if (!highlightIncomplete) return new Set()
+    return new Set(
+      classifiedColumns
+        .filter((c) => {
+          const rows = columnCodes[c.name] || []
+          return rows.length === 0 || rows.some((row) => !rowMapped(row))
+        })
+        .map((c) => c.name),
+    )
+  }, [highlightIncomplete, classifiedColumns, columnCodes])
+
+  useEffect(() => {
+    if (highlightIncomplete && incompleteColumnNames.size === 0) {
+      setHighlightIncomplete(false)
+    }
+  }, [highlightIncomplete, incompleteColumnNames])
 
   const runPublish = async () => {
     if (publishing) return
@@ -396,9 +455,7 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
     setPublishError('')
     const summary = buildIncompleteSummary()
     const issues = []
-    if (summary.notClassified) {
-      issues.push('Classification has not been run yet.')
-    } else if (summary.noColumns) {
+    if (summary.noColumns) {
       issues.push('No classification columns were found for this dataset.')
     }
     if (summary.unfilledRows > 0) {
@@ -519,61 +576,115 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
   }
 
   const cardClass = 'overflow-hidden rounded-[10px] border border-line bg-white'
+  const showClassifyBody = canOpenHarmonisation
+  const onClassificationPage = phase === 'classification'
+  const onHarmonisationPage = phase === 'harmonisation'
+
+  const proceedToHarmonisation = () => {
+    setHarmoniseConfirm(null)
+    setHighlightIncomplete(false)
+    onPhaseChange?.('harmonisation')
+  }
+
+  const dismissHarmoniseConfirm = () => {
+    const summary = buildIncompleteSummary()
+    const firstIncomplete = summary.columnDetails[0]?.name
+    if (firstIncomplete) setSelectedCol(firstIncomplete)
+    setHighlightIncomplete(true)
+    setHarmoniseConfirm(null)
+  }
+
+  const attemptGoToHarmonisation = () => {
+    if (!canOpenHarmonisation) return
+    if (classificationComplete) {
+      proceedToHarmonisation()
+      return
+    }
+    const summary = buildIncompleteSummary()
+    setHarmoniseConfirm({
+      title: 'Classification is incomplete',
+      body: (
+        <div className="flex flex-col gap-2">
+          <p className="m-0">You can still continue to harmonisation, but the following is unfinished:</p>
+          <ul className="m-0 list-disc space-y-1.5 pl-5">
+            {summary.columnDetails.map((col) => (
+              <li key={col.name}>
+                <span className="font-semibold text-ink">{col.name}</span>
+                {col.emptyList ? (
+                  <span> — no code rows</span>
+                ) : (
+                  <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                    {col.gaps.slice(0, 8).map((gap) => (
+                      <li key={`${col.name}:${gap.index}`}>
+                        {gap.value}
+                        <span className="text-[#8E9398]"> ({gap.fields.join(', ')})</span>
+                      </li>
+                    ))}
+                    {col.gaps.length > 8 ? (
+                      <li className="text-[#8E9398]">+{col.gaps.length - 8} more</li>
+                    ) : null}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+          <p className="m-0 text-[13px] text-[#8E9398]">Go back to highlight the empty fields.</p>
+        </div>
+      ),
+    })
+  }
+
+  useEffect(() => {
+    onRegisterGoToHarmonisation?.(attemptGoToHarmonisation)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canOpenHarmonisation, classificationComplete, columnCodes, classifiedColumns])
 
   return (
     <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-4">
-      <div className="flex items-center justify-between gap-6 rounded-[10px] border border-line bg-white px-[22px] py-[18px]">
-        <div>
-          <div className="text-base font-semibold text-ink">Classify columns and harmonise values</div>
-        </div>
-        <Button
-          disabled={classified || loading}
-          onClick={() => setClassified(true)}
-        >
-          {classified ? 'Classified' : 'Run classification'}
-        </Button>
-      </div>
-
-      {classified && loading && (
+      {loading && (
         <div className={`${cardClass} p-[18px]`}>Loading classified columns…</div>
       )}
 
-      {classified && !loading && loadError && (
+      {!loading && loadError && (
         <div className={`${cardClass} p-[18px]`}>Couldn't load classifications: {loadError}</div>
       )}
 
-      {classified && !loading && !loadError && classifiedColumns.length === 0 && (
+      {!loading && !loadError && classifiedColumns.length === 0 && (
         <div className={`${cardClass} p-[18px]`}>No classification columns found for this dataset.</div>
       )}
 
-      {classified && !loading && !loadError && classifiedColumns.length > 0 && (
-        <>
-          <div className={cardClass}>
-            <ColumnChipGrid
-              columns={classifiedColumns}
-              selectedCol={selectedCol}
-              onSelect={setSelectedCol}
-              saving={saving}
+      {onClassificationPage && showClassifyBody && (
+        <div className={cardClass}>
+          <ColumnChipGrid
+            columns={classifiedColumns}
+            selectedCol={selectedCol}
+            onSelect={setSelectedCol}
+            saving={saving}
+            incompleteNames={incompleteColumnNames}
+          />
+          {activeColumn && (
+            <CodeListEditor
+              column={activeColumn}
+              codes={activeCodes}
+              dirty={columnDirty}
+              fillAiLoading={fillAiLoading}
+              fillAiError={fillAiError}
+              onFillAi={fillDefinitionsWithAi}
+              ncoLoading={ncoLoading}
+              ncoError={ncoError}
+              ncoMatches={ncoMatches}
+              ncoPanelOpen={ncoPanelOpen}
+              onSuggestNco={suggestNcoCodes}
+              onCodeFieldChange={setCodeField}
+              onSave={saveColumnCodes}
+              highlightIncomplete={highlightIncomplete}
             />
-            {activeColumn && (
-              <CodeListEditor
-                column={activeColumn}
-                codes={activeCodes}
-                dirty={columnDirty}
-                fillAiLoading={fillAiLoading}
-                fillAiError={fillAiError}
-                onFillAi={fillDefinitionsWithAi}
-                ncoLoading={ncoLoading}
-                ncoError={ncoError}
-                ncoMatches={ncoMatches}
-                ncoPanelOpen={ncoPanelOpen}
-                onSuggestNco={suggestNcoCodes}
-                onCodeFieldChange={setCodeField}
-                onSave={saveColumnCodes}
-              />
-            )}
-          </div>
+          )}
+        </div>
+      )}
 
+      {onHarmonisationPage && showClassifyBody && (
+        <>
           <HarmonisePanel
             classifiedColumns={classifiedColumns}
             columnCodes={columnCodes}
@@ -625,29 +736,63 @@ export default function Classify({ metadataIds, datasetLabel, onContinue }) {
       )}
 
       <div className="flex items-center gap-3.5">
-        <Button disabled={publishing} onClick={publishRelease}>
-          {publishing ? 'Continuing…' : (
-            <span className="inline-flex items-center gap-1.5">
-              Continue to publish
-              <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
+        {onClassificationPage ? (
+          <>
+            <Button
+              disabled={!canOpenHarmonisation}
+              onClick={attemptGoToHarmonisation}
+            >
+              <span className="inline-flex items-center gap-1.5">
+                Continue to harmonisation
+                <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
+              </span>
+            </Button>
+            <span className="text-[13px] text-[#8E9398]">
+              {classifiedColumns.length === 0
+                ? (loading
+                  ? 'Loading classification columns…'
+                  : 'No columns to harmonise for this dataset.')
+                : classificationComplete
+                  ? 'All codes and definitions are filled — continue to verify related tables.'
+                  : 'You can continue anytime. Empty codes or definitions will ask for confirmation.'}
             </span>
-          )}
-        </Button>
-        <span className="text-[13px] text-[#8E9398]">
-          {publishError
-            ? publishError
-            : classified
-              ? (classReady
-                ? 'Catalogue already saved — continue to the publication confirmation.'
-                : 'You can continue anytime. Incomplete codes or harmonisation will ask for confirmation.')
-              : 'Run classification when ready, or continue and confirm if details are still incomplete.'}
-        </span>
+          </>
+        ) : (
+          <>
+            <Button disabled={publishing} onClick={publishRelease}>
+              {publishing ? 'Continuing…' : (
+                <span className="inline-flex items-center gap-1.5">
+                  Continue to publish
+                  <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
+                </span>
+              )}
+            </Button>
+            <span className="text-[13px] text-[#8E9398]">
+              {publishError
+                ? publishError
+                : classReady
+                  ? 'Catalogue already saved — continue to the publication confirmation.'
+                  : 'You can continue anytime. Incomplete codes or harmonisation will ask for confirmation.'}
+            </span>
+          </>
+        )}
       </div>
 
+      {harmoniseConfirm && (
+        <ConfirmDialog
+          title={harmoniseConfirm.title}
+          body={harmoniseConfirm.body}
+          continueLabel="Continue anyway"
+          onCancel={dismissHarmoniseConfirm}
+          onContinue={proceedToHarmonisation}
+        />
+      )}
+
       {publishConfirm && (
-        <PublishConfirmDialog
+        <ConfirmDialog
           title={publishConfirm.title}
           body={publishConfirm.body}
+          continueLabel="Publish anyway"
           onCancel={() => setPublishConfirm(null)}
           onContinue={runPublish}
         />

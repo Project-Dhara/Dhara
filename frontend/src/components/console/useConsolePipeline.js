@@ -17,6 +17,7 @@ import {
 import { loadPersistedConsoleState, CONSOLE_STORAGE_KEY } from '../../lib/consolePersist'
 import { subscribeConsoleTableEdits } from '../../lib/consoleTableEdit'
 import { stepInfoFor } from './ConsoleUploadChoice'
+import { withinStageBack } from './ConsoleStages'
 
 export function useConsolePipeline() {
   const persisted = loadPersistedConsoleState()
@@ -338,7 +339,7 @@ export function useConsolePipeline() {
       key: 'classifyToPublish',
       after: () => {
         setStatusPage(null)
-        setStep(6)
+        setStep(7)
       },
     })
   }
@@ -374,7 +375,10 @@ export function useConsolePipeline() {
     })
   }
 
-  const back = () => setStep((s) => Math.max(1, s - 1))
+  const back = () => {
+    const target = withinStageBack(step)
+    if (target) setStep(target.step)
+  }
 
   const stageIdx = stageIndexForStep(step)
 
@@ -408,6 +412,33 @@ export function useConsolePipeline() {
       setUploadChoice('xlsx')
     }
   }
+
+  const addPendingDatasetFiles = (files) => {
+    const xlsx = (files || []).filter((f) => /\.(xlsx|xls)$/i.test(f.name))
+    if (!xlsx.length) return
+    setPendingDatasetFiles((prev) => {
+      const next = [...prev]
+      xlsx.forEach((file) => {
+        const exists = next.some((f) => f.name === file.name && f.size === file.size)
+        if (!exists) next.push(file)
+      })
+      return next
+    })
+    setUploadChoice('xlsx')
+  }
+
+  const removePendingDatasetFile = (index) => {
+    setPendingDatasetFiles((prev) => {
+      const next = prev.filter((_, i) => i !== index)
+      return next
+    })
+  }
+
+  useEffect(() => {
+    if (uploadChoice === 'xlsx' && pendingDatasetFiles.length === 0) {
+      setUploadChoice(null)
+    }
+  }, [uploadChoice, pendingDatasetFiles.length])
 
   const addStep1MetadataFiles = (files) => {
     setStep1MetadataFiles((prev) => [...prev, ...files])
@@ -489,6 +520,11 @@ export function useConsolePipeline() {
     setSavedIds((prev) => (prev.has(uid) ? prev : new Set(prev).add(uid)))
     if (correction) patchTables({ [uid]: correction })
   }
+  const updatePreviewTableId = (uid, nextId) => {
+    const trimmed = String(nextId || '').trim()
+    if (!uid || !trimmed) return
+    patchTables({ [uid]: { id: trimmed } })
+  }
   // Scoped to the currently selected dataset (falls back to all tables when
   // no filter is applied) so the banner only warns about the dataset in view.
   const mismatchedPreviewTables = visiblePreviewTables.filter((t) => t.id_title_mismatch)
@@ -526,6 +562,7 @@ export function useConsolePipeline() {
 
   return {
     STATUS_TRANSITIONS,
+    addPendingDatasetFiles,
     addStep1MetadataFiles,
     applyReconcile,
     autoMatchResultRef,
@@ -544,8 +581,10 @@ export function useConsolePipeline() {
     info,
     manualGrouping,
     markTableSaved,
+    updatePreviewTableId,
     matchResult,
     maxStepReached,
+    setMaxStepReached,
     metaLabel,
     metadataFiles,
     metadataFilling,
@@ -563,6 +602,7 @@ export function useConsolePipeline() {
     previewSelected,
     previewTables,
     publishFromClassify,
+    removePendingDatasetFile,
     removeStep1MetadataFile,
     requestContinueToMetadata,
     resetUploadChoice,
@@ -578,6 +618,7 @@ export function useConsolePipeline() {
     setMetadataId,
     setMetadataIds,
     setPdfError,
+    setPendingDatasetFiles,
     setPendingGroups,
     setPreviewReviewFilter,
     setStatusPage,

@@ -1,7 +1,7 @@
 """
 Deterministic (no-LLM) confidence scoring for extracted table candidates.
 
-The OpenAI validation step in sda_india_pdf_extraction.py is doing real
+The OpenAI validation step in extraction.pdf_extraction is doing real
 reconstruction work for some pages (mangled/transposed cells, headers glued
 into the first data row, or a page where one detection strategy found
 nothing at all) -- see the false-positive investigation earlier in this
@@ -36,6 +36,7 @@ plausible-looking table with a subtly wrong number -- which is the real
 trade-off of skipping the LLM: worth knowing, not just a footnote.
 """
 
+import math
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -47,20 +48,218 @@ MIN_NONEMPTY_RATIO = 0.5
 MIXED_TYPE_LOW = 0.2
 MIXED_TYPE_HIGH = 0.8
 
+# Captions that mark figures rather than data tables (CRS / statistical PDFs).
+_CHART_CAPTION_RE = re.compile(
+    r"\b(?:"
+    r"graph\s*(?:no\.?|number|#)?\s*\d*"
+    r"|chart\s*(?:no\.?|number|#)?\s*\d*"
+    r"|fig(?:ure)?\s*(?:no\.?|number|#)?\s*\d*"
+    r"|pie\s*chart"
+    r"|bar\s*chart"
+    r"|bar\s*graph"
+    r")\b",
+    re.I,
+)
+
+
+def _header_looks_numeric_fragment(name: str) -> bool:
+    s = _cell_str(name)
+    if not s:
+        return True
+    compact = re.sub(r"[\s,]", "", s)
+    if not compact:
+        return True
+    if re.fullmatch(r"[\d.\-]+", compact):
+        return True
+    # Short digit-heavy crumbs from chart value labels ("83145", "27", "Col_12").
+    digits = sum(ch.isdigit() for ch in compact)
+    return len(compact) <= 6 and digits >= max(2, len(compact) - 1)
+
+
+def _count_fat_rects_in_bbox(page: Any, bbox: Optional[List[float]]) -> int:
+    """Count bar-like filled rectangles overlapping a candidate bbox."""
+    if page is None or not bbox or len(bbox) < 4:
+        return 0
+    try:
+        x0, y0, x1, y1 = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+    except (TypeError, ValueError):
+        return 0
+    fat = 0
+    try:
+        drawings = page.get_drawings()
+    except Exception:
+        return 0
+    for d in drawings or []:
+        r = d.get("rect")
+        if r is None:
+            continue
+        try:
+            if float(r.x1) < x0 or float(r.x0) > x1 or float(r.y1) < y0 or float(r.y0) > y1:
+                continue
+            rw, rh = float(r.width), float(r.height)
+        except Exception:
+            continue
+        if rw < 8 or rh < 8:
+            continue
+        aspect = max(rw, rh) / max(min(rw, rh), 1e-6)
+        if aspect < 6.0:
+            fat += 1
+    return fat
+
+
+def _local_chart_caption(page: Any, bbox: Optional[List[float]]) -> bool:
+    if page is None or not bbox or len(bbox) < 4:
+        return False
+    try:
+        import pymupdf as _fitz
+        clip = _fitz.Rect(
+            float(bbox[0]),
+            max(0.0, float(bbox[1]) - 56.0),
+            float(bbox[2]),
+            float(bbox[3]),
+        )
+        local = page.get_text("text", clip=clip) or ""
+        return bool(_CHART_CAPTION_RE.search(local))
+    except Exception:
+        return False
+
+
+def looks_like_chart_candidate(
+    df: pd.DataFrame,
+    *,
+    page: Any = None,
+    bbox: Optional[List[float]] = None,
+    page_text: str = "",
+) -> Tuple[bool, str]:
+    """
+    Detect bar/line/pie chart regions that pymupdf misreads as tables.
+
+    Guard-only: real ruled statistical tables (sex-by-age, year×rate, …) should
+    return False. Charts typically yield very wide sparse numeric grids and/or
+    sit under Graph/Chart captions with filled bar rectangles.
+    """
+    if df is None or getattr(df, "empty", True):
+        return False, ""
+    try:
+        cleaned = clean_dataframe_light(df)
+    except Exception:
+        cleaned = df
+    n_rows, n_cols = cleaned.shape
+    fat = _count_fat_rects_in_bbox(page, bbox)
+    caption_local = _local_chart_caption(page, bbox)
+
+    cols = [_cell_str(c) for c in cleaned.columns]
+    numeric_hdr = sum(1 for c in cols if _header_looks_numeric_fragment(c))
+    text_hdr = sum(
+        1
+        for c in cols
+        if c and not _header_looks_numeric_fragment(c) and re.search(r"[A-Za-z]{3,}", c)
+    )
+
+    if n_cols < 8 and n_rows >= 3:
+        # Compact grids are almost never chart false-positives. Highlighted
+        # cells / decorative fills inside real statement tables (Cause of
+        # Death, Sl. No., Male/Female, …) create many "fat" rects — keep those
+        # when ≥2 text headers are present.
+        if text_hdr >= 2:
+            return False, ""
+        if fat >= 8:
+            return True, f"dense filled rectangles in region ({fat})"
+        return False, ""
+    wide_sparse = (
+        (n_cols >= 20 and n_rows <= 10)
+        or (n_cols >= 12 and n_cols >= max(12, int(n_rows * 5)))
+    )
+    header_smoke = text_hdr <= max(1, n_cols // 20) and numeric_hdr >= max(3, n_cols // 5)
+
+    if wide_sparse and header_smoke:
+        return True, (
+            f"chart-like grid {n_rows}x{n_cols} "
+            f"(numeric headers {numeric_hdr}/{n_cols}, text headers {text_hdr})"
+        )
+    if fat >= 6 and (wide_sparse or header_smoke or caption_local):
+        return True, f"chart bars in region (fat_rects={fat})"
+    if caption_local and (wide_sparse or header_smoke or fat >= 3):
+        return True, "Graph/Chart caption over non-tabular region"
+    if caption_local and n_cols >= 10 and text_hdr <= 1:
+        return True, "Graph/Chart caption with label-less wide grid"
+    # Page mentions Graph/Chart and this candidate is a wide numeric crumb grid.
+    if page_text and _CHART_CAPTION_RE.search(page_text) and wide_sparse and header_smoke:
+        return True, "page Graph/Chart caption with chart-like grid"
+    return False, ""
+
 
 def _cell_str(v: Any) -> str:
-    return "" if v is None else re.sub(r"\s+", " ", str(v)).strip()
+    if v is None:
+        return ""
+    # Pandas empty cells often arrive as float NaN; str(nan)=="nan" must not
+    # count as a real value (or as numeric) for fill / mixed-type checks.
+    if isinstance(v, float) and math.isnan(v):
+        return ""
+    s = re.sub(r"\s+", " ", str(v)).strip()
+    if s.lower() in {"nan", "none", "<na>"}:
+        return ""
+    return s
 
 
 def _is_numeric_cell(v: str) -> bool:
-    s = v.replace(",", "").rstrip("%").strip()
-    if not s or s in {"-", "—", "NA", "N/A"}:
+    s = v.replace(",", "").replace("*", "").rstrip("%").strip()
+    if len(s) >= 3 and s.startswith("(") and s.endswith(")"):
+        s = s[1:-1].strip()
+    if not s or s.lower() in {"nan", "none"} or s in {"-", "—", "NA", "N/A"}:
         return False
     try:
         float(s)
         return True
     except ValueError:
         return False
+
+
+# Placeholders that are not real typed values for mixed-type detection.
+_TYPE_PLACEHOLDERS = frozenset({
+    "", "na", "n/a", "n.a.", "n.a", "nil", "null", "-", "—", "–", "--", ".",
+})
+
+
+def _is_type_placeholder(v: str) -> bool:
+    return (v or "").strip().lower() in _TYPE_PLACEHOLDERS
+
+
+_BARE_INDEX_RE = re.compile(r"^\d{1,2}$")
+
+
+def _row_values_are_column_index(vals: List[str], n_cols: int) -> bool:
+    """True when a row is a bare 1..N column-number strip under headers."""
+    nonempty = [v for v in vals if v]
+    if len(nonempty) < max(3, int(n_cols * 0.6)):
+        return False
+    if not all(_BARE_INDEX_RE.match(v) for v in nonempty):
+        return False
+    try:
+        nums = [int(v) for v in nonempty]
+    except ValueError:
+        return False
+    return bool(nums) and nums == list(range(1, len(nums) + 1))
+
+
+def _df_without_leading_column_index(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop a leading 1..N reference strip so it does not skew mixed-type checks.
+
+    The strip is still kept in the extracted table for Preview; profiling only
+    looks at real data rows.
+    """
+    if df is None or getattr(df, "empty", True) or len(df) < 2:
+        return df
+    first = [_cell_str(v) for v in df.iloc[0].values]
+    if not _row_values_are_column_index(first, int(df.shape[1])):
+        return df
+    out = df.iloc[1:].copy()
+    try:
+        for key, val in getattr(df, "attrs", {}).items():
+            out.attrs[key] = val
+    except Exception:
+        pass
+    return out.reset_index(drop=True)
 
 
 _PLACEHOLDER_COL_RE = re.compile(r"^Col_\d+$", re.I)
@@ -113,6 +312,9 @@ def clean_dataframe_light(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def profile_table(df: pd.DataFrame) -> Dict[str, Any]:
+    # Ignore leading 1..N column-number strips for structural scoring — they are
+    # reference rows, not typed data (would falsely trip mixed_type on labels).
+    df = _df_without_leading_column_index(df)
     n_rows, n_cols = df.shape
     # Ignore all-null columns when scoring fill rate: they are often intentional
     # empty measure periods (kept for header fidelity), not extraction failure.
@@ -158,10 +360,11 @@ def profile_table(df: pd.DataFrame) -> Dict[str, Any]:
     mixed_type_columns = 0
     for col in df.columns:
         vals = [_cell_str(v) for v in df[col].values]
-        nonempty = [v for v in vals if v]
+        # NA / -- placeholders are absences, not a second "type".
+        nonempty = [v for v in vals if v and not _is_type_placeholder(v)]
         if len(nonempty) < 3:
             continue
-        if _is_stub_code_column(nonempty):
+        if _is_stub_code_column(nonempty) or _is_row_label_stub_column(nonempty):
             continue
         numeric_frac = sum(_is_numeric_cell(v) for v in nonempty) / len(nonempty)
         if MIXED_TYPE_LOW < numeric_frac < MIXED_TYPE_HIGH:
@@ -178,11 +381,47 @@ def profile_table(df: pd.DataFrame) -> Dict[str, Any]:
     }
 
 
+_ROW_LABEL_TEXT_RE = re.compile(
+    r"^(?:"
+    r"not\s*stated|total|others?|above\s*\d+|below\s*\d+"
+    r"|n\.?a\.?|nil|all|sub[\-\s]?total"
+    r")$",
+    re.I,
+)
+
+
 def _is_stub_code_column(nonempty: List[str]) -> bool:
     """Group/S.No.-style codes (1, a, (b)) look mixed numeric/text but are labels."""
     if len(nonempty) < 3:
         return False
     return all(len(v) <= 4 for v in nonempty)
+
+
+def _is_row_label_stub_column(nonempty: List[str]) -> bool:
+    """Birth-order / category stub: mostly short codes plus a few label tokens.
+
+    e.g. 1..10, above10, Not stated, TOTAL — looks mixed numeric/text but is a
+    legitimate stub column, not a misaligned measure.
+    """
+    if len(nonempty) < 3:
+        return False
+    codeish = 0
+    labelish = 0
+    for v in nonempty:
+        s = (v or "").strip()
+        if not s:
+            continue
+        if re.fullmatch(r"\d{1,4}", s):
+            codeish += 1
+            continue
+        if re.fullmatch(r"above\s*\d+", s, re.I) or re.fullmatch(r"\d+\+", s):
+            codeish += 1
+            continue
+        if _ROW_LABEL_TEXT_RE.match(s) or (len(s) <= 4 and not re.search(r"[A-Za-z]{4,}", s)):
+            labelish += 1
+            continue
+        return False
+    return codeish >= 2 and (codeish + labelish) == len(nonempty)
 
 
 def _structural_bucket_for_df(df: pd.DataFrame) -> Tuple[str, str, Dict[str, Any]]:
@@ -292,8 +531,49 @@ _CAPTION_LABEL_PREFIX_SPACE_RE = re.compile(
 _BBOX_TITLE_MAX_GAP_PT = 140.0
 
 
+def collapse_doubled_pdf_glyphs(text: str) -> str:
+    """Collapse fake-bold / doubled-glyph PDF titles (Maaiinn → Main).
+
+    PyMuPDF often emits each painted stroke as its own character when the PDF
+    fakes bold by overdrawing. Only collapse when most letters sit in
+    consecutive identical pairs so normal words (Mississippi, All Ages) stay.
+    """
+    s = text or ""
+    if len(s) < 4:
+        return s
+    letters = [c for c in s if c.isalpha()]
+    if len(letters) < 6:
+        return s
+    in_pair = 0
+    i = 0
+    while i < len(letters):
+        if i + 1 < len(letters) and letters[i].lower() == letters[i + 1].lower():
+            in_pair += 2
+            i += 2
+        else:
+            i += 1
+    if in_pair / len(letters) < 0.8:
+        return s
+    out: list[str] = []
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if (
+            c.isalpha()
+            and i + 1 < len(s)
+            and s[i + 1].isalpha()
+            and c.lower() == s[i + 1].lower()
+        ):
+            out.append(c)
+            i += 2
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
 def _normalize_title_line(line: str) -> str:
-    return re.sub(r"\s+", " ", (line or "").strip())
+    return re.sub(r"\s+", " ", collapse_doubled_pdf_glyphs((line or "").strip()))
 
 
 def strip_caption_label_prefix(title: Optional[str]) -> Optional[str]:
@@ -366,6 +646,89 @@ def _is_usable_inferred_title(title: str, columns: Optional[List[str]] = None) -
         if len(low) <= 16 and (c.startswith(low.rstrip("-–—")) or low.rstrip("-–—") in c):
             return False
     return True
+
+
+def _is_caption_id_only(line: str) -> bool:
+    """True for short TABLE/STATEMENT ids with no descriptive remainder."""
+    from extraction.pdf_header_utils import _is_table_id_only
+
+    s = _normalize_title_line(line)
+    if not s:
+        return False
+    if _is_table_id_only(s):
+        return True
+    # "TABLE -8" / "Table- 3" with only a short token after the kind word.
+    return bool(
+        re.match(
+            r"^\s*(?:TABLE|TAB\.?|STATEMENT|ANNEX(?:URE)?|SCHEDULE|EXHIBIT|APPENDIX)\s*"
+            r"[:.\-–—]?\s*[A-Z0-9][\w.\-–—/]*\s*$",
+            s,
+            re.I,
+        )
+    )
+
+
+# Leaf/header stubs that must never become the table title.
+_WEAK_TITLE_TOKENS = frozenset({
+    "total", "totals", "all", "male", "female", "males", "females",
+    "rural", "urban", "s.no", "s.no.", "sno", "sl", "sl.", "no", "no.",
+    "year", "age", "sex", "gender", "unit", "units", "particulars",
+})
+
+
+def _is_weak_inferred_title(title: str, columns: Optional[List[str]] = None) -> bool:
+    """Reject column-header crumbs (TOTAL, MALE) and bare TABLE ids as titles."""
+    s = _normalize_title_line(title)
+    if not s:
+        return True
+    if _is_caption_id_only(s):
+        return True
+    low = s.lower().rstrip(".")
+    if low in _WEAK_TITLE_TOKENS:
+        return True
+    if len(s.split()) <= 2 and low.replace(" ", "") in {
+        t.replace(".", "") for t in _WEAK_TITLE_TOKENS
+    }:
+        return True
+    # Group labels that appear in header_path but not leaf column names.
+    for c in columns or []:
+        cl = _normalize_title_line(c).lower()
+        if cl and (low == cl or low in cl.split()):
+            if len(s.split()) <= 2:
+                return True
+    return False
+
+
+def _descriptive_line_after_caption_id(
+    lines: List[str],
+    id_index: int,
+    col_names: List[str],
+) -> Optional[str]:
+    """Pick the descriptive caption that sits directly under ``TABLE -8``."""
+    for j in range(id_index + 1, min(id_index + 5, len(lines))):
+        cand = _normalize_title_line(lines[j])
+        if not cand:
+            continue
+        if _is_caption_id_only(cand):
+            continue
+        if _is_weak_inferred_title(cand, col_names):
+            continue
+        # Stop when we hit the table's own column header row.
+        low = cand.lower()
+        if col_names and sum(1 for c in col_names[:4] if c and c.lower() in low) >= 2:
+            break
+        if _looks_like_heading(cand) and _is_usable_inferred_title(cand, col_names):
+            return cand
+        # Long ALL-CAPS / Title Case captions that exceed the short heading word cap.
+        if (
+            _is_usable_inferred_title(cand, col_names)
+            and len(cand) >= 18
+            and not _matches_extended_caption(cand)
+        ):
+            letters = [c for c in cand if c.isalpha()]
+            if letters and sum(1 for c in letters if c.isupper()) / len(letters) >= 0.35:
+                return cand
+    return None
 
 
 def _matches_extended_caption(line: str) -> bool:
@@ -514,26 +877,55 @@ def _title_from_bbox_blocks(
     page_blocks: List[Dict[str, float]],
     bbox: List[float],
     col_names: List[str],
-) -> Tuple[Optional[str], str]:
-    """Caption or heading immediately above the ruled table region."""
-    for _gap, block in _blocks_above_bbox(page_blocks, bbox):
+) -> Tuple[Optional[str], str, Optional[str]]:
+    """Caption or heading immediately above the ruled table region.
+
+    Returns (title, source, banner_table_id). When the nearest caption is an
+    id-only line (``TABLE -8``), prefer the descriptive line under it.
+    """
+    above = _blocks_above_bbox(page_blocks, bbox)
+    # Nearest-first search for captions; keep id + following descriptive pair.
+    texts_near = [block["text"] for _gap, block in above]
+
+    for i, text in enumerate(texts_near):
+        if not _matches_extended_caption(text):
+            continue
+        if _is_caption_id_only(text):
+            desc = _descriptive_line_after_caption_id(texts_near, i, col_names)
+            if desc:
+                return desc, "heuristic_bbox_caption_below_id", text
+            # Bare id alone is not a display title — keep looking.
+            continue
+        if _is_usable_inferred_title(text, col_names) and not _is_weak_inferred_title(text, col_names):
+            return text, "heuristic_bbox_caption", None
+
+    for _gap, block in above:
         text = block["text"]
-        if _matches_extended_caption(text) and _is_usable_inferred_title(text, col_names):
-            return text, "heuristic_bbox_caption"
-    for _gap, block in _blocks_above_bbox(page_blocks, bbox):
-        text = block["text"]
+        if _is_weak_inferred_title(text, col_names):
+            continue
         if _looks_like_heading(text) and _is_usable_inferred_title(text, col_names):
-            return text, "heuristic_bbox_heading"
-    return None, "heuristic_none"
+            return text, "heuristic_bbox_heading", None
+    return None, "heuristic_none", None
 
 
 def _title_from_page_lines(
     lines: List[str],
     col_names: List[str],
-) -> Tuple[Optional[str], str]:
-    for ln in lines:
-        if _matches_extended_caption(ln) and _is_usable_inferred_title(ln, col_names):
-            return ln, "heuristic_table_caption"
+) -> Tuple[Optional[str], str, Optional[str]]:
+    """Scan plain page lines for TABLE/STATEMENT captions and nearby titles.
+
+    Returns (title, source, banner_table_id).
+    """
+    for i, ln in enumerate(lines):
+        if not _matches_extended_caption(ln):
+            continue
+        if _is_caption_id_only(ln):
+            desc = _descriptive_line_after_caption_id(lines, i, col_names)
+            if desc:
+                return desc, "heuristic_table_caption_below_id", ln
+            continue
+        if _is_usable_inferred_title(ln, col_names) and not _is_weak_inferred_title(ln, col_names):
+            return ln, "heuristic_table_caption", None
 
     header_idx = None
     col_lower = {c.lower() for c in col_names[:3] if c}
@@ -548,9 +940,16 @@ def _title_from_page_lines(
             candidate = lines[j]
             if candidate.lower() in col_lower:
                 continue
+            if _is_weak_inferred_title(candidate, col_names):
+                continue
+            if _is_caption_id_only(candidate):
+                desc = _descriptive_line_after_caption_id(lines, j, col_names)
+                if desc:
+                    return desc, "heuristic_heading_above_table", candidate
+                continue
             if _looks_like_heading(candidate) and _is_usable_inferred_title(candidate, col_names):
-                return candidate, "heuristic_heading_above_table"
-    return None, "heuristic_none"
+                return candidate, "heuristic_heading_above_table", None
+    return None, "heuristic_none", None
 
 
 def _looks_like_heading(line: str) -> bool:
@@ -562,7 +961,8 @@ def _looks_like_heading(line: str) -> bool:
     if re.search(r"[–—\-]$", s):
         return False
     words = s.split()
-    if not (1 <= len(words) <= 12):
+    # Allow longer captions used as titles (DEATHS BY CAUSE …).
+    if not (1 <= len(words) <= 18):
         return False
     # Reject lines that look like the table's own column header row.
     if s.count("|") >= 2:
@@ -589,35 +989,62 @@ def infer_title_from_page_text(
     """
     Infer a display title for an auto-accepted (no-LLM) table.
 
-    Strategy (first match wins):
+    Strategy (first strong match wins):
       1. Caption/heading positioned above the table bbox (when bbox + blocks known).
-      2. Extended caption patterns on the page (TABLE, STATEMENT, ANNEX, …).
+      2. Extended caption patterns on the page (TABLE, STATEMENT, ANNEX, …),
+         preferring the descriptive line under a bare ``TABLE -8`` id.
       3. Heading-like line above the column-header cue in plain page text.
       4. PDF outline/bookmark breadcrumb for this page (section context).
       5. None — Preview prompts the user to add a title.
 
     Returns (title, title_source) for debugging in Preview.
+    Banner ids are attached separately via ``infer_title_meta_from_page_text``.
     """
+    title, source, _banner = infer_title_meta_from_page_text(
+        page_text,
+        columns,
+        page_num,
+        bbox=bbox,
+        page_blocks=page_blocks,
+        outline_sections=outline_sections,
+    )
+    return title, source
+
+
+def infer_title_meta_from_page_text(
+    page_text: str,
+    columns: List[str],
+    page_num: Optional[int] = None,
+    *,
+    bbox: Optional[List[float]] = None,
+    page_blocks: Optional[List[Dict[str, float]]] = None,
+    outline_sections: Optional[List[str]] = None,
+) -> Tuple[Optional[str], str, Optional[str]]:
+    """Like ``infer_title_from_page_text`` but also returns ``banner_table_id``."""
     col_names = [_normalize_title_line(c) for c in columns if _normalize_title_line(c)]
     lines = [
         ln for ln in (_normalize_title_line(ln) for ln in (page_text or "").splitlines())
         if ln
     ]
 
-    if bbox and page_blocks:
-        title, source = _title_from_bbox_blocks(page_blocks, bbox, col_names)
-        if title:
-            return strip_caption_label_prefix(title), source
+    best: Tuple[Optional[str], str, Optional[str]] = (None, "heuristic_none", None)
 
-    title, source = _title_from_page_lines(lines, col_names)
-    if title:
-        return strip_caption_label_prefix(title), source
+    if bbox and page_blocks:
+        title, source, banner = _title_from_bbox_blocks(page_blocks, bbox, col_names)
+        if title and not _is_weak_inferred_title(title, col_names):
+            return strip_caption_label_prefix(title), source, banner
+        if banner and not best[0]:
+            best = (None, source, banner)
+
+    title, source, banner = _title_from_page_lines(lines, col_names)
+    if title and not _is_weak_inferred_title(title, col_names):
+        return strip_caption_label_prefix(title), source, banner or best[2]
 
     title, source = _title_from_outline_sections(outline_sections, col_names)
-    if title:
-        return strip_caption_label_prefix(title), source
+    if title and not _is_weak_inferred_title(title, col_names):
+        return strip_caption_label_prefix(title), source, best[2]
 
-    return None, "heuristic_none"
+    return best[0], best[1], best[2]
 
 
 def dedupe_column_names(columns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -728,10 +1155,11 @@ def table_dict_from_df(
         in_grid_banner_id = None
     # In-grid banners (TABLE id row + descriptive title row inside the ruled
     # border) beat page-text / outline heuristics — those look above the bbox.
+    banner_from_page: Optional[str] = None
     if in_grid_title:
         title, title_source = strip_caption_label_prefix(in_grid_title), "heuristic_in_grid_banner"
     else:
-        title, title_source = infer_title_from_page_text(
+        title, title_source, banner_from_page = infer_title_meta_from_page_text(
             page_text,
             col_names,
             page_num=page_num,
@@ -767,6 +1195,7 @@ def table_dict_from_df(
         "extraction": {"method": method or "pymupdf_lines_strict", "confidence": "high"},
         "source": "auto_high_confidence",
     }
-    if in_grid_banner_id:
-        result["banner_table_id"] = in_grid_banner_id
+    banner_id = in_grid_banner_id or banner_from_page
+    if banner_id:
+        result["banner_table_id"] = banner_id
     return result

@@ -149,6 +149,142 @@ def list_catalogue_datasets(conn):
     return [_shape_dataset_row(row) for row in rows]
 
 
+def _shape_group_row(row, tables):
+    """Map a metadata_groups row + linked tables into a catalogue release card."""
+    cls = row.get("classifications") or {}
+    if isinstance(cls, str):
+        try:
+            cls = json.loads(cls)
+        except json.JSONDecodeError:
+            cls = {}
+    if not isinstance(cls, dict):
+        cls = {}
+    facets = list(cls.keys())
+    title = (row.get("title") or row["metadata_id"] or "").strip() or row["metadata_id"]
+    geo = row.get("geography") or "—"
+    freq = row.get("frequency") or "—"
+    source = row.get("data_source") or "—"
+    summary = (row.get("description") or "").strip() or title
+    table_count = len(tables)
+    row_count = sum(int(t.get("row_count") or 0) for t in tables)
+    tags = []
+    for x in (row.get("theme"), row.get("catalogue_product") or row.get("product"),
+              row.get("sector"), row.get("category"), geo):
+        if x and str(x).strip() and str(x) not in tags:
+            tags.append(str(x).strip())
+    for f in facets:
+        if f not in tags:
+            tags.append(f)
+    keywords = " ".join(
+        str(x) for x in [
+            row["metadata_id"], title, geo, freq, source,
+            row.get("theme"), row.get("catalogue_product"), *facets,
+            *(t.get("title") for t in tables),
+        ] if x
+    ).lower()
+    nmds = _nmds_concepts_as_list(row.get("nmds_concepts"))
+    return {
+        "id": row["metadata_id"],
+        "kind": "group",
+        "metadata_id": row["metadata_id"],
+        "title": title,
+        "rows": str(row_count),
+        "row_count": row_count,
+        "table_count": table_count,
+        "tables": tables,
+        "geo": geo,
+        "freq": freq,
+        "source": source,
+        "access": "Public",
+        "summary": summary,
+        "short_description": row.get("description") or "",
+        "long_description": row.get("description") or "",
+        "nmds_concepts": nmds,
+        "metadata_standard": _metadata_standard_from_concepts(row.get("nmds_concepts")),
+        "keywords": keywords,
+        "facets": facets,
+        "tags": tags[:16],
+        "theme": row.get("theme"),
+        "product": row.get("catalogue_product") or row.get("product"),
+        "category": row.get("category"),
+        "time_period": row.get("time_period"),
+        "sector": row.get("sector"),
+        "last_updated": str(row.get("last_updated_date") or "") or None,
+        "classifications": cls,
+    }
+
+
+_GROUP_SELECT = """
+    SELECT
+      m.metadata_id,
+      m.title,
+      m.description,
+      m.product,
+      m.category,
+      m.geography,
+      m.frequency,
+      m.time_period,
+      m.data_source,
+      m.classifications,
+      m.sector,
+      m.theme,
+      m.catalogue_product,
+      m.nmds_concepts,
+      m.last_updated_date
+    FROM metadata_groups m
+"""
+
+
+def _tables_for_group(conn, metadata_id: str) -> list:
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("""
+            SELECT
+              d.dataset_id,
+              d.title,
+              d.table_id,
+              (SELECT COUNT(*)::int FROM dataset_rows r WHERE r.dataset_id = d.dataset_id) AS row_count
+            FROM datasets d
+            WHERE d.metadata_id = %s
+            ORDER BY d.title ASC NULLS LAST, d.dataset_id ASC
+        """, (metadata_id,))
+        return [
+            {
+                "id": r["dataset_id"],
+                "dataset_id": r["dataset_id"],
+                "title": r.get("title") or r["dataset_id"],
+                "table_id": r.get("table_id") or r["dataset_id"],
+                "row_count": int(r.get("row_count") or 0),
+            }
+            for r in cur.fetchall()
+        ]
+
+
+def list_catalogue_groups(conn):
+    """Published releases for the Catalogue page — one card per metadata group."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(_GROUP_SELECT + """
+            ORDER BY m.last_updated_date DESC NULLS LAST, m.metadata_id DESC
+        """)
+        groups = [dict(r) for r in cur.fetchall()]
+    return [
+        _shape_group_row(g, _tables_for_group(conn, g["metadata_id"]))
+        for g in groups
+    ]
+
+
+def get_catalogue_group(conn, metadata_id: str):
+    """Return one published metadata group (release) or None."""
+    mid = (metadata_id or "").strip()
+    if not mid:
+        return None
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(_GROUP_SELECT + " WHERE m.metadata_id = %s", (mid,))
+        row = cur.fetchone()
+    if not row:
+        return None
+    return _shape_group_row(dict(row), _tables_for_group(conn, mid))
+
+
 def search_catalogue_datasets(
     conn,
     *,

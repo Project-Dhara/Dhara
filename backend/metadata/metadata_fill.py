@@ -1,6 +1,8 @@
 """Stage 4 -- LLM metadata autofill for catalogue/PDF groups (mirrors the
 notebook's `generate_metadata_per_group`)."""
 import json as _json
+import os
+import re
 from typing import Any, Optional
 
 from extraction.extractor import TableExtractor
@@ -19,6 +21,84 @@ from metadata.metadata_llm import (
 def _group_metadata_is_empty(metadata: Optional[dict], fields: Optional[list] = None) -> bool:
     keys = fields if fields is not None else METADATA_FIELDS
     return not any((metadata or {}).get(f) for f in keys)
+
+
+def _kyds_data_source(kyds: Optional[dict]) -> str:
+    """KYDS department/ministry — preferred agency Source, never a filename."""
+    if not isinstance(kyds, dict):
+        return ""
+    return str(kyds.get("department") or "").strip()
+
+
+_FILE_EXT_RE = re.compile(r"\.(xlsx|xls|csv|pdf|tsv|ods)(\b|$)", re.I)
+
+
+def _looks_like_filename_source(value: str, known_names: Optional[set] = None) -> bool:
+    """True when Source looks like a workbook/path rather than an agency name."""
+    text = str(value or "").strip()
+    if not text:
+        return False
+    lower = text.lower()
+    if known_names and lower in {str(n).strip().lower() for n in known_names if n}:
+        return True
+    base = os.path.basename(text.replace("\\", "/"))
+    if _FILE_EXT_RE.search(base):
+        return True
+    if "/" in text or "\\" in text:
+        return True
+    return False
+
+
+def _resolve_data_source(
+    current: Any,
+    kyds: Optional[dict],
+    known_filenames: Optional[set] = None,
+) -> str:
+    """Prefer KYDS department over empty/filename Sources; keep real agency names.
+
+    Groups may legitimately differ — only replace missing or filename-like values.
+    """
+    kyds_source = _kyds_data_source(kyds)
+    text = str(current or "").strip()
+    if not text or _looks_like_filename_source(text, known_filenames):
+        return kyds_source
+    return text
+
+
+def _sanitize_group_data_source(
+    g: dict,
+    kyds: Optional[dict],
+    known_filenames: Optional[set] = None,
+) -> None:
+    """Fix filename-like Source on one group; leave distinct agency Sources alone."""
+    meta = dict(g.get("metadata") or {})
+    resolved = _resolve_data_source(meta.get("data_source"), kyds, known_filenames)
+    if resolved != str(meta.get("data_source") or "").strip():
+        meta["data_source"] = resolved
+        g["metadata"] = meta
+    catalogue = g.get("catalogue_metadata")
+    if isinstance(catalogue, dict):
+        cat_resolved = _resolve_data_source(catalogue.get("data_source"), kyds, known_filenames)
+        if cat_resolved != str(catalogue.get("data_source") or "").strip():
+            g["catalogue_metadata"] = {**catalogue, "data_source": cat_resolved}
+
+
+def _known_filenames_for_group(g: dict, facts: Optional[dict] = None) -> set:
+    names: set = set()
+    if facts and facts.get("filename"):
+        names.add(str(facts["filename"]))
+    for mt in g.get("matched_tables") or []:
+        t = mt.get("table") if isinstance(mt, dict) else None
+        if isinstance(t, dict) and t.get("source_file"):
+            names.add(str(t["source_file"]))
+    for t in g.get("tables") or []:
+        if isinstance(t, dict) and t.get("source_file"):
+            names.add(str(t["source_file"]))
+    if g.get("file_name"):
+        names.add(str(g["file_name"]))
+    if g.get("name"):
+        names.add(str(g["name"]))
+    return names
 
 
 def _format_key_statistics(value: Any) -> Optional[str]:
@@ -180,6 +260,11 @@ def _fill_empty_group_metadata(
     if not kyds_responses:
         return False, []
 
+    # Replace filename-like Sources with KYDS department; leave real agency
+    # names alone so groups can still differ when appropriate.
+    for g in groups:
+        _sanitize_group_data_source(g, kyds_responses, _known_filenames_for_group(g))
+
     use_sdg = str(standard or "nmds").lower() == "sdg"
 
     def _group_tables(g: dict) -> list:
@@ -248,7 +333,12 @@ def _fill_empty_group_metadata(
                 llm_output = generate_metadata_with_llm(
                     facts, kyds=kyds_responses, complete_fn=extractor._complete,
                 )
-                g["metadata"] = _stringify_metadata_values(parse_llm_metadata_output(llm_output))
+                meta = _stringify_metadata_values(parse_llm_metadata_output(llm_output))
+                known = _known_filenames_for_group(g, facts)
+                meta["data_source"] = _resolve_data_source(
+                    meta.get("data_source"), kyds_responses, known,
+                )
+                g["metadata"] = meta
             # Keep a display name when the client sent PDF-style groups.
             if not g.get("file_name") and g.get("name"):
                 g["file_name"] = g["name"]
@@ -257,4 +347,7 @@ def _fill_empty_group_metadata(
             print(f"Stage 4 LLM metadata generation failed for group {group_label}: {msg}")
             errors.append({"index": gi, "group": group_label, "error": msg})
 
+    # Final pass: strip any filename Sources the model still leaked in.
+    for g in groups:
+        _sanitize_group_data_source(g, kyds_responses, _known_filenames_for_group(g))
     return False, errors

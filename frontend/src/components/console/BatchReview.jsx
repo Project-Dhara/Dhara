@@ -1,13 +1,17 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, ArrowRight, Check, Info } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Info } from 'lucide-react'
 import { withLlmKeyHeaders } from '../../lib/llmKey'
 import { withAuthHeaders } from '../../lib/auth'
 import { CLICK_THROUGH_ENABLED } from '../../lib/clickThrough'
 import { getConceptStandardConfig } from '../../lib/metadataConcepts'
-import { getMetadataStandard } from '../../lib/settingsConfig'
-import MetadataSheetGrid, { METADATA_COLUMNS } from './MetadataSheetGrid'
+import { getMetadataRequiredFields, getMetadataStandard } from '../../lib/settingsConfig'
+import MetadataSheetGrid, {
+  METADATA_COLUMNS,
+  applyRequiredFieldsToColumns,
+  missingRequiredSheetFields,
+} from './MetadataSheetGrid'
 import NmdsGroupPanel from './NmdsGroupPanel'
 import ConsoleStatusPlaceholder from './ConsoleStatusPlaceholder'
 import Button from '../ui/Button'
@@ -27,6 +31,17 @@ function isMetadataAutoMapped(metadata, fieldKeys) {
     return fieldKeys.some((key) => String(metadata?.[key] || '').trim())
   }
   return entries.some(([key, value]) => key !== 'title' && String(value || '').trim())
+}
+
+/** Product is dataset-wide — keep every group's value identical. */
+function shareProductAcrossGroups(groups) {
+  if (!Array.isArray(groups) || groups.length === 0) return groups
+  const shared = groups.map((g) => String(g?.metadata?.product || '').trim()).find(Boolean) || ''
+  return groups.map((g) => {
+    const current = String(g?.metadata?.product || '')
+    if (current === shared) return g
+    return { ...g, metadata: { ...(g.metadata || {}), product: shared } }
+  })
 }
 
 function emptyConceptGroupState(emptyFields) {
@@ -70,7 +85,12 @@ function seedConceptFieldsFromGroup(group, emptyFields, mergeConcepts) {
 
 export default function BatchReview({ matchResult, metadataFiles, onDone, onCancel, pdfJobId = null }) {
   const conceptConfig = useMemo(() => getConceptStandardConfig(getMetadataStandard()), [])
-  const sheetColumns = conceptConfig.sheetColumns || METADATA_COLUMNS
+  const sheetColumns = useMemo(() => {
+    const base = conceptConfig.sheetColumns || METADATA_COLUMNS
+    // SDG sheet already marks every concept required; NMDS merges Settings → Metadata configuration.
+    if (conceptConfig.usesSdgSheet) return base
+    return applyRequiredFieldsToColumns(base, getMetadataRequiredFields())
+  }, [conceptConfig])
   const sheetFieldKeys = useMemo(() => sheetColumns.map((c) => c.key), [sheetColumns])
 
   const {
@@ -85,10 +105,9 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
     usesSdgSheet,
   } = conceptConfig
 
-  const [groups, setGroups] = useState(matchResult.groups)
+  const [groups, setGroups] = useState(() => shareProductAcrossGroups(matchResult.groups))
   const [assignments, setAssignments] = useState({}) // unmatchedTableIndex -> groupIndex ('' = skip)
-  const [step, setStep] = useState('review') // review | pushing | done | error
-  const [result, setResult] = useState(null)
+  const [step, setStep] = useState('review') // review | pushing | error
   const [error, setError] = useState('')
 
   // One concept upload/fields state per metadata group, keyed by group index.
@@ -112,7 +131,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
   // hands down a new matchResult (which only happens on a grouping change),
   // so the metadata page reflects the current groups without a refresh.
   useEffect(() => {
-    setGroups(matchResult.groups)
+    setGroups(shareProductAcrossGroups(matchResult.groups))
     setNmdsByGroup(matchResult.groups.map((g) => ({
       ...emptyConceptGroupState(emptyFields),
       fields: seedConceptFieldsFromGroup(g, emptyFields, mergeConcepts),
@@ -153,8 +172,27 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
     setToast({ type: 'success', message: `${standardName} fields applied to all other groups.` })
   }
 
-  const updateMetadata = (groupIndex, metadata) => {
-    setGroups((prev) => prev.map((g, i) => (i === groupIndex ? { ...g, metadata } : g)))
+  const setAppliedToAll = (groupIndex, checked) => {
+    if (checked) {
+      applyNmdsToAll(groupIndex)
+      return
+    }
+    setNmdsByGroup((prev) => prev.map((g) => ({ ...g, appliedToAll: false })))
+  }
+
+  const updateMetadata = (groupIndex, metadata, { syncProduct = false } = {}) => {
+    setGroups((prev) => prev.map((g, i) => {
+      if (syncProduct) {
+        return {
+          ...g,
+          metadata: {
+            ...(i === groupIndex ? metadata : (g.metadata || {})),
+            product: metadata?.product ?? '',
+          },
+        }
+      }
+      return i === groupIndex ? { ...g, metadata } : g
+    }))
     if (usesSdgSheet) {
       const nextFields = { ...emptyFields() }
       for (const key of Object.keys(nextFields)) {
@@ -282,6 +320,14 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
   }
 
   const handleSaveGroup = (groupIndex) => {
+    const missingSheet = missingRequiredSheetFields(groups[groupIndex]?.metadata, sheetColumns)
+    if (missingSheet.length > 0) {
+      setToast({
+        type: 'warn',
+        message: `Required metadata fields not filled: ${missingSheet.map((c) => c.label).join(', ')}.`,
+      })
+      return
+    }
     const complete = isComplete(nmdsByGroup[groupIndex]?.fields || emptyFields())
     if (!complete) {
       setToast({ type: 'warn', message: `${standardName} fields not filled. Fill all ${standardName} details for this group.` })
@@ -291,6 +337,15 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
   }
 
   const handlePush = async () => {
+    const incompleteSheet = groups.findIndex((g) => missingRequiredSheetFields(g.metadata, sheetColumns).length > 0)
+    if (incompleteSheet !== -1) {
+      const missing = missingRequiredSheetFields(groups[incompleteSheet].metadata, sheetColumns)
+      setToast({
+        type: 'warn',
+        message: `Required metadata fields not filled in group ${incompleteSheet + 1}: ${missing.map((c) => c.label).join(', ')}.`,
+      })
+      return
+    }
     const allComplete = nmdsByGroup.every((g) => isComplete(g?.fields || emptyFields()))
     if (!allComplete) {
       setToast({ type: 'warn', message: `${standardName} fields not filled. Fill all ${standardName} details.` })
@@ -301,12 +356,16 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
     setError('')
     setToast(null)
 
+    const finish = (ids = []) => {
+      const label = groups[0]?.metadata?.title || groups[0]?.file_name || ''
+      onDone(label, ids)
+    }
+
     // Click-through mode (VITE_ENABLE_CLICK_THROUGH=true): skip the real
     // push and continue as if it succeeded. Leave this off to write
     // catalogue rows (GCS is optional via ENABLE_GCS).
     if (CLICK_THROUGH_ENABLED) {
-      setResult({ groups_pushed: groups.length, results: [] })
-      setStep('done')
+      finish([])
       return
     }
 
@@ -332,12 +391,14 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
       const finalGroups = groups.map((g, gi) => {
         const conceptFields = nmdsByGroup[gi]?.fields || emptyFields()
         const conceptList = fieldsToList(conceptFields)
-        let metadata = g.metadata || {}
+        let metadata = { ...(g.metadata || {}) }
+        // Catalogue title is the group name (not an editable sheet field).
+        metadata.title = g.file_name || metadata.title || ''
         if (usesSdgSheet) {
           const catalogue = g.catalogue_metadata || {}
           metadata = {
             ...catalogue,
-            title: catalogue.title || conceptFields.Indicator || conceptFields.Goal || g.file_name || '',
+            title: g.file_name || catalogue.title || conceptFields.Indicator || conceptFields.Goal || '',
             description: catalogue.description || conceptFields.Target || '',
             data_source: catalogue.data_source || conceptFields['International organisations(s) responsible for global monitoring'] || '',
             last_updated: catalogue.last_updated || conceptFields['Metadata update'] || '',
@@ -386,8 +447,7 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
         throw new Error(err.detail || 'Push failed')
       }
       const data = await res.json()
-      setResult(data)
-      setStep('done')
+      finish((data.results || []).map((r) => r.metadata_id).filter(Boolean))
     } catch (e) {
       setError(e.message)
       setStep('error')
@@ -403,29 +463,6 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
         msPerStep={1200}
         onComplete={() => {}}
       />
-    )
-  }
-
-  if (step === 'done' && result) {
-    const label = groups[0]?.metadata?.title || groups[0]?.file_name || ''
-    return (
-      <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6">
-        <div className="flex flex-col items-center gap-2.5 px-5 py-10 text-center">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#e6f7f3] text-[#0a6e57]">
-            <Check className="h-8 w-8" strokeWidth={2.5} aria-hidden />
-          </div>
-          <div className="text-base font-bold text-ink">
-            {result.groups_pushed} metadata group{result.groups_pushed !== 1 ? 's' : ''} pushed
-          </div>
-          <Button
-            size="sm"
-            onClick={() => onDone(label, (result.results || []).map((r) => r.metadata_id).filter(Boolean))}
-          >
-            Continue to classification
-            <ArrowRight className="ml-1.5 inline h-4 w-4" strokeWidth={2} aria-hidden />
-          </Button>
-        </div>
-      </div>
     )
   }
 
@@ -471,7 +508,31 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
             values: g.metadata,
             manual: groupFailedAutofill(g, gi) || (!isMetadataAutoMapped(g.metadata, usesSdgSheet ? sheetFieldKeys : null) && !matchResult.llm_autofill_skipped_no_key),
           }))}
-          onChange={(gi, key, value) => updateMetadata(gi, { ...groups[gi].metadata, [key]: value })}
+          onChange={(gi, key, value) => updateMetadata(
+            gi,
+            { ...groups[gi].metadata, [key]: value },
+            { syncProduct: key === 'product' },
+          )}
+          renderGroupHeaderActions={(row, gi) => {
+            if (usesSdgSheet) return null
+            const nmdsState = nmdsByGroup[gi] || emptyConceptGroupState(emptyFields)
+            const filledCount = fieldsToList(nmdsState.fields).length
+            const complete = isComplete(nmdsState.fields || emptyFields())
+            return (
+              <button
+                type="button"
+                className={`rounded-lg border px-3 py-1.5 font-sans text-[12.5px] font-semibold transition-colors ${
+                  complete
+                    ? 'border-green/40 bg-[#eef6e6] text-green hover:border-green hover:bg-green hover:text-white'
+                    : 'border-coral/50 bg-[rgba(217,91,104,0.1)] text-coral hover:border-coral hover:bg-coral hover:text-white'
+                }`}
+                onClick={() => setNmdsModalGroup(gi)}
+              >
+                View/Fill {standardName} details
+                {filledCount > 0 ? ` (${filledCount})` : ''}
+              </button>
+            )
+          }}
           renderGroupFooter={(row, gi) => {
             const nmdsState = nmdsByGroup[gi] || emptyConceptGroupState(emptyFields)
             return (
@@ -485,13 +546,12 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
                 parseError={nmdsState.parseError}
                 fileMismatch={nmdsState.fileMismatch}
                 modalOpen={nmdsModalGroup === gi}
-                onOpenModal={() => setNmdsModalGroup(gi)}
                 onCloseModal={() => setNmdsModalGroup(null)}
-                groupLabel={row.label}
+                groupLabel={row.label || row.values?.title}
                 onSaveGroup={() => handleSaveGroup(gi)}
                 canApplyToAll={groups.length > 1}
                 appliedToAll={!!nmdsState.appliedToAll}
-                onApplyToAll={() => applyNmdsToAll(gi)}
+                onApplyToAllChange={(checked) => setAppliedToAll(gi, checked)}
                 standardName={standardName}
                 topics={topics}
                 placeholders={placeholders}

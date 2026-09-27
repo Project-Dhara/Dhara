@@ -55,6 +55,53 @@ _AGGREGATE_LABELS = frozenset({
     "total workers",
     "total occupations",
 })
+# Residual / non-response catch-alls (Others, Not stated, N.A., …) — never map to NCO.
+# These otherwise fuzzy-match onto "… Not Elsewhere Classified" families.
+_RESIDUAL_LABELS = frozenset({
+    "other",
+    "others",
+    "other not stated",
+    "others not stated",
+    "not stated",
+    "not reported",
+    "not available",
+    "not known",
+    "not specified",
+    "not classified",
+    "not ascertained",
+    "not mentioned",
+    "not applicable",
+    "unclassified",
+    "unknown",
+    "n a",
+    "na",
+    "n r",
+    "nr",
+    "n s",
+    "ns",
+    "misc",
+    "miscellaneous",
+    "residual",
+    "remaining",
+    "rest",
+    "others specify",
+    "other specify",
+    "not elsewhere classified",
+    "nec",
+})
+# Vocabulary that only builds residual/non-response labels (no real occupation words).
+_RESIDUAL_TOKENS = frozenset({
+    "other", "others", "misc", "miscellaneous", "residual", "remaining", "rest",
+    "unknown", "na", "nr", "ns", "nec", "n", "a", "r", "s",
+    "not", "stated", "reported", "available", "known", "specified",
+    "classified", "elsewhere", "specify", "mentioned", "applicable",
+    "ascertained", "response", "unclassified",
+})
+_RESIDUAL_MARKERS = frozenset({
+    "other", "others", "misc", "miscellaneous", "residual", "remaining",
+    "rest", "unknown", "na", "nr", "ns", "nec", "unclassified",
+    "stated", "reported", "available", "known", "specified",
+})
 
 # Tunable gates (not vocabulary) — auto_fill only above these.
 _EMBED_HIGH = 0.52
@@ -71,11 +118,11 @@ def normalize_occupation_value(text) -> str:
 
 
 def is_non_occupation_aggregate(text) -> bool:
-    """True for All / Total / similar stubs that must not receive an NCO code."""
+    """True for All/Total aggregates and Others/Not-stated residuals — never NCO-map."""
     n = normalize_occupation_value(text)
     if not n:
         return False
-    if n in _AGGREGATE_LABELS:
+    if n in _AGGREGATE_LABELS or n in _RESIDUAL_LABELS:
         return True
     # "All - Urban", "Total (persons)", etc.
     if re.fullmatch(r"(?:all|total|overall|sum)(?:\s+\w+){0,3}", n):
@@ -88,6 +135,15 @@ def is_non_occupation_aggregate(text) -> bool:
             return n in _AGGREGATE_LABELS or tokens[1] in {
                 "occupations", "categories", "workers", "persons", "people",
             }
+    # Labels built only from residual vocabulary, e.g. "Others / Not stated", "N.A."
+    tokens = n.split()
+    if tokens and all(t in _RESIDUAL_TOKENS for t in tokens):
+        if any(t in _RESIDUAL_MARKERS for t in tokens):
+            return True
+        if tokens[0] == "not" and 1 < len(tokens) <= 4:
+            return True
+        if len(tokens) == 2 and tokens[0] == "n" and tokens[1] in {"a", "r", "s"}:
+            return True
     return False
 
 
@@ -544,7 +600,7 @@ def match_occupation(conn, occupation_text, extractor=None, shortlist_size=16):
         return None
 
     occupation_text = str(occupation_text).strip()
-    # Aggregates like All / Total are stubs, not occupations.
+    # Aggregates (All/Total) and residuals (Others/Not stated) are stubs, not occupations.
     if is_non_occupation_aggregate(occupation_text):
         return None
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from pdf.sda_india_pdf_extraction import (
+from extraction.pdf_extraction import (
     _llm_title_is_id_only,
     _prefer_descriptive_llm_title,
 )

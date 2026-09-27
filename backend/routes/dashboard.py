@@ -1,4 +1,4 @@
-"""Dashboard readiness (catalogue groups + in-flight PDF jobs) and pipeline
+"""Dashboard readiness (uploaded files + catalogue Excel/SQL) and pipeline
 step tracking routes."""
 import asyncio
 from typing import Any, Dict, Optional
@@ -18,11 +18,11 @@ def _pdf_dashboard_row(
     grouping_status: Optional[str] = None,
     pipeline_step: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Map a PDF extraction job into a Dashboard readiness row.
+    """Map a PDF upload job into a Dashboard readiness row (one row per file).
 
     Console steps: 1 Files → 2 Preview → 3 Grouping → 4 Metadata → 5 Classify → 6 Publish.
-    Returns None when the job should be represented by catalogue rows instead
-    (metadata already pushed / classify+).
+    Jobs stay visible through classify/publish so stewards can resume from the
+    uploaded file rather than from each catalogue table/group.
     """
     job_id = job.get("job_id") or ""
     name = (job.get("filename") or "PDF upload").rsplit("/", 1)[-1]
@@ -81,10 +81,26 @@ def _pdf_dashboard_row(
         # Grouping Continue always advances into Metadata.
         step = 4
 
-    # After Metadata push the catalogue rows are the accurate readiness view.
+    if step >= 6:
+        return {
+            **base,
+            "readiness_pct": 100,
+            "status": "Published",
+            "status_key": "published",
+            "action": "View",
+            "href": "/catalogue",
+            "pipeline_step": 6,
+        }
     if step >= 5:
-        return None
-
+        return {
+            **base,
+            "readiness_pct": 85,
+            "status": "Classification review",
+            "status_key": "classification_review",
+            "action": "Review",
+            "href": f"/console/grouping/{job_id}",
+            "pipeline_step": 5,
+        }
     if step >= 4:
         return {
             **base,
@@ -179,7 +195,12 @@ async def pdf_set_pipeline_step(job_id: str, request: Request, user_email: str =
 
 @router.get("/api/dashboard", tags=["Dashboard"])
 async def get_dashboard(user_email: str = Depends(require_user)):
-    """Dataset readiness for the Dashboard: catalogue groups + in-flight PDF jobs."""
+    """Upload readiness for the Dashboard: one row per uploaded file.
+
+    PDF jobs are always listed (filename + resume link). Catalogue groups are
+    included only for Excel/SQL (or when the user has no PDF uploads), so a
+    single PDF is not exploded into many table/group rows.
+    """
     from pdf import pdf_store
 
     def _run():
@@ -244,15 +265,33 @@ async def get_dashboard(user_email: str = Depends(require_user)):
         if row:
             pdf_rows.append(row)
 
-    awaiting_extra = sum(
+    catalogue_rows = list(base.get("rows") or [])
+    if pdf_rows:
+        # PDF uploads already cover that file end-to-end. Keep catalogue rows
+        # only when they clearly came from Excel/SQL so mixed workspaces still
+        # show non-PDF uploads.
+        catalogue_rows = [
+            r for r in catalogue_rows
+            if str(r.get("source") or "").upper() in ("XLSX", "CSV", "SQL")
+        ]
+
+    awaiting_pdf = sum(
         1 for r in pdf_rows
         if r.get("status_key") not in ("failed", "published")
     )
+    published_pdf = sum(1 for r in pdf_rows if r.get("status_key") == "published")
+    awaiting_cat = sum(
+        1 for r in catalogue_rows
+        if r.get("status_key") not in ("failed", "published")
+    )
+    published_cat = sum(1 for r in catalogue_rows if r.get("status_key") == "published")
 
-    rows = list(pdf_rows) + list(base.get("rows") or [])
+    rows = list(pdf_rows) + catalogue_rows
     stats = dict(base.get("stats") or {})
-    stats["awaiting_review"] = int(stats.get("awaiting_review") or 0) + awaiting_extra
-    stats["datasets"] = int(stats.get("datasets") or 0) + len(pdf_rows)
+    # One "dataset" on the dashboard = one uploaded file (or Excel/SQL group).
+    stats["datasets"] = len(rows)
+    stats["awaiting_review"] = awaiting_pdf + awaiting_cat
+    stats["published"] = published_pdf + published_cat
 
     def _sort_key(r):
         u = r.get("updated_at")

@@ -199,17 +199,15 @@ export function createMatchGroup(matchResult, name, tableIds) {
   if (!matchResult) return matchResult
   const idSet = new Set(tableIds)
   const pulled = []
-  const groups = matchResult.groups
-    .map((g) => {
-      const keep = []
-      ;(g.matched_tables || []).forEach((mt) => {
-        const id = mt.table.id || mt.table._uid
-        if (idSet.has(id)) pulled.push({ table: mt.table, inventory_item: null, confidence: 'manual' })
-        else keep.push(mt)
-      })
-      return { ...g, matched_tables: keep }
+  const groups = matchResult.groups.map((g) => {
+    const keep = []
+    ;(g.matched_tables || []).forEach((mt) => {
+      const id = mt.table.id || mt.table._uid
+      if (idSet.has(id)) pulled.push({ table: mt.table, inventory_item: null, confidence: 'manual' })
+      else keep.push(mt)
     })
-    .filter((g) => (g.matched_tables || []).length > 0)
+    return { ...g, matched_tables: keep }
+  })
   const unmatchedKeep = []
   ;(matchResult.unmatched_tables || []).forEach((u) => {
     const id = u.table.id || u.table._uid

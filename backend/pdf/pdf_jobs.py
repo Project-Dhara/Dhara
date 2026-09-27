@@ -3,7 +3,7 @@ job -> review).
 
 Unlike the xlsx batch-extract flow, this can take several minutes (pymupdf
 extraction + batched OpenAI reconstruction/classification -- see
-sda_india_pdf_extraction.py), far longer than a synchronous request should
+extraction.pdf_extraction), far longer than a synchronous request should
 block for. Jobs are cached in memory here for live progress and persisted to
 Postgres (pdf_store) -- never under backend/data/. Pipeline runs use ephemeral
 temp files that are deleted when extraction finishes.
@@ -18,7 +18,7 @@ import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 from catalogue import catalogue as _cat
-from pdf import sda_india_pdf_extraction as _pdf_pipeline
+from extraction import pdf_extraction as _pdf_pipeline
 from pdf import pdf_store as _pdf_store
 
 _pdf_jobs: Dict[str, Dict[str, Any]] = {}

@@ -197,7 +197,7 @@ def _title_looks_like_headers(title: str, columns: Optional[List] = None) -> boo
     return False
 
 
-_TITLE_MAX_LEN = 90
+_TITLE_MAX_LEN = 220
 
 
 def _looks_like_column_list_phrase(text: str) -> bool:
@@ -213,10 +213,20 @@ def _looks_like_column_list_phrase(text: str) -> bool:
 
 
 def normalize_table_title(title: str, columns: Optional[List] = None) -> str:
-    """Keep a short descriptive caption; drop column-list / header suffixes."""
+    """Keep a descriptive caption; drop column-list / header suffixes.
+
+    Hard truncation is only a safety net for pathological strings — genuine
+    government table titles often exceed 100 characters and must be kept whole.
+    """
     s = " ".join(str(title or "").split()).strip()
     if not s:
         return ""
+    try:
+        from extraction.pdf_table_confidence import collapse_doubled_pdf_glyphs
+
+        s = collapse_doubled_pdf_glyphs(s)
+    except Exception:
+        pass
 
     for sep in (" — ", " – ", " —", " –"):
         if sep not in s:
@@ -276,11 +286,12 @@ Column headers (hint only — NEVER copy these into the title): {col_preview or 
 
 Definitions:
 - Source Table ID = short identifier, usually containing TABLE plus a code (e.g. "TABLE: B-6", "Table : D-12").
-- Table Title = short descriptive caption of what the table measures (preferably under 80 characters).
-  Prefer the main caption only (e.g. "Scheme Summary (Basic Statistics)").
+- Table Title = descriptive caption of what the table measures.
+  Prefer the full main caption from the leading rows (often long for vital-statistics tables).
   Do NOT append column headers, field lists, or schema phrases (e.g. "Scheme name, beneficiaries, budget").
   Do NOT join column names with " — ". Only join a genuine category/geography subtitle
   (e.g. "URBAN") when it appears as its own banner row — never invent one from columns.
+  Do NOT shorten or truncate a correct caption mid-sentence.
 - Keep original wording/casing from the leading rows when possible.
 - If a field is already correct, return it unchanged.
 - Respond with ONLY JSON: {{"table_id": "...", "title": "..."}}

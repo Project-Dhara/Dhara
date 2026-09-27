@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Copy, FileText, Plug, Tags, Terminal } from 'lucide-react'
-import { withAuthHeaders } from '../../lib/auth'
+import { Check, Copy, Download, FileText, Loader2, Plug, Tags, Terminal } from 'lucide-react'
+import { getToken, withAuthHeaders } from '../../lib/auth'
 
 const MCP_TOOLS = ['search_datasets', 'get_table', 'get_metadata']
 const TOOL_DESCS = {
@@ -43,7 +43,7 @@ const copyBtnClass = 'flex h-[34px] flex-none items-center gap-1.5 rounded-full 
 function MetaCard({ label, value, wide }) {
   const empty = isEmptyMeta(value)
   return (
-    <div className={`${metaCardClass} ${wide ? 'col-span-2' : ''}`}>
+    <div className={`${metaCardClass} h-full ${wide ? 'col-span-2' : ''}`}>
       <div className={metaCardLabelClass}>{label}</div>
       <div className={`break-words text-sm font-medium leading-snug text-ink ${empty ? 'font-normal italic text-[#a49c8e]' : ''}`}>
         {empty ? 'Not recorded' : value}
@@ -70,6 +70,34 @@ function EndpointCard({ label, url, copied, copyLabel, onCopy, hint, children })
   )
 }
 
+async function downloadGroupZip(metadataId, title, setDownloading) {
+  setDownloading(true)
+  try {
+    const res = await fetch(
+      `/api/catalogue/groups/${encodeURIComponent(metadataId)}/download`,
+      withAuthHeaders(),
+    )
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(text || `Download failed (${res.status})`)
+    }
+    const blob = await res.blob()
+    const cd = res.headers.get('Content-Disposition') || ''
+    const match = /filename="?([^"]+)"?/i.exec(cd)
+    const fallback = `${String(title || metadataId).replace(/[/\\?%*:|"<>]/g, '_')}_release.zip`
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = match?.[1] || fallback
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    alert(err.message || 'Could not download this release')
+  } finally {
+    setDownloading(false)
+  }
+}
+
 export default function Catalogue({ hasKey, onGoSettings }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
@@ -82,15 +110,16 @@ export default function Catalogue({ hasKey, onGoSettings }) {
   const detailScrollRef = useRef(null)
   const [apiPreviewOpen, setApiPreviewOpen] = useState(false)
   const [mcpPreviewOpen, setMcpPreviewOpen] = useState(false)
-  const [datasets, setDatasets] = useState([])
+  const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [downloading, setDownloading] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
-    fetch('/api/catalogue/datasets', withAuthHeaders())
+    fetch('/api/catalogue/groups', withAuthHeaders())
       .then(async (res) => {
         if (!res.ok) {
           const text = await res.text()
@@ -100,8 +129,8 @@ export default function Catalogue({ hasKey, onGoSettings }) {
       })
       .then((data) => {
         if (cancelled) return
-        const rows = data.datasets || []
-        setDatasets(rows)
+        const rows = data.groups || []
+        setGroups(rows)
         setSelId((prev) => (prev && rows.some((r) => r.id === prev) ? prev : rows[0]?.id || null))
       })
       .catch((err) => {
@@ -115,21 +144,22 @@ export default function Catalogue({ hasKey, onGoSettings }) {
 
   const facetOptions = useMemo(() => {
     const keys = new Set()
-    datasets.forEach((d) => (d.facets || []).forEach((f) => keys.add(f)))
+    groups.forEach((d) => (d.facets || []).forEach((f) => keys.add(f)))
     return [
       { value: 'all', label: 'All facets' },
       ...[...keys].sort().map((k) => ({ value: k, label: labelFacet(k) })),
     ]
-  }, [datasets])
+  }, [groups])
 
   const q = query.trim().toLowerCase()
-  const list = datasets.filter((r) =>
+  const list = groups.filter((r) =>
     (filter === 'all' || (r.facets || []).includes(filter)) &&
     (!q || `${r.id} ${r.title} ${r.keywords} ${r.geo}`.toLowerCase().includes(q))
   )
   const sel = list.find((r) => r.id === selId) || list[0]
   const access = (sel?.access || 'Public').toLowerCase()
   const keywords = sel ? keywordChips(sel) : []
+  const tableCount = sel?.table_count ?? (sel?.tables || []).length
 
   const copy = (label, text) => {
     navigator.clipboard?.writeText(text).catch(() => {})
@@ -137,7 +167,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
     setTimeout(() => setCopied(null), 1500)
   }
 
-  const apiUrl = sel ? `https://catalogue.dhara.people+ai.org/api/datasets/${sel.id}` : ''
+  const apiUrl = sel ? `https://catalogue.dhara.people+ai.org/api/v1/datasets?metadata_id=${encodeURIComponent(sel.id)}` : ''
 
   return (
     <div className="cat-screen flex flex-1 min-h-0 flex-col gap-3.5 overflow-hidden">
@@ -174,7 +204,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search by dataset id, title, geography…"
+          placeholder="Search by release id, title, geography…"
         />
         <select className="h-11 rounded-xl border border-line bg-surface px-2.5 text-sm text-ink transition-shadow focus:border-teal focus:shadow-focus-ring focus:outline-none" value={filter} onChange={(e) => setFilter(e.target.value)}>
           {facetOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -185,7 +215,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
         <div className="flex min-h-0 w-[328px] flex-none flex-col gap-2 overflow-hidden">
           <div className="flex flex-none items-center justify-between px-0.5 text-[11.5px] uppercase tracking-wide text-[#8E9398]">
             <span>
-              {loading ? 'Loading…' : `${list.length} dataset${list.length !== 1 ? 's' : ''}`}
+              {loading ? 'Loading…' : `${list.length} release${list.length !== 1 ? 's' : ''}`}
             </span>
             {(query || filter !== 'all') && (
               <span className="cursor-pointer text-[12.5px] font-semibold text-teal" onClick={() => { setQuery(''); setFilter('all') }}>Clear filter</span>
@@ -208,14 +238,18 @@ export default function Catalogue({ hasKey, onGoSettings }) {
                   <div className="text-[13.5px] font-semibold leading-snug text-ink">{d.title}</div>
                 </div>
                 <div className="text-[11.5px] text-[#8E9398]">
-                  {[d.geo, d.freq].filter((x) => !isEmptyMeta(x)).join(' · ') || 'Published release'}
+                  {[
+                    `${d.table_count ?? (d.tables || []).length} table${(d.table_count ?? (d.tables || []).length) === 1 ? '' : 's'}`,
+                    d.geo,
+                    d.freq,
+                  ].filter((x) => !isEmptyMeta(x)).join(' · ') || 'Published release'}
                 </div>
               </div>
             ))}
             {!error && !loading && list.length === 0 && (
               <div className="rounded-[10px] border border-dashed border-line bg-white p-5 text-sm text-[#8E9398]">
-                {datasets.length === 0
-                  ? 'No published datasets yet. Finish classification and continue to publish.'
+                {groups.length === 0
+                  ? 'No published releases yet. Finish classification and continue to publish.'
                   : 'Nothing matches that search.'}
               </div>
             )}
@@ -228,9 +262,27 @@ export default function Catalogue({ hasKey, onGoSettings }) {
               <div className="flex items-center gap-2.5">
                 <span className={`rounded-full px-2.5 py-[3px] text-[11.5px] font-semibold ${access === 'restricted' ? 'bg-[rgba(217,91,104,0.16)] text-[#8c3540]' : 'bg-sage text-[#3d5230]'}`}>{sel.access || 'Public'}</span>
                 <span className="ml-auto text-[11.5px] text-[#8E9398]">v1</span>
+                <button
+                  type="button"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md bg-teal px-3 text-[12.5px] font-semibold text-white transition-colors hover:bg-teal-dark disabled:cursor-default disabled:opacity-60"
+                  disabled={downloading || !getToken()}
+                  onClick={() => downloadGroupZip(sel.metadata_id || sel.id, sel.title, setDownloading)}
+                  title="Download every table in this release with Code and Definition columns appended"
+                >
+                  {downloading ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} aria-hidden />
+                  ) : (
+                    <Download className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+                  )}
+                  {downloading ? 'Preparing…' : 'Download'}
+                </button>
               </div>
               <div className="text-xl font-semibold leading-tight text-ink">{sel.title}</div>
-              <div className="grid grid-cols-[0.6fr_1.2fr_0.8fr_1.4fr] gap-2.5">
+              <div className="grid grid-cols-[0.6fr_0.6fr_1.2fr_0.8fr_1.4fr] gap-2.5">
+                <div className="flex flex-col gap-[3px] rounded-lg border border-[#f0e7d6] bg-cream px-3 py-2.5">
+                  <div className="text-[10.5px] uppercase tracking-wide text-[#8E9398]">Tables</div>
+                  <div className="text-[13px] font-medium leading-snug text-ink">{tableCount}</div>
+                </div>
                 <div className="flex flex-col gap-[3px] rounded-lg border border-[#f0e7d6] bg-cream px-3 py-2.5">
                   <div className="text-[10.5px] uppercase tracking-wide text-[#8E9398]">Rows</div>
                   <div className="text-[13px] font-medium leading-snug text-ink">{sel.rows}</div>
@@ -285,6 +337,21 @@ export default function Catalogue({ hasKey, onGoSettings }) {
             <div key={tab} className="dhara-tab-panel flex flex-col gap-3.5 px-[22px] pb-[22px] pt-[18px]" role="tabpanel">
               {tab === 'summary' && (
                 <div className="flex flex-col gap-3">
+                  {(sel.tables || []).length > 0 && (
+                    <div className="flex flex-col gap-2 rounded-lg border border-line bg-white px-3.5 py-3">
+                      <div className={metaCardLabelClass}>Tables in this release</div>
+                      <ul className="m-0 list-none space-y-1.5 p-0">
+                        {(sel.tables || []).map((t) => (
+                          <li key={t.id || t.dataset_id} className="flex items-baseline justify-between gap-3 text-[13px]">
+                            <span className="min-w-0 truncate font-medium text-ink">{t.title}</span>
+                            <span className="flex-none tabular-nums text-[11.5px] text-[#8E9398]">
+                              {Number(t.row_count || 0).toLocaleString()} rows
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   <div className="flex items-stretch gap-2" role="tablist" aria-label="Summary type">
                     <button
                       type="button"
@@ -361,14 +428,29 @@ export default function Catalogue({ hasKey, onGoSettings }) {
                   </div>
                   <div className="grid grid-cols-2 gap-2.5">
                     <MetaCard label="Title" value={sel.title} wide />
+                    <MetaCard label="Release id" value={sel.metadata_id || sel.id} wide />
+                    <MetaCard label="Tables" value={String(tableCount)} />
                     <MetaCard label="Rows" value={sel.rows} />
                     <MetaCard label="Geography" value={sel.geo} />
                     <MetaCard label="Frequency" value={sel.freq} />
                     <MetaCard label="Time period" value={sel.time_period} />
-                    <MetaCard label="Data source" value={sel.source} wide />
+                    <MetaCard label="Data source" value={sel.source} />
                     <MetaCard label="Theme" value={sel.theme} />
                     <MetaCard label="Product" value={sel.product} />
                   </div>
+                  {Object.keys(sel.classifications || {}).length > 0 && (
+                    <div className="flex flex-col gap-2 rounded-lg border border-line bg-white px-3.5 py-3">
+                      <div className={metaCardLabelClass}>Classification columns</div>
+                      <div className={tagListClass}>
+                        {Object.keys(sel.classifications).map((name) => (
+                          <span className={tagChipClass} key={name}>{name}</span>
+                        ))}
+                      </div>
+                      <p className="m-0 text-[12.5px] text-ink-soft">
+                        Download appends Code and Definition columns next to these fields in every table.
+                      </p>
+                    </div>
+                  )}
                   {keywords.length > 0 && (
                     <div className="flex flex-col gap-2 rounded-lg border border-line bg-white px-3.5 py-3">
                       <div className={metaCardLabelClass}>Keywords</div>
@@ -387,7 +469,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
                   <div className={`${metaCardClass} col-span-2 gap-2.5`}>
                     <div className="text-lg font-bold text-ink">Coming soon</div>
                     <div className="text-sm leading-relaxed text-ink-soft">
-                      Live dataset API access is not available yet. Open a preview of the planned endpoint for this release.
+                      Live release API access is not available yet. Open a preview of the planned endpoint for this group.
                     </div>
                     <button
                       type="button"
@@ -400,17 +482,17 @@ export default function Catalogue({ hasKey, onGoSettings }) {
                   </div>
                   {apiPreviewOpen && (
                     <EndpointCard
-                      label="Dataset endpoint"
+                      label="Release tables endpoint"
                       url={apiUrl}
                       copied={copied}
                       copyLabel="api"
                       onCopy={() => copy('api', apiUrl)}
-                      hint="Fetch the harmonised table as JSON. Add ?format=csv for a flat file."
+                      hint="List tables that belong to this published group. Use each table id for row queries."
                     >
                       <div className={`${tagListClass} pt-0`}>
                         <span className={tagChipClass}>GET</span>
                         <span className={tagChipClass}>JSON</span>
-                        <span className={tagChipClass}>CSV</span>
+                        <span className={tagChipClass}>metadata_id</span>
                       </div>
                       <div className="selection-invert flex flex-col gap-2 rounded-lg bg-gradient-to-br from-teal-deep to-[#0c2f2d] px-4 py-3.5 ring-1 ring-inset ring-white/[.06]">
                         <div className="flex items-center gap-1.5">

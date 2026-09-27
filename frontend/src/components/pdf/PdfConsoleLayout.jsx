@@ -6,12 +6,19 @@ import { goToConsoleFiles } from '../../lib/consoleSession'
 
 /**
  * PDF pipeline stages map onto the same Console Stages numbers as Excel:
- *   1 Files · 2 Preview · 3 Grouping · 4 Metadata · 5 Classify · 6 Publish
+ *   1 Files · 2 Preview · 3 Grouping · 4 Metadata · 5 Classification · 6 Harmonisation · 7 Publish
  *
  * Pass `onGoToStep` when the page owns later steps in-memory (grouping →
  * metadata onward); otherwise default to the review/grouping routes.
  */
-export default function PdfConsoleLayout({ jobId, step, maxStepReached, onGoToStep = undefined, children }) {
+export default function PdfConsoleLayout({
+  jobId,
+  step,
+  maxStepReached,
+  onGoToStep = undefined,
+  isStepReachable = undefined,
+  children,
+}) {
   const router = useRouter()
 
   const defaultGoToStep = (targetStep) => {
@@ -36,6 +43,7 @@ export default function PdfConsoleLayout({ jobId, step, maxStepReached, onGoToSt
       step={step}
       maxStepReached={maxStepReached}
       onGoToStep={onGoToStep || defaultGoToStep}
+      isStepReachable={isStepReachable}
     >
       {children}
     </ConsoleStagesShell>

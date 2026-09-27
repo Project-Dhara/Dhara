@@ -24,19 +24,40 @@ export const STAGE_DEFS = [
   },
   {
     name: 'Transformation & Harmonisation', firstStep: 5, sub: 'Concepts and code maps',
-    subs: [{ step: 5, label: 'Classification & harmonisation' }],
+    subs: [
+      { step: 5, label: 'Classification' },
+      { step: 6, label: 'Harmonisation' },
+    ],
   },
   {
-    name: 'Dataset Publication', firstStep: 6, sub: 'API, MCP, catalogue',
-    subs: [{ step: 6, label: 'Publish' }],
+    name: 'Dataset Publication', firstStep: 7, sub: 'API, MCP, catalogue',
+    subs: [{ step: 7, label: 'Publish' }],
   },
 ]
 
 export function stageIndexForStep(step) {
   if (step <= 2) return 0
   if (step <= 4) return 1
-  if (step === 5) return 2
+  if (step <= 6) return 2
   return 3
+}
+
+/**
+ * Previous page within the same console stage, or null when this is the
+ * stage’s first page (cross-stage jumps use the stage rail only).
+ */
+export function withinStageBack(step) {
+  for (const stage of STAGE_DEFS) {
+    const idx = stage.subs.findIndex((s) => s.step === step)
+    if (idx < 0) continue
+    if (idx === 0) return null
+    const prev = stage.subs[idx - 1]
+    return {
+      step: prev.step,
+      label: `Back to ${prev.label.toLowerCase()}`,
+    }
+  }
+  return null
 }
 
 // Green fill on the connector after stage `i`: full once that stage is
@@ -56,7 +77,15 @@ function connectorFillPercent(i, stageIdx, step) {
 // Substeps stay hidden until you hover a stage, then float out as a small
 // panel beneath it — click any reachable one (current or already-visited) to
 // jump straight there, including back to an earlier substep.
-export function StageSidebar({ stageIdx, step, maxStepReached, expandedStage, setExpandedStage, goToStep }) {
+export function StageSidebar({
+  stageIdx,
+  step,
+  maxStepReached,
+  expandedStage,
+  setExpandedStage,
+  goToStep,
+  isStepReachable,
+}) {
   return (
     <div className="flex w-full items-center rounded-2xl border border-line/90 bg-surface px-5 py-3.5">
       {STAGE_DEFS.map((s, i) => {
@@ -92,7 +121,9 @@ export function StageSidebar({ stageIdx, step, maxStepReached, expandedStage, se
                   {s.subs.map((sub) => {
                     const subActive = sub.step === step
                     const subDone = sub.step < step
-                    const reachable = sub.step <= maxStepReached
+                    const reachable = isStepReachable
+                      ? isStepReachable(sub.step)
+                      : sub.step <= maxStepReached
                     return (
                       <button
                         key={sub.step}
@@ -139,11 +170,11 @@ export function StageSidebar({ stageIdx, step, maxStepReached, expandedStage, se
 /**
  * Shell that mirrors Console.jsx's left rail for PDF routes.
  * step / maxStepReached map to the same STAGE_DEFS numbers as Excel:
- *   1 Files · 2 Preview · 3 Grouping · 4 Metadata · 5 Classify · 6 Publish
+ *   1 Files · 2 Preview · 3 Grouping · 4 Metadata · 5 Classification · 6 Harmonisation · 7 Publish
  * Grouping lives under Metadata Workspace (with Metadata); Files/Preview
  * stay under Dataset Inventory.
  */
-export function ConsoleStagesShell({ step, maxStepReached, onGoToStep, children }) {
+export function ConsoleStagesShell({ step, maxStepReached, onGoToStep, isStepReachable, children }) {
   const stageIdx = stageIndexForStep(step)
   const [expandedStage, setExpandedStage] = useState(stageIdx)
 
@@ -152,7 +183,10 @@ export function ConsoleStagesShell({ step, maxStepReached, onGoToStep, children 
   }, [step])
 
   const goToStep = (targetStep) => {
-    if (targetStep <= maxStepReached) onGoToStep?.(targetStep)
+    const reachable = isStepReachable
+      ? isStepReachable(targetStep)
+      : targetStep <= maxStepReached
+    if (reachable) onGoToStep?.(targetStep)
   }
 
   return (
@@ -164,9 +198,10 @@ export function ConsoleStagesShell({ step, maxStepReached, onGoToStep, children 
         expandedStage={expandedStage}
         setExpandedStage={setExpandedStage}
         goToStep={goToStep}
+        isStepReachable={isStepReachable}
       />
       {/* Same content column as Excel Console.jsx — header + panels stay unchanged inside children. */}
-      <div key={step} className="dhara-page-enter flex min-w-0 flex-1 flex-col gap-[18px]">
+      <div key={step === 5 || step === 6 ? 'classify-harmonise' : step} className="dhara-page-enter flex min-w-0 flex-1 flex-col gap-[18px]">
         {children}
       </div>
     </div>
