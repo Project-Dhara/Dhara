@@ -56,8 +56,27 @@ def _lookup_maps(classifications: dict) -> dict[str, dict[str, tuple[str, str]]]
     return out
 
 
-def _code_def_names(col: str) -> tuple[str, str]:
-    return f"{col}_Code", f"{col}_Definition"
+def _code_def_names(col: str, taken: set[str]) -> tuple[str, str]:
+    """Prefer plain Code / Definition; disambiguate only if those names are taken."""
+    if "Code" not in taken and "Definition" not in taken:
+        return "Code", "Definition"
+    return f"{col} Code", f"{col} Definition"
+
+
+def _pair_already_present(col: str, columns: list[str]) -> bool:
+    """True when Code/Definition (any naming style) already follow this column."""
+    try:
+        i = columns.index(col)
+    except ValueError:
+        return False
+    if i + 2 >= len(columns):
+        return False
+    nxt = (columns[i + 1], columns[i + 2])
+    return nxt in {
+        ("Code", "Definition"),
+        (f"{col} Code", f"{col} Definition"),
+        (f"{col}_Code", f"{col}_Definition"),
+    }
 
 
 def append_code_definition_columns(
@@ -65,10 +84,12 @@ def append_code_definition_columns(
     rows: list[dict],
     classifications: dict,
 ) -> tuple[list[str], list[dict]]:
-    """After each classified column, insert ``{col}_Code`` and ``{col}_Definition``.
+    """After each classified column, insert ``Code`` and ``Definition``.
 
     Values are filled by matching the row's cell against the classification
     code list (case-insensitive). Unmatched cells get empty strings.
+    If more than one classified column is present, later pairs are named
+    ``{col} Code`` / ``{col} Definition`` so headers stay unique.
     """
     lookups = _lookup_maps(classifications)
     if not lookups or not columns:
@@ -77,21 +98,28 @@ def append_code_definition_columns(
     # Only enrich columns that appear in both the table and the code lists.
     # Skip if Code/Definition were already appended (re-download safety).
     enrich_cols = []
+    taken = set(columns)
+    planned: dict[str, tuple[str, str]] = {}
     for col in columns:
         if col not in lookups:
             continue
-        code_name, def_name = _code_def_names(col)
-        if code_name in columns or def_name in columns:
+        if _pair_already_present(col, columns):
+            continue
+        code_name, def_name = _code_def_names(col, taken)
+        if code_name in taken or def_name in taken:
             continue
         enrich_cols.append(col)
+        planned[col] = (code_name, def_name)
+        taken.add(code_name)
+        taken.add(def_name)
     if not enrich_cols:
         return columns, rows
 
     new_columns: list[str] = []
     for col in columns:
         new_columns.append(col)
-        if col in enrich_cols:
-            code_name, def_name = _code_def_names(col)
+        if col in planned:
+            code_name, def_name = planned[col]
             new_columns.append(code_name)
             new_columns.append(def_name)
 
@@ -99,7 +127,7 @@ def append_code_definition_columns(
     for row in rows:
         out = dict(row)
         for col in enrich_cols:
-            code_name, def_name = _code_def_names(col)
+            code_name, def_name = planned[col]
             code, definition = lookups[col].get(_norm_key(row.get(col)), ("", ""))
             out[code_name] = code
             out[def_name] = definition

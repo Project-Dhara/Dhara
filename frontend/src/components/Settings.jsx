@@ -58,7 +58,9 @@ function defaultNameFromFile(file) {
 
 // LLM provider/key + user info. API key/provider persist in localStorage via
 // AppContext (`llmKey.ts`); classification standards live in Postgres.
-export default function Settings({ settings, onSettingsChange, keySaved, onSaveKey, user, onUserChange }) {
+const VALID_TABS = new Set(CONFIG_TABS.map((t) => t.key))
+
+export default function Settings({ settings, onSettingsChange, keySaved, onSaveKey, user, onUserChange, initialTab }) {
   const [local, setLocal] = useState(settings)
   const [standards, setStandards] = useState([])
   const [standardsLoading, setStandardsLoading] = useState(false)
@@ -67,7 +69,9 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
   const [addingStandard, setAddingStandard] = useState(false)
   const [pendingFile, setPendingFile] = useState(null)
   const [pendingName, setPendingName] = useState('')
-  const [activeTab, setActiveTab] = useState('dataset')
+  const [activeTab, setActiveTab] = useState(
+    () => (VALID_TABS.has(initialTab) ? initialTab : 'dataset'),
+  )
   const [datasetIdConfig, setDatasetIdConfig] = useState(getDatasetIdConfig)
   const [savedDatasetIdConfig, setSavedDatasetIdConfig] = useState(getDatasetIdConfig)
   const [extraRequiredFields, setExtraRequiredFields] = useState(getMetadataRequiredFields)
@@ -81,6 +85,10 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
   useEffect(() => {
     setLocal(settings)
   }, [settings])
+
+  useEffect(() => {
+    if (VALID_TABS.has(initialTab)) setActiveTab(initialTab)
+  }, [initialTab])
 
   const setDatasetIdField = (key) => (e) => setDatasetIdConfig((prev) => ({ ...prev, [key]: e.target.value }))
 

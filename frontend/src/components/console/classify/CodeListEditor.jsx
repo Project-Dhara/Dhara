@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { isOccupationColumn, relatedAliasCount } from '../../../lib/classifyColumns'
 import NcoSuggestPanel from './NcoSuggestPanel'
 
@@ -10,8 +11,8 @@ const colRule = 'border-r border-[#d7cdb9]'
 const rowRule = 'border-b border-[#d7cdb9]'
 
 /**
- * Active column's editable code/value/definition table, its header
- * (Fill with AI / Suggest NCO codes), and the NCO suggestion panel below it.
+ * Active column's editable code/value/definition table and header actions.
+ * NCO suggestions open in a preview modal via a small button beside Suggest.
  */
 export default function CodeListEditor({
   column,
@@ -28,10 +29,28 @@ export default function CodeListEditor({
   onCodeFieldChange,
   onSave,
   highlightIncomplete = false,
+  ncoNeedsStandard = false,
+  onGoNcoSettings,
 }) {
   const occupation = isOccupationColumn(column.name)
-
   const panelKey = `${column._metadataId || ''}:${column.name}`
+  const [previewOpen, setPreviewOpen] = useState(false)
+
+  const canPreview = Boolean(
+    ncoMatches || ncoNeedsStandard || ncoError || ncoLoading || ncoPanelOpen,
+  )
+
+  // Open preview when Suggest produces results or needs Settings / AI fallback.
+  useEffect(() => {
+    if (!occupation) return
+    if (ncoNeedsStandard || (ncoMatches && !ncoLoading) || (ncoError && !ncoLoading)) {
+      setPreviewOpen(true)
+    }
+  }, [occupation, ncoNeedsStandard, ncoMatches, ncoLoading, ncoError])
+
+  useEffect(() => {
+    setPreviewOpen(false)
+  }, [panelKey])
 
   return (
     <div key={panelKey} className="dhara-group-panel">
@@ -46,7 +65,7 @@ export default function CodeListEditor({
             {relatedAliasCount(column) > 0
               ? ` · ${relatedAliasCount(column)} related in harmonisation`
               : column.note ? ` · ${column.note}` : ''}
-            {fillAiError && !occupation ? ` · ${fillAiError}` : ''}
+            {fillAiError ? ` · ${fillAiError}` : ''}
             {highlightIncomplete ? ' · empty fields highlighted' : ''}
           </div>
         </div>
@@ -60,14 +79,25 @@ export default function CodeListEditor({
             {fillAiLoading ? 'Filling…' : 'Fill with AI'}
           </button>
         ) : (
-          <button
-            type="button"
-            className="h-8 flex-none rounded-md border-0 bg-teal px-3 text-[12.5px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]"
-            disabled={ncoLoading || codes.length === 0}
-            onClick={onSuggestNco}
-          >
-            {ncoLoading ? 'Matching…' : 'Suggest NCO codes'}
-          </button>
+          <div className="flex flex-none items-center gap-2">
+            <button
+              type="button"
+              className="h-8 rounded-md border-0 bg-teal px-3 text-[12.5px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]"
+              disabled={ncoLoading || codes.length === 0}
+              onClick={onSuggestNco}
+            >
+              {ncoLoading ? 'Matching…' : 'Suggest NCO codes'}
+            </button>
+            <button
+              type="button"
+              className="h-8 rounded-md border border-line bg-white px-2.5 text-[12px] font-semibold text-ink-soft transition-colors hover:border-teal/40 hover:text-teal-deep disabled:cursor-default disabled:opacity-45"
+              disabled={!canPreview}
+              title={canPreview ? 'Show suggestion results' : 'Run Suggest NCO codes first'}
+              onClick={() => setPreviewOpen(true)}
+            >
+              Show results
+            </button>
+          </div>
         )}
       </div>
 
@@ -126,12 +156,18 @@ export default function CodeListEditor({
         <button className={saveBtnClass} disabled={!dirty} onClick={onSave}>Save changes</button>
       </div>
 
-      {occupation && ncoPanelOpen && (
+      {occupation && (
         <NcoSuggestPanel
+          open={previewOpen}
+          onClose={() => setPreviewOpen(false)}
           codes={codes}
           ncoError={ncoError}
           ncoLoading={ncoLoading}
           ncoMatches={ncoMatches}
+          needsStandard={ncoNeedsStandard}
+          onGoSettings={onGoNcoSettings}
+          onFillAiFallback={onFillAi}
+          fillAiLoading={fillAiLoading}
         />
       )}
     </div>

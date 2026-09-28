@@ -731,7 +731,9 @@ async def update_classification_column(metadata_id: str, request: Request, user_
 @router.post("/api/catalogue/fill-definitions")
 async def fill_definitions(request: Request, user_email: str = Depends(require_user)):
     """Fill classification definitions from values + catalogue/excel facts.
-    Occupation columns are skipped (NCO matching owns those)."""
+    Occupation columns are skipped by default (NCO matching owns those).
+    Pass allow_occupation=true when no concordance is uploaded and the steward
+    chooses Fill with AI as a fallback."""
     import re as _re
     from metadata.metadata_llm import fill_classification_definitions
 
@@ -739,6 +741,7 @@ async def fill_definitions(request: Request, user_email: str = Depends(require_u
     columns = data.get("columns") or []
     if not isinstance(columns, list):
         raise HTTPException(400, "columns must be a list")
+    allow_occupation = bool(data.get("allow_occupation"))
     extractor = _extractor_for(request)
     if extractor.skip_llm:
         raise HTTPException(400, "Configure an LLM key in Settings to fill definitions.")
@@ -751,7 +754,9 @@ async def fill_definitions(request: Request, user_email: str = Depends(require_u
             facts_by_id = {}
             for col in columns:
                 name = (col.get("name") or "").strip()
-                if not name or _re.search(r"occupat", name, _re.I):
+                if not name:
+                    continue
+                if not allow_occupation and _re.search(r"occupat", name, _re.I):
                     continue
                 values = [str(v) for v in (col.get("values") or []) if v is not None and str(v).strip()]
                 if not values:

@@ -8,10 +8,36 @@ def _normalize_code_entry(entry):
     real metadata-excel parse). But when no metadata-excel sheet covered a
     dimension, the LLM-guessed fallback stores it as a flat list of plain
     value strings instead — normalize those too so the frontend always gets
-    a consistent {code, value, definition} shape."""
+    a consistent {code, value, definition} shape.
+
+    Value comes from the data; code starts empty unless a real code was stored
+    (not an identity copy of the value)."""
     if isinstance(entry, dict):
-        return {"code": entry.get("code"), "value": entry.get("value"), "definition": entry.get("definition")}
-    return {"code": entry, "value": entry, "definition": None}
+        value = entry.get("value")
+        code = entry.get("code")
+        definition = entry.get("definition")
+        if definition in (None, "") and entry.get("description") not in (None, ""):
+            definition = entry.get("description")
+        if value in (None, "") and code not in (None, ""):
+            # Legacy shapes sometimes only set code; treat it as the value.
+            value = code
+            code = ""
+        # Identity placeholders only when still unfilled (no definition yet).
+        # After Fill with AI, code === value with a definition is intentional.
+        if (
+            code not in (None, "")
+            and value not in (None, "")
+            and str(code).strip().lower() == str(value).strip().lower()
+            and not str(definition or "").strip()
+        ):
+            code = ""
+        return {
+            "code": "" if code is None else code,
+            "value": value,
+            "definition": definition,
+        }
+    # Plain string = observed value only; steward fills code later.
+    return {"code": "", "value": entry, "definition": None}
 
 
 def get_metadata_group_classifications(conn, metadata_id):
@@ -179,7 +205,7 @@ def _normalize_classification_values(vals) -> list:
         return []
     if isinstance(vals, str):
         s = vals.strip()
-        return [{"code": s, "value": s, "definition": None}] if s else []
+        return [{"code": "", "value": s, "definition": None}] if s else []
     if isinstance(vals, dict):
         # Single code-list entry shaped as a dict.
         if any(k in vals for k in ("code", "value", "definition")):
@@ -190,7 +216,7 @@ def _normalize_classification_values(vals) -> list:
         return []
     if not isinstance(vals, (list, tuple)):
         s = str(vals).strip()
-        return [{"code": s, "value": s, "definition": None}] if s else []
+        return [{"code": "", "value": s, "definition": None}] if s else []
 
     out = []
     seen = set()
@@ -199,7 +225,7 @@ def _normalize_classification_values(vals) -> list:
             s = v.strip()
             if not s:
                 continue
-            entry = {"code": s, "value": s, "definition": None}
+            entry = {"code": "", "value": s, "definition": None}
         else:
             entry = _normalize_code_entry(v)
         key = (str(entry.get("value") or entry.get("code") or "").strip().lower())
@@ -254,7 +280,7 @@ def _classifications_from_table_data(tables):
                 if key in seen:
                     continue
                 seen.add(key)
-                values.append({"code": s, "value": s, "definition": None})
+                values.append({"code": "", "value": s, "definition": None})
                 if len(values) > 80:
                     break
             if 2 <= len(values) <= 80:

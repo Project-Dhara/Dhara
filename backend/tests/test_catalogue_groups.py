@@ -61,25 +61,45 @@ def test_append_code_definition_after_classified_column():
     new_cols, new_rows = append_code_definition_columns(columns, rows, classifications)
     assert new_cols == [
         "State",
-        "Occupation", "Occupation_Code", "Occupation_Definition",
+        "Occupation", "Code", "Definition",
         "Count",
     ]
-    assert new_rows[0]["Occupation_Code"] == "23"
-    assert new_rows[0]["Occupation_Definition"] == "Teaching professionals"
-    assert new_rows[1]["Occupation_Code"] == "22"  # case-insensitive match
-    assert new_rows[2]["Occupation_Code"] == ""
-    assert new_rows[2]["Occupation_Definition"] == ""
+    assert new_rows[0]["Code"] == "23"
+    assert new_rows[0]["Definition"] == "Teaching professionals"
+    assert new_rows[1]["Code"] == "22"  # case-insensitive match
+    assert new_rows[2]["Code"] == ""
+    assert new_rows[2]["Definition"] == ""
     # Original columns untouched
     assert new_rows[0]["Occupation"] == "Teacher"
     assert new_rows[0]["Count"] == 10
 
 
 def test_append_is_idempotent_when_already_present():
-    columns = ["Sex", "Sex_Code", "Sex_Definition"]
-    rows = [{"Sex": "Male", "Sex_Code": "M", "Sex_Definition": "Male"}]
+    columns = ["Sex", "Code", "Definition"]
+    rows = [{"Sex": "Male", "Code": "M", "Definition": "Male"}]
     classifications = {
         "Sex": [{"value": "Male", "code": "1", "definition": "M"}],
     }
     new_cols, new_rows = append_code_definition_columns(columns, rows, classifications)
     assert new_cols == columns
-    assert new_rows[0]["Sex_Code"] == "M"
+    assert new_rows[0]["Code"] == "M"
+
+
+def test_append_second_classified_column_disambiguates():
+    columns = ["Occupation", "Sex"]
+    rows = [
+        {"Occupation": "Teacher", "Sex": "Male"},
+    ]
+    classifications = {
+        "Occupation": [{"value": "Teacher", "code": "23", "definition": "Teaching"}],
+        "Sex": [{"value": "Male", "code": "1", "definition": "Male"}],
+    }
+    new_cols, new_rows = append_code_definition_columns(columns, rows, classifications)
+    assert new_cols == [
+        "Occupation", "Code", "Definition",
+        "Sex", "Sex Code", "Sex Definition",
+    ]
+    assert new_rows[0]["Code"] == "23"
+    assert new_rows[0]["Definition"] == "Teaching"
+    assert new_rows[0]["Sex Code"] == "1"
+    assert new_rows[0]["Sex Definition"] == "Male"

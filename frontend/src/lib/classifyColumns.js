@@ -32,12 +32,26 @@ export function rowMapped(row) {
   return Boolean(String(row?.code || '').trim()) && Boolean(String(row?.definition || '').trim())
 }
 
+/** Prefer a real code; clear identity placeholders only when still unfilled. */
+function sanitizeCode(code, value, definition = '') {
+  const c = String(code ?? '').trim()
+  const v = String(value ?? '').trim()
+  if (!c) return ''
+  // code === value with no definition yet → leftover auto-fill, not steward work.
+  if (v && c.toLowerCase() === v.toLowerCase() && !String(definition ?? '').trim()) return ''
+  return String(code ?? '')
+}
+
 export function cloneCodeRows(codes) {
-  return (codes || []).map((row) => ({
-    code: row.code ?? '',
-    value: row.value ?? '',
-    definition: row.definition ?? '',
-  }))
+  return (codes || []).map((row) => {
+    const value = row.value ?? ''
+    const definition = row.definition ?? ''
+    return {
+      code: sanitizeCode(row.code, value, definition),
+      value,
+      definition,
+    }
+  })
 }
 
 export function codesFingerprint(codes) {
@@ -70,13 +84,15 @@ export function mergeCodeLists(lists) {
       const prev = byValue.get(key)
       if (!prev) {
         byValue.set(key, {
-          code: row.code ?? '',
+          code: sanitizeCode(row.code, row.value, row.definition),
           value: row.value ?? '',
           definition: row.definition ?? '',
         })
         continue
       }
-      if (!String(prev.code || '').trim() && row.code) prev.code = row.code
+      if (!String(prev.code || '').trim() && row.code) {
+        prev.code = sanitizeCode(row.code, prev.value || row.value, prev.definition || row.definition)
+      }
       if (!String(prev.definition || '').trim() && row.definition) prev.definition = row.definition
     }
   }

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowRight } from 'lucide-react'
+import { useRouter } from 'next/navigation'
 import { withAuthHeaders } from '../../lib/auth'
 import { getLlmApiKey, withLlmKeyHeaders } from '../../lib/llmKey'
 import { useApp } from '../../context/AppContext'
@@ -60,6 +61,7 @@ export default function Classify({
   onContinue,
 }) {
   const { keySaved } = useApp()
+  const router = useRouter()
   const hasLlmKey = hasKey || keySaved || Boolean(getLlmApiKey())
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
@@ -78,6 +80,8 @@ export default function Classify({
   const [ncoLoading, setNcoLoading] = useState(false)
   const [ncoError, setNcoError] = useState('')
   const [ncoPanelOpen, setNcoPanelOpen] = useState(false)
+  const [ncoStandardReady, setNcoStandardReady] = useState(false)
+  const [ncoNeedsStandard, setNcoNeedsStandard] = useState(false)
   const [fillAiLoading, setFillAiLoading] = useState(false)
   const [fillAiError, setFillAiError] = useState('')
   const [publishing, setPublishing] = useState(false)
@@ -85,6 +89,24 @@ export default function Classify({
   const [publishConfirm, setPublishConfirm] = useState(null)
   const [harmoniseConfirm, setHarmoniseConfirm] = useState(null)
   const [highlightIncomplete, setHighlightIncomplete] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/catalogue/classification-standards', withAuthHeaders())
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(data.detail || 'Failed to load standards')
+        return Array.isArray(data.standards) ? data.standards : []
+      })
+      .then((standards) => {
+        if (cancelled) return
+        setNcoStandardReady(standards.some((s) => s.is_selected))
+      })
+      .catch(() => {
+        if (!cancelled) setNcoStandardReady(false)
+      })
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     const ids = Array.isArray(metadataIds) ? metadataIds.filter(Boolean) : [metadataIds].filter(Boolean)
@@ -319,8 +341,9 @@ export default function Classify({
     }
   }
 
-  const fillDefinitionsWithAi = () => {
-    if (isOccupationColumn(selectedCol) || !activeColumn) return
+  const fillDefinitionsWithAi = ({ allowOccupation = false } = {}) => {
+    if (!activeColumn) return
+    if (!allowOccupation && isOccupationColumn(selectedCol)) return
     if (!hasLlmKey) {
       setFillAiError('LLM key not configured — add your API key in Settings to fill definitions with AI.')
       return
@@ -336,7 +359,7 @@ export default function Classify({
     fetch('/api/catalogue/fill-definitions', withAuthHeaders(withLlmKeyHeaders({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ columns }),
+      body: JSON.stringify({ columns, allow_occupation: Boolean(allowOccupation) }),
     })))
       .then(async (res) => {
         if (!res.ok) {
@@ -349,14 +372,35 @@ export default function Classify({
         const byCol = data.definitions || {}
         const defs = byCol[activeColumn.name] || {}
         const nextRows = (columnCodes[activeColumn.name] || []).map((row) => {
-          const d = defs[row.value] || defs[row.code]
-          if (!d) return row
-          return { ...row, definition: String(d) }
+          const value = String(row.value ?? '')
+          const raw = defs[row.value]
+            || (row.code ? defs[row.code] : undefined)
+            || Object.entries(defs).find(([k]) => k.trim().toLowerCase() === value.trim().toLowerCase())?.[1]
+          let definition = row.definition
+          if (typeof raw === 'string' && raw.trim()) {
+            definition = raw
+          } else if (raw && typeof raw === 'object' && String(raw.definition || '').trim()) {
+            definition = String(raw.definition)
+          }
+          // On Fill with AI: copy value → code (no AI). Definition comes from AI above.
+          return {
+            ...row,
+            code: value,
+            definition: definition ?? '',
+          }
         })
         setColumnCodes((prev) => ({ ...prev, [activeColumn.name]: nextRows }))
+        if (allowOccupation) {
+          setNcoNeedsStandard(false)
+          setNcoError('')
+        }
       })
       .catch((e) => setFillAiError(e.message))
       .finally(() => setFillAiLoading(false))
+  }
+
+  const goClassificationSettings = () => {
+    router.push('/settings?tab=classification')
   }
 
   const columnMapped = (name) => {
@@ -427,17 +471,16 @@ export default function Classify({
     }
   }
 
-  const incompleteColumnNames = useMemo(() => {
-    if (!highlightIncomplete) return new Set()
-    return new Set(
-      classifiedColumns
-        .filter((c) => {
-          const rows = columnCodes[c.name] || []
-          return rows.length === 0 || rows.some((row) => !rowMapped(row))
-        })
-        .map((c) => c.name),
-    )
-  }, [highlightIncomplete, classifiedColumns, columnCodes])
+  // Always track incomplete columns for the locator strip; field highlight in
+  // the editor still waits until the user dismisses the incomplete dialog.
+  const incompleteColumnNames = useMemo(() => new Set(
+    classifiedColumns
+      .filter((c) => {
+        const rows = columnCodes[c.name] || []
+        return rows.length === 0 || rows.some((row) => !rowMapped(row))
+      })
+      .map((c) => c.name),
+  ), [classifiedColumns, columnCodes])
 
   useEffect(() => {
     if (highlightIncomplete && incompleteColumnNames.size === 0) {
@@ -501,72 +544,107 @@ export default function Classify({
     setNcoPanelOpen(true)
     if (!hasLlmKey) {
       setNcoLoading(false)
+      setNcoNeedsStandard(false)
       setNcoError('NCO matching key not configured — add your LLM API key in Settings to suggest NCO codes.')
       return
     }
-    const values = activeCodes.map((r) => r.value || r.code).filter(Boolean)
+
+    const runMatch = () => {
+      setNcoNeedsStandard(false)
+      const values = activeCodes.map((r) => r.value || r.code).filter(Boolean)
+      setNcoLoading(true)
+      setNcoError('')
+      fetch('/api/catalogue/match-nco', withAuthHeaders(withLlmKeyHeaders({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values }),
+      })))
+        .then(async (res) => {
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({ detail: 'NCO matching failed' }))
+            throw new Error(err.detail || 'NCO matching failed')
+          }
+          return res.json()
+        })
+        .then((data) => {
+          const occName = selectedCol
+          const matches = data.matches || {}
+          setNcoMatchesByCol((prev) => ({ ...prev, [occName]: matches }))
+          if (!isOccupationColumn(occName)) return
+          // Only auto-fill Code/Definition for high-confidence hits.
+          const rows = columnCodes[occName] || []
+          const isAggregateValue = (v) => {
+            const s = String(v || '').trim().toLowerCase().replace(/\s+/g, ' ')
+            return /^(all|total|grand total|sub ?total|overall|sum)(\s+(occupations|categories|workers|persons|people))?$/.test(s)
+          }
+          const nextRows = rows.map((row) => {
+            // Aggregates must not keep a suggested NCO code.
+            if (isAggregateValue(row.value)) {
+              return { ...row, code: '', definition: '' }
+            }
+            const m = matches[row.value]
+            if (!m || !m.auto_fill) return row
+            if (m.code == null || m.code === '') return row
+            const code = String(m.code).trim()
+            // Never auto-fill occupation labels into the Code column.
+            if (!/^\d{1,4}(?:\.\d+)*$/.test(code)) return row
+            return {
+              ...row,
+              code,
+              definition: m.title != null && m.title !== '' ? String(m.title) : row.definition,
+            }
+          })
+          setColumnCodes((prev) => ({ ...prev, [occName]: nextRows }))
+          setAliasVerified((prev) => {
+            const next = { ...prev }
+            delete next[`club:${occName}`]
+            flattenForHarmonise(classifiedColumns)
+              .filter((e) => e.sourceName === occName)
+              .forEach((e) => { delete next[e.id] })
+            return next
+          })
+          setHarmDirty((prev) => {
+            const next = { ...prev }
+            delete next[`club:${occName}`]
+            flattenForHarmonise(classifiedColumns)
+              .filter((e) => e.sourceName === occName)
+              .forEach((e) => { delete next[e.id] })
+            return next
+          })
+        })
+        .catch((e) => setNcoError(e.message))
+        .finally(() => setNcoLoading(false))
+    }
+
+    // Re-check so a standard uploaded in Settings is picked up without remount.
     setNcoLoading(true)
     setNcoError('')
-    fetch('/api/catalogue/match-nco', withAuthHeaders(withLlmKeyHeaders({
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ values }),
-    })))
+    fetch('/api/catalogue/classification-standards', withAuthHeaders())
       .then(async (res) => {
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ detail: 'NCO matching failed' }))
-          throw new Error(err.detail || 'NCO matching failed')
-        }
-        return res.json()
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(data.detail || 'Failed to load standards')
+        return Array.isArray(data.standards) ? data.standards : []
       })
-      .then((data) => {
-        const occName = selectedCol
-        const matches = data.matches || {}
-        setNcoMatchesByCol((prev) => ({ ...prev, [occName]: matches }))
-        if (!isOccupationColumn(occName)) return
-        // Only auto-fill Code/Definition for high-confidence hits.
-        const rows = columnCodes[occName] || []
-        const isAggregateValue = (v) => {
-          const s = String(v || '').trim().toLowerCase().replace(/\s+/g, ' ')
-          return /^(all|total|grand total|sub ?total|overall|sum)(\s+(occupations|categories|workers|persons|people))?$/.test(s)
+      .then((standards) => {
+        const ready = standards.some((s) => s.is_selected)
+        setNcoStandardReady(ready)
+        if (!ready) {
+          setNcoLoading(false)
+          setNcoNeedsStandard(true)
+          setNcoError('No classification standard selected. Upload a file in Settings, or fill definitions with AI instead.')
+          return
         }
-        const nextRows = rows.map((row) => {
-          // Aggregates must not keep a suggested NCO code.
-          if (isAggregateValue(row.value)) {
-            return { ...row, code: '', definition: '' }
-          }
-          const m = matches[row.value]
-          if (!m || !m.auto_fill) return row
-          if (m.code == null || m.code === '') return row
-          const code = String(m.code).trim()
-          // Never auto-fill occupation labels into the Code column.
-          if (!/^\d{1,4}(?:\.\d+)*$/.test(code)) return row
-          return {
-            ...row,
-            code,
-            definition: m.title != null && m.title !== '' ? String(m.title) : row.definition,
-          }
-        })
-        setColumnCodes((prev) => ({ ...prev, [occName]: nextRows }))
-        setAliasVerified((prev) => {
-          const next = { ...prev }
-          delete next[`club:${occName}`]
-          flattenForHarmonise(classifiedColumns)
-            .filter((e) => e.sourceName === occName)
-            .forEach((e) => { delete next[e.id] })
-          return next
-        })
-        setHarmDirty((prev) => {
-          const next = { ...prev }
-          delete next[`club:${occName}`]
-          flattenForHarmonise(classifiedColumns)
-            .filter((e) => e.sourceName === occName)
-            .forEach((e) => { delete next[e.id] })
-          return next
-        })
+        runMatch()
       })
-      .catch((e) => setNcoError(e.message))
-      .finally(() => setNcoLoading(false))
+      .catch(() => {
+        if (ncoStandardReady) {
+          runMatch()
+          return
+        }
+        setNcoLoading(false)
+        setNcoNeedsStandard(true)
+        setNcoError('No classification standard selected. Upload a file in Settings, or fill definitions with AI instead.')
+      })
   }
 
   const selectHarmoniseEntry = (id) => setOpenRule(id)
@@ -697,7 +775,9 @@ export default function Classify({
               dirty={columnDirty}
               fillAiLoading={fillAiLoading}
               fillAiError={fillAiError}
-              onFillAi={fillDefinitionsWithAi}
+              onFillAi={() => fillDefinitionsWithAi({
+                allowOccupation: isOccupationColumn(activeColumn.name),
+              })}
               ncoLoading={ncoLoading}
               ncoError={ncoError}
               ncoMatches={ncoMatches}
@@ -706,6 +786,8 @@ export default function Classify({
               onCodeFieldChange={setCodeField}
               onSave={saveColumnCodes}
               highlightIncomplete={highlightIncomplete}
+              ncoNeedsStandard={ncoNeedsStandard}
+              onGoNcoSettings={goClassificationSettings}
             />
           )}
         </div>
