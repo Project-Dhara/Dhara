@@ -35,10 +35,10 @@ def require_user(
 
 
 def _extractor_for(request: Request) -> TableExtractor:
-    """Build a TableExtractor from the caller's own LLM API key (and chosen
-    provider), sent on every LLM-backed request from the frontend's Settings
-    screen. No key on the request means no LLM calls -- this replaces the old
-    .env-based ANTHROPIC_API_KEY / SKIP_LLM toggle, which is no longer read."""
+    """Build a TableExtractor from the caller's Settings LLM API key (and
+    chosen provider), sent on every LLM-backed request. No key on the request
+    means no LLM calls — there is no server OPENAI_API_KEY / ANTHROPIC_API_KEY
+    fallback."""
     key = request.headers.get(LLM_KEY_HEADER, "").strip() or None
     provider = request.headers.get(LLM_PROVIDER_HEADER, "").strip().lower() or None
     if provider not in _KNOWN_LLM_PROVIDERS:

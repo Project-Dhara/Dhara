@@ -56,8 +56,8 @@ function defaultNameFromFile(file) {
   return file.name.replace(/\.csv$/i, '').replace(/[_-]+/g, ' ').trim()
 }
 
-// Mock LLM provider/key form + user info form. No persistence backend today
-// — `keySaved` is local state only, matching the mockup.
+// LLM provider/key + user info. API key/provider persist in localStorage via
+// AppContext (`llmKey.ts`); classification standards live in Postgres.
 export default function Settings({ settings, onSettingsChange, keySaved, onSaveKey, user, onUserChange }) {
   const [local, setLocal] = useState(settings)
   const [standards, setStandards] = useState([])
@@ -75,6 +75,12 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
   const [metadataStandard, setMetadataStandard] = useState(getMetadataStandard)
   const [savedMetadataStandard, setSavedMetadataStandard] = useState(getMetadataStandard)
   const [pickingFields, setPickingFields] = useState(false)
+
+  // AppContext restores the key from localStorage after mount — keep the form
+  // in sync so a Settings reload shows the saved key instead of an empty field.
+  useEffect(() => {
+    setLocal(settings)
+  }, [settings])
 
   const setDatasetIdField = (key) => (e) => setDatasetIdConfig((prev) => ({ ...prev, [key]: e.target.value }))
 
@@ -200,7 +206,12 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
       </div>
 
       <div className="flex flex-col gap-[18px] rounded-2xl border border-line/90 bg-surface p-6">
-        <div className="text-[16px] font-semibold tracking-tight text-ink">LLM</div>
+        <div className="flex flex-col gap-1">
+          <div className="text-[16px] font-semibold tracking-tight text-ink">LLM</div>
+          <div className="text-sm text-ink-soft">
+            One API key powers metadata auto-fill, NCO matching suggestions, and other AI assists. Save it here before those steps.
+          </div>
+        </div>
         <div className="grid grid-cols-2 gap-4">
           <div className="flex flex-col gap-1.5">
             <label className={fieldLabelClass}>Provider</label>
@@ -212,11 +223,18 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
           </div>
           <div className="flex flex-col gap-1.5">
             <label className={fieldLabelClass}>API key</label>
-            <input className={inputClass} type="password" value={local.apiKey} onChange={setField('apiKey')} placeholder="API key" />
+            <input className={inputClass} type="password" value={local.apiKey} onChange={setField('apiKey')} placeholder="API key" autoComplete="off" />
           </div>
         </div>
         <div className="flex items-center gap-3.5">
-          <Button onClick={onSaveKey}>Save key</Button>
+          <Button
+            onClick={() => {
+              // Persist the form's local value (not a click event / stale context).
+              onSaveKey(local)
+            }}
+          >
+            Save key
+          </Button>
           <span className={statusClass === 'settings-key-status-ok' ? statusToneClass.ok : statusClass === 'settings-key-status-warn' ? statusToneClass.warn : statusToneClass.none}>{status}</span>
         </div>
       </div>

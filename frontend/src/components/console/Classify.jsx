@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowRight } from 'lucide-react'
 import { withAuthHeaders } from '../../lib/auth'
-import { withLlmKeyHeaders } from '../../lib/llmKey'
+import { getLlmApiKey, withLlmKeyHeaders } from '../../lib/llmKey'
+import { useApp } from '../../context/AppContext'
 import { STATISTICS_OPTIONS } from '../../lib/settingsConfig'
 import {
   delhiProductForTheme,
@@ -51,11 +52,15 @@ export default function Classify({
   metadataIds,
   datasetLabel,
   phase = 'classification',
+  hasKey = false,
+  onGoSettings,
   onPhaseChange,
   onClassificationCompleteChange,
   onRegisterGoToHarmonisation,
   onContinue,
 }) {
+  const { keySaved } = useApp()
+  const hasLlmKey = hasKey || keySaved || Boolean(getLlmApiKey())
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [classifiedColumns, setClassifiedColumns] = useState([])
@@ -316,6 +321,10 @@ export default function Classify({
 
   const fillDefinitionsWithAi = () => {
     if (isOccupationColumn(selectedCol) || !activeColumn) return
+    if (!hasLlmKey) {
+      setFillAiError('LLM key not configured — add your API key in Settings to fill definitions with AI.')
+      return
+    }
     const columns = [{
       name: activeColumn.name,
       metadata_id: activeColumn._metadataId || activeColumn.aliases?.[0]?._metadataId || null,
@@ -490,6 +499,11 @@ export default function Classify({
 
   const suggestNcoCodes = () => {
     setNcoPanelOpen(true)
+    if (!hasLlmKey) {
+      setNcoLoading(false)
+      setNcoError('NCO matching key not configured — add your LLM API key in Settings to suggest NCO codes.')
+      return
+    }
     const values = activeCodes.map((r) => r.value || r.code).filter(Boolean)
     setNcoLoading(true)
     setNcoError('')
@@ -641,6 +655,20 @@ export default function Classify({
 
   return (
     <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-4">
+      {!hasLlmKey && (
+        <div className="rounded-lg border border-[#f3c98b] bg-[#fffaf1] px-4 py-3 text-sm leading-relaxed text-[#8a5a12]">
+          <strong>LLM key not configured</strong>
+          <div className="mt-1">
+            Add your API key in Settings for Fill with AI and NCO matching suggestions. Classification still works without it.
+          </div>
+          {onGoSettings && (
+            <div className="mt-3">
+              <Button type="button" onClick={onGoSettings}>Open Settings</Button>
+            </div>
+          )}
+        </div>
+      )}
+
       {loading && (
         <div className={`${cardClass} p-[18px]`}>Loading classified columns…</div>
       )}

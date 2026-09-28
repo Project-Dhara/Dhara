@@ -13,16 +13,16 @@ PaaS. All required services can run in Docker.
 ## LLM and PDF extraction (important)
 
 DHARA does **not** need a public SaaS LLM vendor name — configure a
-**MEITY-empanelled LLM** API key in Settings (or `OPENAI_API_KEY` /
-`ANTHROPIC_API_KEY` in `.env` for an OpenAI-/Anthropic-compatible endpoint).
+**MEITY-empanelled LLM** API key in **Settings**. Server `.env` keys are not
+used for AI calls.
 
 | Mode | What happens |
 |------|----------------|
-| **With MEITY-empanelled LLM key** | Full PDF path: PyMuPDF candidates → confidence split → LLM reconstruct/classify for ambiguous pages; richer Excel assist, NCO suggest, singleton grouping merge |
-| **Without LLM key** | PyMuPDF still extracts ruled tables. **High-confidence** pages are auto-accepted. **Ambiguous** pages fall back to the same heuristic grid (`table_dict_from_df`) and are flagged for human review — no remote LLM call. Excel extract uses structural heuristics. Title-base grouping still works; embedding / LLM singleton merge is skipped |
+| **With Settings LLM key** | Full PDF path: PyMuPDF candidates → confidence split → LLM reconstruct/classify for ambiguous pages; richer Excel assist, NCO suggest, singleton grouping merge |
+| **Without Settings key** | Console / PDF upload is blocked until a key is saved. There is no server-side key fallback |
 
-Air-gapped PDF ingest is therefore usable, but expect more steward review on
-complex multi-header pages than with a MEITY-empanelled model available.
+Air-gapped installs can still run without AI once a key is available via an
+on-prem MEITY-compatible endpoint pasted in Settings.
 
 ## 1. Quick start (recommended)
 
@@ -30,7 +30,7 @@ From the repo root:
 
 ```bash
 cp backend/.env.example backend/.env
-# Edit JWT_SECRET; optional MEITY-empanelled LLM key (OPENAI_API_KEY / ANTHROPIC_API_KEY)
+# Edit JWT_SECRET; paste MEITY-empanelled LLM key in Settings after login
 make up
 make urls
 ```

@@ -678,6 +678,7 @@ def prepare_kyds_for_llm(kyds: Dict[str, Any]) -> Dict[str, Any]:
     # emptyForm() in frontend/src/components/KydsModal.jsx) -- not the
     # snake_case names used here previously, which meant every field but
     # `modality`/`granularity`/`notes` silently read back None.
+    kyds = kyds or {}
     return {
         "dataset_name": kyds.get("datasetName"),
         "description": kyds.get("description"),

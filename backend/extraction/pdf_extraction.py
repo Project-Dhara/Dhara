@@ -672,6 +672,27 @@ def _ruled_tables_from_candidates(
     return tables
 
 
+def _llm_pages_missing_tables(
+    llm_pages: Dict[int, List[Dict[str, Any]]],
+    llm_results: Dict[int, Dict[str, Any]],
+) -> Dict[int, List[Dict[str, Any]]]:
+    """Pages that still need a ruled-grid accept after LLM validation failed/empty.
+
+    When the MEITY key is present but invalid/quota-exhausted, validate_* logs
+    failures and omits those pages — without this fallback the extracted tables
+    are silently dropped.
+    """
+    missing: Dict[int, List[Dict[str, Any]]] = {}
+    for page_num, cands in (llm_pages or {}).items():
+        if not cands:
+            continue
+        result = (llm_results or {}).get(page_num)
+        tables = result.get("tables") if isinstance(result, dict) else None
+        if not tables:
+            missing[page_num] = cands
+    return missing
+
+
 def heuristic_accept_pages(
     pages_grouped: Dict[int, List[Dict[str, Any]]],
     page_text: Optional[Dict[int, str]] = None,
@@ -3114,8 +3135,12 @@ def validate_page(client: openai.OpenAI, page_num: int, candidates: List[Dict[st
 
 
 def validate_all_pages(pages_grouped: Dict[int, List[Dict[str, Any]]], page_text: Dict[int, str],
-                        n_workers: int = OPENAI_WORKERS) -> Dict[int, Dict[str, Any]]:
-    client = openai.OpenAI()
+                        n_workers: int = OPENAI_WORKERS,
+                        api_key: Optional[str] = None) -> Dict[int, Dict[str, Any]]:
+    key = (api_key or "").strip()
+    if not key:
+        return {}
+    client = openai.OpenAI(api_key=key)
     validated: Dict[int, Dict[str, Any]] = {}
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
         futures = {
@@ -3219,7 +3244,10 @@ def validate_all_pages_batched(pages_grouped: Dict[int, List[Dict[str, Any]]], p
                                 batch_size: int = BATCH_SIZE, n_workers: int = OPENAI_WORKERS,
                                 progress_cb: Optional[Callable[[int, int], None]] = None,
                                 api_key: Optional[str] = None) -> Dict[int, Dict[str, Any]]:
-    client = openai.OpenAI(api_key=api_key)
+    key = (api_key or "").strip()
+    if not key:
+        return {}
+    client = openai.OpenAI(api_key=key)
     all_pages = list(pages_grouped.keys())
     batches = [all_pages[i:i + batch_size] for i in range(0, len(all_pages), batch_size)]
 
@@ -3340,7 +3368,7 @@ def run_pipeline(pdf_path: Path, on_progress: Optional[Callable[[str, int, str],
 
     validated_by_page: Dict[int, Dict[str, Any]] = dict(high_results)
     if llm_pages:
-        key = (api_key or os.environ.get("OPENAI_API_KEY") or "").strip() or None
+        key = (api_key or "").strip() or None
         if key:
             llm_results = validate_all_pages_batched(
                 llm_pages, page_text, api_key=key,
@@ -3351,6 +3379,23 @@ def run_pipeline(pdf_path: Path, on_progress: Optional[Callable[[str, int, str],
                 ),
             )
             validated_by_page.update(llm_results)
+            # Keep ruled-grid tables when LLM auth/quota/parse fails or returns [].
+            missing = _llm_pages_missing_tables(llm_pages, llm_results)
+            if missing:
+                progress(
+                    "validate",
+                    90,
+                    f"LLM returned no tables for {len(missing)} page(s) — "
+                    f"keeping ruled-border extractions for review",
+                )
+                heuristic = heuristic_accept_pages(
+                    missing,
+                    page_text,
+                    pdf_path=pdf_path,
+                    outline_index=outline_index,
+                    review_reason="llm_validation_failed_heuristic",
+                )
+                validated_by_page.update(heuristic)
         else:
             progress(
                 "validate",
@@ -3435,6 +3480,21 @@ def main():
         llm_results = validate_all_pages_batched(llm_pages, page_text)
         log(f"  validated {len(llm_results)} page(s) in {time.time() - t0:.1f}s")
         validated_by_page.update(llm_results)
+        missing = _llm_pages_missing_tables(llm_pages, llm_results)
+        if missing:
+            log(
+                f"  LLM returned no tables for {len(missing)} page(s); "
+                f"heuristic-accepting ruled-border extractions"
+            )
+            validated_by_page.update(
+                heuristic_accept_pages(
+                    missing,
+                    page_text,
+                    pdf_path=PDF_PATH,
+                    outline_index=outline_index,
+                    review_reason="llm_validation_failed_heuristic",
+                )
+            )
 
         _log_representative_examples(llm_results, high_results)
 

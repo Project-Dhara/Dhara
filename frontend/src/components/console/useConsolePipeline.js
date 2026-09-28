@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { STATUS_TRANSITIONS } from '../../lib/consoleStatusTransitions'
 import { withAuthHeaders } from '../../lib/auth'
-import { withLlmKeyHeaders } from '../../lib/llmKey'
+import { getLlmApiKey, withLlmKeyHeaders } from '../../lib/llmKey'
 import { getMetadataStandard } from '../../lib/settingsConfig'
 import { stageIndexForStep } from './ConsoleStages'
 import {
@@ -454,6 +454,10 @@ export function useConsolePipeline() {
   }
 
   const handlePdfFile = async (file) => {
+    if (!getLlmApiKey()) {
+      setPdfError('Configure an LLM API key in Settings before uploading a PDF.')
+      return
+    }
     setPdfError('')
     setPdfUploading(true)
     try {

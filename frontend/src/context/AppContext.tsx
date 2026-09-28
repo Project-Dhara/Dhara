@@ -27,7 +27,7 @@ type AppContextValue = {
   settings: Settings
   keySaved: boolean
   onSettingsChange: (next: Settings) => void
-  onSaveKey: () => void
+  onSaveKey: (override?: Settings) => void
   login: (data: LoginData) => void
   signOut: () => void
 }
@@ -112,10 +112,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (next.apiKey !== getLlmApiKey()) setKeySaved(false)
   }
 
-  const handleSaveKey = () => {
-    setLlmApiKey(settings.apiKey.trim())
-    setLlmProvider(settings.provider.trim())
-    setKeySaved(!!settings.apiKey.trim())
+  const handleSaveKey = (override?: Settings) => {
+    // Button onClick may pass a click event — only treat plain settings objects as overrides.
+    const fromForm = override && typeof override === 'object' && 'apiKey' in override
+      ? override
+      : null
+    const next = fromForm || settings
+    const key = String(next.apiKey || '').trim()
+    const provider = String(next.provider || '').trim() || 'openai'
+    setLlmApiKey(key)
+    setLlmProvider(provider)
+    setSettings({ provider, apiKey: key })
+    setKeySaved(!!key)
   }
 
   const login = (data: LoginData) => {

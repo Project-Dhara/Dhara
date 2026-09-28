@@ -95,7 +95,8 @@ def _pseudo_embedding(text: str, dim: int) -> list[float]:
 
 def embed_texts(texts: list[str], api_key: Optional[str] = None) -> list[list[float]]:
     dim = vs.embedding_dim()
-    key = (api_key or os.environ.get("OPENAI_API_KEY") or "").strip()
+    # Settings-scoped key only — never fall back to server OPENAI_API_KEY.
+    key = (api_key or "").strip()
     if not key or not texts:
         return [_pseudo_embedding(t, dim) for t in texts]
     try:
@@ -701,7 +702,7 @@ def merge_singleton_groups_strict(
     Returns (possibly updated groups, whether any merge was applied).
     On missing key / API failure / empty singletons, returns groups unchanged.
     """
-    key = (api_key or os.environ.get("OPENAI_API_KEY") or "").strip()
+    key = (api_key or "").strip()
     if not key or not groups:
         print(
             f"[pdf_grouping] singleton LLM skipped (key={'yes' if bool(key) else 'no'}, groups={len(groups or [])})",
@@ -968,7 +969,7 @@ def propose_groups(
 
     indexed = 0
     embeddings: dict[str, list[float]] = {}
-    key = (api_key or os.environ.get("OPENAI_API_KEY") or "").strip() or None
+    key = (api_key or "").strip() or None
 
     if corpus_looks_like_sdg_indicator_tables(tables):
         embeddings = _load_summary_embeddings(conn, job_id)

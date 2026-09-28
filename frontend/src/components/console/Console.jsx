@@ -15,8 +15,13 @@ import { tableCode, tablePickerLabel } from '../../lib/postPreview'
 import { UploadChoice } from './ConsoleUploadChoice'
 import { useConsolePipeline } from './useConsolePipeline'
 import ClassifyBreadcrumb from './classify/ClassifyBreadcrumb'
+import LlmKeyRequiredBanner from '../LlmKeyRequiredBanner'
+import { getLlmApiKey } from '../../lib/llmKey'
+import { useApp } from '../../context/AppContext'
 
 export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatalogue, onUploadAnother }) {
+  const { keySaved } = useApp()
+  const hasLlmKey = hasKey || keySaved || Boolean(getLlmApiKey())
   const {
     STATUS_TRANSITIONS,
     addPendingDatasetFiles,
@@ -170,30 +175,32 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
         <div style={{ display: statusPage ? 'none' : undefined }}>
         {step === 1 && (
           <div className="flex flex-col gap-6">
+            {!hasLlmKey && <LlmKeyRequiredBanner onGoSettings={onGoSettings} />}
             <UploadChoice
               choice={uploadChoice}
-              onChoose={setUploadChoice}
-              onDatasetFile={handleDatasetFile}
-              onDatasetFilesAdd={addPendingDatasetFiles}
+              onChoose={hasLlmKey ? setUploadChoice : undefined}
+              disabled={!hasLlmKey}
+              onDatasetFile={hasLlmKey ? handleDatasetFile : undefined}
+              onDatasetFilesAdd={hasLlmKey ? addPendingDatasetFiles : undefined}
               onDatasetFileRemove={removePendingDatasetFile}
               datasetFiles={pendingDatasetFiles}
-              onPdfFile={handlePdfFile}
+              onPdfFile={hasLlmKey ? handlePdfFile : undefined}
               pdfUploading={pdfUploading}
-              pdfError={pdfError}
+              pdfError={pdfError || (!hasLlmKey ? 'Configure an LLM API key in Settings before uploading.' : '')}
               onClearPdfError={() => setPdfError('')}
               metadataFiles={step1MetadataFiles}
               onMetadataFilesAdd={addStep1MetadataFiles}
               onMetadataFileRemove={removeStep1MetadataFile}
-              sqlPanel={(
+              sqlPanel={hasLlmKey ? (
                 <SqlUpload
                   onMatched={handleMatched}
                   metadataFiles={step1MetadataFiles}
                   onMetadataFilesChange={setStep1MetadataFiles}
                   hideMetadataSection
                 />
-              )}
+              ) : null}
             />
-            {uploadChoice === 'xlsx' && pendingDatasetFiles.length > 0 && (
+            {hasLlmKey && uploadChoice === 'xlsx' && pendingDatasetFiles.length > 0 && (
               <BatchUpload
                 onMatched={handleMatched}
                 datasetFiles={pendingDatasetFiles}
@@ -443,6 +450,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
           onGoDashboard={onGoDashboard}
           onGoCatalogue={onGoCatalogue}
           onUploadAnother={onUploadAnother}
+          onMatchResultChange={setMatchResult}
         />
 
         </div>

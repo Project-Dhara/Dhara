@@ -661,6 +661,83 @@ def resolve_column_headers(header_matrix: List[List[Any]], n_cols: int) -> List[
         name = path[-1]
         group = path[-2] if len(path) >= 2 else None
         out.append({"name": name, "header_group": group, "header_path": path})
+    return _recover_colspan_leaf_names(out, kinds)
+
+
+def _default_order_leaf_labels(n: int) -> List[str]:
+    """Synthetic 1..8, >8, All… labels when a spanning group has no leaf row."""
+    if n <= 0:
+        return []
+    base = [str(i) for i in range(1, 9)] + [">8"]
+    if n <= len(base):
+        return base[:n]
+    extra = ["All"] + [str(i) for i in range(10, n + 1)]
+    return base + extra[: n - len(base)]
+
+
+# Category banners that commonly lose their 1..N / >8 leaf strip in pymupdf.
+_COLSPAN_LEAF_GROUP_RE = re.compile(
+    r"(?i)\b("
+    r"birth\s*order|order|education|sex|gender|religion|"
+    r"marital|literacy|qualification|occupation"
+    r")\b"
+)
+
+
+def _recover_colspan_leaf_names(
+    resolved: List[dict],
+    kinds: List[str],
+) -> List[dict]:
+    """Assign leaf codes under a colspan group that lost its 1/2/3…/>8 row.
+
+    PyMuPDF sometimes drops the birth-order leaf strip while keeping the parent
+    ``BIRTH ORDER`` / education banner. Horizontal fill then repeats that parent
+    as every leaf name; ``coalesce_phantom_grid_columns`` would glue the measure
+    values into one cell. Recover positional leaves so columns stay distinct.
+
+    Does NOT touch long prose group labels (Cause of Death, indicator names) —
+    those empty slots are phantom splits and must still coalesce.
+    """
+    if not resolved or not kinds or len(kinds) != len(resolved):
+        return resolved
+    out = [dict(c) for c in resolved]
+    n = len(out)
+    i = 0
+    while i < n:
+        if (kinds[i] if i < len(kinds) else "stub") != "group":
+            i += 1
+            continue
+        j = i + 1
+        while j < n and (kinds[j] if j < len(kinds) else "span") == "span":
+            j += 1
+        run = list(range(i, j))
+        if len(run) < 2:
+            i = j
+            continue
+        paths = [list(out[k].get("header_path") or []) for k in run]
+        # Only recover when every column is a single identical label (no real leaves).
+        if not all(len(p) == 1 for p in paths):
+            i = j
+            continue
+        if len({p[0].strip().upper() for p in paths if p and p[0].strip()}) != 1:
+            i = j
+            continue
+        group_name = paths[0][0].strip()
+        # Skip stub-like tokens and long prose (Cause of Death & ICD-…).
+        if len(group_name) < 8 and " " not in group_name:
+            i = j
+            continue
+        if len(group_name) > 48 or not _COLSPAN_LEAF_GROUP_RE.search(group_name):
+            i = j
+            continue
+        leaves = _default_order_leaf_labels(len(run))
+        for k, leaf in zip(run, leaves):
+            out[k] = {
+                "name": leaf,
+                "header_group": group_name,
+                "header_path": [group_name, leaf],
+            }
+        i = j
     return out
 
 
@@ -867,14 +944,59 @@ def flatten_headers(header_matrix: List[List[Any]], n_cols: int) -> List[str]:
 
 
 def _uniquify_columns(names: List[str]) -> List[str]:
-    seen: dict[str, int] = {}
+    """Ensure DataFrame column labels are unique (append ' (2)', ' (3)', …)."""
+    seen: Dict[str, int] = {}
     out: List[str] = []
-    for name in names:
-        base = name or "Col"
-        n = seen.get(base, 0)
-        seen[base] = n + 1
-        out.append(base if n == 0 else f"{base} ({n + 1})")
+    for raw in names:
+        base = str(raw or "").strip() or "Col"
+        n = seen.get(base, 0) + 1
+        seen[base] = n
+        out.append(base if n == 1 else f"{base} ({n})")
     return out
+
+
+def _fill_blank_leading_serial_header(
+    leaf_names: List[str],
+    column_meta: List[dict],
+) -> Tuple[List[str], List[dict]]:
+    """Name a blank leading stub ``S.No.`` for cause-of-death style grids.
+
+    PyMuPDF often leaves the serial column header empty (label sits outside the
+    ruled box) while ``Name of the Disease`` / ``Sex`` are present — that becomes
+    ``Col_1`` and routes the page to LLM. Filling the obvious serial label keeps
+    cell values unchanged and allows auto-accept.
+    """
+    if not leaf_names:
+        return leaf_names, column_meta
+    first = str(leaf_names[0] or "").strip()
+    if first and not re.match(r"^Col_\d+$", first, re.I):
+        return leaf_names, column_meta
+    second = str(leaf_names[1] if len(leaf_names) > 1 else "").strip().lower()
+    third = str(leaf_names[2] if len(leaf_names) > 2 else "").strip().lower()
+    disease_name = any(
+        tip in second
+        for tip in (
+            "name of the disease",
+            "name of disease",
+            "cause of death",
+        )
+    )
+    sex_layout = third in {"sex", "gender"} and (
+        disease_name or "disease" in second or second.startswith("name")
+    )
+    if not (disease_name or sex_layout):
+        return leaf_names, column_meta
+    names = list(leaf_names)
+    names[0] = "S.No."
+    meta = list(column_meta) if column_meta else []
+    if meta and len(meta) == len(names):
+        meta[0] = {
+            **meta[0],
+            "name": "S.No.",
+            "header_group": None,
+            "header_path": ["S.No."],
+        }
+    return names, meta
 
 
 def _split_hybrid_leaf_data_row(
@@ -1285,6 +1407,25 @@ def coalesce_phantom_grid_columns(df):
         # Still drop empty parent-as-leaf columns (name == neighbour's group).
         return _drop_empty_parent_leaf_columns(df)
 
+    def _run_has_parallel_values(start: int, end: int) -> bool:
+        """True when rows hold distinct parallel measures — not phantom duplicates."""
+        width = end - start
+        if width < 2:
+            return False
+        parallel_rows = 0
+        for r in range(df.shape[0]):
+            vals = [_cell_str(df.iloc[r, c]) for c in range(start, end)]
+            nonempty = [v for v in vals if v]
+            if len(nonempty) < 2:
+                continue
+            # Phantom splits often repeat the same Cause/label across columns.
+            if len(set(nonempty)) < 2:
+                continue
+            parallel_rows += 1
+            if parallel_rows >= 2:
+                return True
+        return False
+
     new_cols: List[Any] = []
     new_meta: List[dict] = []
     series_list: List[List[Optional[str]]] = []
@@ -1297,6 +1438,17 @@ def coalesce_phantom_grid_columns(df):
             series_list.append([
                 _cell_str(v) or None for v in df.iloc[:, start].tolist()
             ])
+            continue
+        # Shared header path from colspan fill (BIRTH ORDER × N) still has
+        # distinct parallel measure values — do NOT glue them into one cell.
+        if _run_has_parallel_values(start, end):
+            for c in range(start, end):
+                new_cols.append(df.columns[c])
+                if meta:
+                    new_meta.append(meta[c])
+                series_list.append([
+                    _cell_str(v) or None for v in df.iloc[:, c].tolist()
+                ])
             continue
         # Coalesce body cells left→right across the phantom run.
         merged: List[Optional[str]] = []
@@ -1504,6 +1656,93 @@ def fold_label_wrap_continuation_rows(df):
     return out
 
 
+def fold_orphan_parenthetical_share_rows(df):
+    """Fold sparse orphan rows that only hold ``(pct)`` shares into the previous row.
+
+    When a prior expand step (or a sparse find_tables split) left
+    ``— | — | — | (88.06)`` under a count row, append the share to the matching
+    measure cell. Full blank-stub share rows (every measure is a parenthetical,
+    as in year×education tables) are left alone.
+    """
+    import pandas as pd
+
+    if df is None or getattr(df, "empty", True) or df.shape[0] < 2 or df.shape[1] < 3:
+        return df
+
+    n_cols = df.shape[1]
+    # Classify stub vs measure by column content.
+    measure_idxs: List[int] = []
+    stub_idxs: List[int] = []
+    for i in range(n_cols):
+        vals = [_cell_str(v) for v in df.iloc[:, i].tolist() if _cell_str(v)]
+        if not vals:
+            continue
+        num = sum(1 for v in vals if _is_numeric_cell(v))
+        if num >= max(1, int(len(vals) * 0.55)):
+            measure_idxs.append(i)
+        elif not measure_idxs:
+            stub_idxs.append(i)
+    if not measure_idxs:
+        return df
+
+    def _is_blankish(v: Any) -> bool:
+        s = _cell_str(v)
+        return (not s) or s in {"—", "–", "-", "−", ".", "..", "...", "NA", "N/A"}
+
+    rows = df.values.tolist()
+    out_rows: List[List[Any]] = []
+    for row in rows:
+        cur = list(row)
+        stub_blank = all(_is_blankish(cur[i]) for i in stub_idxs) if stub_idxs else True
+        paren_cols = [
+            i for i in measure_idxs
+            if _is_parenthetical_share_token(cur[i])
+        ]
+        other_meas = [
+            i for i in measure_idxs
+            if not _is_blankish(cur[i]) and i not in paren_cols
+        ]
+        # Sparse orphan: some measures are shares, the rest blank — not a full
+        # blank-stub percentage row (those fill most/all measures with a share).
+        filled_meas = [i for i in measure_idxs if not _is_blankish(cur[i])]
+        dense_share_row = (
+            stub_blank
+            and paren_cols
+            and not other_meas
+            and len(paren_cols) >= max(2, int(len(measure_idxs) * 0.75))
+        )
+        sparse = (
+            stub_blank
+            and paren_cols
+            and not other_meas
+            and not dense_share_row
+            and len(paren_cols) < len(measure_idxs)
+            and len(paren_cols) <= max(1, len(filled_meas))
+        )
+        if sparse and out_rows:
+            prev = out_rows[-1]
+            prev_has_counts = any(
+                _is_numeric_cell(prev[i]) and not _is_parenthetical_share_token(prev[i])
+                for i in measure_idxs
+            )
+            if prev_has_counts:
+                for i in paren_cols:
+                    share = _cell_str(cur[i])
+                    base = _cell_str(prev[i])
+                    if not share:
+                        continue
+                    if share in base:
+                        continue
+                    prev[i] = f"{base} {share}".strip() if base else share
+                continue
+        out_rows.append(cur)
+
+    out = pd.DataFrame(out_rows, columns=list(df.columns))
+    for key, val in getattr(df, "attrs", {}).items():
+        out.attrs[key] = val
+    return out
+
+
 def _cell_line_parts(v: Any) -> List[str]:
     raw = _cell_raw_text(v)
     if not raw.strip():
@@ -1515,10 +1754,46 @@ def _cell_line_parts(v: Any) -> List[str]:
     return []
 
 
+def _is_parenthetical_share_token(v: Any) -> bool:
+    """True for in-cell % / share annotations like ``(88.06)`` or ``*(45.18)``."""
+    s = _cell_str(v)
+    if not s:
+        return False
+    return bool(re.fullmatch(r"\*?\(\s*[-+]?\d+(?:[.,]\d+)?\s*%?\s*\)", s))
+
+
+def _measure_parts_for_row_expand(v: Any) -> List[str]:
+    """Line parts that should drive M/F / multi-disease row expansion.
+
+    A count with a parenthetical share under it (``325839\\n(88.06)``) is one
+    logical measure — do not invent an extra output row for the share.
+    """
+    parts = _cell_line_parts(v)
+    if len(parts) < 2:
+        return parts
+    out: List[str] = []
+    i = 0
+    while i < len(parts):
+        cur = parts[i]
+        nxt = parts[i + 1] if i + 1 < len(parts) else None
+        if (
+            nxt is not None
+            and _is_numeric_cell(cur)
+            and not _is_parenthetical_share_token(cur)
+            and _is_parenthetical_share_token(nxt)
+        ):
+            out.append(f"{cur}\n{nxt}")
+            i += 2
+            continue
+        out.append(cur)
+        i += 1
+    return out
+
+
 def _cell_looks_multivalue(v: Any, n: int) -> bool:
     if n < 2:
         return False
-    parts = _cell_line_parts(v)
+    parts = _measure_parts_for_row_expand(v)
     if len(parts) >= 2:
         return True
     flat = _cell_str(v)
@@ -1537,7 +1812,8 @@ def _split_measure_cell_to_n(v: Any, n: int) -> List[Optional[str]]:
     """Split a numeric/age cell into n row values. Never cram overflow into the last row."""
     if n <= 0:
         return []
-    parts = _cell_line_parts(v)
+    # Prefer share-collapsed parts so count+(pct) stays on the same expanded row.
+    parts = _measure_parts_for_row_expand(v)
     if len(parts) == n:
         return parts
     flat = _cell_str(v)
@@ -1583,10 +1859,14 @@ def _consensus_numeric_line_count(
     for c in range(min(len(row), n_cols)):
         if c in skip:
             continue
-        parts = _cell_line_parts(row[c])
+        parts = _measure_parts_for_row_expand(row[c])
         if len(parts) < 2:
             continue
-        numish = sum(1 for p in parts if _is_numeric_cell(p))
+        numish = sum(
+            1
+            for p in parts
+            if _is_numeric_cell(str(p).split("\n", 1)[0])
+        )
         if numish >= max(2, int(len(parts) * 0.6)):
             counts.append(len(parts))
     if not counts:
@@ -2032,7 +2312,7 @@ def _row_max_measure_line_count(
     for c in range(sex_col + 1, n_cols):
         if c >= len(row):
             break
-        parts = _cell_line_parts(row[c])
+        parts = _measure_parts_for_row_expand(row[c])
         if parts:
             best = max(best, len(parts))
             continue
@@ -2192,6 +2472,105 @@ def expand_collapsed_sex_pair_rows(rows: List[List[Any]]) -> List[List[Any]]:
     return repair_sex_pair_next_row_label_bleed(out, sex_col)
 
 
+def _looks_like_birth_order_leaf_strip(row: Sequence[Any], n_cols: int) -> bool:
+    """True for Sl.No. / age-stub / 1,2,…,>8,All header strips parked as data."""
+    padded = _pad_row(row, n_cols)
+    non_empty = [v for v in padded if _cell_str(v)]
+    if len(non_empty) < max(4, int(n_cols * 0.5)):
+        return False
+    if sum(1 for v in non_empty if _is_measurement_number(v)) >= 2:
+        return False
+    # Reject bare 1..N / (1)(2)(3) index strips — those are not leaf headers.
+    if all(
+        bool(re.match(r"^\(?\d+\)?$", _cell_str(v).replace(" ", "")))
+        for v in non_empty
+    ):
+        return False
+    leafish = sum(1 for v in non_empty if _is_leaf_header_token(v))
+    if leafish < max(3, int(len(non_empty) * 0.55)):
+        return False
+    # Need a serial / stub label plus several short order codes.
+    has_serial = any(
+        re.match(r"^(?:sl\.?\s*no\.?|s\.?\s*no\.?|sno)$", _cell_str(v), re.I)
+        for v in non_empty
+    )
+    order_codes = sum(
+        1 for v in non_empty
+        if re.match(r"^(?:\d+|>\s*8|≥\s*8|all)$", _cell_str(v).replace(" ", ""), re.I)
+    )
+    return bool(has_serial and order_codes >= 3)
+
+
+def _promote_leading_leaf_strip(
+    header_matrix: List[List[Any]],
+    header_count: int,
+    padded: List[List[Any]],
+    skip_rows: List[int],
+    n_cols: int,
+) -> Tuple[List[List[Any]], int, List[List[Any]]]:
+    """Pull a misplaced 1..>8 leaf strip from the first body row into headers."""
+    next_i = header_count
+    while next_i < len(padded) and (next_i in skip_rows or _blank(padded[next_i])):
+        next_i += 1
+    if next_i >= len(padded):
+        return header_matrix, header_count, padded
+    candidate = padded[next_i]
+    if not _looks_like_birth_order_leaf_strip(candidate, n_cols):
+        return header_matrix, header_count, padded
+    # Already have distinct short leaves under the group — nothing to promote.
+    if header_matrix:
+        last = header_matrix[-1]
+        last_non_empty = [v for v in last if _cell_str(v)]
+        if (
+            len(last_non_empty) >= max(4, int(n_cols * 0.5))
+            and sum(1 for v in last_non_empty if _is_leaf_header_token(v))
+            >= max(3, int(len(last_non_empty) * 0.55))
+        ):
+            return header_matrix, header_count, padded
+    new_matrix = list(header_matrix) + [_pad_row(candidate, n_cols)]
+    return new_matrix, next_i + 1, padded
+
+
+def _recover_stub_from_caption(
+    leaf_names: List[str],
+    column_meta: List[dict],
+    caption_title: Optional[str],
+) -> Tuple[List[str], List[dict]]:
+    """Rename a truncated age stub using the descriptive caption.
+
+    PyMuPDF often splits ``AGE OF MOTHER`` across header rows (``AGE OF`` on
+    the group row, ``MOTHER`` on the leaf). Stub resolution keeps only the
+    parent token; restore the full phrase when the caption clearly has it.
+    """
+    title = _cell_str(caption_title).upper()
+    if not title or "MOTHER" not in title:
+        return leaf_names, column_meta
+    full = None
+    if "AGE OF THE MOTHER" in title:
+        full = "AGE OF THE MOTHER"
+    elif "AGE OF MOTHER" in title:
+        full = "AGE OF MOTHER"
+    if not full:
+        return leaf_names, column_meta
+    names = list(leaf_names)
+    meta = [dict(m) for m in column_meta]
+    for i, name in enumerate(names):
+        u = str(name).strip().upper()
+        if u not in {"MOTHER", "AGE OF", "AGE OF THE"}:
+            continue
+        names[i] = full
+        if i < len(meta):
+            meta[i]["name"] = full
+            path = [str(p) for p in (meta[i].get("header_path") or []) if str(p).strip()]
+            if path:
+                path[-1] = full
+            else:
+                path = [full]
+            meta[i]["header_path"] = path
+        break
+    return names, meta
+
+
 def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
     """
     Build a pandas DataFrame from a pymupdf `tab.extract()` grid, flattening
@@ -2254,6 +2633,13 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
         header_matrix = [padded[0]]
         header_count = 1
 
+    # When a group banner (education / BIRTH ORDER) absorbed "AGE OF" into the
+    # header and the real leaf strip (Sl.No. / MOTHER / 1..>8) was treated as
+    # data, promote that first body row back into the header block.
+    header_matrix, header_count, padded = _promote_leading_leaf_strip(
+        header_matrix, header_count, padded, skip_rows, n_cols
+    )
+
     resolved = resolve_column_headers(header_matrix, n_cols)
     leaf_names = _uniquify_columns([c["name"] for c in resolved])
     column_meta = []
@@ -2268,6 +2654,7 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
             "header_group": path[-2] if len(path) >= 2 else None,
             "header_path": path,
         })
+    leaf_names, column_meta = _fill_blank_leading_serial_header(leaf_names, column_meta)
 
     body = [
         padded[i]
@@ -2290,6 +2677,9 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
     if leading_index:
         body = leading_index + body
     caption = extract_in_grid_caption(padded)
+    leaf_names, column_meta = _recover_stub_from_caption(
+        leaf_names, column_meta, caption.get("title")
+    )
 
     def _attach_caption_attrs(frame):
         frame.attrs["dhara_column_meta"] = column_meta
@@ -2312,4 +2702,5 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
     # and fold stub-only wrap rows into the parent disease row.
     df = coalesce_phantom_grid_columns(df)
     df = fold_label_wrap_continuation_rows(df)
+    df = fold_orphan_parenthetical_share_rows(df)
     return df

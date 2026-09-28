@@ -269,6 +269,7 @@ export async function fillGroupMetadataForMatchResult(matchResult, {
   const autofillErrors = Array.isArray(data.autofill_errors) ? data.autofill_errors : []
   const metaPatches = Array.isArray(data.group_metadata) ? data.group_metadata : null
   let nextGroups = matchResult.groups
+  const aiFilledFieldsByGroup = {}
   if (metaPatches) {
     nextGroups = matchResult.groups.map((g, i) => {
       const patch = metaPatches.find((p) => p.index === i) || metaPatches[i]
@@ -284,6 +285,14 @@ export async function fillGroupMetadataForMatchResult(matchResult, {
       if (patch.catalogue_metadata && Object.keys(patch.catalogue_metadata).length) {
         next.catalogue_metadata = { ...(g.catalogue_metadata || {}), ...patch.catalogue_metadata }
       }
+      if (patch.llm_filled) {
+        next.llm_filled = true
+        const fields = Array.isArray(patch.llm_filled_fields)
+          ? patch.llm_filled_fields.filter((k) => String(next.metadata?.[k] || next.concept_metadata?.[k] || '').trim())
+          : Object.keys(next.metadata || {}).filter((k) => String(next.metadata[k] || '').trim())
+        next.llm_filled_fields = fields
+        aiFilledFieldsByGroup[i] = fields
+      }
       return next
     })
   } else if (Array.isArray(data.groups) && data.groups.length === matchResult.groups.length) {
@@ -293,9 +302,15 @@ export async function fillGroupMetadataForMatchResult(matchResult, {
       metadata: data.groups[i]?.metadata && Object.keys(data.groups[i].metadata).length
         ? { ...(g.metadata || {}), ...data.groups[i].metadata }
         : g.metadata,
+      llm_filled: Boolean(data.groups[i]?._llm_filled || data.groups[i]?.llm_filled),
+      llm_filled_fields: data.groups[i]?._llm_filled_fields || data.groups[i]?.llm_filled_fields || [],
     }))
+    nextGroups.forEach((g, i) => {
+      if (g.llm_filled) aiFilledFieldsByGroup[i] = g.llm_filled_fields || []
+    })
   }
   const filledCount = Number(data.autofill_filled_count) || 0
+  const llmFilledCount = Number(data.autofill_llm_filled_count) || Object.keys(aiFilledFieldsByGroup).length
   let toast = null
   if (data.kyds_missing) {
     toast = 'Fill in Know Your Dataset first so metadata can be auto-mapped — or fill fields manually on the next step.'
@@ -308,6 +323,8 @@ export async function fillGroupMetadataForMatchResult(matchResult, {
       : autofillErrors.length === 1
         ? `Auto-fill failed for 1 group (${sample}). Fill that group in manually.`
         : `Auto-fill failed for ${autofillErrors.length} groups. Fill those groups in manually.`
+  } else if (llmFilledCount > 0) {
+    toast = `AI auto-filled metadata for ${llmFilledCount} group${llmFilledCount !== 1 ? 's' : ''}.`
   }
   return {
     ok: true,
@@ -319,6 +336,8 @@ export async function fillGroupMetadataForMatchResult(matchResult, {
       kyds_missing: Boolean(data.kyds_missing),
       autofill_errors: autofillErrors,
       autofill_filled_count: filledCount,
+      autofill_llm_filled_count: llmFilledCount,
+      ai_filled_fields_by_group: aiFilledFieldsByGroup,
     },
   }
 }

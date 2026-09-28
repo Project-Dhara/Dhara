@@ -61,13 +61,14 @@ def _title_context_rows_for(table: dict) -> list:
     return context
 
 
-def _apply_llm_id_title_repair(table: dict, table_id: str, title: str) -> tuple:
+def _apply_llm_id_title_repair(table: dict, table_id: str, title: str, api_key: Optional[str] = None) -> tuple:
     """Apply LLM repair patches; returns (table_id, title, code_result)."""
     repaired = repair_table_id_title_llm(
         table_id,
         title,
         context_rows=_title_context_rows_for(table),
         columns=table.get("columns") or [],
+        api_key=api_key,
     )
     if not repaired:
         return table_id, title, validate_table_fields_code(table_id, title)
@@ -83,7 +84,7 @@ def _apply_llm_id_title_repair(table: dict, table_id: str, title: str) -> tuple:
     return table_id, title, validate_table_fields_code(table_id, title)
 
 
-def _validate_table_id_title(table: dict) -> None:
+def _validate_table_id_title(table: dict, api_key: Optional[str] = None) -> None:
     """Runs the code-based and prompt-based Source Table ID / Table Title validators
     on one extracted table (mirrors the notebook's Stage 2.5) and annotates
     the table in place with the results plus a `id_title_mismatch` flag the
@@ -91,7 +92,7 @@ def _validate_table_id_title(table: dict) -> None:
 
     When the LLM auto-fills or corrects either field, sets
     ``table_id_repaired_by_llm`` / ``title_repaired_by_llm`` so Preview can
-    highlight them for human review.
+    highlight them for human review. LLM calls use the Settings key only.
     """
     table_id = table.get("table_id", "")
     title = table.get("title", "")
@@ -115,7 +116,7 @@ def _validate_table_id_title(table: dict) -> None:
     )
 
     if needs_repair:
-        table_id, title, code_result = _apply_llm_id_title_repair(table, table_id, title)
+        table_id, title, code_result = _apply_llm_id_title_repair(table, table_id, title, api_key=api_key)
 
     if not str(table_id or "").strip() and not str(title or "").strip():
         # Nothing to send the model -- both fields are already conclusively
@@ -124,7 +125,7 @@ def _validate_table_id_title(table: dict) -> None:
         llm_result = {"valid": False, "issues": ["Source Table ID and Table Title are both missing"]}
     else:
         try:
-            llm_result = validate_table_fields_llm(table_id, title)
+            llm_result = validate_table_fields_llm(table_id, title, api_key=api_key)
         except Exception as e:
             llm_result = {"valid": None, "issues": [f"LLM validation skipped ({e})"]}
 
@@ -139,9 +140,9 @@ def _validate_table_id_title(table: dict) -> None:
         and llm_result.get("valid") is False
         and llm_field_issue
     ):
-        table_id, title, code_result = _apply_llm_id_title_repair(table, table_id, title)
+        table_id, title, code_result = _apply_llm_id_title_repair(table, table_id, title, api_key=api_key)
         try:
-            llm_result = validate_table_fields_llm(table_id, title)
+            llm_result = validate_table_fields_llm(table_id, title, api_key=api_key)
         except Exception as e:
             llm_result = {"valid": None, "issues": [f"LLM validation skipped ({e})"]}
 
@@ -160,10 +161,11 @@ def _validate_table_id_title(table: dict) -> None:
     table["id_title_mismatch"] = mismatch
 
 
-def _validate_tables(tables: list) -> None:
+def _validate_tables(tables: list, api_key: Optional[str] = None) -> None:
     """Runs `_validate_table_id_title` across all tables concurrently (each
     call makes a blocking LLM request) and annotates them in place."""
     if not tables:
         return
+    key = (api_key or "").strip() or None
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
-        list(pool.map(_validate_table_id_title, tables))
+        list(pool.map(lambda t: _validate_table_id_title(t, api_key=key), tables))

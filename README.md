@@ -180,14 +180,12 @@ postgresql://dhara:dhara_local_password@localhost:5432/dhara
 Copy `backend/.env.example` to `backend/.env` and set at least:
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...          # optional MEITY-empanelled / Anthropic-compatible (or paste in Settings)
 DATABASE_URL=postgresql://dhara:dhara_local_password@localhost:5432/dhara
 JWT_SECRET=<random hex>               # required for login tokens
 ENABLE_GCS=false
 ENABLE_SIGNUP=true                    # self-serve signup; set false in locked-down deploys
-SKIP_LLM=false                        # no key → heuristic PDF/Excel; see docs/deployment/on-prem.md
-# OPENAI_API_KEY=...                  # optional MEITY-empanelled / OpenAI-compatible + embeddings
 # EMBEDDING_DIM=1536                  # optional embedding width
+# LLM keys: paste in Settings (not server .env). AI rejects uploads without a Settings key.
 ```
 
 Generate a JWT secret:

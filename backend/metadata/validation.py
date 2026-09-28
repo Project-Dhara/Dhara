@@ -73,7 +73,16 @@ def validate_table_fields_llm(
     table_id = (table_id or "").strip()
     title = (title or "").strip()
 
-    client = openai.OpenAI(api_key=api_key or os.environ.get("OPENAI_API_KEY"))
+    key = (api_key or "").strip()
+    if not key:
+        return {
+            "valid": None,
+            "issues": ["LLM validation skipped (no Settings API key)"],
+            "table_id": table_id,
+            "title": title,
+        }
+
+    client = openai.OpenAI(api_key=key)
 
 # f"""You are validating two fields extracted from a statistical table sheet.
 
@@ -272,6 +281,9 @@ def repair_table_id_title_llm(
     """
     table_id = (table_id or "").strip()
     title = (title or "").strip()
+    key = (api_key or "").strip()
+    if not key:
+        return None
     lines = [str(x).strip() for x in (context_rows or []) if str(x).strip()]
     col_preview = ", ".join(str(c) for c in (columns or [])[:8] if str(c).strip())
 
@@ -298,7 +310,7 @@ Definitions:
 """
 
     try:
-        client = openai.OpenAI(api_key=api_key or os.environ.get("OPENAI_API_KEY"))
+        client = openai.OpenAI(api_key=key)
         response = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],

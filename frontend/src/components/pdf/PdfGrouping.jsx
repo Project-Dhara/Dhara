@@ -499,6 +499,7 @@ export default function PdfGrouping({ jobId }) {
             clearPdfPipeline(jobId)
             goToConsoleFiles(router)
           }}
+          onMatchResultChange={setMatchResult}
         />
       )}
     </PdfConsoleLayout>

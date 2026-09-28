@@ -46,10 +46,14 @@ async def pdf_upload(request: Request, file: UploadFile = File(...), user_email:
 
     job_id = uuid.uuid4().hex
 
-    # Same per-request LLM key convention as the rest of the app (see
-    # deps._extractor_for) -- falls back to the server's OPENAI_API_KEY env var
-    # (openai.OpenAI(api_key=None)) when the caller hasn't configured one.
+    # Settings-scoped key only (X-Llm-Api-Key). No server OPENAI_API_KEY fallback.
     api_key = request.headers.get(LLM_KEY_HEADER, "").strip() or None
+    if not api_key:
+        raise HTTPException(
+            400,
+            "Configure an LLM API key in Settings before uploading a PDF. "
+            "AI extraction uses your Settings key only.",
+        )
 
     with _pdf_jobs_lock:
         _pdf_jobs[job_id] = {

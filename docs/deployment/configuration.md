@@ -32,19 +32,18 @@ Admin provisioning: `backend/scripts/create_user.py`.
 
 ## LLM & embeddings
 
-Prefer pasting a **MEITY-empanelled LLM** key in **Settings**. Env vars are
-optional for server-side defaults (OpenAI-/Anthropic-compatible endpoints):
+Paste a **MEITY-empanelled LLM** key in **Settings**. All AI paths (Excel
+metadata fill, NCO matching, PDF extraction/grouping/validation) use that
+key via the `X-Llm-Api-Key` header. Server `OPENAI_API_KEY` /
+`ANTHROPIC_API_KEY` are **not** used as fallbacks.
 
 | Variable | Purpose |
 |----------|---------|
-| `ANTHROPIC_API_KEY` | MEITY-empanelled / Anthropic-compatible API key (optional if key in Settings) |
-| `OPENAI_API_KEY` | MEITY-empanelled / OpenAI-compatible API key + embeddings (optional if key in Settings) |
-| `SKIP_LLM` | Legacy flag; Excel path already skips LLM when no Settings/header key is sent. Prefer documenting “no key” over relying on this alone |
 | `EMBEDDING_DIM` | Vector width (default 1536 for common small embedding models) |
 | `EMBEDDING_MODEL` | Override embedding model if supported by code paths |
 
-**PDF without a key:** PyMuPDF extraction still runs; ambiguous pages are
-accepted heuristically and flagged for human review (see [on-prem](./on-prem.md)).
+**Without a Settings key:** Console and PDF upload are blocked until the
+steward saves a key. PDF upload also returns HTTP 400 if the header is missing.
 
 ## Object storage
 

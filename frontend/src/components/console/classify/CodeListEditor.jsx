@@ -127,7 +127,12 @@ export default function CodeListEditor({
       </div>
 
       {occupation && ncoPanelOpen && (
-        <NcoSuggestPanel codes={codes} ncoError={ncoError} ncoLoading={ncoLoading} ncoMatches={ncoMatches} />
+        <NcoSuggestPanel
+          codes={codes}
+          ncoError={ncoError}
+          ncoLoading={ncoLoading}
+          ncoMatches={ncoMatches}
+        />
       )}
     </div>
   )

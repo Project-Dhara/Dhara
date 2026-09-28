@@ -441,6 +441,25 @@ def _structural_bucket_for_df(df: pd.DataFrame) -> Tuple[str, str, Dict[str, Any
     if any(str(c).startswith("Col_") for c in primary.columns):
         return "llm", "placeholder column header (blank in the raw table) -- real header likely lives outside the ruled region", info
 
+    # Space-joined measure packs ("556 28 3 0") mean colspan leaves were glued.
+    glued = 0
+    for col in primary.columns:
+        for v in primary[col].values:
+            s = _cell_str(v)
+            if not s or " " not in s:
+                continue
+            parts = s.split()
+            if len(parts) >= 3 and all(
+                re.fullmatch(r"[\d,]+(?:\.\d+)?", p) for p in parts
+            ):
+                glued += 1
+                if glued >= 2:
+                    return (
+                        "llm",
+                        "glued multi-value measure cells (column boundaries collapsed)",
+                        info,
+                    )
+
     return "high", "clean single-header table, passes all structural checks", info
 
 

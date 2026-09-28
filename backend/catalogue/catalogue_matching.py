@@ -200,14 +200,14 @@ def _groups_without_metadata(
     Excel, SQL, and PDF all bucket tables the same way after preview.
     Lazy-import avoids a circular import with ``pdf_grouping``.
 
-    ``api_key`` (browser header or caller) is preferred over ``OPENAI_API_KEY``
-    for the optional strict singleton LLM merge — same as PDF grouping.
+    ``api_key`` is the steward's Settings key (browser ``X-Llm-Api-Key`` header).
+    There is no server ``OPENAI_API_KEY`` fallback — without a key, singleton
+    LLM merge is skipped (title-base grouping still runs).
     """
     from pdf.pdf_grouping import (
         propose_groups_from_table_dicts,
         proposal_to_catalogue_match_result,
     )
-    import os
 
     source_type = "xlsx"
     default_source = "Dataset"
@@ -218,7 +218,7 @@ def _groups_without_metadata(
             source_type = "xlsx" if st == "xls" else st
         default_source = first.get("source_file") or first.get("filename") or default_source
 
-    key = (api_key or os.environ.get("OPENAI_API_KEY") or "").strip() or None
+    key = (api_key or "").strip() or None
     proposal = propose_groups_from_table_dicts(extracted_tables, api_key=key)
     return proposal_to_catalogue_match_result(
         proposal,

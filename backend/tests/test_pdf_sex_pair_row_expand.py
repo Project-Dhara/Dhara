@@ -77,14 +77,16 @@ def test_dataframe_merges_measure_continuation_from_extract_shape():
         ],
     ]
     df = dataframe_from_extracted_rows(rows)
-    assert df.shape[0] == 4
-    sexes = [_cell(v) for v in df["Sex"].tolist()]
+    # Leading 1..N / (1)(2)… index strip is retained as the first body row.
+    assert df.shape[0] == 5
+    data = df.iloc[1:].reset_index(drop=True)
+    sexes = [_cell(v) for v in data["Sex"].tolist()]
     assert sexes == ["M", "F", "M", "F"]
-    totals = [_cell(v) for v in df["Total"].tolist()]
+    totals = [_cell(v) for v in data["Total"].tolist()]
     assert totals == ["4", "2", "10", "7"]
-    assert _cell(df.iloc[0]["S.No."]) == "1"
-    assert _cell(df.iloc[1]["S.No."]) == ""
-    assert _cell(df.iloc[2]["S.No."]) == "2"
+    assert _cell(data.iloc[0]["S.No."]) == "1"
+    assert _cell(data.iloc[1]["S.No."]) == ""
+    assert _cell(data.iloc[2]["S.No."]) == "2"
 
 
 

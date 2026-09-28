@@ -5,18 +5,26 @@ import { useRouter } from 'next/navigation'
 import FileUpload from '../FileUpload'
 import ErrorBanner from '../ui/ErrorBanner'
 import Button from '../ui/Button'
+import LlmKeyRequiredBanner from '../LlmKeyRequiredBanner'
 import { withAuthHeaders } from '../../lib/auth'
-import { withLlmKeyHeaders } from '../../lib/llmKey'
+import { getLlmApiKey, withLlmKeyHeaders } from '../../lib/llmKey'
+import { useApp } from '../../context/AppContext'
 
 // Upload only. Processing progress and review now live on their own routed
 // pages (/console/processing/:jobId, /console/review/:jobId) -- this
 // component's only job is picking a file, POSTing it, and navigating away.
-export default function PdfUpload() {
+export default function PdfUpload({ onGoSettings }) {
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
   const router = useRouter()
+  const { keySaved } = useApp()
+  const hasLlmKey = keySaved || Boolean(getLlmApiKey())
 
   const handleUpload = async (file) => {
+    if (!hasLlmKey) {
+      setError('Configure an LLM API key in Settings before uploading a PDF.')
+      return
+    }
     setError('')
     setUploading(true)
     try {
@@ -37,13 +45,17 @@ export default function PdfUpload() {
 
   return (
     <div className="mx-auto flex max-w-[760px] flex-col gap-3">
+      {!hasLlmKey && (
+        <LlmKeyRequiredBanner onGoSettings={onGoSettings || (() => router.push('/settings'))} />
+      )}
       <FileUpload
         onUpload={handleUpload}
         loading={uploading}
         label="Drop your file here"
-        hint="Drag and drop or browse"
+        hint={hasLlmKey ? 'Drag and drop or browse' : 'Save an LLM key in Settings first'}
         accept=".pdf"
         extensionRegex={/\.pdf$/i}
+        disabled={!hasLlmKey}
       />
 
       {error && (

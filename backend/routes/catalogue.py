@@ -124,7 +124,11 @@ async def batch_extract(request: Request, files: list[UploadFile] = File(...), u
     for filename, tables in results:
         all_tables.extend(tables)
         per_file.append({"filename": filename, "table_count": len(tables)})
-    await asyncio.to_thread(_validate_tables, all_tables)
+    await asyncio.to_thread(
+        _validate_tables,
+        all_tables,
+        request.headers.get(LLM_KEY_HEADER, "").strip() or None,
+    )
 
     # Stage full tables server-side so batch-push can send slim refs only
     # (avoids Starlette's 1MB multipart part limit on groups_json).
@@ -348,6 +352,8 @@ async def fill_group_metadata(request: Request, user_email: str = Depends(requir
                 g.get("concept_metadata") if use_sdg and g.get("concept_metadata") else g.get("metadata"),
                 fill_fields,
             ),
+            "llm_filled": bool(g.get("_llm_filled")),
+            "llm_filled_fields": list(g.get("_llm_filled_fields") or []),
         }
         for i, g in enumerate(filled_groups)
     ]
@@ -383,6 +389,7 @@ async def fill_group_metadata(request: Request, user_email: str = Depends(requir
         "autofill_errors": autofill_errors,
         "autofill_failed_count": len(autofill_errors),
         "autofill_filled_count": sum(1 for item in group_metadata if item["filled"]),
+        "autofill_llm_filled_count": sum(1 for item in group_metadata if item["llm_filled"]),
     }
 
 

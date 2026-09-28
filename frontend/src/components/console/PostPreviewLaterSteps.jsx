@@ -37,6 +37,7 @@ export default function PostPreviewLaterSteps({
   onGoDashboard,
   onGoCatalogue,
   onUploadAnother,
+  onMatchResultChange,
   showMetadataHeading = false,
   showClassifyHeading = false,
 }) {
@@ -72,6 +73,8 @@ export default function PostPreviewLaterSteps({
             metadataFiles={metadataFiles}
             onDone={onMetadataDone}
             onCancel={onBackToGrouping}
+            onMatchResultChange={onMatchResultChange}
+            onGoSettings={onGoSettings}
           />
         </div>
       )}
@@ -105,6 +108,8 @@ export default function PostPreviewLaterSteps({
           metadataIds={metadataIds}
           datasetLabel={metaLabel || datasetLabel || 'This dataset'}
           phase={phase}
+          hasKey={hasKey}
+          onGoSettings={onGoSettings}
           onPhaseChange={onClassifyPhaseChange}
           onClassificationCompleteChange={onClassificationCompleteChange}
           onRegisterGoToHarmonisation={(fn) => {

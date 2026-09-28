@@ -70,6 +70,25 @@ export default function MetadataSheetGrid({
     [rows],
   )
 
+  const aiKeySet = useMemo(
+    () => new Set(activeRow?.aiFilledKeys || []),
+    [activeRow],
+  )
+
+  const fieldStatusLabel = (key, value) => {
+    const filled = Boolean(String(value || '').trim())
+    if (aiKeySet.has(key) && filled) {
+      return { text: 'AI', className: 'border-teal/30 bg-[#e7f3ef] text-teal-deep', title: 'Filled by AI autofill' }
+    }
+    if (!filled) {
+      return { text: 'Empty', className: 'border-line bg-white text-ink-muted', title: 'Not filled yet' }
+    }
+    if (activeRow?.autofillSkippedNoKey) {
+      return { text: 'Manual', className: 'border-[#f0d6a3] bg-[#fdf0d8] text-[#a15c00]', title: 'Needs manual entry (AI autofill did not run)' }
+    }
+    return { text: 'Manual', className: 'border-line bg-white text-ink-soft', title: 'Entered or edited manually' }
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-3">
@@ -124,7 +143,23 @@ export default function MetadataSheetGrid({
               <span className="min-w-0 flex-1 text-[15px] font-semibold text-ink" title={row.label}>
                 {row.label || 'Untitled group'}
               </span>
-              {row.manual && (
+              {row.autofillSkippedNoKey && (
+                <span
+                  className="flex-none rounded-md border border-[#f0d6a3] bg-[#fdf0d8] px-2 py-0.5 font-sans text-[11.5px] font-semibold text-[#a15c00]"
+                  title="AI autofill did not run — fill in the fields below by hand"
+                >
+                  Not AI-filled
+                </span>
+              )}
+              {!row.autofillSkippedNoKey && row.aiFilled && (
+                <span
+                  className="flex-none rounded-md border border-teal/30 bg-[#e7f3ef] px-2 py-0.5 font-sans text-[11.5px] font-semibold text-teal-deep"
+                  title="Some fields in this group were filled by AI"
+                >
+                  AI auto-filled{(row.aiFilledKeys || []).length ? ` (${row.aiFilledKeys.length})` : ''}
+                </span>
+              )}
+              {!row.autofillSkippedNoKey && row.manual && !row.aiFilled && (
                 <span
                   className="flex-none rounded-md border border-[#f0d6a3] bg-[#fdf0d8] px-2 py-0.5 font-sans text-[11.5px] font-semibold text-[#a15c00]"
                   title="No metadata was auto-mapped for this group — fill in the fields below by hand"
@@ -143,6 +178,7 @@ export default function MetadataSheetGrid({
               <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 {badgeCols.map((c) => {
                   const missing = c.required && !(row.values[c.key] || '').trim()
+                  const status = fieldStatusLabel(c.key, row.values[c.key])
                   return (
                   <label
                     key={c.key}
@@ -150,7 +186,15 @@ export default function MetadataSheetGrid({
                       missing ? REQUIRED_EMPTY_FIELD_CLASS : 'border-line bg-[#F7F3EA]'
                     }`}
                   >
-                    <span className="font-label text-[11px] tracking-wide text-[#8E9398]">{c.label}{c.required && ' *'}</span>
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="font-label text-[11px] tracking-wide text-[#8E9398]">{c.label}{c.required && ' *'}</span>
+                      <span
+                        className={`flex-none rounded px-1.5 py-0.5 font-sans text-[10px] font-bold uppercase tracking-wide ${status.className}`}
+                        title={status.title}
+                      >
+                        {status.text}
+                      </span>
+                    </span>
                     {c.readOnly ? (
                       <span
                         className="block min-h-[34px] w-full [overflow-wrap:anywhere] break-words rounded-lg border border-solid border-line bg-cream px-2.5 py-1.5 font-sans text-[13px] font-medium leading-snug text-ink"
@@ -188,12 +232,21 @@ export default function MetadataSheetGrid({
               <div className="flex flex-col gap-2.5">
                 {longCols.map((c) => {
                   const missing = c.required && !(row.values[c.key] || '').trim()
+                  const status = fieldStatusLabel(c.key, row.values[c.key])
                   return (
                   <label key={c.key} className="flex flex-col gap-1">
-                    <span className="font-sans text-[11px] font-semibold uppercase tracking-wide text-[#8E9398]">
-                      {c.label}
-                      {c.code ? <span className="ml-1 font-medium normal-case tracking-normal">({c.code})</span> : null}
-                      {c.required ? ' *' : ''}
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="font-sans text-[11px] font-semibold uppercase tracking-wide text-[#8E9398]">
+                        {c.label}
+                        {c.code ? <span className="ml-1 font-medium normal-case tracking-normal">({c.code})</span> : null}
+                        {c.required ? ' *' : ''}
+                      </span>
+                      <span
+                        className={`flex-none rounded px-1.5 py-0.5 font-sans text-[10px] font-bold uppercase tracking-wide ${status.className}`}
+                        title={status.title}
+                      >
+                        {status.text}
+                      </span>
                     </span>
                     <textarea
                       className={`box-border min-h-[44px] w-full resize-y rounded-lg border px-3 py-2 font-sans text-[13.5px] leading-relaxed text-ink placeholder:text-[#a49c8e] focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal ${

@@ -19,8 +19,14 @@ from metadata.metadata_llm import (
 
 
 def _group_metadata_is_empty(metadata: Optional[dict], fields: Optional[list] = None) -> bool:
+    """True when no *fillable* catalogue fields are set.
+
+    `title` alone does not count — grouping often stamps a display title while
+    Product / Geography / Description etc. are still blank and need Stage 4.
+    """
     keys = fields if fields is not None else METADATA_FIELDS
-    return not any((metadata or {}).get(f) for f in keys)
+    fillable = [f for f in keys if f != "title"]
+    return not any(str((metadata or {}).get(f) or "").strip() for f in fillable)
 
 
 def _kyds_data_source(kyds: Optional[dict]) -> str:
@@ -258,12 +264,11 @@ def _fill_empty_group_metadata(
     let the user fill them in manually.
     """
     if not kyds_responses:
+        # Still report a missing LLM key so the metadata UI can prompt for it
+        # even when KYDS is absent (KYDS-missing is a separate client flag).
+        if getattr(extractor, "skip_llm", False):
+            return True, []
         return False, []
-
-    # Replace filename-like Sources with KYDS department; leave real agency
-    # names alone so groups can still differ when appropriate.
-    for g in groups:
-        _sanitize_group_data_source(g, kyds_responses, _known_filenames_for_group(g))
 
     use_sdg = str(standard or "nmds").lower() == "sdg"
 
@@ -285,8 +290,32 @@ def _fill_empty_group_metadata(
             return _group_metadata_is_empty(g.get("metadata"), SDG_METADATA_FIELDS)
         return _group_metadata_is_empty(g.get("metadata"), METADATA_FIELDS)
 
-    has_fillable_group = any(_is_empty(g) and _group_tables(g) for g in groups)
-    if not has_fillable_group:
+    def _needs_llm_fill(g: dict) -> bool:
+        """True when catalogue fields besides title/Source are still blank.
+
+        Grouping stamps a title, and KYDS (or a filename) may already occupy
+        Source. Neither of those should block Stage 4 when a Settings key is
+        present. Groups that already carry workbook values (Product,
+        Description, and so on) stay untouched.
+        """
+        if not _group_tables(g):
+            return False
+        if use_sdg:
+            return _is_empty(g)
+        meta = g.get("metadata") or {}
+        others = [f for f in METADATA_FIELDS if f not in ("title", "data_source")]
+        return not any(str(meta.get(f) or "").strip() for f in others)
+
+    # Decide before KYDS source injection as well as after a previous pass
+    # that only wrote Source. Either way, Source alone must not skip the LLM.
+    fill_ids = {i for i, g in enumerate(groups) if _needs_llm_fill(g)}
+
+    # Replace filename-like Sources with KYDS department; leave real agency
+    # names alone so groups can still differ when appropriate.
+    for g in groups:
+        _sanitize_group_data_source(g, kyds_responses, _known_filenames_for_group(g))
+
+    if not fill_ids:
         return False, []
     if extractor.skip_llm:
         return True, []
@@ -295,7 +324,7 @@ def _fill_empty_group_metadata(
     errors: list[dict] = []
 
     for gi, g in enumerate(groups):
-        if not _is_empty(g):
+        if gi not in fill_ids:
             continue
         tables = _group_tables(g)
         if not tables:
@@ -329,6 +358,10 @@ def _fill_empty_group_metadata(
                         f: prior.get(f) for f in METADATA_FIELDS if prior.get(f)
                     }
                 g["metadata"] = sdg_meta
+                g["_llm_filled"] = True
+                g["_llm_filled_fields"] = [
+                    f for f in SDG_METADATA_FIELDS if str(sdg_meta.get(f) or "").strip()
+                ]
             else:
                 llm_output = generate_metadata_with_llm(
                     facts, kyds=kyds_responses, complete_fn=extractor._complete,
@@ -339,6 +372,10 @@ def _fill_empty_group_metadata(
                     meta.get("data_source"), kyds_responses, known,
                 )
                 g["metadata"] = meta
+                g["_llm_filled"] = True
+                g["_llm_filled_fields"] = [
+                    f for f in METADATA_FIELDS if str(meta.get(f) or "").strip()
+                ]
             # Keep a display name when the client sent PDF-style groups.
             if not g.get("file_name") and g.get("name"):
                 g["file_name"] = g["name"]
