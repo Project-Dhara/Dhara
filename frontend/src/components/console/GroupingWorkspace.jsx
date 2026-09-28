@@ -89,10 +89,24 @@ function ConfirmDialog({ title, body, onCancel, onContinue }) {
   )
 }
 
-function AddGroupModal({ tables, onCreate, onClose, idField = 'id', allowEmpty = false }) {
+function AddGroupModal({ tables, onCreate, onClose, allowEmpty = false }) {
+  const [step, setStep] = useState('name')
   const [name, setName] = useState('')
   const [selected, setSelected] = useState(() => new Set())
-  const tableKey = (t) => t[idField] || t.id || t._uid || t.table_id
+  const [query, setQuery] = useState('')
+  const tableKey = (t) => t.id || t._uid || t.table_id
+  const trimmed = name.trim()
+  const canCreate = Boolean(trimmed) && (allowEmpty || selected.size > 0)
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return tables
+    return tables.filter((t) => {
+      const blob = [t.title || '', t.id || '', t.table_id || '', t._uid || ''].join(' ').toLowerCase()
+      return blob.includes(q)
+    })
+  }, [tables, query])
+
   const toggle = (id) => {
     setSelected((prev) => {
       const next = new Set(prev)
@@ -101,76 +115,132 @@ function AddGroupModal({ tables, onCreate, onClose, idField = 'id', allowEmpty =
       return next
     })
   }
-  const canCreate = Boolean(name.trim()) && (allowEmpty || selected.size > 0)
+
   if (typeof document === 'undefined') return null
+
   return createPortal(
-    <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/35 p-4" role="dialog" aria-modal="true">
-      <div className="flex max-h-[85vh] w-full max-w-3xl flex-col gap-3.5 overflow-hidden rounded-xl bg-surface p-5 shadow-dhara">
-        <div className="text-[16px] font-bold text-ink">Add group</div>
-        <label className="flex flex-col gap-1.5 text-[13px] text-ink-soft">
-          <span>Group name</span>
-          <input
-            className="rounded-lg border border-line px-3 py-2 font-body text-[14px] text-ink"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Population by State"
-          />
-        </label>
-        <div className="flex min-h-0 flex-1 flex-col gap-1.5">
-          <span className="text-[13px] text-ink-soft">
-            {allowEmpty
-              ? 'Optionally pick from ungrouped tables (or leave empty and use Move to later)'
-              : 'Select ungrouped tables to include'}
-          </span>
-          <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-line">
-            {tables.length === 0 ? (
-              <p className="m-0 px-3 py-4 text-[13px] text-ink-soft">No ungrouped tables remaining.</p>
-            ) : (
-              <table className="w-full border-collapse text-[13px]">
-                <tbody>
-                  {tables.map((t) => {
-                    const key = tableKey(t)
-                    return (
-                      <tr
-                        key={key}
-                        className="cursor-pointer border-b border-cream last:border-b-0 hover:bg-cream"
-                        onClick={() => toggle(key)}
-                      >
-                        <td className="w-0 whitespace-nowrap px-3 py-2.5 align-top">
-                          <input
-                            type="checkbox"
-                            className="mt-0.5 shrink-0"
-                            checked={selected.has(key)}
-                            onChange={() => toggle(key)}
-                            onClick={(e) => e.stopPropagation()}
-                            aria-label={`Select ${t.table_id || t.id}`}
-                          />
-                        </td>
-                        <td className="w-0 whitespace-nowrap py-2.5 pr-3 align-top font-semibold text-teal">
-                          {t.table_id || t.id}
-                        </td>
-                        <td className="min-w-0 py-2.5 pr-3 align-top leading-snug break-words text-ink">
-                          {t.title || '—'}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            )}
+    <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/35 p-4" role="dialog" aria-modal="true" aria-labelledby="add-group-title">
+      {step === 'name' ? (
+        <form
+          className="flex w-full max-w-md flex-col gap-3.5 rounded-xl bg-surface p-5 shadow-dhara"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (trimmed) setStep('pick')
+          }}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div id="add-group-title" className="text-[16px] font-bold text-ink">Add group</div>
+            <div className="text-[12px] font-semibold text-ink-soft">Step 1 of 2</div>
+          </div>
+          <label className="flex flex-col gap-1.5 text-[13px] text-ink-soft">
+            <span>Group name</span>
+            <input
+              className="rounded-lg border border-line px-3 py-2 font-body text-[14px] text-ink"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Population by State"
+              autoFocus
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </label>
+          <div className="flex items-center justify-end gap-2.5">
+            <Button variant="secondary" type="button" onClick={onClose}>Cancel</Button>
+            <Button variant="primary" type="submit" disabled={!trimmed}>Next</Button>
+          </div>
+        </form>
+      ) : (
+        <div className="flex max-h-[85vh] w-full max-w-3xl flex-col gap-3.5 overflow-hidden rounded-xl bg-surface p-5 shadow-dhara">
+          <div className="flex items-center justify-between gap-3">
+            <div id="add-group-title" className="text-[16px] font-bold text-ink">Add group</div>
+            <div className="text-[12px] font-semibold text-ink-soft">Step 2 of 2</div>
+          </div>
+          <div className="shrink-0 rounded-lg border border-line bg-cream px-3 py-2.5">
+            <div className="text-[12px] font-semibold uppercase tracking-wide text-ink-soft">Group name</div>
+            <div className="mt-0.5 truncate text-[15px] font-semibold text-ink" title={trimmed}>{trimmed}</div>
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col gap-1.5">
+            <span className="text-[13px] text-ink-soft">
+              {allowEmpty
+                ? 'Optionally pick from ungrouped tables (or leave empty and use Move to later)'
+                : 'Select ungrouped tables to include'}
+            </span>
+            <label className="flex min-w-0 items-center gap-2 rounded-lg border border-line bg-cream px-2.5 py-2 focus-within:border-teal focus-within:shadow-focus-ring">
+              <Search className="h-4 w-4 flex-none text-ink-soft" strokeWidth={2} aria-hidden />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search tables…"
+                className="min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 text-[13.5px] text-ink shadow-none outline-none placeholder:text-ink-soft focus:outline-none focus:ring-0"
+                aria-label="Search tables"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              {query ? (
+                <button
+                  type="button"
+                  className="flex-none text-ink-soft hover:text-teal"
+                  onClick={() => setQuery('')}
+                  aria-label="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" strokeWidth={2} />
+                </button>
+              ) : null}
+            </label>
+            <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-line">
+              {tables.length === 0 ? (
+                <p className="m-0 px-3 py-4 text-[13px] text-ink-soft">No ungrouped tables remaining.</p>
+              ) : filtered.length === 0 ? (
+                <p className="m-0 px-3 py-4 text-[13px] text-ink-soft">No tables match “{query.trim()}”.</p>
+              ) : (
+                <table className="w-full border-collapse text-[13px]">
+                  <tbody>
+                    {filtered.map((t) => {
+                      const key = tableKey(t)
+                      return (
+                        <tr
+                          key={key}
+                          className="cursor-pointer border-b border-cream last:border-b-0 hover:bg-cream"
+                          onClick={() => toggle(key)}
+                        >
+                          <td className="w-0 whitespace-nowrap px-3 py-2.5 align-top">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 shrink-0"
+                              checked={selected.has(key)}
+                              onChange={() => toggle(key)}
+                              onClick={(e) => e.stopPropagation()}
+                              aria-label={`Select ${t.table_id || t.id}`}
+                            />
+                          </td>
+                          <td className="w-0 whitespace-nowrap py-2.5 pr-3 align-top font-semibold text-teal">
+                            {t.table_id || t.id}
+                          </td>
+                          <td className="min-w-0 py-2.5 pr-3 align-top leading-snug break-words text-ink">
+                            {t.title || '—'}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center justify-end gap-2.5">
+            <Button variant="secondary" type="button" onClick={() => setStep('name')}>Back</Button>
+            <Button
+              variant="primary"
+              type="button"
+              disabled={!canCreate}
+              onClick={() => onCreate(trimmed, [...selected])}
+            >
+              Create group
+            </Button>
           </div>
         </div>
-        <div className="flex items-center justify-end gap-2.5">
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button
-            variant="primary"
-            disabled={!canCreate}
-            onClick={() => onCreate(name.trim(), [...selected])}
-          >
-            Create group
-          </Button>
-        </div>
-      </div>
+      )}
     </div>,
     document.body,
   )
