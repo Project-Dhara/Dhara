@@ -11,9 +11,16 @@ const CHIP_CAP = 12
 
 /**
  * Column locator: searchable combobox + color-coded chips
- * (green = mapped, coral = unmapped), with show more / show less.
+ * (green = mapped, coral/red = unmapped; stronger red when highlightIncomplete).
  */
-export default function ColumnChipGrid({ columns, selectedCol, onSelect, saving, incompleteNames }) {
+export default function ColumnChipGrid({
+  columns,
+  selectedCol,
+  onSelect,
+  saving,
+  incompleteNames,
+  highlightIncomplete = false,
+}) {
   const unmapped = incompleteNames instanceof Set ? incompleteNames : new Set(incompleteNames || [])
   const [expanded, setExpanded] = useState(false)
 
@@ -93,21 +100,30 @@ export default function ColumnChipGrid({ columns, selectedCol, onSelect, saving,
           {visible.map((c) => {
             const selected = c.name === selectedCol
             const isUnmapped = unmapped.has(c.name)
+            const needsAttention = highlightIncomplete && isUnmapped
             const n = (c.codes || []).length
             const related = relatedAliasCount(c)
+            const chipTone = selected
+              ? isUnmapped
+                ? needsAttention
+                  ? 'border-coral bg-[rgba(217,91,104,0.22)] text-coral ring-2 ring-coral/30'
+                  : 'border-coral bg-[rgba(217,91,104,0.14)] text-coral'
+                : 'border-green bg-[rgba(45,138,90,0.14)] text-green'
+              : isUnmapped
+                ? needsAttention
+                  ? 'border-coral bg-[rgba(217,91,104,0.14)] text-coral hover:border-coral hover:bg-[rgba(217,91,104,0.2)]'
+                  : 'border-coral/50 bg-[rgba(217,91,104,0.07)] text-coral hover:border-coral hover:bg-[rgba(217,91,104,0.12)]'
+                : 'border-green/40 bg-[rgba(45,138,90,0.07)] text-green hover:border-green hover:bg-[rgba(45,138,90,0.12)]'
+            const badgeTone = isUnmapped
+              ? needsAttention
+                ? 'bg-coral/25 text-coral'
+                : 'bg-coral/15 text-coral'
+              : 'bg-green/15 text-green'
             return (
               <button
                 key={`${c._metadataId || ''}:${c.name}`}
                 type="button"
-                className={`flex h-8 w-full min-w-0 items-center gap-1.5 rounded-md border px-2.5 text-left transition-colors ${
-                  selected
-                    ? isUnmapped
-                      ? 'border-coral bg-[rgba(217,91,104,0.14)] text-coral'
-                      : 'border-green bg-[rgba(45,138,90,0.14)] text-green'
-                    : isUnmapped
-                      ? 'border-coral/50 bg-[rgba(217,91,104,0.07)] text-coral hover:border-coral hover:bg-[rgba(217,91,104,0.12)]'
-                      : 'border-green/40 bg-[rgba(45,138,90,0.07)] text-green hover:border-green hover:bg-[rgba(45,138,90,0.12)]'
-                }`}
+                className={`flex h-8 w-full min-w-0 items-center gap-1.5 rounded-md border px-2.5 text-left transition-colors ${chipTone}`}
                 onClick={() => onSelect(c.name)}
                 title={
                   related > 0
@@ -119,9 +135,7 @@ export default function ColumnChipGrid({ columns, selectedCol, onSelect, saving,
                   {c.name}
                 </span>
                 <span
-                  className={`flex h-[18px] min-w-[18px] flex-none items-center justify-center rounded px-1.5 text-[10.5px] font-semibold tabular-nums leading-none ${
-                    isUnmapped ? 'bg-coral/15 text-coral' : 'bg-green/15 text-green'
-                  }`}
+                  className={`flex h-[18px] min-w-[18px] flex-none items-center justify-center rounded px-1.5 text-[10.5px] font-semibold tabular-nums leading-none ${badgeTone}`}
                 >
                   {n}
                 </span>

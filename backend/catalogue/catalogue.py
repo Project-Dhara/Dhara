@@ -26,6 +26,7 @@ from catalogue.classification_standards import (
     select_standard as select_classification_standard,
     delete_standard as delete_classification_standard,
     ensure_selected_loaded as ensure_classification_standard_loaded,
+    ensure_bundled_nco_standard as ensure_bundled_classification_standard,
 )
 from catalogue.classifications import (
     get_metadata_group_classifications,
@@ -65,6 +66,7 @@ __all__ = [
     "select_classification_standard",
     "delete_classification_standard",
     "ensure_classification_standard_loaded",
+    "ensure_bundled_classification_standard",
     "get_metadata_group_classifications",
     "get_definition_facts",
     "get_recent_classification_columns",

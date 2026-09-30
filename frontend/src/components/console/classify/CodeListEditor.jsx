@@ -6,7 +6,7 @@ import NcoSuggestPanel from './NcoSuggestPanel'
 
 const saveBtnClass = 'h-9 rounded-md border-0 px-4 text-[13px] font-semibold text-white transition-colors bg-teal hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]'
 const fieldClass = 'box-border h-9 w-full min-w-0 border-0 bg-transparent px-2.5 font-sans text-[12.5px] text-ink focus:bg-white focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal'
-const fieldMissingClass = 'box-border h-9 w-full min-w-0 border-0 bg-[rgba(217,91,104,0.1)] px-2.5 font-sans text-[12.5px] text-ink placeholder:text-coral/70 focus:bg-[rgba(217,91,104,0.14)] focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-coral'
+const fieldMissingClass = 'box-border h-9 w-full min-w-0 border-0 bg-[#fff3d9] px-2.5 font-sans text-[12.5px] text-ink placeholder:text-[#a15c00]/70 focus:bg-[#fff0cc] focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-[#e6b86a]'
 const colRule = 'border-r border-[#d7cdb9]'
 const rowRule = 'border-b border-[#d7cdb9]'
 
@@ -121,7 +121,7 @@ export default function CodeListEditor({
               const missingDefinition = highlightIncomplete && !String(row.definition || '').trim()
               return (
                 <tr className="bg-white" key={i}>
-                  <td className={`${rowRule} ${colRule} p-0 align-middle ${missingCode ? 'bg-[rgba(217,91,104,0.1)]' : 'bg-white'}`}>
+                  <td className={`${rowRule} ${colRule} p-0 align-middle ${missingCode ? 'bg-[#fff3d9]' : 'bg-white'}`}>
                     <input
                       className={missingCode ? fieldMissingClass : fieldClass}
                       type="text"
@@ -134,7 +134,7 @@ export default function CodeListEditor({
                   <td className={`${rowRule} ${colRule} bg-[#FBF7EF] px-2.5 py-2 align-middle text-[12.5px] font-medium leading-snug text-ink`} title="From the data — not editable">
                     <span className="line-clamp-2" title={row.value}>{row.value}</span>
                   </td>
-                  <td className={`${rowRule} p-0 align-middle ${missingDefinition ? 'bg-[rgba(217,91,104,0.1)]' : 'bg-white'}`}>
+                  <td className={`${rowRule} p-0 align-middle ${missingDefinition ? 'bg-[#fff3d9]' : 'bg-white'}`}>
                     <input
                       className={missingDefinition ? fieldMissingClass : fieldClass}
                       type="text"

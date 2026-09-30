@@ -4,6 +4,8 @@ import re
 import uuid
 from datetime import date
 
+import psycopg2.extras
+
 from catalogue.classifications import (
     _classifications_from_table_data,
     _merge_classifications,
@@ -186,17 +188,27 @@ def push_to_catalogue(
             # of its own, so clear out this dataset's old rows first.
             cur.execute("DELETE FROM dataset_rows WHERE dataset_id = %s", (ds_id,))
 
-            for row_index, row in enumerate(rows):
-                cur.execute("""
+            if rows:
+                # Bulk insert — row-by-row executemany was a major cost on
+                # large PDF pushes (tens of thousands of round-trips).
+                psycopg2.extras.execute_values(
+                    cur,
+                    """
                     INSERT INTO dataset_rows (dataset_id, sl_no, row_index, row_data, user_email)
-                    VALUES (%s, %s, %s, %s, %s)
-                """, (
-                    ds_id,
-                    _extract_sl_no(row, row_index),
-                    row_index,
-                    json.dumps(row, default=str),
-                    user_email,
-                ))
+                    VALUES %s
+                    """,
+                    [
+                        (
+                            ds_id,
+                            _extract_sl_no(row, row_index),
+                            row_index,
+                            json.dumps(row, default=str),
+                            user_email,
+                        )
+                        for row_index, row in enumerate(rows)
+                    ],
+                    page_size=500,
+                )
 
         # ── Handle metadata group ───────────────────────────────────────────
         if metadata_mode == "new":

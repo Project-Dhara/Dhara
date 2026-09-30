@@ -245,3 +245,15 @@ def init_schema(conn):
         except Exception:
             pass
         print(f"[catalogue.init_schema] extract_staging setup skipped: {exc}")
+
+    # Optional local NCO concordance → classification_standards list entry.
+    try:
+        from catalogue.classification_standards import ensure_bundled_nco_standard
+
+        ensure_bundled_nco_standard(conn)
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"[catalogue.init_schema] bundled NCO standard skipped: {exc}")

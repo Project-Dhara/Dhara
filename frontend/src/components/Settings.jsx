@@ -481,8 +481,8 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
         {activeTab === 'classification' && (
           <>
             <div className="-mt-2.5 text-sm text-ink-soft">
-              Upload a CSV, give it a name, then select which standard Classify should use for occupation suggestions.
-              Columns must match the NCO layout (see <code className="text-[12px]">nco_2015_concordance.csv.example</code>).
+              You can also upload more CSVs — select which standard Classify
+              should use for suggestions.
             </div>
 
             <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-white">
@@ -522,7 +522,9 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
                       <div className="text-[13px] text-ink-soft">
                         {selected ? 'Selected for classification. ' : 'Click the check to use this for classification. '}
                         {(s.row_count ?? 0).toLocaleString()} codes
-                        {s.original_filename ? ` · ${s.original_filename}` : ''}
+                        {s.uploaded_by !== 'system' && s.original_filename
+                          ? ` · ${s.original_filename}`
+                          : ''}
                       </div>
                     </div>
                     <button
@@ -607,7 +609,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
                 </button>
                 {!standardsLoading && standards.length > 0 && (
                   <span className={statusToneClass.ok}>
-                    {standards.some((s) => s.is_selected) ? 'Active standard saved in Postgres' : 'Select a standard to use for Classify'}
+                    {standards.some((s) => s.is_selected) ? 'Active standard saved.' : 'Select a standard to use for Classify'}
                   </span>
                 )}
               </div>

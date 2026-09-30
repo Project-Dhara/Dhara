@@ -413,14 +413,18 @@ async def batch_push(
     sessions extracted before staging existed). Legacy clients that still
     embed full `rows` in groups_json continue to work.
 
-    Two phases, deliberately kept separate: (1) slow work -- per-table LLM
-    enrichment and optional GCS uploads, parallelized -- happens BEFORE any
+    Two phases, deliberately kept separate: (1) prepare -- rebuild per-table
+    Excel bytes and optional GCS uploads, parallelized -- happens BEFORE any
     database connection is opened, and (2) fast DB writes happen only once
     everything is ready. Doing this in one phase with a connection held open
     for the whole thing caused Neon to drop the (idle, minutes-long)
-    connection before it could commit. GCS is skipped unless ENABLE_GCS=true."""
+    connection before it could commit. GCS is skipped unless ENABLE_GCS=true.
+
+    Per-table LLM enrichment is intentionally NOT run here. Group metadata
+    was already filled in Stage 4; a second LLM pass per table timed out
+    Cloudflare's ~100s proxy limit on large PDF jobs (100+ tables) and
+    surfaced as a generic UI "Push failed"."""
     groups = _json.loads(groups_json)
-    extractor = _extractor_for(request)
     nmds_concepts = _json.loads(nmds_concepts_json) if nmds_concepts_json else None
     batch_id = (batch_id or "").strip() or None
     pdf_job_id = (pdf_job_id or "").strip() or None
@@ -497,6 +501,18 @@ async def batch_push(
             full["_uid"] = uid
         return full
 
+    def _local_enrich(t: dict) -> dict:
+        """Title/unit heuristics only — no LLM. Classify rebuilds real
+        classifications from row data via `_classifications_from_table_data`."""
+        title = (t.get("title") or t.get("table_id") or "").strip()
+        return {
+            "short_description": title,
+            "long_description": title,
+            "units": t.get("unit") or "Count",
+            "classifications": {},
+            "age_column_keys": {},
+        }
+
     def _prep_table(t):
         # Preserve the extractor's own clean table structure as a
         # downloadable single-sheet Excel per dataset, so a download
@@ -504,7 +520,7 @@ async def batch_push(
         # reconstruction from the DB rows.
         xlsx_bytes = table_to_excel_bytes(t)
         t["source_excel_url"] = _upload_table_excel_to_gcs(xlsx_bytes, t.get("id", ""))
-        return t, extractor.enrich_for_catalogue(t)
+        return t, _local_enrich(t)
 
     def _prepare_group(group):
         tables = []
@@ -516,8 +532,9 @@ async def batch_push(
         if not tables:
             return None
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
-            prepped = list(pool.map(_prep_table, tables))
+        # Local enrich + openpyxl only (no LLM) — safe to run sync per group
+        # and parallelize across groups below.
+        prepped = [_prep_table(t) for t in tables]
 
         excel_url = None
         wi = group.get("workbook_index")
@@ -536,7 +553,9 @@ async def batch_push(
         }
 
     def _prepare_all():
-        return [g for g in (_prepare_group(group) for group in groups) if g]
+        workers = min(8, max(1, len(groups)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            return [g for g in pool.map(_prepare_group, groups) if g]
 
     def _write_all(prepared):
         conn = _cat.get_connection()
@@ -780,12 +799,14 @@ async def fill_definitions(request: Request, user_email: str = Depends(require_u
 
 @router.get("/api/catalogue/classification-standards")
 async def get_classification_standards(user_email: str = Depends(require_user)):
-    """List steward-uploaded classification concordance standards."""
+    """List classification concordance standards (uploads + bundled NCO CSV)."""
 
     def _run():
         conn = _cat.get_connection()
         try:
             _cat.init_schema(conn)
+            # Re-check in case the CSV appeared after first schema init.
+            _cat.ensure_bundled_classification_standard(conn)
             return _cat.list_classification_standards(conn)
         finally:
             conn.close()

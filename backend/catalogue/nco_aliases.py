@@ -7,57 +7,20 @@ NCO_2015_CSV_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "da
 
 
 def seed_nco_2015(conn, csv_path=NCO_2015_CSV_PATH):
-    """Optional local bootstrap: load a concordance CSV into nco_2015_codes if empty.
+    """Optional local bootstrap: register bundled concordance as a standard.
 
-    Production stewards should upload via Settings → Classification code
-    configuration instead. Kept for offline tests / one-off ops.
+    Prefer Settings → Classification code configuration for steward uploads.
+    When ``backend/data/nco_2015_concordance.csv`` exists, this creates the
+    ``NCO 2015`` list entry (and loads ``nco_2015_codes`` if nothing is selected).
     """
-    import csv as _csv
+    from catalogue.classification_standards import ensure_bundled_nco_standard
+
+    created = ensure_bundled_nco_standard(conn, csv_path=csv_path)
+    if created:
+        return int(created.get("row_count") or 0)
     with conn.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM nco_2015_codes")
-        if cur.fetchone()[0] > 0:
-            return 0
-    if not os.path.exists(csv_path):
-        return 0
-    rows = []
-    with open(csv_path, newline="", encoding="utf-8-sig") as f:
-        for r in _csv.DictReader(f):
-            code = (r.get("NCO_2015_Code") or "").strip()
-            title = (r.get("Occupation_Title") or "").strip()
-            if not code or not title:
-                continue
-            rows.append((
-                code, title,
-                (r.get("Division_Code") or "").strip(),
-                (r.get("Division_Title") or "").strip(),
-                (r.get("SubDivision_Code") or "").strip(),
-                (r.get("SubDivision_Title") or "").strip(),
-                (r.get("Group_Code") or "").strip(),
-                (r.get("Group_Title") or "").strip(),
-                (r.get("Family_Code") or "").strip(),
-                (r.get("Family_Title") or "").strip(),
-                (r.get("QP_NOS_Reference") or "").strip(),
-            ))
-    if not rows:
-        return 0
-    with conn.cursor() as cur:
-        psycopg2.extras.execute_values(
-            cur,
-            """
-            INSERT INTO nco_2015_codes (
-                nco_code, occupation_title,
-                division_code, division_title,
-                subdivision_code, subdivision_title,
-                group_code, group_title,
-                family_code, family_title,
-                qp_nos_reference
-            ) VALUES %s
-            ON CONFLICT (nco_code) DO NOTHING
-            """,
-            rows,
-        )
-    conn.commit()
-    return len(rows)
+        return cur.fetchone()[0]
 
 
 def lookup_nco_alias(conn, normalized_value: str):

@@ -3,11 +3,15 @@
 Matching still reads the active working set from ``nco_2015_codes`` (unchanged
 suggestion logic). Selecting a standard replaces that table from the stored
 upload so Classify uses the steward's chosen file.
+
+When ``backend/data/nco_2015_concordance.csv`` is present, it is auto-registered
+as an ``NCO 2015`` standard so it appears in Settings without a manual upload.
 """
 from __future__ import annotations
 
 import csv
 import io
+import os
 import re
 
 import psycopg2.extras
@@ -25,6 +29,14 @@ OPTIONAL_COLUMNS = (
     "Family_Code",
     "Family_Title",
     "QP_NOS_Reference",
+)
+
+BUNDLED_NCO_STANDARD_NAME = "NCO 2015"
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DEFAULT_CSV_CANDIDATES = (
+    os.path.join(_BACKEND_DIR, "data", "nco_2015_concordance.csv"),
+    # Repo-root copy when running from a monorepo checkout (optional).
+    os.path.join(os.path.dirname(_BACKEND_DIR), "nco_2015_concordance.csv"),
 )
 
 
@@ -281,3 +293,59 @@ def ensure_selected_loaded(conn) -> int:
     count = _reload_active_into_nco_table(conn, row[0])
     conn.commit()
     return count
+
+
+def resolve_concordance_csv_path(csv_path: str | None = None) -> str | None:
+    """Return the first existing concordance CSV path, or None."""
+    candidates = []
+    if csv_path:
+        candidates.append(csv_path)
+    candidates.extend(_DEFAULT_CSV_CANDIDATES)
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+
+def ensure_bundled_nco_standard(
+    conn,
+    *,
+    csv_path: str | None = None,
+    name: str = BUNDLED_NCO_STANDARD_NAME,
+) -> dict | None:
+    """Auto-register a local concordance CSV as a classification standard.
+
+    No-op when the file is missing or a standard with ``name`` already exists.
+    Selects the new standard only when nothing else is already selected.
+    """
+    path = resolve_concordance_csv_path(csv_path)
+    if not path:
+        return None
+
+    display_name = _slugify_name(name) or BUNDLED_NCO_STANDARD_NAME
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM classification_standards WHERE lower(name) = lower(%s)",
+            (display_name,),
+        )
+        if cur.fetchone():
+            return None
+        cur.execute(
+            "SELECT COUNT(*) FROM classification_standards WHERE is_selected = TRUE"
+        )
+        has_selected = cur.fetchone()[0] > 0
+
+    with open(path, "rb") as f:
+        raw = f.read()
+    if not raw:
+        return None
+
+    return create_standard(
+        conn,
+        name=display_name,
+        csv_bytes=raw,
+        original_filename=None,
+        description="Auto-loaded from backend concordance CSV",
+        uploaded_by="system",
+        select=not has_selected,
+    )

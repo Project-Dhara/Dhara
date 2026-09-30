@@ -651,8 +651,11 @@ export default function BatchReview({
 
       const res = await fetch('/api/catalogue/batch-push', withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: fd })))
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: 'Push failed' }))
-        throw new Error(err.detail || 'Push failed')
+        const err = await res.json().catch(() => ({}))
+        const detail = typeof err.detail === 'string'
+          ? err.detail
+          : (Array.isArray(err.detail) ? err.detail.map((d) => d?.msg || d).filter(Boolean).join('; ') : '')
+        throw new Error(detail || `Push failed (HTTP ${res.status})`)
       }
       const data = await res.json()
       finish((data.results || []).map((r) => r.metadata_id).filter(Boolean))

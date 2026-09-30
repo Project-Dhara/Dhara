@@ -693,34 +693,21 @@ export default function Classify({
       return
     }
     const summary = buildIncompleteSummary()
+    const n = summary.incompleteColumns
     setHarmoniseConfirm({
       title: 'Classification is incomplete',
       body: (
         <div className="flex flex-col gap-2">
-          <p className="m-0">You can still continue to harmonisation, but the following is unfinished:</p>
-          <ul className="m-0 list-disc space-y-1.5 pl-5">
-            {summary.columnDetails.map((col) => (
-              <li key={col.name}>
-                <span className="font-semibold text-ink">{col.name}</span>
-                {col.emptyList ? (
-                  <span> — no code rows</span>
-                ) : (
-                  <ul className="mt-1 list-disc space-y-0.5 pl-4">
-                    {col.gaps.slice(0, 8).map((gap) => (
-                      <li key={`${col.name}:${gap.index}`}>
-                        {gap.value}
-                        <span className="text-[#8E9398]"> ({gap.fields.join(', ')})</span>
-                      </li>
-                    ))}
-                    {col.gaps.length > 8 ? (
-                      <li className="text-[#8E9398]">+{col.gaps.length - 8} more</li>
-                    ) : null}
-                  </ul>
-                )}
-              </li>
-            ))}
-          </ul>
-          <p className="m-0 text-[13px] text-[#8E9398]">Go back to highlight the empty fields.</p>
+          <p className="m-0">
+            You can still continue to harmonisation, but{' '}
+            <span className="font-semibold text-ink">
+              {n} column{n === 1 ? '' : 's'}
+            </span>
+            {' '}{n === 1 ? 'is' : 'are'} not completely filled.
+          </p>
+          <p className="m-0 text-[13px] text-[#8E9398]">
+            Go back to highlight those columns.
+          </p>
         </div>
       ),
     })
@@ -767,6 +754,7 @@ export default function Classify({
             onSelect={setSelectedCol}
             saving={saving}
             incompleteNames={incompleteColumnNames}
+            highlightIncomplete={highlightIncomplete}
           />
           {activeColumn && (
             <CodeListEditor

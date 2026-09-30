@@ -230,10 +230,11 @@ curl http://localhost:8000/api/ready   # Postgres reachable (503 if not)
 docker exec -it dhara-postgres psql -U dhara -d dhara -c '\dt'
 ```
 
-Occupation matching needs a concordance CSV uploaded in **Settings →
-Classification code configuration** (columns match
-`backend/data/nco_2015_concordance.csv.example`). For offline golden tests
-only, you may also place a CSV at `backend/data/nco_2015_concordance.csv`.
+Occupation matching uses a concordance CSV. Place one at
+`backend/data/nco_2015_concordance.csv` and it is auto-registered as **NCO 2015**
+in **Settings → Classification code configuration** (columns match
+`backend/data/nco_2015_concordance.csv.example`). Stewards can also upload
+additional standards there.
 
 ## Auth
 

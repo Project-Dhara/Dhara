@@ -80,15 +80,16 @@ empty.
 
 ## Classification data
 
-Occupation / standards CSVs are uploaded in the app (**Settings → Classification
-code configuration**). They are stored in Postgres and are not part of env
-config. Optional local test file path:
+Occupation / standards CSVs are managed in the app (**Settings → Classification
+code configuration**) and stored in Postgres. Optional local file:
 
 ```text
 backend/data/nco_2015_concordance.csv
 ```
 
-(ignored by git; see `.example` for headers)
+When present, the backend auto-registers it as **NCO 2015** in the Settings
+list (selected if nothing else is). Stewards can still upload more standards.
+The full CSV is gitignored; see `.example` for headers.
 
 ## Health checks
 
