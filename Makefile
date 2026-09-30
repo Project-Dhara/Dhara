@@ -2,9 +2,9 @@ COMPOSE ?= docker compose
 .DEFAULT_GOAL := help
 
 # Local URLs (override if you change ports in docker-compose.yml)
-FRONTEND_URL ?= http://localhost:3000
+FRONTEND_URL ?= http://localhost:80
 BACKEND_URL  ?= http://localhost:8000
-PROD_URL     ?= http://localhost:8080
+PROD_URL     ?= http://localhost:80
 API_DOCS     ?= $(BACKEND_URL)/docs
 
 .PHONY: help urls up down logs build restart ps psql postgres prod prod-down clean
@@ -17,12 +17,13 @@ urls: ## Print local service URLs
 	@echo "  Dev UI:      $(FRONTEND_URL)"
 	@echo "  Dev API:     $(BACKEND_URL)"
 	@echo "  API docs:    $(API_DOCS)"
-	@echo "  Health:      $(BACKEND_URL)/api/health"
+	@echo "  Liveness:    $(BACKEND_URL)/api/live"
+	@echo "  Readiness:   $(BACKEND_URL)/api/ready"
 	@echo "  Access API:  $(BACKEND_URL)/api/v1"
 	@echo "  Prod (all):  $(PROD_URL)"
 	@echo ""
 
-up: ## Start Postgres, backend (:8000), and frontend (:3000)
+up: ## Start Postgres, backend (:8000), and frontend (:80)
 	$(COMPOSE) up -d --build
 	@echo ""
 	@echo "  UI:      $(FRONTEND_URL)"
@@ -57,11 +58,12 @@ postgres: ## Start only Postgres (run backend/frontend on the host)
 	@echo "  Backend:  $(BACKEND_URL)  (run backend on host)"
 	@echo ""
 
-prod: ## Start Postgres + combined app image on :8080
+prod: ## Start Postgres + combined app image on :80
 	$(COMPOSE) --profile prod up -d --build postgres app
 	@echo ""
 	@echo "  App (UI + API): $(PROD_URL)"
-	@echo "  API health:     $(PROD_URL)/api/health"
+	@echo "  Liveness:       $(PROD_URL)/api/live"
+	@echo "  Readiness:      $(PROD_URL)/api/ready"
 	@echo ""
 
 prod-down: ## Stop prod-profile services

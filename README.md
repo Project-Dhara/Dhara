@@ -125,7 +125,8 @@ make urls                               # print local URLs
 | UI        | http://localhost:3000 |
 | API       | http://localhost:8000 |
 | API docs  | http://localhost:8000/docs |
-| Health    | http://localhost:8000/api/health |
+| Liveness  | http://localhost:8000/api/live |
+| Readiness | http://localhost:8000/api/ready |
 
 Useful Make targets:
 
@@ -224,7 +225,8 @@ npm run dev   # http://localhost:3000 — /api proxied to :8000
 Schema is created on first catalogue/KYDS API use (`init_schema`). Verify:
 
 ```bash
-curl http://localhost:8000/api/health
+curl http://localhost:8000/api/live    # process up
+curl http://localhost:8000/api/ready   # Postgres reachable (503 if not)
 docker exec -it dhara-postgres psql -U dhara -d dhara -c '\dt'
 ```
 

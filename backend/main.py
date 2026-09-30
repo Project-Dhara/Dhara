@@ -1,7 +1,7 @@
 import pathlib
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,7 +17,13 @@ from routes import kyds as routes_kyds
 from routes import pdf as routes_pdf
 
 OPENAPI_TAGS = [
-    {"name": "Health", "description": "Liveness. No JWT."},
+    {
+        "name": "Health",
+        "description": (
+            "Probes (no JWT). `/api/live` = process up; "
+            "`/api/ready` and `/api/health` = Postgres reachable (503 if not)."
+        ),
+    },
     {"name": "Auth", "description": "Login issues a JWT. Send it as `Authorization: Bearer <token>` on every other route. `/api/me` checks the current session."},
     {"name": "KYDS", "description": "Know Your Dataset survey. JWT required."},
     {"name": "Catalogue", "description": "Excel/SQL extract → match → classify → publish. JWT required."},
@@ -62,21 +68,52 @@ app.include_router(routes_dashboard.router)
 app.include_router(routes_access.router)
 
 
-@app.get("/api/health", tags=["Health"], summary="Health")
-async def health():
-    out = {"status": "ok", "pgvector": False}
+def _readiness_payload(response: Response) -> dict:
+    """Postgres SELECT 1 for readiness; report pgvector without failing on it.
+
+    Schema init / migrations must never run here — probes are read-only.
+    """
+    checks: dict = {"postgres": False, "pgvector": False}
     try:
         from core import vector_store as _vs
+
         conn = _cat.get_connection()
         try:
-            _cat.init_schema(conn)
-            out["pgvector"] = _vs.vector_extension_ready(conn)
-            out["embedding_dim"] = _vs.embedding_dim()
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+            checks["postgres"] = True
+            checks["pgvector"] = _vs.vector_extension_ready(conn)
+            checks["embedding_dim"] = _vs.embedding_dim()
         finally:
             conn.close()
     except Exception as exc:
-        out["pgvector_error"] = str(exc)
-    return out
+        checks["error"] = type(exc).__name__
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {"status": "not_ready", "checks": checks}
+
+    if not checks["postgres"]:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {"status": "not_ready", "checks": checks}
+    return {"status": "ready", "checks": checks}
+
+
+@app.get("/api/live", tags=["Health"], summary="Liveness")
+async def live():
+    """Process is up. No dependency checks."""
+    return {"status": "ok"}
+
+
+@app.get("/api/ready", tags=["Health"], summary="Readiness")
+async def ready(response: Response):
+    """Ready for traffic when Postgres answers SELECT 1. Returns 503 otherwise."""
+    return _readiness_payload(response)
+
+
+@app.get("/api/health", tags=["Health"], summary="Health (readiness alias)")
+async def health(response: Response):
+    """Alias of `/api/ready` for existing docs and curl habits."""
+    return _readiness_payload(response)
 
 
 # --- Serve React frontend (production) ---

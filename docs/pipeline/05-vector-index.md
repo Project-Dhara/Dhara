@@ -51,7 +51,7 @@ PostgreSQL (SoT)
 - Image: `pgvector/pgvector:pg16`
 - Init: `backend/db/init-pgvector.sql`
 - Module: `backend/core/vector_store.py`
-- Health: `/api/health` reports pgvector readiness
+- Health: `/api/ready` (and `/api/health`) report whether the `vector` extension is present; missing pgvector does not fail readiness
 - PDF Preview → Continue upserts `table_summary` (+ column chunks)
 
 Embeddings are keyed by `object_type` / `object_id` / `chunk_kind` (and often

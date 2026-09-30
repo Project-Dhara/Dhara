@@ -93,8 +93,12 @@ backend/data/nco_2015_concordance.csv
 ## Health checks
 
 ```bash
-curl -s "$BASE/api/health"
+curl -s -o /dev/null -w "%{http_code}\n" "$BASE/api/live"    # 200 if process up
+curl -s "$BASE/api/ready"                                    # 200 or 503
+# /api/health is an alias of /api/ready
 ```
 
-Expect Postgres connectivity and pgvector readiness indicators used by the
-health handler.
+`/api/live` has no dependency checks. `/api/ready` runs a read-only
+`SELECT 1` against Postgres and reports whether the `vector` extension is
+present (`pgvector` is informational; missing pgvector does not fail
+readiness). Unreachable Postgres returns **HTTP 503**.

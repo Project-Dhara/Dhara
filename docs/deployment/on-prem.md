@@ -40,7 +40,8 @@ make urls
 | UI | http://localhost:3000 |
 | API | http://localhost:8000 |
 | Swagger | http://localhost:8000/docs |
-| Health | http://localhost:8000/api/health |
+| Liveness | http://localhost:8000/api/live |
+| Readiness | http://localhost:8000/api/ready |
 
 Useful targets:
 

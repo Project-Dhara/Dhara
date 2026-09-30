@@ -191,7 +191,7 @@ pgvector is enabled from `backend/db/init-pgvector.sql` on first Postgres boot.
 
 ## Auth and API surface
 
-- JWT Bearer auth on almost all routes (`/api/health`, login, signup excepted)
+- JWT Bearer auth on almost all routes (`/api/live`, `/api/ready`, `/api/health`, login, signup excepted)
 - Swagger at `/docs`
 - Signup controlled by `ENABLE_SIGNUP`; otherwise provision with
   `backend/scripts/create_user.py`

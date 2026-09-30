@@ -1,6 +1,6 @@
 # Full stack: Postgres + FastAPI + Next.js.
 #   docker compose up -d --build
-# Combined production image (root Dockerfile) on :8080:
+# Combined production image (root Dockerfile) published on host :80 (Cloudflare):
 #   docker compose --profile prod up -d --build app postgres
 services:
   postgres:
@@ -53,6 +53,18 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/ready')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     volumes:
       - ./backend:/backend
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
@@ -64,16 +76,18 @@ services:
     container_name: dhara-frontend
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      # Host :80 for Cloudflare Tunnel / reverse proxy; Next still listens on 3000 inside.
+      - "80:3000"
     environment:
       BACKEND_ORIGIN: http://backend:8000
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     volumes:
       - ./frontend:/app
       - frontend_node_modules:/app/node_modules
     # Named volume can be empty/stale after package changes — install before
-    # starting Next, and bind 0.0.0.0 so host localhost:3000 can reach it.
+    # starting Next, and bind 0.0.0.0 so host localhost:80 can reach it.
     command: sh -c "npm ci && npm run dev"
 
   app:
@@ -90,7 +104,8 @@ services:
       - 8.8.8.8
       - 1.1.1.1
     ports:
-      - "8080:8080"
+      # Host :80 for Cloudflare Tunnel; app still listens on PORT (8080) inside.
+      - "80:8080"
     environment:
       DATABASE_URL: postgresql://dhara:dhara_local_password@postgres:5432/dhara
       ENABLE_GCS: "false"
@@ -100,6 +115,19 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      # Hit FastAPI directly (Next proxies /api on :8080; backend is on BACKEND_PORT).
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import os,urllib.request; p=os.environ.get('BACKEND_PORT','8000'); urllib.request.urlopen(f'http://127.0.0.1:{p}/api/ready')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
 
 volumes:
   dhara_pg_data:

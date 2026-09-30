@@ -215,7 +215,7 @@ def init_schema(conn):
         _vs.ensure_semantic_embeddings_table(conn)
     except Exception as exc:
         # Non-pgvector Postgres (e.g. managed DB without the extension) must
-        # not break catalogue init; surface via /api/health when available.
+        # not break catalogue init; surface via /api/ready (and /api/health).
         # Critical: roll back so the connection is usable for later queries
         # (otherwise callers hit InFailedSqlTransaction).
         try:
