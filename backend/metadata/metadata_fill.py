@@ -1,5 +1,6 @@
 """Stage 4 -- LLM metadata autofill for catalogue/PDF groups (mirrors the
 notebook's `generate_metadata_per_group`)."""
+import concurrent.futures
 import json as _json
 import os
 import re
@@ -16,6 +17,10 @@ from metadata.metadata_llm import (
     parse_llm_metadata_output,
     parse_llm_sdg_metadata_output,
 )
+
+# Cap concurrent Stage 4 LLM calls the same way Excel extraction does —
+# enough to cut wall time across many groups without thrashing rate limits.
+_STAGE4_MAX_WORKERS = 5
 
 
 def _group_metadata_is_empty(metadata: Optional[dict], fields: Optional[list] = None) -> bool:
@@ -320,19 +325,19 @@ def _fill_empty_group_metadata(
     if extractor.skip_llm:
         return True, []
 
+    # Build facts serially (openpyxl / shared cache), then run LLM calls in
+    # parallel. Same per-group outcomes as the old sequential loop.
     facts_cache: dict = {}
-    errors: list[dict] = []
-
-    for gi, g in enumerate(groups):
-        if gi not in fill_ids:
-            continue
+    jobs: list[tuple[int, dict, dict]] = []  # (gi, group, facts)
+    err_by_gi: dict[int, dict] = {}
+    for gi in sorted(fill_ids):
+        g = groups[gi]
         tables = _group_tables(g)
         if not tables:
             continue
         group_label = g.get("file_name") or g.get("name") or "Untitled group"
         source_file = tables[0].get("source_file") or group_label or "extracted"
         content = (dataset_bytes_by_filename or {}).get(source_file)
-
         try:
             if content:
                 if source_file not in facts_cache:
@@ -343,7 +348,19 @@ def _fill_empty_group_metadata(
                 if cache_key not in facts_cache:
                     facts_cache[cache_key] = extract_facts_from_tables(tables, source_file)
                 facts = facts_cache[cache_key]
+            jobs.append((gi, g, facts))
+        except Exception as e:
+            msg = str(e).strip() or e.__class__.__name__
+            print(f"Stage 4 LLM metadata generation failed for group {group_label}: {msg}")
+            err_by_gi[gi] = {"index": gi, "group": group_label, "error": msg}
 
+    def _apply_llm_fill(gi: int, g: dict, facts: dict) -> Optional[dict]:
+        """Run one group's LLM fill. Returns an error dict on failure, else None.
+
+        Mutates only `g` (unique per index), so concurrent workers do not race.
+        """
+        group_label = g.get("file_name") or g.get("name") or "Untitled group"
+        try:
             if use_sdg:
                 llm_output = generate_sdg_metadata_with_llm(
                     facts, kyds=kyds_responses, complete_fn=extractor._complete,
@@ -379,10 +396,32 @@ def _fill_empty_group_metadata(
             # Keep a display name when the client sent PDF-style groups.
             if not g.get("file_name") and g.get("name"):
                 g["file_name"] = g["name"]
+            return None
         except Exception as e:
             msg = str(e).strip() or e.__class__.__name__
             print(f"Stage 4 LLM metadata generation failed for group {group_label}: {msg}")
-            errors.append({"index": gi, "group": group_label, "error": msg})
+            return {"index": gi, "group": group_label, "error": msg}
+
+    if jobs:
+        workers = min(_STAGE4_MAX_WORKERS, len(jobs))
+        if workers <= 1:
+            for gi, g, facts in jobs:
+                err = _apply_llm_fill(gi, g, facts)
+                if err:
+                    err_by_gi[gi] = err
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [
+                    pool.submit(_apply_llm_fill, gi, g, facts)
+                    for gi, g, facts in jobs
+                ]
+                for future in concurrent.futures.as_completed(futures):
+                    err = future.result()
+                    if err:
+                        err_by_gi[int(err["index"])] = err
+
+    # Preserve ascending group-index order (matches the old sequential loop).
+    errors = [err_by_gi[i] for i in sorted(err_by_gi)]
 
     # Final pass: strip any filename Sources the model still leaked in.
     for g in groups:

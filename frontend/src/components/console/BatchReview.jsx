@@ -135,6 +135,10 @@ export default function BatchReview({
   // Avoid re-running autofill in a loop for the same blocker state (e.g. still
   // missing KYDS). Cleared when the steward saves KYDS or clicks Retry.
   const autofillAttemptTokenRef = useRef('')
+  // Last kick value we already auto-ran for — used to skip a redundant second
+  // Stage 4 call after continue-to-metadata already filled, while still
+  // allowing KYDS-save / Retry kicks to re-run.
+  const lastAutofillKickRef = useRef(0)
   // Per-group field keys still carrying an AI autofill value (cleared when the steward edits).
   const [aiFilledByGroup, setAiFilledByGroup] = useState(() => {
     const fromResult = matchResult?.ai_filled_fields_by_group
@@ -237,7 +241,8 @@ export default function BatchReview({
 
   // Auto-run Stage 4 fill when the steward has a key and groups are still
   // empty — including after they add a key or save KYDS (not only the old
-  // "skipped_no_key" path).
+  // "skipped_no_key" path). Skip when continue-to-metadata already ran fill
+  // for this group set (autofill_attempted) unless a kick bumps retry.
   useEffect(() => {
     if (!hasLlmKey || !onMatchResultChange || !groupsNeedAiFill || refilling) return
     const token = [
@@ -248,7 +253,20 @@ export default function BatchReview({
       `groups:${(matchResult?.groups || []).length}`,
     ].join('|')
     if (autofillAttemptTokenRef.current === token) return
+
+    // Stage 4 already completed (success, empty, or per-group errors) during
+    // the grouping → metadata transition. Don't immediately re-call the LLM
+    // for the same outcome. Still auto-run when key/KYDS blockers clear, or
+    // when kick advances (KYDS save / Retry button).
+    const alreadyAttempted = Boolean(matchResult?.autofill_attempted)
+      && !matchResult?.llm_autofill_skipped_no_key
+    if (alreadyAttempted && autofillKick === lastAutofillKickRef.current) {
+      autofillAttemptTokenRef.current = token
+      return
+    }
+
     autofillAttemptTokenRef.current = token
+    lastAutofillKickRef.current = autofillKick
     void retryAutofill({ force: true })
   }, [
     hasLlmKey,
@@ -257,6 +275,7 @@ export default function BatchReview({
     refilling,
     matchResult?.llm_autofill_skipped_no_key,
     matchResult?.kyds_missing,
+    matchResult?.autofill_attempted,
     matchResult?.groups,
     autofillKick,
     retryAutofill,
@@ -714,7 +733,13 @@ export default function BatchReview({
                 disabled={refilling}
                 onClick={() => {
                   autofillAttemptTokenRef.current = ''
-                  setAutofillKick((n) => n + 1)
+                  setAutofillKick((n) => {
+                    const next = n + 1
+                    // Keep the effect from immediately scheduling a second run;
+                    // this click already invokes retryAutofill below.
+                    lastAutofillKickRef.current = next
+                    return next
+                  })
                   void retryAutofill({ force: true })
                 }}
               >

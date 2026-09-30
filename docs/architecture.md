@@ -98,7 +98,7 @@ dhara-poc/
 │   ├── metadata/      metadata fill / validation / LLM helpers
 │   └── core/          auth, deps, vector_store, GCS
 ├── docker-compose.yml Dev stack + prod profile
-├── Dockerfile         Combined Next + FastAPI image (:8080)
+├── Dockerfile         Combined Next + FastAPI image (host :80 → :8080)
 └── docs/              This documentation
 ```
 

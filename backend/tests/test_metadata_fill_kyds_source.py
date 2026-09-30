@@ -109,3 +109,27 @@ def test_workbook_metadata_is_not_overwritten():
     assert extractor.calls == 0
     assert groups[0]["metadata"]["product"] == "From workbook"
     assert groups[0]["metadata"]["description"] == "Already mapped"
+
+
+def test_multiple_blank_groups_are_filled_in_parallel():
+    """Several empty groups each get an LLM call; outcomes match sequential fill."""
+    groups = [_blank_group(), _blank_group()]
+    groups[1]["file_name"] = "Deaths"
+    groups[1]["metadata"]["title"] = "Deaths"
+    groups[1]["matched_tables"][0]["table"]["title"] = "Deaths by age"
+    extractor = _FakeExtractor()
+    skipped, errors = _fill_empty_group_metadata(
+        groups,
+        {},
+        {"department": "Department of Health and Welfare"},
+        extractor,
+    )
+    assert skipped is False
+    assert errors == []
+    assert extractor.calls == 2
+    assert groups[0]["metadata"]["product"] == "Vital statistics"
+    assert groups[1]["metadata"]["product"] == "Vital statistics"
+    assert groups[0]["_llm_filled"] is True
+    assert groups[1]["_llm_filled"] is True
+    assert groups[0]["metadata"]["data_source"] == "Department of Health and Welfare"
+    assert groups[1]["metadata"]["data_source"] == "Department of Health and Welfare"

@@ -24,7 +24,14 @@ urls: ## Print local service URLs
 	@echo ""
 
 up: ## Start Postgres, backend (:8000), and frontend (:80)
-	$(COMPOSE) up -d --build
+	@test -f backend/.env || { cp backend/.env.example backend/.env && echo "Created backend/.env from .env.example (set JWT_SECRET for non-dev use)"; }
+	# Retry once: Docker+systemd cgroup setup can fail transiently with
+	# "Message recipient disconnected from message bus without replying".
+	@$(COMPOSE) up -d --build || { \
+		echo "Compose up failed; retrying created containers..."; \
+		sleep 2; \
+		$(COMPOSE) start || $(COMPOSE) up -d; \
+	}
 	@echo ""
 	@echo "  UI:      $(FRONTEND_URL)"
 	@echo "  Backend: $(BACKEND_URL)"
@@ -59,6 +66,7 @@ postgres: ## Start only Postgres (run backend/frontend on the host)
 	@echo ""
 
 prod: ## Start Postgres + combined app image on :80
+	@test -f backend/.env || { cp backend/.env.example backend/.env && echo "Created backend/.env from .env.example (set JWT_SECRET for non-dev use)"; }
 	$(COMPOSE) --profile prod up -d --build postgres app
 	@echo ""
 	@echo "  App (UI + API): $(PROD_URL)"

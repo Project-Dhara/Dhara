@@ -66,7 +66,7 @@ dhara-poc/
 ├── docs/                        Architecture, pipeline stages, deployment
 ├── Makefile                     make up / down / logs / psql / prod …
 ├── docker-compose.yml           postgres + backend + frontend (dev); app (prod)
-├── Dockerfile                   Combined Next.js + FastAPI image (:8080)
+├── Dockerfile                   Combined Next.js + FastAPI image (host :80 → :8080)
 ├── Dhara_logo.png               Brand mark (README / docs)
 ├── backend/                     FastAPI + openpyxl + LLM + Postgres + pgvector
 │   ├── main.py                  App setup + router registration (entrypoint)
@@ -116,13 +116,13 @@ Requires Docker Compose. From the repo root:
 
 ```bash
 cp backend/.env.example backend/.env   # then edit secrets / keys
-make up                                 # postgres + backend :8000 + frontend :3000
+make up                                 # postgres + backend :8000 + frontend :80
 make urls                               # print local URLs
 ```
 
 | Service   | URL |
 |-----------|-----|
-| UI        | http://localhost:3000 |
+| UI        | http://localhost:80 |
 | API       | http://localhost:8000 |
 | API docs  | http://localhost:8000/docs |
 | Liveness  | http://localhost:8000/api/live |
@@ -136,7 +136,7 @@ make ps          # container status
 make psql        # psql into Docker Postgres
 make down        # stop (keeps DB volume)
 make postgres    # Postgres only (run backend/frontend on the host)
-make prod        # combined app image on :8080
+make prod        # combined app image on :80
 make clean       # stop and delete volumes (incl. DB)
 ```
 
@@ -261,7 +261,8 @@ Cloud Run service `extractionprocess` (project `data-unlock`, region
 stack:
 
 ```bash
-make prod    # http://localhost:8080
+make prod    # http://localhost:80
+
 ```
 
 Manual deploy example:

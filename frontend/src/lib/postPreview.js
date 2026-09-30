@@ -259,6 +259,7 @@ export async function fillGroupMetadataForMatchResult(matchResult, {
       toast: `${detail} — fill metadata in manually below.`,
       matchResult: {
         ...matchResult,
+        autofill_attempted: true,
         llm_autofill_skipped_no_key: false,
         kyds_missing: false,
         autofill_errors: [{ group: 'all', error: detail }],
@@ -332,6 +333,7 @@ export async function fillGroupMetadataForMatchResult(matchResult, {
     matchResult: {
       ...matchResult,
       groups: nextGroups,
+      autofill_attempted: true,
       llm_autofill_skipped_no_key: Boolean(data.llm_autofill_skipped_no_key),
       kyds_missing: Boolean(data.kyds_missing),
       autofill_errors: autofillErrors,

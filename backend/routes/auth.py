@@ -52,6 +52,13 @@ async def signup(request: Request):
     if len(password) < 8:
         raise HTTPException(400, "Password must be at least 8 characters")
 
+    # Mint the JWT before writing the user so a missing JWT_SECRET fails
+    # cleanly instead of leaving an orphan account.
+    try:
+        token = _auth.create_token(email)
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+
     def _run():
         conn = _cat.get_connection()
         _cat.init_schema(conn)
@@ -70,7 +77,6 @@ async def signup(request: Request):
     if not created:
         raise HTTPException(409, "An account with that email already exists")
 
-    token = _auth.create_token(email)
     return {"token": token, "email": email, "name": name, "dept": dept}
 
 
@@ -102,5 +108,8 @@ async def login(request: Request):
     if not user or not _auth.verify_password(password, user["password_hash"]):
         raise HTTPException(401, "Invalid email or password")
 
-    token = _auth.create_token(email)
+    try:
+        token = _auth.create_token(email)
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
     return {"token": token, "email": email, "name": user.get("name"), "dept": user.get("dept")}

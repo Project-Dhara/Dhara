@@ -37,7 +37,7 @@ make urls
 
 | Service | URL |
 |---------|-----|
-| UI | http://localhost:3000 |
+| UI | http://localhost:80 |
 | API | http://localhost:8000 |
 | Swagger | http://localhost:8000/docs |
 | Liveness | http://localhost:8000/api/live |
@@ -62,12 +62,12 @@ port:
 
 ```bash
 make prod
-# → http://localhost:8080
+# → http://localhost:80
 ```
 
 `start.sh` runs uvicorn on `BACKEND_PORT` (default 8000, internal) and
-`next start` on `PORT` (default 8080, public). Next rewrites `/api/*` to the
-backend.
+`next start` on `PORT` (default 8080, container-internal). Compose maps host
+`:80` → container `:8080`. Next rewrites `/api/*` to the backend.
 
 Stop:
 
@@ -77,7 +77,7 @@ make prod-down
 
 ### Reverse proxy (on-prem)
 
-Put nginx / Caddy / Traefik in front of `:8080` (or `:3000`+`:8000` in three-
+Put nginx / Caddy / Traefik in front of `:80` (or `:80`+`:8000` in three-
 container mode):
 
 - Terminate TLS
@@ -88,7 +88,7 @@ Example conceptual Caddy site:
 
 ```text
 dhara.internal {
-  reverse_proxy localhost:8080
+  reverse_proxy localhost:80
 }
 ```
 
