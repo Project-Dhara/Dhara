@@ -19,10 +19,10 @@ used for AI calls.
 | Mode | What happens |
 |------|----------------|
 | **With Settings LLM key** | Full PDF path: PyMuPDF candidates → confidence split → LLM reconstruct/classify for ambiguous pages; richer Excel assist, NCO suggest, singleton grouping merge |
-| **Without Settings key** | Console / PDF upload is blocked until a key is saved. There is no server-side key fallback |
+| **Without Settings key** | Uploads still work. PyMuPDF extracts ruled tables; ambiguous pages use heuristics and need more steward review. Excel extract is structural; AI fill / NCO / LLM singleton merge are skipped. There is no server-side key fallback |
 
-Air-gapped installs can still run without AI once a key is available via an
-on-prem MEITY-compatible endpoint pasted in Settings.
+Air-gapped PDF ingest is usable without a key, with more human review on
+complex pages. Paste a MEITY-compatible key in Settings when AI assist is available.
 
 ## 1. Quick start (recommended)
 

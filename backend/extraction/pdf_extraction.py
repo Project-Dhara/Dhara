@@ -30,6 +30,7 @@ from extraction.pdf_table_confidence import (
     extract_page_text_blocks,
     strip_caption_label_prefix,
     table_dict_from_df,
+    title_needs_review,
 )
 
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -935,6 +936,7 @@ REVIEW_REASONS = (
     "uncertain_semantic_role",
     "uncertain_concept",
     "ambiguous_column",
+    "uncertain_title",
 )
 _REASON_PRIORITY = {reason: i for i, reason in enumerate(REVIEW_REASONS)}
 
@@ -1880,6 +1882,8 @@ def _coerce_reason(raw: Any) -> Optional[str]:
         return "uncertain_extraction"
     if "ambig" in s:
         return "ambiguous_column"
+    if "title" in s:
+        return "uncertain_title"
     return None
 
 
@@ -2132,6 +2136,8 @@ def derive_human_review_needed(table: Dict[str, Any]) -> tuple[bool, Optional[st
         (role == "unknown" -> uncertain_semantic_role, material to
         understanding the table regardless of whether the model itself
         flagged it)
+      - missing / unusable title -> uncertain_title (also applies on the
+        deterministic no-LLM path so Preview's Review needed filter sees it)
 
     When multiple reasons are present, REVIEW_REASONS' order picks ONE for
     the table-level rollup -- the underlying field/column reasons are left
@@ -2139,15 +2145,23 @@ def derive_human_review_needed(table: Dict[str, Any]) -> tuple[bool, Optional[st
     needs attention and why.
 
     Tables that simply haven't been semantically classified yet (the
-    deterministic high-confidence/no-LLM path) are NOT "needing review" --
-    that status is tracked separately via semantic_status. Absence of
-    optional metadata (frequency/unit/description unknown) does not, by
-    itself, trigger review either -- see the prompt's human_review_needed
-    rules for why the model is told not to flag those."""
-    if table.get("semantic_status") != "classified":
-        return False, None
-
+    deterministic high-confidence/no-LLM path) are NOT "needing review" for
+    classification -- that status is tracked separately via semantic_status.
+    Absence of optional metadata (frequency/unit/description unknown) does
+    not, by itself, trigger review either -- see the prompt's
+    human_review_needed rules for why the model is told not to flag those.
+    A missing table title is the exception: stewards must supply one before
+    grouping."""
     reasons_present: set = set()
+
+    if title_needs_review(table.get("title"), table.get("columns") or []):
+        reasons_present.add("uncertain_title")
+
+    if table.get("semantic_status") != "classified":
+        # Auto-accepted path: only surface missing-title review.
+        if "uncertain_title" in reasons_present:
+            return True, "uncertain_title"
+        return False, None
 
     uncertain_cells = table.get("uncertain_cells") or []
     rows = table.get("rows") or []

@@ -38,6 +38,7 @@ export const REASON_LABELS = {
   uncertain_extraction: 'Uncertain extraction',
   ambiguous_column: 'Ambiguous column',
   uncertain_concept: 'Uncertain concept',
+  uncertain_title: 'Uncertain title',
 }
 
 
@@ -45,6 +46,8 @@ export const REASON_LABELS = {
 export const REASON_ALIASES = {
   column_alignment_mismatch: 'uncertain_extraction',
   uncertain_semantic_role: 'ambiguous_column',
+  // Prior frontend-only id; keep filtering old sessions.
+  missing_title: 'uncertain_title',
 }
 
 
@@ -334,6 +337,8 @@ export function collectReviewReasons(table) {
   if ((table.uncertain_cells || []).length > 0 && !reasons.has('conflicting_extraction')) {
     add('uncertain_extraction')
   }
+  // Missing / unusable title — same signal as "No title — review" in the list.
+  if (tableHasMissingTitle(table)) add('uncertain_title')
   return reasons
 }
 
@@ -353,14 +358,119 @@ export function matchesStatusFilter(table, filter, reviewed) {
   if (filter === 'reviewed') return reviewed
   if (filter === 'needs_review') {
     if (reviewed) return false
-    return Boolean(table.human_review_needed) || collectReviewReasons(table).size > 0 || tableHasGarbledCells(table)
+    return (
+      Boolean(table.human_review_needed)
+      || tableHasMissingTitle(table)
+      || collectReviewReasons(table).size > 0
+      || tableHasGarbledCells(table)
+    )
   }
   if (filter === 'no_review') {
+    if (tableHasMissingTitle(table)) return false
     return !table.human_review_needed && !tableHasGarbledCells(table) && collectReviewReasons(table).size === 0
   }
   if (filter === 'dev_ai_classified') return isAiClassified(table)
   if (filter === 'dev_auto_extracted') return !isAiClassified(table)
   return collectReviewReasons(table).has(canonicalizeReviewReason(filter))
+}
+
+
+/** Collapse punctuation/whitespace so "TABLE 10(I)" and "table 10 i" compare equally. */
+function normalizeSearchText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+}
+
+
+function editDistance(a, b) {
+  if (a === b) return 0
+  if (!a) return b.length
+  if (!b) return a.length
+  // Keep DP bounded for title tokens; long tokens fall back to substring checks.
+  if (a.length > 32 || b.length > 32) return Math.max(a.length, b.length)
+  const prev = new Array(b.length + 1)
+  const cur = new Array(b.length + 1)
+  for (let j = 0; j <= b.length; j += 1) prev[j] = j
+  for (let i = 1; i <= a.length; i += 1) {
+    cur[0] = i
+    const ca = a.charCodeAt(i - 1)
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = ca === b.charCodeAt(j - 1) ? 0 : 1
+      cur[j] = Math.min(cur[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost)
+    }
+    for (let j = 0; j <= b.length; j += 1) prev[j] = cur[j]
+  }
+  return prev[b.length]
+}
+
+
+function isCharSubsequence(needle, haystack) {
+  let i = 0
+  for (let j = 0; j < haystack.length && i < needle.length; j += 1) {
+    if (needle[i] === haystack[j]) i += 1
+  }
+  return i === needle.length
+}
+
+
+function fuzzyTokenMatches(token, haystack, words) {
+  if (!token) return true
+  if (haystack.includes(token)) return true
+
+  // Digits are exact only — "15" must not fuzzy-match "10" / "12" / "5".
+  if (/^\d+$/.test(token)) {
+    return words.includes(token)
+  }
+
+  const maxDist = token.length <= 4 ? 1 : token.length <= 8 ? 2 : 3
+  for (const word of words) {
+    if (!word) continue
+    // Require a real prefix/stem — avoid "p15".startsWith("p") via short word flips.
+    if (word.startsWith(token)) return true
+    if (token.startsWith(word) && word.length >= 3) return true
+    if (word.includes(token)) return true
+    // "p15".includes("1") / .includes("5") was matching pages 1 and 5.
+    if (token.length >= 3 && word.length >= 3 && token.includes(word)) return true
+    // Typo / rough match: "relgion" ≈ "religion", "birts" ≈ "births".
+    if (token.length >= 3 && word.length >= 3 && isCharSubsequence(token, word)) return true
+    if (/^\d+$/.test(word)) continue
+    if (Math.abs(word.length - token.length) <= maxDist && editDistance(word, token) <= maxDist) {
+      return true
+    }
+  }
+  return false
+}
+
+
+/**
+ * Fuzzy / rough match against table title and page number.
+ * Empty query matches everything so existing filter behaviour is unchanged.
+ * Page queries ("15", "p15", "page 15") match that page exactly — no fuzzy spillover.
+ */
+export function matchesTableSearch(table, query) {
+  const raw = String(query || '').trim()
+  if (!raw) return true
+
+  const page = String(table?.page ?? '').trim()
+
+  // Page-number queries are exact: "15", "p15", "p.15", "page 15".
+  const pageOnly = raw.match(/^(?:p(?:age)?\.?\s*)?(\d+)$/i)
+  if (pageOnly) {
+    return Boolean(page) && page === pageOnly[1]
+  }
+
+  const title = displayTitle(table) || String(table?.title || '').trim()
+  const banner = String(table?.banner_table_id || '').trim()
+  const tableId = String(table?.table_id ?? '').trim()
+  const haystack = normalizeSearchText([title, banner, page ? `page ${page}` : '', tableId].join(' '))
+  const words = haystack ? haystack.split(' ') : []
+
+  const tokens = normalizeSearchText(raw).split(' ').filter(Boolean)
+  if (tokens.length === 0) return true
+  return tokens.every((token) => fuzzyTokenMatches(token, haystack, words))
 }
 
 
@@ -960,8 +1070,8 @@ export function isUsableTableTitle(title, columns) {
 function isBareTableIdLabel(value) {
   const s = String(value || '').trim()
   if (!s) return false
-  // "TABLE -8", "TABLE: B-15", "Table-9" — id only, not a descriptive title.
-  return /^table\b\s*[:.\-–—]?\s*[a-z0-9][\w.\-–—/]*\s*$/i.test(s)
+  // "TABLE -8", "TABLE: B-15", "TABLE (ii)", "TABLE - (I)" — id only.
+  return /^(?:table|tab\.?)\b\s*[:.\-–—]?\s*(?:[a-z0-9][\w.\-–—/]*(?:\s*\([^)]{0,48}\))?|\([^)]{1,48}\))\s*$/i.test(s)
 }
 
 
@@ -984,6 +1094,12 @@ export function displayTitle(table) {
     return `${banner} — ${t}`
   }
   return t
+}
+
+
+/** True when the steward sees "No title — review" (no usable descriptive title). */
+export function tableHasMissingTitle(table) {
+  return !displayTitle(table)
 }
 
 

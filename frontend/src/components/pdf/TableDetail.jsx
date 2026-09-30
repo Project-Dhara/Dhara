@@ -29,6 +29,7 @@ import {
   reshapeRows,
   resolveEditorBodySpans,
   setHeaderPathLevel,
+  tableHasMissingTitle,
   titleForEdit,
   unmergeAt,
   withParentPath,
@@ -588,7 +589,12 @@ export function TableDetail({
     || Boolean(draft.mergesExplicit) !== Boolean(
       table.cell_merges_explicit || (Array.isArray(table.cell_merges) && table.cell_merges.length > 0)
     )
-  const canSave = (table.human_review_needed || structureDirty || titleDirty) && !saved
+  const canSave = (
+    table.human_review_needed
+    || tableHasMissingTitle(table)
+    || structureDirty
+    || titleDirty
+  ) && !saved
 
   const handleSave = () => {
     const columns = draft.columns.map((c) => ({
@@ -833,7 +839,9 @@ export function TableDetail({
 
       {canSave && (
         <Button variant="primary" className="self-start" onClick={handleSave}>
-          {table.human_review_needed ? 'Save review & mark resolved' : 'Save changes'}
+          {table.human_review_needed || tableHasMissingTitle(table)
+            ? 'Save review & mark resolved'
+            : 'Save changes'}
         </Button>
       )}
       {saved && (

@@ -178,29 +178,28 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
             {!hasLlmKey && <LlmKeyRequiredBanner onGoSettings={onGoSettings} />}
             <UploadChoice
               choice={uploadChoice}
-              onChoose={hasLlmKey ? setUploadChoice : undefined}
-              disabled={!hasLlmKey}
-              onDatasetFile={hasLlmKey ? handleDatasetFile : undefined}
-              onDatasetFilesAdd={hasLlmKey ? addPendingDatasetFiles : undefined}
+              onChoose={setUploadChoice}
+              onDatasetFile={handleDatasetFile}
+              onDatasetFilesAdd={addPendingDatasetFiles}
               onDatasetFileRemove={removePendingDatasetFile}
               datasetFiles={pendingDatasetFiles}
-              onPdfFile={hasLlmKey ? handlePdfFile : undefined}
+              onPdfFile={handlePdfFile}
               pdfUploading={pdfUploading}
-              pdfError={pdfError || (!hasLlmKey ? 'Configure an LLM API key in Settings before uploading.' : '')}
+              pdfError={pdfError}
               onClearPdfError={() => setPdfError('')}
               metadataFiles={step1MetadataFiles}
               onMetadataFilesAdd={addStep1MetadataFiles}
               onMetadataFileRemove={removeStep1MetadataFile}
-              sqlPanel={hasLlmKey ? (
+              sqlPanel={(
                 <SqlUpload
                   onMatched={handleMatched}
                   metadataFiles={step1MetadataFiles}
                   onMetadataFilesChange={setStep1MetadataFiles}
                   hideMetadataSection
                 />
-              ) : null}
+              )}
             />
-            {hasLlmKey && uploadChoice === 'xlsx' && pendingDatasetFiles.length > 0 && (
+            {uploadChoice === 'xlsx' && pendingDatasetFiles.length > 0 && (
               <BatchUpload
                 onMatched={handleMatched}
                 datasetFiles={pendingDatasetFiles}
@@ -284,19 +283,22 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                   ))}
                 </div>
 
-                <div className="ml-auto flex flex-wrap items-center gap-3.5 text-[12.5px] font-medium text-ink">
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="h-2.5 w-2.5 flex-none rounded-[3px] bg-coral" aria-hidden />
-                    Needs fixing
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="h-2.5 w-2.5 flex-none rounded-[3px] bg-[#2F6FED]" aria-hidden />
-                    AI review
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="h-2.5 w-2.5 flex-none rounded-[3px] bg-green" aria-hidden />
-                    Reviewed
-                  </span>
+                <div className="ml-auto flex flex-col items-center gap-1.5 text-[12.5px] font-medium text-ink">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-soft">Details</span>
+                  <div className="flex flex-wrap items-center justify-center gap-3.5">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="h-2.5 w-2.5 flex-none rounded-[3px] bg-coral" aria-hidden />
+                      Partial
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="h-2.5 w-2.5 flex-none rounded-[3px] bg-[#2F6FED]" aria-hidden />
+                      Missing (Filled by AI)
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="h-2.5 w-2.5 flex-none rounded-[3px] bg-green" aria-hidden />
+                      present
+                    </span>
+                  </div>
                 </div>
               </div>
 

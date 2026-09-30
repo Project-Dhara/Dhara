@@ -552,7 +552,7 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
             <ExcelTableHead columns={table.columns} rawHeaderRows={table.raw_header_rows} />
             <tbody>
               {displayRows.map((row, i) => (
-                <tr key={i} className="bg-white hover:bg-[#F4EFE3]">
+                <tr key={i} className="bg-white hover:bg-[#FDFCF9]">
                   {table.columns.map((col) => {
                     const val = row[col]
                     const isNull = val == null || val === ''

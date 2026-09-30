@@ -23,7 +23,7 @@ export const STAGE_DEFS = [
     ],
   },
   {
-    name: 'Transformation & Harmonisation', firstStep: 5, sub: 'Concepts and code maps',
+    name: 'Classification & Harmonisation', firstStep: 5, sub: 'Concepts and code maps',
     subs: [
       { step: 5, label: 'Classification' },
       { step: 6, label: 'Harmonisation' },

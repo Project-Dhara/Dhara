@@ -250,7 +250,7 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
                 {status === 'ai' && (
                   <span className="inline-flex flex-none items-center gap-1 rounded-full border border-[#5B8DEF]/45 bg-[#EEF4FF] px-2 py-0.5 text-[11px] font-semibold text-[#2F6FED]">
                     <Sparkles className="h-3 w-3" strokeWidth={2} aria-hidden />
-                    AI review
+                    Reviewed by AI
                   </span>
                 )}
                 {status === 'ok' && (
@@ -335,21 +335,21 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
         })}
       </div>
 
-      <div className="flex items-center gap-4">
-        {allCorrected && (
-          <Button onClick={handleContinue} className="inline-flex items-center gap-1.5">
-            {mismatched.length > 0 ? 'Apply corrections & continue' : 'Continue'}
-            <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
-          </Button>
-        )}
-        {extraAction}
-      </div>
       {!allCorrected && (
         <div className="text-sm text-[#8a4b0f]">
           Correct and save all {mismatched.length} flagged table{mismatched.length !== 1 ? 's' : ''} above
           ({mismatched.length - mismatched.filter((t) => isSaved(t)).length} remaining) before continuing.
         </div>
       )}
+      <div className="flex items-center justify-end gap-4">
+        {extraAction}
+        {allCorrected && (
+          <Button onClick={handleContinue} className="inline-flex items-center gap-1.5">
+            {mismatched.length > 0 ? 'Apply corrections & continue' : 'Continue'}
+            <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
+          </Button>
+        )}
+      </div>
     </div>
   )
 }

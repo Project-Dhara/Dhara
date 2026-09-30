@@ -42,8 +42,10 @@ key via the `X-Llm-Api-Key` header. Server `OPENAI_API_KEY` /
 | `EMBEDDING_DIM` | Vector width (default 1536 for common small embedding models) |
 | `EMBEDDING_MODEL` | Override embedding model if supported by code paths |
 
-**Without a Settings key:** Console and PDF upload are blocked until the
-steward saves a key. PDF upload also returns HTTP 400 if the header is missing.
+**Without a Settings key:** Uploads and the pipeline still work using
+heuristics. AI-assisted steps (richer PDF extraction, metadata auto-fill,
+NCO matching, LLM grouping) degrade or are skipped. There is no server
+env-key fallback.
 
 ## Object storage
 

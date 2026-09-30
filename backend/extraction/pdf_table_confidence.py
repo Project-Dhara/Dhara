@@ -510,10 +510,16 @@ _TABLE_CAPTION_RE = re.compile(
     re.I,
 )
 # Broader document captions (SDA / DES / vital-stats style).
+# Id core mirrors pdf_header_utils._TABLE_ID_CORE_RE so "TABLE (ii)" /
+# "TABLE - (I)" / "TABLE 10(I)" all count as captions (not only "TABLE-8").
+_TABLE_CAPTION_ID_CORE = (
+    r"(?:[A-Z0-9][\w.\-–—/]*(?:\s*\([^)]{0,48}\))?|\([^)]{1,48}\))"
+)
 _EXTENDED_CAPTION_RES = (
     _TABLE_CAPTION_RE,
     re.compile(
-        r"^\s*(?:TABLE|TAB\.?)\s*[:.\-–—]?\s*[A-Z0-9][\w.\-–—/]*(?:\s*[:.\-–—]\s*.+)?$",
+        rf"^\s*(?:TABLE|TAB\.?)\s*[:.\-–—]?\s*{_TABLE_CAPTION_ID_CORE}"
+        rf"(?:\s*[:.\-–—]\s*.+)?\s*$",
         re.I,
     ),
     re.compile(
@@ -548,6 +554,37 @@ _CAPTION_LABEL_PREFIX_SPACE_RE = re.compile(
 )
 # Max vertical gap (PDF points) between caption/heading and table top.
 _BBOX_TITLE_MAX_GAP_PT = 140.0
+
+
+def title_needs_review(
+    title: Optional[str],
+    columns: Optional[List[Any]] = None,
+) -> bool:
+    """True when Preview should treat the table as missing a usable title.
+
+    Aligns with the frontend ``displayTitle`` / ``tableHasMissingTitle`` rules
+    so auto-accepted tables without a caption land in Review needed.
+    """
+    col_names = []
+    for c in columns or []:
+        if isinstance(c, dict):
+            name = c.get("name")
+        else:
+            name = c
+        n = _normalize_title_line(str(name or ""))
+        if n:
+            col_names.append(n)
+    t = strip_caption_label_prefix(title) or ""
+    t = _normalize_title_line(t)
+    if not t:
+        return True
+    if _is_caption_id_only(t) or _is_column_group_banner(t):
+        return True
+    if _is_weak_inferred_title(t, col_names):
+        return True
+    if not _is_usable_inferred_title(t, col_names):
+        return True
+    return False
 
 
 def collapse_doubled_pdf_glyphs(text: str) -> str:
@@ -676,11 +713,11 @@ def _is_caption_id_only(line: str) -> bool:
         return False
     if _is_table_id_only(s):
         return True
-    # "TABLE -8" / "Table- 3" with only a short token after the kind word.
+    # "TABLE -8" / "Table- 3" / "TABLE (ii)" with only a short token after the kind word.
     return bool(
         re.match(
-            r"^\s*(?:TABLE|TAB\.?|STATEMENT|ANNEX(?:URE)?|SCHEDULE|EXHIBIT|APPENDIX)\s*"
-            r"[:.\-–—]?\s*[A-Z0-9][\w.\-–—/]*\s*$",
+            rf"^\s*(?:TABLE|TAB\.?|STATEMENT|ANNEX(?:URE)?|SCHEDULE|EXHIBIT|APPENDIX)\s*"
+            rf"[:.\-–—]?\s*{_TABLE_CAPTION_ID_CORE}\s*$",
             s,
             re.I,
         )
@@ -692,7 +729,35 @@ _WEAK_TITLE_TOKENS = frozenset({
     "total", "totals", "all", "male", "female", "males", "females",
     "rural", "urban", "s.no", "s.no.", "sno", "sl", "sl.", "no", "no.",
     "year", "age", "sex", "gender", "unit", "units", "particulars",
+    "month", "months", "order", "local body", "birth order",
 })
+
+# Spanning column-group banners inside the ruled grid (not the page caption).
+# E.g. "LEVELS OF LITERACY" sits under the top border while the real title
+# ("LIVE BIRTH BY …") is printed above the table.
+_COLUMN_GROUP_BANNER_RE = re.compile(
+    r"^(?:"
+    r"levels?\s+of\s+.+"
+    r"|occupation\s+groups?"
+    r"|age\s+of\s+mothers?(?:\s*\([^)]*\))?"
+    r"|birth\s+order"
+    r"|religion\s+of\s+(?:the\s+)?(?:families|deceased|fathers?|mothers?)"
+    r"|fathers?'?\s+rel[ei]gion"
+    r"|mothers?'?\s+rel[ei]gion"
+    r")$",
+    re.I,
+)
+
+# Geography / population-scope lines that belong with the title as a subtitle
+# (TABLE-14(ii) → "…FATHER, 2001 — RURAL"; TABLE-13(vi) → "… — DELHI CANTT.").
+_SCOPE_SUBTITLE_RE = re.compile(
+    r"^(?:"
+    r"total|rural|urban"
+    r"|mcd(?:\s*\(\s*(?:[ur]|urban|rural)\s*\))?"
+    r"|ndmc|delhi\s+cantt\.?|cantt\.?"
+    r")$",
+    re.I,
+)
 
 
 def _is_weak_inferred_title(title: str, columns: Optional[List[str]] = None) -> bool:
@@ -718,37 +783,190 @@ def _is_weak_inferred_title(title: str, columns: Optional[List[str]] = None) -> 
     return False
 
 
+def _is_column_group_banner(line: str) -> bool:
+    """True for in-grid spanning headers that must not become the table title."""
+    s = _normalize_title_line(line)
+    return bool(s) and bool(_COLUMN_GROUP_BANNER_RE.match(s))
+
+
+def _is_scope_subtitle(line: str) -> bool:
+    """Short geography/population scope under the descriptive caption."""
+    s = _normalize_title_line(line)
+    if not s:
+        return False
+    return bool(_SCOPE_SUBTITLE_RE.match(s))
+
+
+def _is_stub_near_caption(cand: str, col_names: List[str]) -> bool:
+    """True for short axis/header stubs between a TABLE id and the real title.
+
+    Vital-stats PDFs often insert lines like ``Months``, ``LOCAL BODY``, or
+    ``Rural / Urban / Total`` between ``TABLE-11(i)`` and the descriptive
+    caption; those must not win as the title. Spanning group headers such as
+    ``LEVELS OF LITERACY`` are also stubs here — they live inside the grid.
+    """
+    s = _normalize_title_line(cand)
+    if not s:
+        return True
+    if _is_weak_inferred_title(s, col_names):
+        return True
+    if _is_column_group_banner(s):
+        return True
+    words = s.split()
+    # Real descriptive captions are longer (e.g. "LIVE BIRTHS BY …").
+    if len(words) <= 2 and len(s) < 24:
+        return True
+    if len(s) < 18 and len(words) < 4:
+        return True
+    return False
+
+
+def _is_descriptive_caption_candidate(cand: str, col_names: List[str]) -> bool:
+    """True when a line is strong enough to be the display title under/near a TABLE id."""
+    s = _normalize_title_line(cand)
+    if not s or _is_caption_id_only(s) or _is_stub_near_caption(s, col_names):
+        return False
+    if not _is_usable_inferred_title(s, col_names):
+        return False
+    if _looks_like_heading(s):
+        return True
+    # Long ALL-CAPS / Title Case captions that exceed the short heading word cap.
+    if len(s) >= 18 and not _matches_extended_caption(s):
+        letters = [c for c in s if c.isalpha()]
+        if letters and sum(1 for c in letters if c.isupper()) / len(letters) >= 0.35:
+            return True
+    return False
+
+
+def _caption_candidate_score(cand: str) -> int:
+    """Prefer real captions ("… BY …, 2001") over short leftover headings."""
+    s = _normalize_title_line(cand)
+    if not s:
+        return -10_000
+    score = len(s) + 4 * len(s.split())
+    if re.search(r"\bby\b", s, re.I):
+        score += 50
+    if re.search(r"\b20\d{2}\b", s):
+        score += 25
+    if _is_column_group_banner(s):
+        score -= 200
+    return score
+
+
 def _descriptive_line_after_caption_id(
     lines: List[str],
     id_index: int,
     col_names: List[str],
 ) -> Optional[str]:
     """Pick the descriptive caption that sits directly under ``TABLE -8``."""
-    for j in range(id_index + 1, min(id_index + 5, len(lines))):
+    best: Optional[str] = None
+    best_score = -10_000
+    # Allow several stub/header lines between the id and the real title.
+    for j in range(id_index + 1, min(id_index + 12, len(lines))):
         cand = _normalize_title_line(lines[j])
         if not cand:
             continue
         if _is_caption_id_only(cand):
             continue
-        if _is_weak_inferred_title(cand, col_names):
+        if _is_stub_near_caption(cand, col_names):
             continue
         # Stop when we hit the table's own column header row.
         low = cand.lower()
         if col_names and sum(1 for c in col_names[:4] if c and c.lower() in low) >= 2:
             break
-        if _looks_like_heading(cand) and _is_usable_inferred_title(cand, col_names):
+        if _is_descriptive_caption_candidate(cand, col_names):
+            score = _caption_candidate_score(cand)
+            if score > best_score:
+                best, best_score = cand, score
+    return best
+
+
+def _descriptive_line_before_caption_id(
+    lines: List[str],
+    id_index: int,
+    col_names: List[str],
+) -> Optional[str]:
+    """Pick a descriptive caption that sits directly above ``TABLE (ii)``."""
+    best: Optional[str] = None
+    best_score = -10_000
+    for j in range(id_index - 1, max(-1, id_index - 12), -1):
+        cand = _normalize_title_line(lines[j])
+        if not cand:
+            continue
+        if _is_caption_id_only(cand):
+            continue
+        if _is_stub_near_caption(cand, col_names):
+            continue
+        low = cand.lower()
+        if col_names and sum(1 for c in col_names[:4] if c and c.lower() in low) >= 2:
+            break
+        if _is_descriptive_caption_candidate(cand, col_names):
+            score = _caption_candidate_score(cand)
+            if score > best_score:
+                best, best_score = cand, score
+    return best
+
+
+def _find_line_index(lines: List[str], text: str, near: int) -> int:
+    target = _normalize_title_line(text)
+    if not target:
+        return near
+    # Prefer the occurrence closest to the TABLE id.
+    best_i, best_dist = near, 10_000
+    for i, ln in enumerate(lines):
+        if _normalize_title_line(ln) == target:
+            dist = abs(i - near)
+            if dist < best_dist:
+                best_i, best_dist = i, dist
+    return best_i
+
+
+def _scope_subtitle_near(
+    lines: List[str],
+    id_index: int,
+    title: str,
+) -> Optional[str]:
+    """Find RURAL / DELHI CANTT. / NDMC etc. next to the caption + TABLE id."""
+    title_index = _find_line_index(lines, title, id_index)
+    lo = min(id_index, title_index)
+    hi = max(id_index, title_index)
+    # Scope can sit just above the caption, between caption and id, or under both.
+    scan = (
+        list(range(max(0, lo - 3), lo))
+        + list(range(lo, hi + 1))
+        + list(range(hi + 1, min(hi + 4, len(lines))))
+    )
+    for j in scan:
+        if j == id_index or j == title_index:
+            continue
+        cand = _normalize_title_line(lines[j])
+        if _is_scope_subtitle(cand) and cand.lower() not in title.lower():
             return cand
-        # Long ALL-CAPS / Title Case captions that exceed the short heading word cap.
-        if (
-            _is_usable_inferred_title(cand, col_names)
-            and len(cand) >= 18
-            and not _matches_extended_caption(cand)
-        ):
-            letters = [c for c in cand if c.isalpha()]
-            if letters and sum(1 for c in letters if c.isupper()) / len(letters) >= 0.35:
-                return cand
     return None
 
+
+def _descriptive_line_near_caption_id(
+    lines: List[str],
+    id_index: int,
+    col_names: List[str],
+) -> Optional[str]:
+    """Prefer the strongest caption near the TABLE id; append scope subtitle."""
+    after = _descriptive_line_after_caption_id(lines, id_index, col_names)
+    before = _descriptive_line_before_caption_id(lines, id_index, col_names)
+    if after and before:
+        title = (
+            after
+            if _caption_candidate_score(after) >= _caption_candidate_score(before)
+            else before
+        )
+    else:
+        title = after or before
+    if not title:
+        return None
+    scope = _scope_subtitle_near(lines, id_index, title)
+    if scope:
+        return f"{title} — {scope}"
+    return title
 
 def _matches_extended_caption(line: str) -> bool:
     s = _normalize_title_line(line)
@@ -910,17 +1128,21 @@ def _title_from_bbox_blocks(
         if not _matches_extended_caption(text):
             continue
         if _is_caption_id_only(text):
-            desc = _descriptive_line_after_caption_id(texts_near, i, col_names)
+            desc = _descriptive_line_near_caption_id(texts_near, i, col_names)
             if desc:
                 return desc, "heuristic_bbox_caption_below_id", text
             # Bare id alone is not a display title — keep looking.
             continue
         if _is_usable_inferred_title(text, col_names) and not _is_weak_inferred_title(text, col_names):
+            if _is_column_group_banner(text):
+                continue
             return text, "heuristic_bbox_caption", None
 
     for _gap, block in above:
         text = block["text"]
         if _is_weak_inferred_title(text, col_names):
+            continue
+        if _is_column_group_banner(text):
             continue
         if _looks_like_heading(text) and _is_usable_inferred_title(text, col_names):
             return text, "heuristic_bbox_heading", None
@@ -939,11 +1161,23 @@ def _title_from_page_lines(
         if not _matches_extended_caption(ln):
             continue
         if _is_caption_id_only(ln):
-            desc = _descriptive_line_after_caption_id(lines, i, col_names)
+            desc = _descriptive_line_near_caption_id(lines, i, col_names)
             if desc:
-                return desc, "heuristic_table_caption_below_id", ln
+                after = _descriptive_line_after_caption_id(lines, i, col_names)
+                # Scope suffix (" — RURAL") is added by near(); compare the core.
+                core = desc.split(" — ", 1)[0]
+                source = (
+                    "heuristic_table_caption_below_id"
+                    if after and _normalize_title_line(after) == _normalize_title_line(core)
+                    else "heuristic_table_caption_above_id"
+                )
+                return desc, source, ln
             continue
-        if _is_usable_inferred_title(ln, col_names) and not _is_weak_inferred_title(ln, col_names):
+        if (
+            _is_usable_inferred_title(ln, col_names)
+            and not _is_weak_inferred_title(ln, col_names)
+            and not _is_column_group_banner(ln)
+        ):
             return ln, "heuristic_table_caption", None
 
     header_idx = None
@@ -961,8 +1195,10 @@ def _title_from_page_lines(
                 continue
             if _is_weak_inferred_title(candidate, col_names):
                 continue
+            if _is_column_group_banner(candidate):
+                continue
             if _is_caption_id_only(candidate):
-                desc = _descriptive_line_after_caption_id(lines, j, col_names)
+                desc = _descriptive_line_near_caption_id(lines, j, col_names)
                 if desc:
                     return desc, "heuristic_heading_above_table", candidate
                 continue
@@ -1174,8 +1410,9 @@ def table_dict_from_df(
         in_grid_banner_id = None
     # In-grid banners (TABLE id row + descriptive title row inside the ruled
     # border) beat page-text / outline heuristics — those look above the bbox.
+    # But spanning column-group headers ("LEVELS OF LITERACY") must not win.
     banner_from_page: Optional[str] = None
-    if in_grid_title:
+    if in_grid_title and not _is_column_group_banner(in_grid_title):
         title, title_source = strip_caption_label_prefix(in_grid_title), "heuristic_in_grid_banner"
     else:
         title, title_source, banner_from_page = infer_title_meta_from_page_text(
@@ -1188,6 +1425,7 @@ def table_dict_from_df(
         )
     if title:
         title = strip_caption_label_prefix(title)
+    needs_title = title_needs_review(title, columns)
     empty_field = {"value": None, "human_review_needed": False, "human_review_reason": None}
     result = {
         "title": title,
@@ -1203,14 +1441,10 @@ def table_dict_from_df(
         "notes": [],
         "uncertain_cells": [],
         "semantic_status": "not_classified",
-        # human_review_needed is always False here, not merely defaulted: this
-        # flag means "an existing AI decision needs a human look," and this
-        # path has made no semantic decisions at all yet to review -- it is
-        # NOT a signal that classification hasn't happened (that's
-        # semantic_status's job). See derive_human_review_needed for the
-        # equivalent (and only other) place this flag gets computed.
-        "human_review_needed": False,
-        "human_review_reason": None,
+        # Missing title is the one non-semantic signal that still needs a
+        # steward look on the auto-accepted path (Preview "Uncertain title").
+        "human_review_needed": bool(needs_title),
+        "human_review_reason": "uncertain_title" if needs_title else None,
         "extraction": {"method": method or "pymupdf_lines_strict", "confidence": "high"},
         "source": "auto_high_confidence",
     }

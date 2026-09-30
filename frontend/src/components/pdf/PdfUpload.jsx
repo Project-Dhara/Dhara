@@ -21,10 +21,6 @@ export default function PdfUpload({ onGoSettings }) {
   const hasLlmKey = keySaved || Boolean(getLlmApiKey())
 
   const handleUpload = async (file) => {
-    if (!hasLlmKey) {
-      setError('Configure an LLM API key in Settings before uploading a PDF.')
-      return
-    }
     setError('')
     setUploading(true)
     try {
@@ -52,10 +48,9 @@ export default function PdfUpload({ onGoSettings }) {
         onUpload={handleUpload}
         loading={uploading}
         label="Drop your file here"
-        hint={hasLlmKey ? 'Drag and drop or browse' : 'Save an LLM key in Settings first'}
+        hint="Drag and drop or browse"
         accept=".pdf"
         extensionRegex={/\.pdf$/i}
-        disabled={!hasLlmKey}
       />
 
       {error && (

@@ -185,7 +185,7 @@ JWT_SECRET=<random hex>               # required for login tokens
 ENABLE_GCS=false
 ENABLE_SIGNUP=true                    # self-serve signup; set false in locked-down deploys
 # EMBEDDING_DIM=1536                  # optional embedding width
-# LLM keys: paste in Settings (not server .env). AI rejects uploads without a Settings key.
+# LLM keys: paste in Settings (not server .env). Optional — AI steps degrade without one.
 ```
 
 Generate a JWT secret:

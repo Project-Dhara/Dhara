@@ -72,15 +72,17 @@ _DOC_KIND_RE = (
     r"(?:TABLE|TAB\.?|STATEMENT|ANNEX(?:URE)?|SCHEDULE|EXHIBIT|APPENDIX)"
 )
 _TABLE_ID_TOKEN_RE = r"[A-Z0-9][\w.\-–—/]*"
+# Token with optional (i)/(ii) suffix, OR paren-only id ("TABLE (ii)", "TABLE - (I)").
+_TABLE_ID_CORE_RE = (
+    rf"(?:{_TABLE_ID_TOKEN_RE}(?:\s*\([^)]{{0,48}}\))?|\([^)]{{1,48}}\))"
+)
 _TABLE_ID_ONLY_RE = re.compile(
-    rf"^{_DOC_KIND_RE}\s*[:.\-–—]?\s*{_TABLE_ID_TOKEN_RE}"
-    rf"(?:\s*\([^)]{{0,48}}\))?\s*$",
+    rf"^{_DOC_KIND_RE}\s*[:.\-–—]?\s*{_TABLE_ID_CORE_RE}\s*$",
     re.IGNORECASE,
 )
 # Id and descriptive title jammed into one full-width cell.
 _TABLE_ID_THEN_TITLE_RE = re.compile(
-    rf"^(?P<id>{_DOC_KIND_RE}\s*[:.\-–—]?\s*{_TABLE_ID_TOKEN_RE}"
-    rf"(?:\s*\([^)]{{0,48}}\))?)"
+    rf"^(?P<id>{_DOC_KIND_RE}\s*[:.\-–—]?\s*{_TABLE_ID_CORE_RE})"
     rf"(?:\s*[:.\-–—]\s*|\s+)(?P<title>\S.+)$",
     re.IGNORECASE,
 )

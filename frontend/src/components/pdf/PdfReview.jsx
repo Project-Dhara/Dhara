@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, ArrowRight, Check, Download, Loader2 } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, Download, Loader2, Search, X } from 'lucide-react'
 import { withAuthHeaders } from '../../lib/auth'
 import { withLlmKeyHeaders } from '../../lib/llmKey'
 import Badge from '../ui/Badge'
@@ -21,6 +21,8 @@ import {
   displayTitle,
   isAiClassified,
   matchesStatusFilter,
+  matchesTableSearch,
+  tableHasMissingTitle,
   tableHeaderKey,
 } from '../../lib/pdfReviewHelpers'
 import { DeleteConfirmDialog, MergeConfirmDialog, ReviewBadge, ScrollToTopButton, TableExpandPanel } from './PdfReviewAtoms'
@@ -104,6 +106,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
   const [expanded, setExpanded] = useState(null)
   const [reviewedIds, setReviewedIds] = useState(() => new Set())
   const [statusFilter, setStatusFilter] = useState('all')
+  const [tableSearch, setTableSearch] = useState('')
   const [tablePage, setTablePage] = useState(0)
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   // null | 'delete' | 'download' | 'merge' — same checkbox UI, different confirm action
@@ -509,7 +512,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
     // step vs. the deterministic auto-accepted path, for QA'ing AI output.
     // Never shown in a production build.
     ...(process.env.NODE_ENV !== 'production' ? [
-      { id: 'dev_ai_classified', label: 'AI classified' },
+      { id: 'dev_ai_classified', label: 'AI extracted' },
       { id: 'dev_auto_extracted', label: 'Auto-extracted' },
     ] : []),
   ]
@@ -531,6 +534,11 @@ export default function PdfReview({ jobId, filename, onDone }) {
   let filteredTables = tables.filter((t) =>
     matchesStatusFilter(t, activeFilter, reviewedIds.has(t.table_id))
   )
+  // Search is additive: status / reason / merge filters stay unchanged.
+  const searchQuery = tableSearch.trim()
+  if (searchQuery) {
+    filteredTables = filteredTables.filter((t) => matchesTableSearch(t, searchQuery))
+  }
   // Merge mode: after the first selection, only show tables with the same headers.
   if (selectMode === 'merge' && selectedIds.size > 0) {
     const anchor = tables.find((t) => selectedIds.has(t.table_id))
@@ -581,7 +589,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="text-[12.5px] text-ink-soft">
         Showing {pageStart + 1}–{pageEnd} of {filteredCount}
-        {activeFilter !== 'all' ? ' (filtered)' : ''}
+        {activeFilter !== 'all' || searchQuery ? ' (filtered)' : ''}
         {' · '}{TABLES_PER_PAGE} per page
       </div>
       <div className="flex items-center gap-2">
@@ -663,14 +671,6 @@ export default function PdfReview({ jobId, filename, onDone }) {
         </div>
         <div className="flex flex-none flex-wrap items-center justify-end gap-2.5">
           <KydsSummaryCard variant="corner" />
-          <Button variant="primary" disabled={continuing} onClick={continueToGrouping} className="inline-flex items-center gap-1.5">
-            {continuing ? 'Saving…' : (
-              <>
-                Continue
-                <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
-              </>
-            )}
-          </Button>
         </div>
       </div>
 
@@ -679,6 +679,42 @@ export default function PdfReview({ jobId, filename, onDone }) {
       {/* Content box: filters stick at the top of the scrollport while tables scroll underneath. */}
       <div className="rounded-xl border border-line bg-white shadow-sm">
         <div className="sticky top-0 z-20 space-y-2 rounded-t-xl border-b border-line bg-white px-5 py-3 sm:px-6">
+          <div className="space-y-1">
+            <label className="flex min-w-0 items-center gap-2 rounded-lg border border-line bg-cream px-2.5 py-2 focus-within:border-teal focus-within:shadow-focus-ring">
+              <Search className="h-4 w-4 flex-none text-ink-soft" strokeWidth={2} aria-hidden />
+              <input
+                type="text"
+                value={tableSearch}
+                onChange={(e) => {
+                  setTableSearch(e.target.value)
+                  setExpanded(null)
+                  setTablePage(0)
+                }}
+                placeholder="Search by table name or page…"
+                className="min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 text-[13.5px] text-ink shadow-none outline-none placeholder:text-ink-soft focus:outline-none focus:ring-0"
+                aria-label="Search tables by name or page number"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              {tableSearch ? (
+                <button
+                  type="button"
+                  className="flex-none text-ink-soft hover:text-teal"
+                  onClick={() => {
+                    setTableSearch('')
+                    setExpanded(null)
+                    setTablePage(0)
+                  }}
+                  aria-label="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" strokeWidth={2} />
+                </button>
+              ) : null}
+            </label>
+            <p className="m-0 px-0.5 text-[11.5px] leading-snug text-ink-soft">
+              Tip: jump to a page with <span className="font-medium text-ink">15</span>, <span className="font-medium text-ink">p15</span>, or <span className="font-medium text-ink">page 15</span>
+            </p>
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="flex-none text-[13px] font-bold tracking-wide text-ink">
               Filter by:
@@ -855,7 +891,9 @@ export default function PdfReview({ jobId, filename, onDone }) {
             <div className="rounded-lg border border-dashed border-line px-2 py-10 text-center text-[13px] text-ink-soft">
               {selectMode === 'merge' && selectedIds.size > 0
                 ? 'No other tables share these column headers.'
-                : 'No tables match this filter.'}
+                : searchQuery
+                  ? `No tables match “${searchQuery}”.`
+                  : 'No tables match this filter.'}
             </div>
           ) : pageTables.map((t) => {
             const isOpen = expanded === t.table_id
@@ -912,7 +950,17 @@ export default function PdfReview({ jobId, filename, onDone }) {
                           </span>
                         </Badge>
                       ) : (
-                        <ReviewBadge needed={t.human_review_needed} reason={t.human_review_reason} />
+                        <ReviewBadge
+                          needed={
+                            Boolean(t.human_review_needed)
+                            || tableHasMissingTitle(t)
+                            || collectReviewReasons(t).size > 0
+                          }
+                          reason={
+                            t.human_review_reason
+                            || (tableHasMissingTitle(t) ? 'uncertain_title' : null)
+                          }
+                        />
                       )}
                     </div>
                   </div>
@@ -942,6 +990,17 @@ export default function PdfReview({ jobId, filename, onDone }) {
             </div>
           ) : null}
         </div>
+      </div>
+
+      <div className="flex items-center justify-end gap-4">
+        <Button variant="primary" disabled={continuing} onClick={continueToGrouping} className="inline-flex items-center gap-1.5">
+          {continuing ? 'Saving…' : (
+            <>
+              Continue
+              <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
+            </>
+          )}
+        </Button>
       </div>
     </div>
     </PdfConsoleLayout>
