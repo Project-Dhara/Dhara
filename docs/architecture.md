@@ -172,7 +172,7 @@ separate; see [deployment/configuration.md](./deployment/configuration.md).
 | Human | Approve meaning and groupings |
 | Configuration modules | Dataset IDs, metadata schema, code lists, LLM key |
 | Catalogue / API | Discoverability and access |
-| MCP | Agent-oriented access via `python -m mcp_server` (stdio) |
+| MCP | Agent access via `/mcp` (Streamable HTTP) or `python -m mcp_server` (stdio) |
 
 ## Data model (essentials)
 

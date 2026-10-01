@@ -38,8 +38,13 @@ async def access_index(user_email: str = Depends(require_user)):
         },
         "mcp_tools": ["search_datasets", "get_metadata", "get_table"],
         "mcp": {
+            "http": "/mcp",
             "stdio": "cd backend && python -m mcp_server",
-            "note": "MCP wraps the same query helpers as these REST routes.",
+            "auth": (
+                "Open by default (published reads). "
+                "Set MCP_HTTP_AUTH=jwt for login Bearer, or token + MCP_AUTH_TOKEN"
+            ),
+            "note": "HTTP MCP wraps the same query helpers as these REST routes.",
         },
     }
 

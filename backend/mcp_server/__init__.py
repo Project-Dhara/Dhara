@@ -1,14 +1,16 @@
-"""DHARA Catalogue MCP server (stdio).
+"""DHARA Catalogue MCP server.
 
 Exposes search_datasets, get_metadata, and get_table tools that call the same
 helpers as GET /api/v1/datasets*.
 
-Run from the backend directory::
+Transports
+----------
+* **stdio** (local agents)::
 
-    python -m mcp_server
+      cd backend && python -m mcp_server
 
-Point an MCP client (Cursor, Claude Desktop, etc.) at that command with
-cwd = backend/ and DATABASE_URL available (e.g. via backend/.env).
+* **Streamable HTTP** (deployed URL ``/mcp``): mounted from ``main.py`` —
+  see ``mcp_server.http_asgi``. Same tools; auth via Bearer JWT by default.
 """
 from __future__ import annotations
 
@@ -25,10 +27,13 @@ from dotenv import load_dotenv
 load_dotenv(_BACKEND_ROOT / ".env")
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from catalogue import catalogue as _cat
 from catalogue import query as catalogue_query
 
+# host=0.0.0.0 avoids localhost-only DNS-rebinding defaults so /mcp works
+# behind the public deploy hostname. Stateless mode is safe on Cloud Run.
 mcp = FastMCP(
     "DHARA Catalogue",
     instructions=(
@@ -36,6 +41,13 @@ mcp = FastMCP(
         "Use search_datasets to discover tables, get_metadata for one dataset, "
         "and get_table to page through row data."
     ),
+    host="0.0.0.0",
+    streamable_http_path="/mcp",
+    stateless_http=True,
+    # Prefer JSON bodies over SSE streams — more reliable through Next.js
+    # rewrites / reverse proxies and common remote MCP clients (Cursor, etc.).
+    json_response=True,
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
 

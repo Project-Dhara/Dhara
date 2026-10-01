@@ -14,6 +14,9 @@ const nextConfig = {
     // else in the app.
     return [
       { source: '/api/:path*', destination: `${backendOrigin}/api/:path*` },
+      // Streamable HTTP MCP (same backend port; no new service/port).
+      { source: '/mcp', destination: `${backendOrigin}/mcp` },
+      { source: '/mcp/', destination: `${backendOrigin}/mcp/` },
     ]
   },
 }

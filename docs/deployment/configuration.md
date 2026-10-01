@@ -27,6 +27,8 @@ python -c "import secrets; print(secrets.token_hex(32))"
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `ENABLE_SIGNUP` | `true` | Allow `POST /api/signup`. Set `false` in locked deploys |
+| `MCP_HTTP_AUTH` | `off` | Remote `/mcp` auth: `off` (open published reads), `jwt` (login Bearer), or `token` (`MCP_AUTH_TOKEN` only) |
+| `MCP_AUTH_TOKEN` | _(unset)_ | Optional long-lived Bearer for agents when auth is enabled |
 
 Admin provisioning: `backend/scripts/create_user.py`.
 

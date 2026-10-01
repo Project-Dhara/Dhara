@@ -3,9 +3,9 @@
 import { useEffect, useState } from 'react'
 import { ArrowRight, Check } from 'lucide-react'
 import Button from '../ui/Button'
+import { publicApiDatasetsUrl, publicMcpUrl } from '../../lib/publicUrls'
 
-// Confirmation screen after Continue to publish writes the release to
-// Postgres. API/MCP URLs here are still display placeholders.
+// Confirmation screen after Continue to publish writes the release to Postgres.
 
 const PUBLISH_STEPS = [
   'Validating harmonised columns',
@@ -35,8 +35,8 @@ export default function Publish({ datasetLabel, metadataId, onGoDashboard, onUpl
   }, [publishing, doneSteps])
 
   const idBase = metadataId || 'DHARA_NEW_RELEASE'
-  const apiUrl = `https://catalogue.dhara.people+ai.org/api/v1/datasets?metadata_id=${encodeURIComponent(idBase)}`
-  const mcpUrl = 'https://catalogue.dhara.people+ai.org/mcp'
+  const apiUrl = publicApiDatasetsUrl(idBase)
+  const mcpUrl = publicMcpUrl()
 
   const copy = (label, text) => {
     navigator.clipboard?.writeText(text).catch(() => {})
@@ -104,6 +104,7 @@ export default function Publish({ datasetLabel, metadataId, onGoDashboard, onUpl
             <div className="flex-1 truncate rounded-md border border-line bg-[#F7F3EA] px-2.5 py-2.5 text-[11.5px] text-ink">{mcpUrl}</div>
             <button className="flex h-[34px] flex-none items-center rounded-md border border-line bg-white px-3.5 text-[13px] font-semibold text-teal" onClick={() => copy('mcp', mcpUrl)}>{copied === 'mcp' ? 'Copied' : 'Copy'}</button>
           </div>
+          <div className="text-[11.5px] text-[#8E9398]">Streamable HTTP · published reads open (set MCP_HTTP_AUTH=jwt to lock)</div>
           <div className="flex flex-wrap gap-1.5">
             {MCP_TOOLS.map((t) => <span className="rounded-full border border-line bg-cream px-2.5 py-1 text-[11.5px] text-ink-soft" key={t}>{t}</span>)}
           </div>

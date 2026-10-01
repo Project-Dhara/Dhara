@@ -71,7 +71,7 @@ dhara-poc/
 ├── backend/                     FastAPI + openpyxl + LLM + Postgres + pgvector
 │   ├── main.py                  App setup + router registration (entrypoint)
 │   ├── routes/                  FastAPI routers: auth, kyds, catalogue, pdf, dashboard, access
-│   ├── mcp_server/              stdio MCP (search_datasets, get_metadata, get_table)
+│   ├── mcp_server/              MCP tools (stdio + HTTP /mcp on FastAPI)
 │   ├── core/                    auth.py, deps.py, gcs_utils.py, vector_store.py
 │   ├── catalogue/               query.py, datasets.py, catalogue.py (shim), matching, NCO, staging, …
 │   ├── pdf/                     pdf_store.py, pdf_jobs.py, pdf_grouping.py, …

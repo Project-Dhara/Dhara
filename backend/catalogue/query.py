@@ -180,6 +180,7 @@ def _shape_group_row(row, tables):
             row["metadata_id"], title, geo, freq, source,
             row.get("theme"), row.get("catalogue_product"), *facets,
             *(t.get("title") for t in tables),
+            *(t.get("dataset_id") or t.get("id") for t in tables),
         ] if x
     ).lower()
     nmds = _nmds_concepts_as_list(row.get("nmds_concepts"))

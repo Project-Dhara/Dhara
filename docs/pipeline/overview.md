@@ -95,7 +95,7 @@ Implementation notes:
 | 8 Transformation | design | partial | partial | Mappings stored; full transform layer planned |
 | 9 Validation | design | partial | partial | Structural checks exist; full QA planned |
 | 10 Metadata & catalogue | ✓ | ✓ | ✓ | `batch-push`; NMDS/SDG from Settings |
-| 11 Access API/MCP | ✓ | ✓ | ✓ | `/api/v1` + stdio MCP |
+| 11 Access API/MCP | ✓ | ✓ | ✓ | `/api/v1` + `/mcp` HTTP + stdio |
 
 Status legend: **✓** usable in the POC · **partial** some code/UI · **design**
 documented intent without a complete product surface · **wired** shares Excel

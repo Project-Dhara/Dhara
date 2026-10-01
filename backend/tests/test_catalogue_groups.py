@@ -38,6 +38,7 @@ def test_shape_group_row_includes_tables():
     assert shaped["row_count"] == 15
     assert shaped["rows"] == "15"
     assert len(shaped["tables"]) == 2
+    assert "ds_1" in shaped["keywords"]
     assert "Occupation" in shaped["classifications"]
     assert shaped["nmds_concepts"][0]["concept"] == "Geography"
 

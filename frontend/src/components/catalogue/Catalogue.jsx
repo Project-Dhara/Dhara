@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Copy, Download, FileText, Loader2, Plug, Tags, Terminal } from 'lucide-react'
 import { getToken, withAuthHeaders } from '../../lib/auth'
+import { publicApiDatasetsUrl, publicMcpUrl } from '../../lib/publicUrls'
 
 const MCP_TOOLS = ['search_datasets', 'get_table', 'get_metadata']
 const TOOL_DESCS = {
@@ -10,7 +11,6 @@ const TOOL_DESCS = {
   get_table: 'Return rows of a published table, with optional filters.',
   get_metadata: 'Return the metadata record for a release.',
 }
-const MCP_URL = 'https://catalogue.dhara.people+ai.org/mcp'
 
 const TABS = ['summary', 'metadata', 'api', 'mcp']
 const TAB_ICONS = { summary: FileText, metadata: Tags, api: Terminal, mcp: Plug }
@@ -21,6 +21,20 @@ function labelFacet(key) {
 
 function isEmptyMeta(v) {
   return v == null || String(v).trim() === '' || String(v).trim() === '—'
+}
+
+/** PDF-published tables use uuid PKs as dataset_id — hide those in the UI. */
+function isPdfDatasetId(id) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id || ''))
+}
+
+function tableDatasetId(t) {
+  return String(t?.dataset_id || t?.id || '').trim()
+}
+
+function groupSearchText(r) {
+  const tableIds = (r.tables || []).map(tableDatasetId).filter(Boolean).join(' ')
+  return `${r.id} ${r.title} ${r.keywords} ${r.geo} ${tableIds}`.toLowerCase()
 }
 
 function keywordChips(sel) {
@@ -108,8 +122,6 @@ export default function Catalogue({ hasKey, onGoSettings }) {
   const [copied, setCopied] = useState(null)
   const listScrollRef = useRef(null)
   const detailScrollRef = useRef(null)
-  const [apiPreviewOpen, setApiPreviewOpen] = useState(false)
-  const [mcpPreviewOpen, setMcpPreviewOpen] = useState(false)
   const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -154,7 +166,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
   const q = query.trim().toLowerCase()
   const list = groups.filter((r) =>
     (filter === 'all' || (r.facets || []).includes(filter)) &&
-    (!q || `${r.id} ${r.title} ${r.keywords} ${r.geo}`.toLowerCase().includes(q))
+    (!q || groupSearchText(r).includes(q))
   )
   const sel = list.find((r) => r.id === selId) || list[0]
   const access = (sel?.access || 'Public').toLowerCase()
@@ -167,7 +179,15 @@ export default function Catalogue({ hasKey, onGoSettings }) {
     setTimeout(() => setCopied(null), 1500)
   }
 
-  const apiUrl = sel ? `https://catalogue.dhara.people+ai.org/api/v1/datasets?metadata_id=${encodeURIComponent(sel.id)}` : ''
+  const apiUrl = sel ? publicApiDatasetsUrl(sel.id) : ''
+  const mcpUrl = publicMcpUrl()
+  const mcpClientSnippet = `{
+  "mcpServers": {
+    "dhara-catalogue": {
+      "url": "${mcpUrl}"
+    }
+  }
+}`
 
   return (
     <div className="cat-screen flex flex-1 min-h-0 flex-col gap-3.5 overflow-hidden">
@@ -187,12 +207,12 @@ export default function Catalogue({ hasKey, onGoSettings }) {
         <div className="selection-invert flex items-center gap-4 rounded-xl bg-gradient-to-br from-teal-deep to-[#0c2f2d] px-5 py-4 ring-1 ring-inset ring-white/[.06]">
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             <div className="text-[15px] font-semibold text-cream">Catalogue MCP endpoint</div>
-            <div className="font-mono text-xs text-[#a8bdb3]">{MCP_URL}</div>
+            <div className="font-mono text-xs text-[#a8bdb3]">{mcpUrl}</div>
           </div>
           <div className="flex flex-wrap gap-1.5">
             {MCP_TOOLS.map((t) => <span className="rounded-full bg-white/[.12] px-2.5 py-[5px] text-xs text-cream ring-1 ring-inset ring-white/10" key={t}>{t}</span>)}
           </div>
-          <button className={copyBtnClass} onClick={() => copy('mcp', MCP_URL)}>
+          <button className={copyBtnClass} onClick={() => copy('mcp', mcpUrl)}>
             {copied === 'mcp' ? (<><Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden /> Copied</>) : (<><Copy className="h-3.5 w-3.5" strokeWidth={2} aria-hidden /> Copy</>)}
           </button>
         </div>
@@ -204,7 +224,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search by release id, title, geography…"
+          placeholder="Search by release id, dataset id, title, geography…"
         />
         <select className="h-11 rounded-xl border border-line bg-surface px-2.5 text-sm text-ink transition-shadow focus:border-teal focus:shadow-focus-ring focus:outline-none" value={filter} onChange={(e) => setFilter(e.target.value)}>
           {facetOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -231,7 +251,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
                     ? 'border-teal bg-sage shadow-[inset_0_0_0_1px_#176B6B]'
                     : 'border-line bg-white hover:-translate-y-px hover:border-teal hover:bg-cream hover:shadow-sm'
                 }`}
-                onClick={() => { setSelId(d.id); setTab('summary'); setSummaryChip('ai'); setApiPreviewOpen(false); setMcpPreviewOpen(false) }}
+                onClick={() => { setSelId(d.id); setTab('summary'); setSummaryChip('ai') }}
               >
                 <div className="flex items-center gap-2">
                   <span className="h-1.5 w-1.5 rounded-full bg-green" />
@@ -323,8 +343,6 @@ export default function Catalogue({ hasKey, onGoSettings }) {
                     }`}
                     onClick={() => {
                       setTab(t)
-                      if (t !== 'api') setApiPreviewOpen(false)
-                      if (t !== 'mcp') setMcpPreviewOpen(false)
                     }}
                   >
                     <TabIcon className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
@@ -341,14 +359,23 @@ export default function Catalogue({ hasKey, onGoSettings }) {
                     <div className="flex flex-col gap-2 rounded-lg border border-line bg-white px-3.5 py-3">
                       <div className={metaCardLabelClass}>Tables in this release</div>
                       <ul className="m-0 list-none space-y-1.5 p-0">
-                        {(sel.tables || []).map((t) => (
-                          <li key={t.id || t.dataset_id} className="flex items-baseline justify-between gap-3 text-[13px]">
-                            <span className="min-w-0 truncate font-medium text-ink">{t.title}</span>
-                            <span className="flex-none tabular-nums text-[11.5px] text-[#8E9398]">
-                              {Number(t.row_count || 0).toLocaleString()} rows
-                            </span>
-                          </li>
-                        ))}
+                        {(sel.tables || []).map((t) => {
+                          const dsId = tableDatasetId(t)
+                          const showDatasetId = dsId && !isPdfDatasetId(dsId)
+                          return (
+                            <li key={dsId || t.title} className="flex items-baseline justify-between gap-3 text-[13px]">
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate font-medium text-ink">{t.title}</div>
+                                {showDatasetId && (
+                                  <div className="truncate font-mono text-[11px] text-[#8E9398]">{dsId}</div>
+                                )}
+                              </div>
+                              <span className="flex-none tabular-nums text-[11.5px] text-[#8E9398]">
+                                {Number(t.row_count || 0).toLocaleString()} rows
+                              </span>
+                            </li>
+                          )
+                        })}
                       </ul>
                     </div>
                   )}
@@ -466,88 +493,63 @@ export default function Catalogue({ hasKey, onGoSettings }) {
 
               {tab === 'api' && (
                 <div className="flex flex-col gap-3.5">
-                  <div className={`${metaCardClass} col-span-2 gap-2.5`}>
-                    <div className="text-lg font-bold text-ink">Coming soon</div>
-                    <div className="text-sm leading-relaxed text-ink-soft">
-                      Live release API access is not available yet. Open a preview of the planned endpoint for this group.
+                  <EndpointCard
+                    label="Release tables endpoint"
+                    url={apiUrl}
+                    copied={copied}
+                    copyLabel="api"
+                    onCopy={() => copy('api', apiUrl)}
+                    hint="List tables that belong to this published group. Requires the same Bearer JWT as Console login."
+                  >
+                    <div className={`${tagListClass} pt-0`}>
+                      <span className={tagChipClass}>GET</span>
+                      <span className={tagChipClass}>JSON</span>
+                      <span className={tagChipClass}>metadata_id</span>
                     </div>
-                    <button
-                      type="button"
-                      className="mt-1 self-start rounded-lg border border-teal bg-white px-3.5 py-2 text-[13px] font-semibold text-teal transition-colors hover:bg-cream"
-                      onClick={() => setApiPreviewOpen((v) => !v)}
-                      aria-expanded={apiPreviewOpen}
-                    >
-                      {apiPreviewOpen ? 'Hide preview' : 'Preview'}
-                    </button>
-                  </div>
-                  {apiPreviewOpen && (
-                    <EndpointCard
-                      label="Release tables endpoint"
-                      url={apiUrl}
-                      copied={copied}
-                      copyLabel="api"
-                      onCopy={() => copy('api', apiUrl)}
-                      hint="List tables that belong to this published group. Use each table id for row queries."
-                    >
-                      <div className={`${tagListClass} pt-0`}>
-                        <span className={tagChipClass}>GET</span>
-                        <span className={tagChipClass}>JSON</span>
-                        <span className={tagChipClass}>metadata_id</span>
+                    <div className="selection-invert flex flex-col gap-2 rounded-lg bg-gradient-to-br from-teal-deep to-[#0c2f2d] px-4 py-3.5 ring-1 ring-inset ring-white/[.06]">
+                      <div className="flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-[#e4c331]/70" />
+                        <span className="h-2 w-2 rounded-full bg-[#c97e93]/70" />
+                        <span className="h-2 w-2 rounded-full bg-[#8fae4c]/70" />
+                        <div className="ml-1.5 text-[11px] uppercase tracking-wide text-[#7d9891]">Example</div>
                       </div>
-                      <div className="selection-invert flex flex-col gap-2 rounded-lg bg-gradient-to-br from-teal-deep to-[#0c2f2d] px-4 py-3.5 ring-1 ring-inset ring-white/[.06]">
-                        <div className="flex items-center gap-1.5">
-                          <span className="h-2 w-2 rounded-full bg-[#e4c331]/70" />
-                          <span className="h-2 w-2 rounded-full bg-[#c97e93]/70" />
-                          <span className="h-2 w-2 rounded-full bg-[#8fae4c]/70" />
-                          <div className="ml-1.5 text-[11px] uppercase tracking-wide text-[#7d9891]">Example</div>
-                        </div>
-                        <div className="break-all font-mono text-[12.5px] leading-relaxed text-[#e8f0e8]">
-                          <span className="text-[#8fbcae]">curl -H</span>{' '}
-                          <span className="text-[#e8f0e8]">"Authorization: Bearer $TOKEN"</span>{' '}
-                          <span className="text-[#f2d788]">"{apiUrl}"</span>
-                        </div>
+                      <div className="break-all font-mono text-[12.5px] leading-relaxed text-[#e8f0e8]">
+                        <span className="text-[#8fbcae]">curl -H</span>{' '}
+                        <span className="text-[#e8f0e8]">"Authorization: Bearer $TOKEN"</span>{' '}
+                        <span className="text-[#f2d788]">"{apiUrl}"</span>
                       </div>
-                    </EndpointCard>
-                  )}
+                    </div>
+                  </EndpointCard>
                 </div>
               )}
 
               {tab === 'mcp' && (
                 <div className="flex flex-col gap-3.5">
-                  <div className={`${metaCardClass} col-span-2 gap-2.5`}>
-                    <div className="text-lg font-bold text-ink">Coming soon</div>
-                    <div className="text-sm leading-relaxed text-ink-soft">
-                      Live MCP access is not available yet. Open a preview of the planned endpoint and tools for this release.
+                  <EndpointCard
+                    label="MCP endpoint"
+                    url={mcpUrl}
+                    copied={copied}
+                    copyLabel="mcp2"
+                    onCopy={() => copy('mcp2', mcpUrl)}
+                    hint="Paste this URL into any MCP-capable agent (Cursor, Claude, etc.). Published catalogue reads are open by default."
+                  >
+                    <div className="grid grid-cols-1 gap-2.5">
+                      {MCP_TOOLS.map((t) => (
+                        <div className={metaCardClass} key={t}>
+                          <div className={metaCardLabelClass}>Tool</div>
+                          <div className="font-mono text-sm font-semibold text-teal">{t}</div>
+                          <div className="text-[13.5px] leading-snug text-ink">{TOOL_DESCS[t]}</div>
+                        </div>
+                      ))}
                     </div>
-                    <button
-                      type="button"
-                      className="mt-1 self-start rounded-lg border border-teal bg-white px-3.5 py-2 text-[13px] font-semibold text-teal transition-colors hover:bg-cream"
-                      onClick={() => setMcpPreviewOpen((v) => !v)}
-                      aria-expanded={mcpPreviewOpen}
-                    >
-                      {mcpPreviewOpen ? 'Hide preview' : 'Preview'}
-                    </button>
-                  </div>
-                  {mcpPreviewOpen && (
-                    <EndpointCard
-                      label="MCP endpoint"
-                      url={MCP_URL}
-                      copied={copied}
-                      copyLabel="mcp2"
-                      onCopy={() => copy('mcp2', MCP_URL)}
-                      hint="Add this endpoint to an assistant so it can find and read this release."
-                    >
-                      <div className="grid grid-cols-1 gap-2.5">
-                        {MCP_TOOLS.map((t) => (
-                          <div className={metaCardClass} key={t}>
-                            <div className={metaCardLabelClass}>Tool</div>
-                            <div className="font-mono text-sm font-semibold text-teal">{t}</div>
-                            <div className="text-[13.5px] leading-snug text-ink">{TOOL_DESCS[t]}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </EndpointCard>
-                  )}
+                    <div className={`${metaCardClass} col-span-2 gap-2.5 border-l-[3px] border-l-teal-deep`}>
+                      <div className={metaCardLabelClass}>Client config</div>
+                      <pre className="m-0 overflow-x-auto whitespace-pre-wrap break-all rounded-md bg-white/70 px-2.5 py-2 font-mono text-[11.5px] leading-snug text-teal-deep">{mcpClientSnippet}</pre>
+                      <button type="button" className={`${copyBtnClass} self-start`} onClick={() => copy('mcp-config', mcpClientSnippet)}>
+                        {copied === 'mcp-config' ? (<><Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden /> Copied</>) : (<><Copy className="h-3.5 w-3.5" strokeWidth={2} aria-hidden /> Copy config</>)}
+                      </button>
+                    </div>
+                  </EndpointCard>
                 </div>
               )}
             </div>

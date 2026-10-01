@@ -1,14 +1,17 @@
 import pathlib
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.routing import Route
 
 load_dotenv()
 
 from catalogue import catalogue as _cat
+from mcp_server.http_asgi import mcp_http_handler, mcp_http_lifespan
 from routes import auth as routes_auth
 from routes import access as routes_access
 from routes import catalogue as routes_catalogue
@@ -32,6 +35,13 @@ OPENAPI_TAGS = [
     {"name": "Access", "description": "Published catalogue query API (v1) for apps and agents. JWT required. MCP tools mirror these routes."},
 ]
 
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    async with mcp_http_lifespan():
+        yield
+
+
 app = FastAPI(
     title="DHARA API",
     description=(
@@ -45,12 +55,17 @@ app = FastAPI(
         "## Catalogue access (v1)\n\n"
         "Published datasets: **GET /api/v1/datasets**, "
         "**GET /api/v1/datasets/{id}**, "
-        "**GET /api/v1/datasets/{id}/rows**. "
-        "MCP: `python -m mcp_server` from `backend/` "
-        "(tools: search_datasets, get_metadata, get_table)."
+        "**GET /api/v1/datasets/{id}/rows**.\n\n"
+        "## MCP\n\n"
+        "Remote Streamable HTTP: **`/mcp`** "
+        "(tools: search_datasets, get_metadata, get_table). "
+        "Open by default for published reads "
+        "(`MCP_HTTP_AUTH=jwt` or `token` to require Bearer; optional `MCP_AUTH_TOKEN`). "
+        "Local stdio: `python -m mcp_server` from `backend/`."
     ),
     openapi_tags=OPENAPI_TAGS,
     swagger_ui_parameters={"persistAuthorization": True},
+    lifespan=_lifespan,
 )
 
 app.add_middleware(
@@ -66,6 +81,12 @@ app.include_router(routes_catalogue.router)
 app.include_router(routes_pdf.router)
 app.include_router(routes_dashboard.router)
 app.include_router(routes_access.router)
+
+# Streamable HTTP MCP — register before the SPA catch-all. Both slash forms
+# so clients that omit the trailing slash still work (no 307 on POST).
+_mcp_asgi = mcp_http_handler()
+app.router.routes.insert(0, Route("/mcp", endpoint=_mcp_asgi))
+app.router.routes.insert(0, Route("/mcp/", endpoint=_mcp_asgi))
 
 
 def _readiness_payload(response: Response) -> dict:
