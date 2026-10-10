@@ -1,63 +1,35 @@
-<p align="center">
-  <img src="./Dhara_logo.png" alt="Data Dhara" width="420" />
-</p>
+![Data Dhara](./Dhara_logo.png)
 
-<p align="center">
-  <a href="http://localhost:8000/docs"><img src="https://img.shields.io/badge/API-Swagger-0A7EA4?style=flat-square" alt="API docs" /></a>
-  <img src="https://img.shields.io/badge/Frontend-Next.js_14-000000?style=flat-square" alt="Next.js" />
-  <img src="https://img.shields.io/badge/Backend-FastAPI-009688?style=flat-square" alt="FastAPI" />
-  <img src="https://img.shields.io/badge/Database-Postgres_%2B_pgvector-336791?style=flat-square" alt="Postgres" />
-  <img src="https://img.shields.io/badge/Deploy-Docker-2496ED?style=flat-square" alt="Docker" />
-  <img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square" alt="Apache 2.0" />
-</p>
+![API docs](https://img.shields.io/badge/API-Swagger-0A7EA4?style=flat-square)![Next.js](https://img.shields.io/badge/Frontend-Next.js_14-000000?style=flat-square)![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688?style=flat-square)![Postgres](https://img.shields.io/badge/Database-Postgres_%2B_pgvector-336791?style=flat-square)![Docker](https://img.shields.io/badge/Deploy-Docker-2496ED?style=flat-square)![Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square)
 
-# DHARA: Data cataloguing for government statistical releases
+# Data DHARA (Data Harnessed for AI Ready Advancement)
 
-Internal toolkit for building and maintaining the DES Delhi data catalog — the
-Postgres database that
-[des-website](https://des-website-235956738573.asia-south1.run.app) reads from.
-Upload Excel workbooks or PDF statistical reports, extract and review tables,
-harmonise classifications, and publish clean datasets into the catalogue.
+The Data DHARA Toolkit takes a dataset through all seven stages in one workflow to make data discoverable and AI ready. It would identify datasets by building an inventory with unique IDs, describe them with NMDS 2.0, MDDS and other metadata standards. It makes them interoperable by harmonising codes and values into a stable structure, and catalogue them in a searchable browser. 
 
-Full design, stage-by-stage pipeline, and deployment guides live under
-**[docs/](./docs/README.md)** (architecture, on-prem, cloud, configuration).
+The catalogued data is made accessible through API and MCP endpoints.
 
----
+## About
 
-## What can be done with Dhara
+[https://datadhara.ekstep.org/](https://datadhara.ekstep.org/)
 
-- **Ingest Excel workbooks** — batch-extract tables, match them to metadata tag
-  files, reconcile IDs/titles, classify columns, and publish.
-- **Connect a SQL database** — paste a Postgres URL; tables are auto-extracted
-  (DHARA catalogue DBs expand `datasets` from `dataset_rows`) and continue on
-  the same review path as Excel.
-- **Process PDF reports** — extract tables from statistical PDFs, preview and
-  edit grids, merge cross-page tables, group related tables, then join the
-  shared catalogue pipeline.
-- **Harmonise classifications** — steward code lists, fill definitions, and
-  match occupation values to NCO 2015 with optional LLM assistance.
-- **Publish to a shared catalogue** — push metadata groups and table records
-  (plus clean / original Excel exports) into Postgres for browsing and for
-  downstream consumers like des-website.
-- **Browse published datasets** — Catalogue UI lists what you have published,
-  with access metadata and API-oriented previews.
+## Scope
 
----
+### In Scope
 
-## Why Dhara
+- One workflow that takes a dataset from inventory through description, harmonisation, cataloguing, and access.
+- A dataset inventory with unique IDs.
+- Description with NMDS 2.0, MDDS, and other metadata standards configured for the release.
+- Harmonising codes and values into a stable structure.
+- A searchable catalogue browser.
+- Access to catalogued data through API and MCP endpoints.
+- Intake from Excel workbooks, PDF reports, and SQL (Postgres).
 
-- **One pipeline for Excel, SQL, and PDF** — different intake paths, one
-  Console flow into the same catalogue.
-- **Human-in-the-loop by design** — Preview, grouping, metadata, and classify
-  steps keep stewards in control before anything is published.
-- **Catalogue as source of truth** — Postgres holds authoritative rows;
-  pgvector is for semantic retrieval only, not a second database.
-- **Bring your own LLM key** — MEITY-empanelled providers via Settings; no
-  shared server-side model key required for local work.
-- **Built for DES Delhi** — shaped around government statistical products,
-  NMDS/SDG metadata, and NCO/NIC-style harmonisation — not a generic ETL toy.
+### Out of Scope
 
----
+- Replacing the systems that originally produce the datasets.
+- Acting as the public website that consumes the catalogue.
+- Hosting or training the language model. A provider key is supplied in Settings when an AI step is used.
+- Intake of file types other than Excel, PDF, and SQL.
 
 ## Project structure
 
@@ -90,24 +62,6 @@ dhara-poc/
         └── lib/                 auth, llmKey, postPreview, pipeline.js, settings
 ```
 
-## Flows
-
-Both Excel and PDF start from **Console** after login. Published rows land in
-the same Postgres catalog and are browsable under **Catalogue**.
-
-**Excel (batch)** — upload dataset workbooks (+ metadata tag files). Tables are
-extracted, matched to metadata (exact ID → typo-tolerant → keyword
-disambiguation), reconciled, classified/harmonised, then published.
-
-**SQL (Postgres)** — paste a connection URL; **tables are auto-extracted**
-(DHARA catalogue DBs expand each `datasets` row from `dataset_rows.row_data`)
-(custom `SELECT` optional). Continues on the **same Excel review path**.
-See Console → “Connect a SQL database”.
-
-**PDF** — upload a report → extract tables → **Preview** (edit cells, merge
-cross-page tables, show-all-rows) → **Grouping** (similarity / review) → continue
-into the shared catalog pipeline as implemented.
-
 ## Quick start (Docker)
 
 Requires Docker Compose. From the repo root:
@@ -118,13 +72,15 @@ make up                                 # postgres + backend :8000 + frontend :8
 make urls                               # print local URLs
 ```
 
-| Service   | URL |
-|-----------|-----|
-| UI        | http://localhost:80 |
-| API       | http://localhost:8000 |
-| API docs  | http://localhost:8000/docs |
-| Liveness  | http://localhost:8000/api/live |
-| Readiness | http://localhost:8000/api/ready |
+
+| Service   | URL                                                                |
+| --------- | ------------------------------------------------------------------ |
+| UI        | [http://localhost:80](http://localhost:80)                         |
+| API       | [http://localhost:8000](http://localhost:8000)                     |
+| API docs  | [http://localhost:8000/docs](http://localhost:8000/docs)           |
+| Liveness  | [http://localhost:8000/api/live](http://localhost:8000/api/live)   |
+| Readiness | [http://localhost:8000/api/ready](http://localhost:8000/api/ready) |
+
 
 Useful Make targets:
 
@@ -156,7 +112,7 @@ make postgres
 # or: docker compose up -d postgres
 ```
 
-Postgres uses **`pgvector/pgvector:pg16`**. Catalogue tables stay in normal SQL;
+Postgres uses `**pgvector/pgvector:pg16**`. Catalogue tables stay in normal SQL;
 embeddings live in `semantic_embeddings`.
 
 If you previously used `postgres:16-alpine` on the same volume, recreate once:
@@ -242,7 +198,7 @@ Sign up via the UI when `ENABLE_SIGNUP=true`, or create accounts with
 
 **Call the API**
 
-Use Swagger at http://localhost:8000/docs: get a token via curl (below) or the
+Use Swagger at [http://localhost:8000/docs](http://localhost:8000/docs): get a token via curl (below) or the
 app login, click **Authorize**, paste the token only (no `Bearer` prefix).
 
 ```bash
@@ -285,15 +241,17 @@ preserved). `des-website` prefers `original_excel`, falling back to
 
 ## Documentation
 
-| Topic | Link |
-|-------|------|
-| Docs home | [docs/README.md](./docs/README.md) |
-| Architecture | [docs/architecture.md](./docs/architecture.md) (includes Configuration modules) |
-| Pipeline stages | [docs/pipeline/overview.md](./docs/pipeline/overview.md) |
+
+| Topic                 | Link                                                                                                                         |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Docs home             | [docs/README.md](./docs/README.md)                                                                                           |
+| Architecture          | [docs/architecture.md](./docs/architecture.md) (includes Configuration modules)                                              |
+| Pipeline stages       | [docs/pipeline/overview.md](./docs/pipeline/overview.md)                                                                     |
 | Configuration modules | [Architecture](./docs/architecture.md#configuration-modules) · [Pipeline](./docs/pipeline/overview.md#configuration-modules) |
-| On-prem deploy | [docs/deployment/on-prem.md](./docs/deployment/on-prem.md) |
-| Cloud deploy | [docs/deployment/cloud.md](./docs/deployment/cloud.md) |
-| Configuration (env) | [docs/deployment/configuration.md](./docs/deployment/configuration.md) |
+| On-prem deploy        | [docs/deployment/on-prem.md](./docs/deployment/on-prem.md)                                                                   |
+| Cloud deploy          | [docs/deployment/cloud.md](./docs/deployment/cloud.md)                                                                       |
+| Configuration (env)   | [docs/deployment/configuration.md](./docs/deployment/configuration.md)                                                       |
+
 
 ## License
 
