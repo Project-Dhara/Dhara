@@ -1,34 +1,22 @@
 """Postgres connection + schema DDL for every catalogue-adjacent table."""
 import os
-from pathlib import Path
 
 import psycopg2
 
 
 def get_connection():
-    url = os.environ["DATABASE_URL"]
-    # Host-oriented .env often uses localhost; inside Compose that must be the
-    # postgres service (sql_extract rewrite covers SQL upload DSNs separately).
-    if Path("/.dockerenv").exists():
-        from urllib.parse import urlparse, urlunparse, quote_plus
+    from app.core.config import psycopg2_dsn
 
-        parsed = urlparse(url)
-        host = (parsed.hostname or "").lower()
-        if host in ("localhost", "127.0.0.1", "::1", "host.docker.internal"):
-            userinfo = ""
-            if parsed.username is not None:
-                userinfo = quote_plus(parsed.username)
-                if parsed.password is not None:
-                    userinfo += ":" + quote_plus(parsed.password)
-                userinfo += "@"
-            port = parsed.port or 5432
-            url = urlunparse(
-                (parsed.scheme, f"{userinfo}postgres:{port}", parsed.path, parsed.params, parsed.query, parsed.fragment)
-            )
-    return psycopg2.connect(url)
+    return psycopg2.connect(psycopg2_dsn())
 
 
 def init_schema(conn):
+    """Request-time DDL. No-op when ``DISABLE_REQUEST_TIME_DDL=true`` (Alembic)."""
+    from app.core.config import get_settings
+
+    if get_settings().disable_request_time_ddl:
+        return
+
     with conn.cursor() as cur:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -37,6 +25,33 @@ def init_schema(conn):
                 name           TEXT,
                 dept           TEXT,
                 created_at     TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS id UUID DEFAULT gen_random_uuid()
+        """)
+        cur.execute("""
+            UPDATE users SET id = gen_random_uuid() WHERE id IS NULL
+        """)
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_users_id ON users (id)
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS organisations (
+                id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                name        TEXT NOT NULL,
+                slug        TEXT NOT NULL UNIQUE,
+                created_at  TIMESTAMPTZ DEFAULT NOW(),
+                updated_at  TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS organisation_memberships (
+                organisation_id UUID NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,
+                user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                role            TEXT NOT NULL DEFAULT 'data_steward',
+                created_at      TIMESTAMPTZ DEFAULT NOW(),
+                PRIMARY KEY (organisation_id, user_id)
             )
         """)
         cur.execute("""
@@ -78,6 +93,9 @@ def init_schema(conn):
             ALTER TABLE metadata_groups ADD COLUMN IF NOT EXISTS catalogue_product TEXT
         """)
         cur.execute("""
+            ALTER TABLE metadata_groups ADD COLUMN IF NOT EXISTS organisation_id UUID
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS datasets (
                 dataset_id         TEXT PRIMARY KEY,
                 unique_dataset_id  TEXT,
@@ -110,6 +128,9 @@ def init_schema(conn):
             ALTER TABLE datasets ADD COLUMN IF NOT EXISTS user_email TEXT
         """)
         cur.execute("""
+            ALTER TABLE datasets ADD COLUMN IF NOT EXISTS organisation_id UUID
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS dataset_rows (
                 id         SERIAL PRIMARY KEY,
                 dataset_id TEXT REFERENCES datasets ON DELETE CASCADE,
@@ -121,6 +142,9 @@ def init_schema(conn):
         """)
         cur.execute("""
             ALTER TABLE dataset_rows ADD COLUMN IF NOT EXISTS user_email TEXT
+        """)
+        cur.execute("""
+            ALTER TABLE dataset_rows ADD COLUMN IF NOT EXISTS organisation_id UUID
         """)
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_datasets_metadata_id
@@ -142,6 +166,9 @@ def init_schema(conn):
         """)
         cur.execute("""
             ALTER TABLE kyds_entries ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ
+        """)
+        cur.execute("""
+            ALTER TABLE kyds_entries ADD COLUMN IF NOT EXISTS organisation_id UUID
         """)
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_kyds_entries_created_at

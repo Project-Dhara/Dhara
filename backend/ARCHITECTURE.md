@@ -72,55 +72,71 @@ flowchart TB
 
 ## Current application facts (must preserve)
 
-- Schema is **request-time DDL** via `catalogue.db.init_schema()`, not
-  startup migrations. `/api/ready` and `/api/health` are read-only.
-- No organisations or RBAC yet. `users.email` is the PK; JWT `sub` is email.
-  Isolation is ad hoc `user_email` filters; published catalogue reads are
-  global to any authenticated user.
-- PostgreSQL-specific features in use: JSONB, `TEXT[]`, `BYTEA`,
-  `ON CONFLICT`, `ILIKE`, `TIMESTAMPTZ`, optional pgvector.
+- Schema baseline: **Alembic** under `backend/migrations/` (revision 001).
+  Request-time DDL via `catalogue.db.init_schema()` remains until
+  `DISABLE_REQUEST_TIME_DDL=true` (default `false` for local/dev without
+  Alembic). `/api/ready` and `/api/health` stay read-only (no DDL).
+- **Default organisation** (`DEFAULT_ORGANISATION_SLUG=default`) with
+  `organisation_memberships` (`administrator` | `data_steward` | `data_user`).
+  `users.email` remains PK; additive `users.id` UUID is unique. JWT `sub` is
+  the user UUID (breaking: clients must re-login). Optional JWT claim `email`
+  is informational only.
+- Tenant isolation: `organisation_id` on PDF jobs, catalogue datasets/groups,
+  KYDS, embeddings, staging, etc. Published catalogue **Access API**
+  (`/api/v1/*`) filters by the caller's organisation (no longer global
+  published read across orgs).
+- PostgreSQL-specific features: JSONB, `TEXT[]`, `BYTEA`, `ON CONFLICT`,
+  `ILIKE`, `TIMESTAMPTZ`, optional pgvector / HNSW (Postgres-only).
 - PDF jobs: in-memory `_pdf_jobs` plus Postgres `pdf_jobs` (incl. `pdf_bytes`).
-- Two Excel paths: upload (`data_ingestion/excel.py` + shared validation) vs
-  catalogue wizard (`catalogue/extract/extractor.py`). Different contracts.
-- `data_ingestion/pdf/confidence_validation/` is the **shared** upload
-  validator for PDF, Excel, and CSV (`PreValidationInput`).
-- `backend/config.py` holds LLM prompts/worker counts — not app settings.
+- Two Excel paths (intentionally separate): upload
+  (`data_ingestion/excel.py` + shared validation) vs catalogue wizard
+  (`catalogue/extract/extractor.py`).
+- Shared upload validator lives at
+  `app/services/extraction/pdf/confidence_validation/` with shims under
+  `data_ingestion/pdf/confidence_validation/`. Contracts:
+  `app/services/ingestion/contracts.py` (`PreValidationInput`).
+- `app/core/config.py` — env settings (`DATABASE_URL`, JWT, org slug, DDL flag).
+  `backend/config.py` — LLM prompts/worker counts only.
 - Storage: PDF in BYTEA; optional GCS via `core/gcs_utils.py`.
-- Auth gaps: `ENABLE_SIGNUP` default on; `MCP_HTTP_AUTH` default `off`.
+- Auth gaps remaining: `ENABLE_SIGNUP` default on; `MCP_HTTP_AUTH` default `off`
+  (optional JWT when enabled; tools should respect org when JWT present).
 - Eager import: `data_ingestion/__init__.py` pulls the PDF pipeline.
-  New packages must not re-export that graph from `__init__.py`.
+  Contracts must not import the pipeline graph from `__init__.py`.
 
 ## Placeholders vs live modules
 
-### App package (Phase 2 — live factory)
+### App package (Phases 2–5 — live)
 
 | Module | Role |
 |--------|------|
 | `app/main.py` | `create_app()`, lifespan, CORS, MCP mount, SPA |
-| `app/api/router.py` | Includes health + all live `routes/*` routers |
+| `app/api/router.py` | Health + auth/KYDS/LLM (app routes) + remaining `routes/*` |
 | `app/api/routes/health.py` | `/api/live`, `/api/ready`, `/api/health` |
-| `app/api/dependencies.py` | Re-exports `core.deps` helpers |
-
-Other `app/` packages (services, db, storage, workers) remain docstring
-placeholders until later phases. `backend/migrations/README.md` still
-documents that Alembic is not configured yet.
+| `app/api/routes/auth.py` | Login / signup / `/api/me` via `AuthService` |
+| `app/api/routes/kyds.py`, `llm_key.py` | Account settings (org-aware) |
+| `app/api/dependencies.py` | `CurrentUser`, UUID JWT `require_user` |
+| `app/core/config.py`, `security.py` | Settings + bcrypt/JWT |
+| `app/db/` | SQLAlchemy `Base`, session, models, repositories |
+| `app/services/auth/` | Signup / login / session profile |
+| `app/services/ingestion/` | Upload pipeline + adapters + contracts |
+| `app/services/extraction/` | Shared confidence validation (moved) |
+| `migrations/` | Alembic env + revision 001 |
 
 ### Still live (do not delete; keep imports working)
 
 | Area | Live modules |
 |------|----------------|
 | Compat entry | `main.py` (re-exports `app.main.app`) |
-| HTTP routes | `routes/auth.py`, `kyds.py`, `llm_key.py`, `catalogue.py`, `pdf.py`, `upload.py`, `dashboard.py`, `access.py` |
-
-| Auth / deps / GCS / vectors | `core/auth.py`, `core/deps.py`, `core/gcs_utils.py`, `core/vector_store.py` |
-| Catalogue domain | `catalogue/*` |
+| HTTP routes | `routes/auth.py` / `kyds.py` / `llm_key.py` are **re-exports**; `catalogue.py`, `pdf.py`, `upload.py`, `dashboard.py`, `access.py` still hold heavy handlers |
+| Auth / deps / GCS / vectors | `core/auth.py`, `core/deps.py` (compat shims), `core/gcs_utils.py`, `core/vector_store.py` |
+| Catalogue domain | `catalogue/*` (psycopg2; DDL gated) |
 | PDF jobs / store / grouping | `pdf/pdf_jobs.py`, `pdf_store.py`, `pdf_grouping.py` |
-| Upload ingest | `data_ingestion/*` |
+| Upload ingest | `data_ingestion/*` (pipeline/types/confidence_validation → shims) |
 | Metadata fill / validation | `metadata/*` |
 | MCP | `mcp_server/*` |
 | Prompt config | `config.py` |
 | Docker pgvector init | `db/init-pgvector.sql` |
-| Tests / scripts | `tests/`, `scripts/` |
+| Tests / scripts | `tests/`, `scripts/create_user.py` (membership-aware) |
 
 ### Modules without a 1:1 target folder
 
@@ -173,33 +189,31 @@ documents that Alembic is not configured yet.
 
 | Data | Storage | Notes |
 |------|---------|-------|
-| Login profile | `users` | `email` PK, `password_hash`, `name`, `dept` |
-| Session | Browser `localStorage` + JWT | No sessions table yet |
-| KYDS | `kyds_entries` | Separate table. `POST` create, `GET /api/kyds/mine`, `PATCH /api/kyds/{id}` |
-| LLM API key | `llm_api_keys` | **Separate table**, one row per user. `GET`/`POST /api/llm-key`. Header `X-Llm-Api-Key` overrides; absent header uses stored key |
+| Login profile | `users` | `email` PK, additive `id` UUID, `password_hash`, `name`, `dept` |
+| Organisation | `organisations` + `organisation_memberships` | Default org backfill; role on membership |
+| Session | Browser `localStorage` + JWT (`sub` = user UUID) | No sessions table; re-login after upgrade |
+| KYDS | `kyds_entries` | Separate table + `organisation_id`. `POST` / `GET /api/kyds/mine` / `PATCH` |
+| LLM API key | `llm_api_keys` | One row per user. `GET`/`POST /api/llm-key`. Header overrides stored key |
 | Dataset-id / metadata UI prefs | Browser `localStorage` today | Future `organisation_settings` if shared |
-| UI role labels | Not durable | Future `organisation_memberships.role` |
 | Classification standards | `classification_standards` (+ codes, active `nco_2015_codes`) | |
 
 Neither KYDS nor LLM keys are columns on `users`.
 
 ## Deferred decisions
 
-- Additive organisation / membership tables without rewriting email PKs in place.
-- Move shared validation under extraction (ownership rename) without breaking imports.
-- Keep both Excel extractors until contracts are unified deliberately.
-- pgvector remains optional / explicitly managed.
-- No automatic migration on every API startup.
-- MCP auth default stays until Phase 4 hardens it.
-- Alembic baseline must include additive tables (`llm_api_keys`, etc.) without drops.
+- Full migration of `routes/catalogue.py` off psycopg2 / request DDL.
+- Unify the two Excel extractors (explicit non-goal of Phases 3–5).
+- Phase 6 storage/jobs queue; Phase 7 `DEPLOYMENT.md`.
+- Harden MCP auth default (`MCP_HTTP_AUTH`).
+- Promote `users.id` to PK and rewrite FKs off `email` (separate wave).
 
 ## Proposed migration order
 
 1. ~~**Phase 2** — App factory mounting existing routers~~ **done**
 2. ~~**Account data slice** — `llm_api_keys` + KYDS `PATCH`~~ **done**
-3. **Phase 3** — SQLAlchemy 2 + Alembic baseline mirroring current tables; remove request-time DDL once migrations are safe.
-4. **Phase 4** — Auth: stable user id in JWT `sub`, roles, tenant isolation in services/repositories.
-5. **Phase 5** — Ingestion/extraction adapters as wrappers, then careful moves; preserve grouping after approval.
+3. ~~**Phase 3** — SQLAlchemy 2 + Alembic baseline; `DISABLE_REQUEST_TIME_DDL` gate~~ **done**
+4. ~~**Phase 4** — UUID JWT `sub`, default org, tenant filters, auth/KYDS/LLM app routes~~ **done**
+5. ~~**Phase 5** — Ingestion/extraction services + confidence_validation move + shims~~ **done**
 6. **Phase 6** — FileStorage / VectorStore interfaces; durable job state.
 7. **Phase 7** — Deployment docs; Postgres-first portability policy.
 8. **Phase 8** — Broader test matrix and quality gates.
@@ -207,7 +221,7 @@ Neither KYDS nor LLM keys are columns on `users`.
 ## Phase 1 status
 
 - [x] `backend/app/` package tree with docstring placeholders
-- [x] `backend/migrations/README.md` (Alembic not configured yet)
+- [x] `backend/migrations/README.md` (Alembic configured; see Phases 3–5)
 - [x] This document
 
 ## Phase 2 status
@@ -215,16 +229,23 @@ Neither KYDS nor LLM keys are columns on `users`.
 - [x] `app/main.py` — `create_app()` with lifespan, CORS, MCP, SPA
 - [x] `app/api/router.py` — mounts live `routes/*` + health
 - [x] `app/api/routes/health.py` — liveness/readiness (no secrets, no DDL)
-- [x] `app/api/dependencies.py` — re-exports `core.deps`
+- [x] `app/api/dependencies.py` — `CurrentUser` + UUID JWT (Phase 4)
 - [x] `backend/main.py` — compatibility entry (`load_dotenv` + re-export)
-- Domain HTTP handlers remain in `backend/routes/` (heavy logic not peeled yet)
 
 ## Account data slice (implemented on live modules)
 
-Additive DDL in `catalogue.db.init_schema()` (no drops):
+Additive DDL in `catalogue.db.init_schema()` / Alembic 001 (no drops):
 
-- Table `llm_api_keys` — `routes/llm_key.py` (`GET`/`POST /api/llm-key`);
-  `catalogue/llm_keys.py`; `core.deps.resolve_llm_credentials` uses stored key
-  when `X-Llm-Api-Key` is absent.
-- `kyds_entries.updated_at` + `PATCH /api/kyds/{entry_id}` in `routes/kyds.py`;
-  frontend edits use PATCH instead of creating a new row.
+- Table `llm_api_keys` — `app/api/routes/llm_key.py` (`GET`/`POST /api/llm-key`)
+- `kyds_entries.updated_at` + `PATCH /api/kyds/{entry_id}`
+
+## Phases 3–5 status
+
+- [x] SQLAlchemy 2 + Alembic (`migrations/versions/001_baseline_orgs_tenant.py`)
+- [x] `app/core/config.py`, `app/db/session.py`, ORM models, repositories
+- [x] Default organisation backfill + membership roles
+- [x] JWT `sub` = user UUID; `AuthService`; app auth/KYDS/LLM routes
+- [x] Tenant filters on PDF jobs, dashboard, Access API, KYDS
+- [x] `DISABLE_REQUEST_TIME_DDL` gate on `init_schema`
+- [x] Ingestion service + adapters; extraction service; confidence_validation move + shims
+- [x] Targeted tests: `tests/test_auth_jwt.py`, `tests/test_tenant_isolation.py`

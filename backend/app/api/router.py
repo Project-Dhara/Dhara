@@ -1,18 +1,13 @@
-"""Aggregate API routers for the application factory.
-
-Mounts the live route modules under ``backend/routes/`` plus health.
-URL contracts are unchanged. Business logic still lives in those modules
-and catalogue/pdf helpers; Phase 2 only establishes the registration path.
-"""
+"""Aggregate API routers for the application factory."""
 from fastapi import APIRouter
 
+from app.api.routes import auth as routes_auth
 from app.api.routes import health as routes_health
+from app.api.routes import kyds as routes_kyds
+from app.api.routes import llm_key as routes_llm_key
 from routes import access as routes_access
-from routes import auth as routes_auth
 from routes import catalogue as routes_catalogue
 from routes import dashboard as routes_dashboard
-from routes import kyds as routes_kyds
-from routes import llm_key as routes_llm_key
 from routes import pdf as routes_pdf
 from routes import upload as routes_upload
 

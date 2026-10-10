@@ -1,16 +1,23 @@
 """PDF extraction/review/grouping routes (upload -> background job -> review)."""
+from __future__ import annotations
+
 import asyncio
 import io
 import pathlib
 import uuid
 import zipfile
-from typing import Any, List
+from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 
+from app.api.dependencies import (
+    CurrentUser,
+    require_user,
+    require_user_email,
+    resolve_llm_credentials,
+)
 from catalogue import catalogue as _cat
-from core.deps import require_user, resolve_llm_credentials
 from pdf.pdf_jobs import (
     _get_pdf_bytes,
     _get_pdf_job,
@@ -32,8 +39,22 @@ from catalogue.extract.table_export import safe_download_stem, table_to_excel_by
 router = APIRouter(tags=["PDF"])
 
 
+def _job_visible_to(job: Optional[dict], user: CurrentUser) -> bool:
+    """Owner email match plus organisation_id when the job is tenant-tagged."""
+    if not job or job.get("user_email") != user.email:
+        return False
+    job_org = job.get("organisation_id")
+    if job_org and str(job_org) != str(user.organisation_id):
+        return False
+    return True
+
+
 @router.post("/api/pdf/upload")
-async def pdf_upload(request: Request, file: UploadFile = File(...), user_email: str = Depends(require_user)):
+async def pdf_upload(
+    request: Request,
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(require_user),
+):
     """Accepts one PDF, stores working state in Postgres, and starts background
     processing without blocking the response — returns a job_id immediately for
     the frontend to poll via GET /api/pdf/jobs/{job_id}."""
@@ -48,14 +69,16 @@ async def pdf_upload(request: Request, file: UploadFile = File(...), user_email:
 
     # Header X-Llm-Api-Key overrides; else the caller's stored llm_api_keys row.
     # Optional — without a key, PDF extraction falls back to heuristics.
-    api_key, _provider = resolve_llm_credentials(request, user_email)
+    api_key, _provider = resolve_llm_credentials(request, user.email)
 
     queue_extraction_job(
         job_id=job_id,
         filename=file.filename,
-        user_email=user_email,
+        user_email=user.email,
         source_type="pdf",
         file_bytes=content,
+        organisation_id=str(user.organisation_id),
+        user_id=str(user.id),
     )
 
     asyncio.create_task(asyncio.to_thread(_run_extraction_job, job_id, content, "pdf", api_key))
@@ -63,27 +86,31 @@ async def pdf_upload(request: Request, file: UploadFile = File(...), user_email:
 
 
 @router.get("/api/pdf/jobs", include_in_schema=False)
-async def pdf_jobs_list(user_email: str = Depends(require_user)):
+async def pdf_jobs_list(user: CurrentUser = Depends(require_user)):
     """Lists the caller's own PDF jobs, most recent first -- lets the
     frontend recover an in-progress/finished job after a page refresh."""
     with _pdf_jobs_lock:
-        _hydrate_user_pdf_jobs(user_email)
-        mine = [_pdf_job_public(j) for j in _pdf_jobs.values() if j.get("user_email") == user_email]
+        _hydrate_user_pdf_jobs(user.email)
+        mine = [
+            _pdf_job_public(j)
+            for j in _pdf_jobs.values()
+            if _job_visible_to(j, user)
+        ]
     mine.sort(key=lambda j: j.get("created_at") or 0, reverse=True)
     return {"jobs": mine}
 
 
 @router.get("/api/pdf/jobs/{job_id}")
-async def pdf_job_status(job_id: str, user_email: str = Depends(require_user)):
+async def pdf_job_status(job_id: str, user: CurrentUser = Depends(require_user)):
     with _pdf_jobs_lock:
         job = _get_pdf_job(job_id)
-        if not job or job.get("user_email") != user_email:
+        if not _job_visible_to(job, user):
             raise HTTPException(404, "Job not found")
         return _pdf_job_public(job)
 
 
 @router.get("/api/pdf/jobs/{job_id}/result")
-async def pdf_job_result(job_id: str, user_email: str = Depends(require_user)):
+async def pdf_job_result(job_id: str, user: CurrentUser = Depends(require_user)):
     """Flattens the pipeline's page-keyed output into one list of tables for
     the review screen, each tagged with a stable table_id ("{page}-{index}")
     and merged with any reviewer edits already saved via the PATCH endpoint
@@ -91,7 +118,7 @@ async def pdf_job_result(job_id: str, user_email: str = Depends(require_user)):
     classification/human_review_* fields are ever patched."""
     with _pdf_jobs_lock:
         job = _get_pdf_job(job_id)
-        if not job or job.get("user_email") != user_email:
+        if not _job_visible_to(job, user):
             raise HTTPException(404, "Job not found. Please upload the PDF again.")
         if job["status"] != "done":
             raise HTTPException(409, f"Job not finished yet (status={job['status']})")
@@ -99,7 +126,6 @@ async def pdf_job_result(job_id: str, user_email: str = Depends(require_user)):
         deleted = set(job.get("deleted_table_ids") or [])
         result = job["result"] or {}
         filename = job["filename"]
-
     tables = []
     for page_num in sorted(result.keys(), key=lambda k: int(k) if str(k).isdigit() else str(k)):
         for idx, t in enumerate(result[page_num].get("tables", [])):
@@ -112,7 +138,7 @@ async def pdf_job_result(job_id: str, user_email: str = Depends(require_user)):
 
 
 @router.patch("/api/pdf/jobs/{job_id}/tables/{table_id}")
-async def pdf_review_table(job_id: str, table_id: str, request: Request, user_email: str = Depends(require_user)):
+async def pdf_review_table(job_id: str, table_id: str, request: Request, user_email: str = Depends(require_user_email)):
     """Saves a reviewer's edits to one table (classification, columns, rows,
     structure). Merged onto the original table when /result is next fetched."""
     payload = await request.json()
@@ -128,7 +154,7 @@ async def pdf_review_table(job_id: str, table_id: str, request: Request, user_em
 
 
 @router.get("/api/pdf/jobs/{job_id}/tables/{table_id}/snapshot")
-async def pdf_table_snapshot(job_id: str, table_id: str, user_email: str = Depends(require_user)):
+async def pdf_table_snapshot(job_id: str, table_id: str, user_email: str = Depends(require_user_email)):
     """PNG crop of the source PDF region for this table (or the full page).
 
     Used in review so humans can compare the extracted grid against the page.
@@ -212,7 +238,7 @@ async def pdf_table_snapshot(job_id: str, table_id: str, user_email: str = Depen
 
 
 @router.post("/api/pdf/jobs/{job_id}/tables/delete")
-async def pdf_delete_tables(job_id: str, request: Request, user_email: str = Depends(require_user)):
+async def pdf_delete_tables(job_id: str, request: Request, user_email: str = Depends(require_user_email)):
     """Soft-deletes one or more extracted tables from a finished job.
     table_id values stay stable (page-index), so deletions are recorded in
     deleted_table_ids rather than reshuffling the result payload."""
@@ -242,7 +268,7 @@ async def pdf_delete_tables(job_id: str, request: Request, user_email: str = Dep
 
 
 @router.post("/api/pdf/jobs/{job_id}/tables/merge")
-async def pdf_merge_tables(job_id: str, request: Request, user_email: str = Depends(require_user)):
+async def pdf_merge_tables(job_id: str, request: Request, user_email: str = Depends(require_user_email)):
     """
     Concatenate rows from 2+ Preview tables that share the same column headers
     (cross-page continuations of one logical table). Keeps the earliest table
@@ -362,7 +388,7 @@ async def pdf_merge_tables(job_id: str, request: Request, user_email: str = Depe
 
 
 @router.get("/api/pdf/jobs/{job_id}/tables/{table_id}/download")
-async def pdf_download_table(job_id: str, table_id: str, user_email: str = Depends(require_user)):
+async def pdf_download_table(job_id: str, table_id: str, user_email: str = Depends(require_user_email)):
     """Download one extracted PDF table as a clean .xlsx workbook."""
     with _pdf_jobs_lock:
         job = _get_pdf_job(job_id)
@@ -404,7 +430,7 @@ def _pdf_tables_zip_bytes(tables: list, job_name: str, job_id: str) -> tuple[byt
 
 
 @router.get("/api/pdf/jobs/{job_id}/tables/download-zip")
-async def pdf_download_tables_zip(job_id: str, user_email: str = Depends(require_user)):
+async def pdf_download_tables_zip(job_id: str, user_email: str = Depends(require_user_email)):
     """Download all non-deleted tables for a PDF job as a .zip of .xlsx files."""
     with _pdf_jobs_lock:
         job = _get_pdf_job(job_id)
@@ -428,7 +454,7 @@ async def pdf_download_tables_zip(job_id: str, user_email: str = Depends(require
 
 @router.post("/api/pdf/jobs/{job_id}/tables/download-zip")
 async def pdf_download_tables_zip_selected(
-    job_id: str, request: Request, user_email: str = Depends(require_user)
+    job_id: str, request: Request, user_email: str = Depends(require_user_email)
 ):
     """Download selected tables as a ZIP. Body: { table_ids: string[] }.
     If table_ids is omitted or empty, downloads all non-deleted tables."""
@@ -465,7 +491,7 @@ async def pdf_download_tables_zip_selected(
 
 
 @router.post("/api/pdf/jobs/{job_id}/persist-approved")
-async def pdf_persist_approved(job_id: str, request: Request, user_email: str = Depends(require_user)):
+async def pdf_persist_approved(job_id: str, request: Request, user_email: str = Depends(require_user_email)):
     """
     Continue from Preview: write approved tables to Postgres and propose
     title-based groups (same base-title rule as Excel; SDG jobs by goal).
@@ -547,7 +573,7 @@ async def pdf_persist_approved(job_id: str, request: Request, user_email: str = 
 
 
 @router.get("/api/pdf/jobs/{job_id}/grouping")
-async def pdf_get_grouping(job_id: str, user_email: str = Depends(require_user)):
+async def pdf_get_grouping(job_id: str, user_email: str = Depends(require_user_email)):
     from pdf import pdf_store
 
     conn = _cat.get_connection()
@@ -575,7 +601,7 @@ async def pdf_get_grouping(job_id: str, user_email: str = Depends(require_user))
 
 
 @router.post("/api/pdf/jobs/{job_id}/grouping/propose")
-async def pdf_propose_grouping(job_id: str, request: Request, user_email: str = Depends(require_user)):
+async def pdf_propose_grouping(job_id: str, request: Request, user_email: str = Depends(require_user_email)):
     """Re-run automatic title-based grouping and overwrite saved groups."""
     from pdf import pdf_store
     from pdf import pdf_grouping
@@ -602,7 +628,7 @@ async def pdf_propose_grouping(job_id: str, request: Request, user_email: str = 
 
 
 @router.put("/api/pdf/jobs/{job_id}/grouping")
-async def pdf_save_grouping(job_id: str, request: Request, user_email: str = Depends(require_user)):
+async def pdf_save_grouping(job_id: str, request: Request, user_email: str = Depends(require_user_email)):
     """Persist human-edited groups. Body: { groups: [{ name, table_ids: [uuid...] }] }."""
     from pdf import pdf_store
 

@@ -19,7 +19,8 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from catalogue import catalogue as _cat
-from data_ingestion import resolve_source_type, run_upload_pipeline
+from app.services.ingestion.service import run_upload_pipeline
+from data_ingestion.utils.source_type import resolve_source_type
 from pdf import pdf_store as _pdf_store
 
 _pdf_jobs: Dict[str, Dict[str, Any]] = {}
@@ -140,6 +141,8 @@ def queue_extraction_job(
     user_email: str,
     source_type: str,
     file_bytes: bytes,
+    organisation_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> None:
     """Register an in-memory job and persist initial state (caller starts the worker)."""
     with _pdf_jobs_lock:
@@ -151,6 +154,8 @@ def queue_extraction_job(
             "message": "Queued",
             "filename": filename,
             "user_email": user_email,
+            "organisation_id": organisation_id,
+            "user_id": user_id,
             "source_type": source_type,
             "created_at": time.time(),
             "result": None,

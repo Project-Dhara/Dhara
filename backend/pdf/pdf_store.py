@@ -52,6 +52,7 @@ def init_pdf_schema(conn) -> None:
             "ALTER TABLE pdf_jobs ADD COLUMN IF NOT EXISTS created_at_epoch DOUBLE PRECISION",
             "ALTER TABLE pdf_jobs ADD COLUMN IF NOT EXISTS pipeline_step INTEGER",
             "ALTER TABLE pdf_jobs ADD COLUMN IF NOT EXISTS source_type TEXT",
+            "ALTER TABLE pdf_jobs ADD COLUMN IF NOT EXISTS organisation_id UUID",
             """
             CREATE INDEX IF NOT EXISTS idx_pdf_jobs_user_updated
                 ON pdf_jobs (user_email, updated_at DESC)
@@ -246,17 +247,18 @@ def save_working_job(
     result = job.get("result")
 
     with conn.cursor() as cur:
+        org_id = job.get("organisation_id")
         if pdf_bytes is not None or clear_pdf_bytes:
             cur.execute(
                 """
                 INSERT INTO pdf_jobs (
                     job_id, user_email, filename, status, stage, percent, message, error,
                     result, reviews, deleted_table_ids, pdf_bytes, source_type,
-                    created_at_epoch, updated_at
+                    organisation_id, created_at_epoch, updated_at
                 )
                 VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, NOW()
+                    %s, %s, %s, %s, %s, %s, %s, NOW()
                 )
                 ON CONFLICT (job_id) DO UPDATE SET
                     user_email = EXCLUDED.user_email,
@@ -271,6 +273,7 @@ def save_working_job(
                     deleted_table_ids = EXCLUDED.deleted_table_ids,
                     pdf_bytes = EXCLUDED.pdf_bytes,
                     source_type = COALESCE(EXCLUDED.source_type, pdf_jobs.source_type),
+                    organisation_id = COALESCE(EXCLUDED.organisation_id, pdf_jobs.organisation_id),
                     created_at_epoch = COALESCE(pdf_jobs.created_at_epoch, EXCLUDED.created_at_epoch),
                     updated_at = NOW()
                 """,
@@ -288,6 +291,7 @@ def save_working_job(
                     psycopg2.extras.Json(deleted),
                     None if clear_pdf_bytes else psycopg2.Binary(pdf_bytes),
                     job.get("source_type") or "pdf",
+                    str(org_id) if org_id else None,
                     created_epoch,
                 ),
             )
@@ -296,11 +300,12 @@ def save_working_job(
                 """
                 INSERT INTO pdf_jobs (
                     job_id, user_email, filename, status, stage, percent, message, error,
-                    result, reviews, deleted_table_ids, source_type, created_at_epoch, updated_at
+                    result, reviews, deleted_table_ids, source_type, organisation_id,
+                    created_at_epoch, updated_at
                 )
                 VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, NOW()
+                    %s, %s, %s, %s, %s, %s, NOW()
                 )
                 ON CONFLICT (job_id) DO UPDATE SET
                     user_email = EXCLUDED.user_email,
@@ -314,6 +319,7 @@ def save_working_job(
                     reviews = EXCLUDED.reviews,
                     deleted_table_ids = EXCLUDED.deleted_table_ids,
                     source_type = COALESCE(EXCLUDED.source_type, pdf_jobs.source_type),
+                    organisation_id = COALESCE(EXCLUDED.organisation_id, pdf_jobs.organisation_id),
                     created_at_epoch = COALESCE(pdf_jobs.created_at_epoch, EXCLUDED.created_at_epoch),
                     updated_at = NOW()
                 """,
@@ -330,6 +336,7 @@ def save_working_job(
                     psycopg2.extras.Json(reviews),
                     psycopg2.extras.Json(deleted),
                     job.get("source_type") or "pdf",
+                    str(org_id) if org_id else None,
                     created_epoch,
                 ),
             )

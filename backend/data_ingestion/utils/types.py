@@ -1,33 +1,18 @@
-"""Shared types for the data ingestion layer."""
+"""Compatibility re-export — contracts live in ``app.services.ingestion.contracts``."""
+from app.services.ingestion.contracts import (  # noqa: F401
+    CandidateDict,
+    PagesGrouped,
+    PreValidationInput,
+    SourceType,
+    UnitContextText,
+    UnitId,
+)
 
-from __future__ import annotations
-
-from typing import Any, Dict, List, Literal
-
-from typing_extensions import NotRequired, TypedDict
-
-SourceType = Literal["pdf", "excel", "csv"]
-
-# One logical table region (PDF page, Excel sheet+block, or CSV file).
-UnitId = int
-
-CandidateDict = Dict[str, Any]
-PagesGrouped = Dict[UnitId, List[CandidateDict]]
-UnitContextText = Dict[UnitId, str]
-
-
-class PreValidationInput(TypedDict):
-    """
-    Grid candidates + per-unit grounding text, before confidence / LLM validation.
-
-    Produced by ``data_ingestion`` (Excel, CSV, PDF extract). Consumed by
-    ``extraction`` validation (next pipeline stage).
-    """
-
-    pages_grouped: PagesGrouped
-    unit_context: UnitContextText
-    source_type: NotRequired[SourceType]
-    source_file: NotRequired[str]
-    # PDF-only: absolute path for title/bbox helpers during validation.
-    source_path: NotRequired[str]
-    outline_index: NotRequired[Dict[int, List[str]]]
+__all__ = [
+    "CandidateDict",
+    "PagesGrouped",
+    "PreValidationInput",
+    "SourceType",
+    "UnitContextText",
+    "UnitId",
+]

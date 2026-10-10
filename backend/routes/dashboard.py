@@ -6,11 +6,20 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 import psycopg2.extras
 
+from app.api.dependencies import CurrentUser, require_user
 from catalogue import catalogue as _cat
-from core.deps import require_user
 from pdf.pdf_jobs import _get_pdf_job, _hydrate_user_pdf_jobs, _pdf_job_public, _pdf_jobs, _pdf_jobs_lock
 
 router = APIRouter()
+
+
+def _job_visible_to_org(job: dict, user_email: str, org_id: str) -> bool:
+    if job.get("user_email") != user_email:
+        return False
+    job_org = job.get("organisation_id")
+    if job_org and str(job_org) != org_id:
+        return False
+    return True
 
 
 def _pdf_dashboard_row(
@@ -141,7 +150,9 @@ def _pdf_dashboard_row(
 
 
 @router.patch("/api/pdf/jobs/{job_id}/pipeline", tags=["PDF"])
-async def pdf_set_pipeline_step(job_id: str, request: Request, user_email: str = Depends(require_user)):
+async def pdf_set_pipeline_step(
+    job_id: str, request: Request, user: CurrentUser = Depends(require_user)
+):
     """Persist console pipeline step for dashboard readiness (steps 3–6)."""
     from pdf import pdf_store
 
@@ -155,6 +166,9 @@ async def pdf_set_pipeline_step(job_id: str, request: Request, user_email: str =
     if step < 1 or step > 6:
         raise HTTPException(400, "step must be an integer 1–6")
 
+    user_email = user.email
+    org_id = str(user.organisation_id)
+
     def _run():
         conn = _cat.get_connection()
         try:
@@ -166,6 +180,9 @@ async def pdf_set_pipeline_step(job_id: str, request: Request, user_email: str =
                     mem = _get_pdf_job(job_id)
                 if not mem or mem.get("user_email") != user_email:
                     return None
+                job_org = mem.get("organisation_id")
+                if job_org and str(job_org) != org_id:
+                    return None
                 pdf_store.upsert_job(
                     conn,
                     job_id=job_id,
@@ -173,6 +190,10 @@ async def pdf_set_pipeline_step(job_id: str, request: Request, user_email: str =
                     filename=mem.get("filename"),
                     status=mem.get("status") or "done",
                 )
+            else:
+                job_org = job_row.get("organisation_id")
+                if job_org and str(job_org) != org_id:
+                    return None
             pdf_store.set_pipeline_step(conn, job_id, step)
             return pdf_store.get_pipeline_step(conn, job_id)
         finally:
@@ -194,7 +215,7 @@ async def pdf_set_pipeline_step(job_id: str, request: Request, user_email: str =
 
 
 @router.get("/api/dashboard", tags=["Dashboard"])
-async def get_dashboard(user_email: str = Depends(require_user)):
+async def get_dashboard(user: CurrentUser = Depends(require_user)):
     """Upload readiness for the Dashboard: one row per uploaded file.
 
     PDF jobs are always listed (filename + resume link). Catalogue groups are
@@ -202,6 +223,9 @@ async def get_dashboard(user_email: str = Depends(require_user)):
     single PDF is not exploded into many table/group rows.
     """
     from pdf import pdf_store
+
+    user_email = user.email
+    org_id = str(user.organisation_id)
 
     def _run():
         conn = _cat.get_connection()
@@ -213,12 +237,13 @@ async def get_dashboard(user_email: str = Depends(require_user)):
                 cur.execute(
                     """
                     SELECT job_id, filename, status, grouping_status, pipeline_step,
-                           created_at, updated_at
+                           created_at, updated_at, organisation_id
                     FROM pdf_jobs
                     WHERE user_email = %s
+                      AND (organisation_id = %s::uuid OR organisation_id IS NULL)
                     ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
                     """,
-                    (user_email,),
+                    (user_email, org_id),
                 )
                 pdf_db = {r["job_id"]: dict(r) for r in cur.fetchall()}
         finally:
@@ -232,7 +257,7 @@ async def get_dashboard(user_email: str = Depends(require_user)):
         json_jobs = [
             _pdf_job_public(j)
             for j in _pdf_jobs.values()
-            if j.get("user_email") == user_email
+            if _job_visible_to_org(j, user_email, org_id)
         ]
 
     seen = set()

@@ -1,6 +1,6 @@
-"""SQLAlchemy declarative base and metadata registry.
+"""SQLAlchemy declarative base and metadata registry."""
+from sqlalchemy.orm import DeclarativeBase
 
-Placeholder until Phase 3. Current DDL lives in ``catalogue/db.py``,
-``pdf/pdf_store.py``, ``catalogue/extract_staging.py``, and
-``core/vector_store.py``.
-"""
+
+class Base(DeclarativeBase):
+    """Shared ORM base for all models."""

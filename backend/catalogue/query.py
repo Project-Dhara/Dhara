@@ -139,12 +139,29 @@ _DATASET_SELECT = """
 """
 
 
-def list_catalogue_datasets(conn):
-    """Published datasets for the catalogue page (everything in `datasets`)."""
+def list_catalogue_datasets(conn, *, organisation_id=None):
+    """Published datasets for the catalogue page.
+
+    When ``organisation_id`` is set, only that tenant's rows are returned
+    (NULL organisation_id treated as legacy shared until backfilled).
+    """
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(_DATASET_SELECT + """
-            ORDER BY m.last_updated_date DESC NULLS LAST, d.dataset_id DESC
-        """)
+        if organisation_id is not None:
+            cur.execute(
+                _DATASET_SELECT
+                + """
+                WHERE d.organisation_id = %s OR d.organisation_id IS NULL
+                ORDER BY m.last_updated_date DESC NULLS LAST, d.dataset_id DESC
+                """,
+                (str(organisation_id),),
+            )
+        else:
+            cur.execute(
+                _DATASET_SELECT
+                + """
+                ORDER BY m.last_updated_date DESC NULLS LAST, d.dataset_id DESC
+                """
+            )
         rows = [dict(r) for r in cur.fetchall()]
     return [_shape_dataset_row(row) for row in rows]
 
@@ -293,11 +310,12 @@ def search_catalogue_datasets(
     metadata_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
+    organisation_id=None,
 ):
     """Discover published datasets with optional text / metadata_id filters."""
     limit = max(1, min(int(limit or 50), _MAX_PAGE))
     offset = max(0, int(offset or 0))
-    datasets = list_catalogue_datasets(conn)
+    datasets = list_catalogue_datasets(conn, organisation_id=organisation_id)
     if metadata_id:
         mid = str(metadata_id).strip()
         datasets = [d for d in datasets if (d.get("metadata_id") or "") == mid]
@@ -320,16 +338,26 @@ def search_catalogue_datasets(
     }
 
 
-def get_catalogue_dataset(conn, dataset_id: str):
+def get_catalogue_dataset(conn, dataset_id: str, *, organisation_id=None):
     """Return one published dataset or None."""
     ds_id = (dataset_id or "").strip()
     if not ds_id:
         return None
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(
-            _DATASET_SELECT + " WHERE d.dataset_id = %s",
-            (ds_id,),
-        )
+        if organisation_id is not None:
+            cur.execute(
+                _DATASET_SELECT
+                + """
+                WHERE d.dataset_id = %s
+                  AND (d.organisation_id = %s OR d.organisation_id IS NULL)
+                """,
+                (ds_id, str(organisation_id)),
+            )
+        else:
+            cur.execute(
+                _DATASET_SELECT + " WHERE d.dataset_id = %s",
+                (ds_id,),
+            )
         row = cur.fetchone()
     if not row:
         return None

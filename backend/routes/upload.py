@@ -1,14 +1,12 @@
 """Unified file upload → data ingestion → extraction job (PDF, Excel, CSV)."""
 import asyncio
-import time
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
-from core.deps import require_user, resolve_llm_credentials
-from data_ingestion import resolve_source_type
+from app.api.dependencies import CurrentUser, require_user, resolve_llm_credentials
+from data_ingestion.utils.source_type import resolve_source_type
 from pdf.pdf_jobs import (
-    _pdf_jobs_lock,
     _run_extraction_job,
     queue_extraction_job,
 )
@@ -21,7 +19,7 @@ async def unified_upload(
     request: Request,
     file: UploadFile = File(...),
     type: str = Form(..., description="pdf, excel, or csv"),
-    user_email: str = Depends(require_user),
+    user: CurrentUser = Depends(require_user),
 ):
     """
     Accept one dataset file and start a background extraction job.
@@ -44,14 +42,16 @@ async def unified_upload(
         )
 
     job_id = uuid.uuid4().hex
-    api_key, _provider = resolve_llm_credentials(request, user_email)
+    api_key, _provider = resolve_llm_credentials(request, user.email)
 
     queue_extraction_job(
         job_id=job_id,
         filename=filename,
-        user_email=user_email,
+        user_email=user.email,
         source_type=source_type,
         file_bytes=content,
+        organisation_id=str(user.organisation_id),
+        user_id=str(user.id),
     )
 
     asyncio.create_task(

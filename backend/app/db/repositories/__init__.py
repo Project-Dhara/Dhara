@@ -1,5 +1,4 @@
-"""Persistence helpers that accept a DB session/connection.
+"""Persistence helpers that accept a SQLAlchemy session."""
+from app.db.repositories import catalogue, kyds, llm_keys, organisations, pdf_jobs, users
 
-Live query modules: ``catalogue/*.py``, ``pdf/pdf_store.py``. Repositories
-must not implement HTTP behavior.
-"""
+__all__ = ["users", "organisations", "kyds", "llm_keys", "pdf_jobs", "catalogue"]

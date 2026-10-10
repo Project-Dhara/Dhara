@@ -1,7 +1,33 @@
-"""ORM model package.
+"""ORM model package — import all models for Alembic metadata."""
+from app.db.models.catalogue import Dataset, DatasetRow, KydsEntry, LlmApiKey, MetadataGroup
+from app.db.models.organisation import Organisation, OrganisationMembership
+from app.db.models.pdf import PdfJob, PdfTable, PdfTableGroup, PdfTableGroupMember
+from app.db.models.staging import ExtractStaging, SemanticEmbedding
+from app.db.models.standards import (
+    ClassificationStandard,
+    ClassificationStandardCode,
+    Nco2015Code,
+    NcoValueAlias,
+)
+from app.db.models.user import User
 
-Current tables are created by psycopg2 DDL (users, metadata_groups,
-datasets, dataset_rows, kyds_entries, classification_*, pdf_*,
-extract_staging, semantic_embeddings, and later llm_api_keys). Models
-will map those tables in Phase 3 without dropping data.
-"""
+__all__ = [
+    "User",
+    "Organisation",
+    "OrganisationMembership",
+    "MetadataGroup",
+    "Dataset",
+    "DatasetRow",
+    "KydsEntry",
+    "LlmApiKey",
+    "Nco2015Code",
+    "ClassificationStandard",
+    "ClassificationStandardCode",
+    "NcoValueAlias",
+    "PdfJob",
+    "PdfTable",
+    "PdfTableGroup",
+    "PdfTableGroupMember",
+    "ExtractStaging",
+    "SemanticEmbedding",
+]

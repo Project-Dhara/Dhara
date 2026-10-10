@@ -1,6 +1,7 @@
 """Versioned public access API for published catalogue datasets.
 
 JWT-protected read endpoints shared with the MCP surface (same query helpers).
+Tenant-scoped: callers only see datasets for their organisation.
 """
 from __future__ import annotations
 
@@ -8,9 +9,9 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.api.dependencies import CurrentUser, require_user
 from catalogue import catalogue as _cat
 from catalogue import query as catalogue_query
-from core.deps import require_user
 
 router = APIRouter(prefix="/api/v1", tags=["Access"])
 
@@ -25,7 +26,7 @@ def _with_conn(fn):
 
 
 @router.get("", summary="Access API index")
-async def access_index(user_email: str = Depends(require_user)):
+async def access_index(user: CurrentUser = Depends(require_user)):
     """Describe the catalogue access surface (REST + MCP tools)."""
     return {
         "name": "DHARA Catalogue Access API",
@@ -46,6 +47,7 @@ async def access_index(user_email: str = Depends(require_user)):
             ),
             "note": "HTTP MCP wraps the same query helpers as these REST routes.",
         },
+        "organisation_id": str(user.organisation_id),
     }
 
 
@@ -55,7 +57,7 @@ async def list_datasets(
     metadata_id: str | None = Query(None, description="Filter to one catalogue release"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    user_email: str = Depends(require_user),
+    user: CurrentUser = Depends(require_user),
 ):
     def _run():
         return _with_conn(
@@ -65,6 +67,7 @@ async def list_datasets(
                 metadata_id=metadata_id,
                 limit=limit,
                 offset=offset,
+                organisation_id=user.organisation_id,
             )
         )
 
@@ -72,9 +75,13 @@ async def list_datasets(
 
 
 @router.get("/datasets/{dataset_id}", summary="Get published dataset metadata")
-async def get_dataset(dataset_id: str, user_email: str = Depends(require_user)):
+async def get_dataset(dataset_id: str, user: CurrentUser = Depends(require_user)):
     def _run():
-        return _with_conn(lambda conn: catalogue_query.get_catalogue_dataset(conn, dataset_id))
+        return _with_conn(
+            lambda conn: catalogue_query.get_catalogue_dataset(
+                conn, dataset_id, organisation_id=user.organisation_id
+            )
+        )
 
     dataset = await asyncio.to_thread(_run)
     if not dataset:
@@ -90,11 +97,17 @@ async def get_dataset_rows(
     column: str | None = Query(None, description="row_data key to filter on"),
     equals: str | None = Query(None, description="Exact match on column"),
     contains: str | None = Query(None, description="Substring match on column (ILIKE)"),
-    user_email: str = Depends(require_user),
+    user: CurrentUser = Depends(require_user),
 ):
     def _run():
-        return _with_conn(
-            lambda conn: catalogue_query.query_dataset_rows(
+        # Verify dataset is visible to this org before returning rows.
+        def _inner(conn):
+            ds = catalogue_query.get_catalogue_dataset(
+                conn, dataset_id, organisation_id=user.organisation_id
+            )
+            if not ds:
+                return None
+            return catalogue_query.query_dataset_rows(
                 conn,
                 dataset_id,
                 limit=limit,
@@ -103,12 +116,10 @@ async def get_dataset_rows(
                 equals=equals,
                 contains=contains,
             )
-        )
 
-    try:
-        payload = await asyncio.to_thread(_run)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    if payload is None:
+        return _with_conn(_inner)
+
+    result = await asyncio.to_thread(_run)
+    if result is None:
         raise HTTPException(404, f"Dataset not found: {dataset_id}")
-    return payload
+    return result

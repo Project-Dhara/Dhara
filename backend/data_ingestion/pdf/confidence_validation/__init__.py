@@ -1,22 +1,16 @@
-"""
-PDF confidence + LLM validation (after PreValidationInput).
-
-Public entry: ``run_post_extraction_validation``.
-"""
-
-from data_ingestion.pdf.confidence_validation.confidence_split import split_by_confidence
-from data_ingestion.pdf.confidence_validation.heuristic import heuristic_accept_pages
-from data_ingestion.pdf.confidence_validation.llm import (
+"""Compatibility shim — public API re-exported from app.services.extraction.pdf."""
+from app.services.extraction.pdf.confidence_validation import *  # noqa: F403
+from app.services.extraction.pdf.confidence_validation import (
     build_batch_validation_prompt,
     build_validation_prompt,
+    heuristic_accept_pages,
+    run_pipeline,
+    run_post_extraction_validation,
+    split_by_confidence,
     validate_all_pages,
     validate_all_pages_batched,
     validate_batch,
     validate_page,
-)
-from data_ingestion.pdf.confidence_validation.orchestrate import (
-    run_pipeline,
-    run_post_extraction_validation,
 )
 
 __all__ = [
