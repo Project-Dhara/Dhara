@@ -120,7 +120,10 @@ flowchart TB
 | `app/services/auth/` | Signup / login / session profile |
 | `app/services/ingestion/` | Upload pipeline + adapters + contracts |
 | `app/services/extraction/` | Shared confidence validation (moved) |
+| `app/storage/` | Object store (GCS/local) + pgvector wrapper |
+| `app/workers/` | Upload extraction job registry + worker |
 | `migrations/` | Alembic env + revision 001 |
+| `DEPLOYMENT.md` | Ops runbook (Phase 7) |
 
 ### Still live (do not delete; keep imports working)
 
@@ -203,7 +206,7 @@ Neither KYDS nor LLM keys are columns on `users`.
 
 - Full migration of `routes/catalogue.py` off psycopg2 / request DDL.
 - Unify the two Excel extractors (explicit non-goal of Phases 3–5).
-- Phase 6 storage/jobs queue; Phase 7 `DEPLOYMENT.md`.
+- External job queue (Redis/Celery) — upload jobs remain Postgres + in-process workers.
 - Harden MCP auth default (`MCP_HTTP_AUTH`).
 - Promote `users.id` to PK and rewrite FKs off `email` (separate wave).
 
@@ -214,9 +217,9 @@ Neither KYDS nor LLM keys are columns on `users`.
 3. ~~**Phase 3** — SQLAlchemy 2 + Alembic baseline; `DISABLE_REQUEST_TIME_DDL` gate~~ **done**
 4. ~~**Phase 4** — UUID JWT `sub`, default org, tenant filters, auth/KYDS/LLM app routes~~ **done**
 5. ~~**Phase 5** — Ingestion/extraction services + confidence_validation move + shims~~ **done**
-6. **Phase 6** — FileStorage / VectorStore interfaces; durable job state.
-7. **Phase 7** — Deployment docs; Postgres-first portability policy.
-8. **Phase 8** — Broader test matrix and quality gates.
+6. ~~**Phase 6** — `app/storage` ObjectStore + PgVectorStore; `app/workers` extraction jobs~~ **done**
+7. ~~**Phase 7** — `DEPLOYMENT.md`; Postgres-first portability policy~~ **done**
+8. ~~**Phase 8** — `pytest.ini`, storage/worker tests, GitHub Actions CI~~ **done**
 
 ## Phase 1 status
 
@@ -249,3 +252,12 @@ Additive DDL in `catalogue.db.init_schema()` / Alembic 001 (no drops):
 - [x] `DISABLE_REQUEST_TIME_DDL` gate on `init_schema`
 - [x] Ingestion service + adapters; extraction service; confidence_validation move + shims
 - [x] Targeted tests: `tests/test_auth_jwt.py`, `tests/test_tenant_isolation.py`
+
+## Phases 6–8 status
+
+- [x] `app/storage/` — `ObjectStore`, `GcsObjectStore`, `LocalFileStore`, `PgVectorStore`
+- [x] `core/gcs_utils.py` shim → `app.storage.object_store`
+- [x] `app/workers/extraction_jobs.py` — durable upload jobs; `pdf/pdf_jobs.py` shim
+- [x] `DEPLOYMENT.md` — Alembic, Docker, env, Postgres-first policy
+- [x] `pytest.ini`, `tests/test_storage.py`, `tests/test_workers_jobs.py`
+- [x] `.github/workflows/backend-ci.yml`

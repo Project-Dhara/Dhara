@@ -1,0 +1,47 @@
+name: Backend CI
+
+on:
+  push:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Import app and OpenAPI
+        env:
+          JWT_SECRET: ci-test-secret
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
+        run: |
+          python -c "
+          import main
+          assert len(main.app.openapi().get('paths', {})) >= 40
+          print('openapi_ok')
+          "
+
+      - name: Pytest (unit)
+        env:
+          JWT_SECRET: ci-test-secret
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
+        run: pytest -q -m "not postgres and not slow"

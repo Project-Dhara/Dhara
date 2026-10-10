@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 import main
-
+from catalogue import catalogue as _cat
 
 client = TestClient(main.app)
 
@@ -26,8 +26,8 @@ def test_ready_ok_when_postgres_reachable():
     conn.cursor.return_value = cur
 
     with (
-        patch.object(main._cat, "get_connection", return_value=conn) as get_conn,
-        patch.object(main._cat, "init_schema") as init_schema,
+        patch.object(_cat, "get_connection", return_value=conn) as get_conn,
+        patch.object(_cat, "init_schema") as init_schema,
         patch("core.vector_store.vector_extension_ready", return_value=True),
         patch("core.vector_store.embedding_dim", return_value=384),
     ):
@@ -46,8 +46,8 @@ def test_ready_ok_when_postgres_reachable():
 
 def test_ready_503_when_postgres_down():
     with (
-        patch.object(main._cat, "get_connection", side_effect=OSError("refused")),
-        patch.object(main._cat, "init_schema") as init_schema,
+        patch.object(_cat, "get_connection", side_effect=OSError("refused")),
+        patch.object(_cat, "init_schema") as init_schema,
     ):
         r = client.get("/api/ready")
 
@@ -69,7 +69,7 @@ def test_ready_still_200_when_pgvector_missing():
     conn.cursor.return_value = cur
 
     with (
-        patch.object(main._cat, "get_connection", return_value=conn),
+        patch.object(_cat, "get_connection", return_value=conn),
         patch("core.vector_store.vector_extension_ready", return_value=False),
         patch("core.vector_store.embedding_dim", return_value=384),
     ):
@@ -80,7 +80,7 @@ def test_ready_still_200_when_pgvector_missing():
 
 
 def test_health_aliases_ready():
-    with patch.object(main._cat, "get_connection", side_effect=RuntimeError("boom")):
+    with patch.object(_cat, "get_connection", side_effect=RuntimeError("boom")):
         live = client.get("/api/live")
         ready = client.get("/api/ready")
         health = client.get("/api/health")

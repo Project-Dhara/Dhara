@@ -85,6 +85,11 @@ class Settings:
     bootstrap_admin_email: str | None
     disable_request_time_ddl: bool
     enable_signup: bool
+    enable_gcs: bool
+    gcs_bucket_name: str
+    storage_local_path: str
+    storage_backend: str
+    embedding_dim: int
 
 
 @lru_cache(maxsize=1)
@@ -110,7 +115,21 @@ def get_settings() -> Settings:
         ),
         disable_request_time_ddl=_env_bool("DISABLE_REQUEST_TIME_DDL", False),
         enable_signup=_env_bool("ENABLE_SIGNUP", True),
+        enable_gcs=_env_bool("ENABLE_GCS", False),
+        gcs_bucket_name=_gcs_bucket_from_env(),
+        storage_local_path=(
+            os.environ.get("STORAGE_LOCAL_PATH") or "data/object_store"
+        ).strip(),
+        storage_backend=(os.environ.get("STORAGE_BACKEND") or "auto").strip().lower(),
+        embedding_dim=_env_int("EMBEDDING_DIM", 1536),
     )
+
+
+def _gcs_bucket_from_env() -> str:
+    name = (os.environ.get("GCS_BUCKET_NAME") or "").strip()
+    if not name or name.startswith("your_"):
+        return ""
+    return name
 
 
 def clear_settings_cache() -> None:
