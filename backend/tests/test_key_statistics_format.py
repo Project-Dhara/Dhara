@@ -1,7 +1,7 @@
 """Tests for key_statistics formatting after LLM metadata autofill."""
 from __future__ import annotations
 
-from metadata.metadata_fill import _format_key_statistics, _stringify_metadata_values
+from app.services.metadata.metadata_fill import _format_key_statistics, _stringify_metadata_values
 
 
 def test_format_key_statistics_list_of_rows():

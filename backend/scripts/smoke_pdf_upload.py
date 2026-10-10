@@ -14,8 +14,8 @@ from dotenv import load_dotenv
 load_dotenv(_BACKEND / ".env")
 os.environ.setdefault("JWT_SECRET", "local-smoke-test-secret")
 
-from core import auth as _auth
-from data_ingestion.pdf import extract_pdf_to_pre_input
+from app.core import security as _auth
+from app.services.extraction.pdf import extract_pdf_to_pre_input
 
 PDF = _BACKEND.parent / "Testing files" / "SDA_INDIA_222-224.pdf"
 

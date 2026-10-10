@@ -4,22 +4,21 @@ from __future__ import annotations
 from typing import Optional
 
 from app.core.config import get_settings
-from app.storage.files import NoOpObjectStore, ObjectStore
-
-_GCS_SKIP_LOGGED = False
+from app.storage.files import ObjectStore
+from app.storage.local import LocalFileStore
 
 
 class GcsObjectStore:
-    """Google Cloud Storage backend when ``ENABLE_GCS=true``."""
+    """Google Cloud Storage backend when ``STORAGE_BACKEND=gcs``."""
 
     def __init__(self) -> None:
         settings = get_settings()
-        if not settings.enable_gcs:
-            raise ValueError("GcsObjectStore requires ENABLE_GCS=true")
+        if settings.storage_backend != "gcs" and not settings.enable_gcs:
+            raise ValueError("GcsObjectStore requires STORAGE_BACKEND=gcs")
         if not settings.gcs_bucket_name:
             raise ValueError(
-                "ENABLE_GCS is true but GCS_BUCKET_NAME is not set. "
-                "Set GCS_BUCKET_NAME, or set ENABLE_GCS=false for Postgres-only."
+                "STORAGE_BACKEND=gcs but GCS_BUCKET_NAME is not set. "
+                "Set GCS_BUCKET_NAME, or set STORAGE_BACKEND=local."
             )
         self._bucket_name = settings.gcs_bucket_name
 
@@ -43,24 +42,21 @@ class GcsObjectStore:
 
 
 def get_object_store() -> ObjectStore:
-    """Return GCS when enabled, else a no-op store (Postgres remains source of truth)."""
-    global _GCS_SKIP_LOGGED
+    """Return local or GCS store per ``STORAGE_BACKEND`` (never a silent no-op)."""
     settings = get_settings()
-    if settings.enable_gcs and settings.gcs_bucket_name:
+    backend = (settings.storage_backend or "").strip().lower()
+    if backend == "gcs":
+        if not settings.gcs_bucket_name:
+            raise ValueError(
+                "STORAGE_BACKEND=gcs but GCS_BUCKET_NAME is not set. "
+                "Set GCS_BUCKET_NAME, or set STORAGE_BACKEND=local."
+            )
         return GcsObjectStore()
-    if settings.enable_gcs and not settings.gcs_bucket_name:
-        raise ValueError(
-            "ENABLE_GCS is true but GCS_BUCKET_NAME is not set. "
-            "Set GCS_BUCKET_NAME, or set ENABLE_GCS=false."
-        )
-    if not _GCS_SKIP_LOGGED:
-        print(
-            "GCS uploads skipped (ENABLE_GCS is not true). "
-            "Catalogue rows will still be written to Postgres.",
-            flush=True,
-        )
-        _GCS_SKIP_LOGGED = True
-    return NoOpObjectStore()
+    if backend == "local":
+        return LocalFileStore()
+    raise ValueError(
+        f"Unknown STORAGE_BACKEND={backend!r}; expected 'local' or 'gcs'."
+    )
 
 
 _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

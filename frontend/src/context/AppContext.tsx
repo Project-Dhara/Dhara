@@ -1,10 +1,12 @@
 'use client'
 
-// Cross-cutting app state that isn't owned by any one route: the signed-in
-// user, LLM key/provider settings, and the "show KYDS modal" flag (KYDS is
-// an overlay shown on top of whatever route is active, not a route itself).
+// Cross-cutting app state: signed-in user, LLM credential status, KYDS modal flag.
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
-import { getLlmApiKey, setLlmApiKey, getLlmProvider, setLlmProvider } from '../lib/llmKey'
+import {
+  clearLegacyLlmKeyStorage,
+  getLlmProvider,
+  setLlmProvider,
+} from '../lib/llmKey'
 import {
   getToken,
   getStoredUser,
@@ -14,7 +16,14 @@ import {
   type StoredUser,
 } from '../lib/auth'
 
-type LoginData = { token: string; email: string; name?: string; dept?: string }
+type LoginData = {
+  token: string
+  email: string
+  name?: string
+  dept?: string
+  role?: string
+}
+
 type Settings = { provider: string; apiKey: string }
 
 type AppContextValue = {
@@ -34,7 +43,7 @@ type AppContextValue = {
 
 const AppCtx = createContext<AppContextValue | null>(null)
 
-const EMPTY_USER: StoredUser = { name: '', role: 'Administrator', email: '', dept: '' }
+const EMPTY_USER: StoredUser = { name: '', role: '', email: '', dept: '' }
 
 function normalizeProvider(raw: string): string {
   if (raw === 'OpenAI' || raw === 'Anthropic' || raw === 'MEITY-empanelled LLM') {
@@ -43,23 +52,26 @@ function normalizeProvider(raw: string): string {
   return raw || 'openai'
 }
 
-async function fetchStoredLlmKey(): Promise<Settings | null> {
+function normalizeRole(raw: string | undefined | null): string {
+  const r = (raw || '').trim().toLowerCase().replace(/\s+/g, '_')
+  if (r === 'administrator' || r === 'admin') return 'Administrator'
+  if (r === 'data_steward' || r === 'data-steward') return 'Data Steward'
+  if (r === 'data_user' || r === 'data-user') return 'Data User'
+  if (raw === 'Administrator' || raw === 'Data Steward' || raw === 'Data User') return raw
+  return raw || ''
+}
+
+async function fetchLlmKeyStatus(): Promise<{ configured: boolean; provider: string } | null> {
   const res = await fetch('/api/llm-key', withAuthHeaders())
   if (!res.ok) return null
   const data = await res.json()
-  const apiKey = String(data.api_key || '').trim()
-  if (!apiKey) return { provider: 'openai', apiKey: '' }
   return {
+    configured: Boolean(data.configured),
     provider: normalizeProvider(String(data.provider || 'openai')),
-    apiKey,
   }
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  // Auth state is only known for certain once mounted on the client
-  // (localStorage doesn't exist during server rendering) -- authChecked
-  // gates any redirect logic until after that first client-side check, to
-  // avoid a false "logged out" flash/hydration mismatch.
   const [authChecked, setAuthChecked] = useState(false)
   const [loggedIn, setLoggedIn] = useState(false)
   const [user, setUser] = useState<StoredUser>(EMPTY_USER)
@@ -69,13 +81,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false
+    clearLegacyLlmKeyStorage()
 
     async function restoreSession() {
-      // Cache only until /api/me succeeds and we load from Postgres.
-      const cachedKey = getLlmApiKey()
       const cachedProvider = normalizeProvider(getLlmProvider() || 'openai')
-      setSettings({ provider: cachedProvider, apiKey: cachedKey })
-      setKeySaved(!!cachedKey)
+      setSettings({ provider: cachedProvider, apiKey: '' })
 
       const token = getToken()
       const storedUser = getStoredUser()
@@ -90,7 +100,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
 
       try {
-        // Confirm the token is still valid. An expired/invalid JWT returns 401 here.
         const res = await fetch('/api/me', withAuthHeaders())
         if (!res.ok) throw new Error('session invalid')
         const data = await res.json()
@@ -99,18 +108,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
           name: data.name || storedUser.name || data.email,
           email: data.email || storedUser.email,
           dept: data.dept || storedUser.dept || '',
-          role: storedUser.role || 'Administrator',
+          role: normalizeRole(data.role) || normalizeRole(storedUser.role),
         }
         setSession(token, nextUser)
         setUser(nextUser)
         setLoggedIn(true)
 
-        const fromServer = await fetchStoredLlmKey()
-        if (!cancelled && fromServer) {
-          setLlmApiKey(fromServer.apiKey)
-          setLlmProvider(fromServer.provider)
-          setSettings(fromServer)
-          setKeySaved(!!fromServer.apiKey)
+        const status = await fetchLlmKeyStatus()
+        if (!cancelled && status) {
+          setLlmProvider(status.provider)
+          setSettings({ provider: status.provider, apiKey: '' })
+          setKeySaved(status.configured)
         }
       } catch {
         clearSession()
@@ -129,20 +137,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const handleSettingsChange = (next: Settings) => {
     setSettings(next)
-    // Editing the key after it was saved invalidates the "saved" state until
-    // it's explicitly saved again.
-    if (next.apiKey !== getLlmApiKey()) setKeySaved(false)
+    if (next.apiKey) setKeySaved(false)
   }
 
   const handleSaveKey = (override?: Settings) => {
-    // Button onClick may pass a click event — only treat plain settings objects as overrides.
     const fromForm = override && typeof override === 'object' && 'apiKey' in override
       ? override
       : null
     const next = fromForm || settings
     const key = String(next.apiKey || '').trim()
     const provider = String(next.provider || '').trim() || 'openai'
-    setSettings({ provider, apiKey: key })
 
     void (async () => {
       try {
@@ -155,9 +159,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           setKeySaved(false)
           return
         }
-        setLlmApiKey(key)
+        const data = await res.json().catch(() => ({}))
         setLlmProvider(provider)
-        setKeySaved(!!key)
+        // Clear the input — the server holds the secret.
+        setSettings({ provider, apiKey: '' })
+        setKeySaved(Boolean(data.configured) || Boolean(key))
+        clearLegacyLlmKeyStorage()
       } catch {
         setKeySaved(false)
       }
@@ -165,24 +172,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   const login = (data: LoginData) => {
-    const nextUser: StoredUser = { name: data.name || data.email, email: data.email, dept: data.dept || '', role: 'Administrator' }
+    const nextUser: StoredUser = {
+      name: data.name || data.email,
+      email: data.email,
+      dept: data.dept || '',
+      role: normalizeRole(data.role),
+    }
     setSession(data.token, nextUser)
     setUser(nextUser)
     setLoggedIn(true)
     setShowKyds(true)
     void (async () => {
-      const fromServer = await fetchStoredLlmKey()
-      if (fromServer) {
-        setLlmApiKey(fromServer.apiKey)
-        setLlmProvider(fromServer.provider)
-        setSettings(fromServer)
-        setKeySaved(!!fromServer.apiKey)
+      const status = await fetchLlmKeyStatus()
+      if (status) {
+        setLlmProvider(status.provider)
+        setSettings({ provider: status.provider, apiKey: '' })
+        setKeySaved(status.configured)
       }
     })()
   }
 
   const signOut = () => {
     clearSession()
+    clearLegacyLlmKeyStorage()
+    setLlmProvider('')
+    setSettings({ provider: 'openai', apiKey: '' })
+    setKeySaved(false)
     setLoggedIn(false)
     setShowKyds(false)
   }

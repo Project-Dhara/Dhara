@@ -18,7 +18,7 @@ from app.services.extraction.pdf.confidence_validation.constants import (
     _GARBLED_RE,
     _NUMERIC_DATA_TYPES,
 )
-from data_ingestion.pdf.utils.pymupdf import (
+from app.services.extraction.pdf.utils.pymupdf import (
     _best_matching_ruled_candidate,
     _llm_missing_identity_stubs,
     _llm_starts_at_sex_column,

@@ -1,8 +1,4 @@
-"""Centralized application settings (environment-driven).
-
-Operational secrets and connection settings live here. LLM prompt templates
-remain in ``backend/config.py``.
-"""
+"""Centralized application settings (environment-driven)."""
 from __future__ import annotations
 
 import os
@@ -90,12 +86,20 @@ class Settings:
     storage_local_path: str
     storage_backend: str
     embedding_dim: int
+    llm_credentials_key: str
+    mcp_http_auth: str
+    mcp_auth_token: str
+    dhara_llm_provider: str | None
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     raw_db = os.environ.get("DATABASE_URL", "")
     jwt_secret = os.environ.get("JWT_SECRET", "")
+    storage_backend = (os.environ.get("STORAGE_BACKEND") or "").strip().lower()
+    if not storage_backend:
+        # Prefer local filesystem persistence; GCS only when explicitly enabled.
+        storage_backend = "gcs" if _env_bool("ENABLE_GCS", False) else "local"
     return Settings(
         database_url=normalize_database_url(raw_db) if raw_db else "",
         database_pool_size=_env_int("DATABASE_POOL_SIZE", 10),
@@ -120,8 +124,14 @@ def get_settings() -> Settings:
         storage_local_path=(
             os.environ.get("STORAGE_LOCAL_PATH") or "data/object_store"
         ).strip(),
-        storage_backend=(os.environ.get("STORAGE_BACKEND") or "auto").strip().lower(),
+        storage_backend=storage_backend,
         embedding_dim=_env_int("EMBEDDING_DIM", 1536),
+        llm_credentials_key=(os.environ.get("LLM_CREDENTIALS_KEY") or "").strip(),
+        mcp_http_auth=(os.environ.get("MCP_HTTP_AUTH") or "jwt").strip().lower(),
+        mcp_auth_token=(os.environ.get("MCP_AUTH_TOKEN") or "").strip(),
+        dhara_llm_provider=(
+            (os.environ.get("DHARA_LLM_PROVIDER") or "").strip().lower() or None
+        ),
     )
 
 

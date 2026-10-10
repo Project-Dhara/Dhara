@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ArrowRight, Info } from 'lucide-react'
-import { withLlmKeyHeaders, getLlmApiKey } from '../../lib/llmKey'
+import { withLlmKeyHeaders } from '../../lib/llmKey'
 import { withAuthHeaders } from '../../lib/auth'
 import { CLICK_THROUGH_ENABLED } from '../../lib/clickThrough'
 import { getConceptStandardConfig } from '../../lib/metadataConcepts'
@@ -96,7 +96,7 @@ export default function BatchReview({
   onGoSettings,
 }) {
   const { keySaved } = useApp()
-  const hasLlmKey = keySaved || Boolean(getLlmApiKey())
+  const hasLlmKey = keySaved
   const conceptConfig = useMemo(() => getConceptStandardConfig(getMetadataStandard()), [])
   const sheetColumns = useMemo(() => {
     const base = conceptConfig.sheetColumns || METADATA_COLUMNS

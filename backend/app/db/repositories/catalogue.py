@@ -1,6 +1,6 @@
 """Catalogue persistence helpers with organisation guards.
 
-Heavy catalogue write paths still live in ``catalogue.datasets``. This module
+Heavy catalogue write paths still live in ``app.services.datasets.datasets``. This module
 wraps the common publish entry so callers can pass ``organisation_id``.
 """
 from __future__ import annotations
@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from catalogue import datasets as _datasets
+from app.services.datasets import datasets as _datasets
 
 
 def push_to_catalogue(
@@ -17,7 +17,7 @@ def push_to_catalogue(
     organisation_id: uuid.UUID | str | None = None,
     **kwargs: Any,
 ):
-    """Delegate to ``catalogue.datasets.push_to_catalogue`` with tenant tagging.
+    """Delegate to ``app.services.datasets.datasets.push_to_catalogue`` with tenant tagging.
 
     When ``organisation_id`` is provided and the underlying function accepts it,
     it is forwarded; otherwise it is applied after insert via a best-effort

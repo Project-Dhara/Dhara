@@ -16,12 +16,11 @@ import { UploadChoice } from './ConsoleUploadChoice'
 import { useConsolePipeline } from './useConsolePipeline'
 import ClassifyBreadcrumb from './classify/ClassifyBreadcrumb'
 import LlmKeyRequiredBanner from '../LlmKeyRequiredBanner'
-import { getLlmApiKey } from '../../lib/llmKey'
 import { useApp } from '../../context/AppContext'
 
 export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatalogue, onUploadAnother }) {
   const { keySaved } = useApp()
-  const hasLlmKey = hasKey || keySaved || Boolean(getLlmApiKey())
+  const hasLlmKey = hasKey || keySaved
   const {
     STATUS_TRANSITIONS,
     addPendingDatasetFiles,

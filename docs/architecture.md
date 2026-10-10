@@ -91,12 +91,11 @@ and [deployment configuration](./deployment/configuration.md) for env vars.
 dhara-poc/
 ├── frontend/          Next.js UI (Console, Catalogue, Settings)
 ├── backend/
-│   ├── routes/        HTTP API
-│   ├── catalogue/     catalogue DB, matching, classifications, NCO
-│   ├── pdf/           PDF jobs, store, grouping
-│   ├── extraction/    Excel + SQL + PDF extractors
-│   ├── metadata/      metadata fill / validation / LLM helpers
-│   └── core/          auth, deps, vector_store, GCS
+│   ├── main.py        uvicorn entry → app.main
+│   ├── app/api/       HTTP routes
+│   ├── app/services/  ingestion, extraction, grouping, catalogue, metadata
+│   ├── app/db/        psycopg2 store (psycopg.py, pdf_store.py) and SQLAlchemy repos
+│   └── app/mcp/       MCP tools (stdio `python -m app.mcp`, HTTP `/mcp`)
 ├── docker-compose.yml Dev stack + prod profile
 ├── Dockerfile         Combined Next + FastAPI image (host :80 → :8080)
 └── docs/              This documentation
@@ -172,7 +171,7 @@ separate; see [deployment/configuration.md](./deployment/configuration.md).
 | Human | Approve meaning and groupings |
 | Configuration modules | Dataset IDs, metadata schema, code lists, LLM key |
 | Catalogue / API | Discoverability and access |
-| MCP | Agent access via `/mcp` (Streamable HTTP) or `python -m mcp_server` (stdio) |
+| MCP | Agent access via `/mcp` (Streamable HTTP) or `python -m app.mcp` (stdio) |
 
 ## Data model (essentials)
 

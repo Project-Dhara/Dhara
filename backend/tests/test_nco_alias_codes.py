@@ -1,7 +1,7 @@
 """NCO alias validation — never treat occupation labels as codes."""
 from __future__ import annotations
 
-from catalogue.nco_matching import (
+from app.services.classification.nco_matching import (
     is_usable_nco_alias,
     looks_like_nco_code,
     match_occupation,
@@ -19,7 +19,7 @@ def test_looks_like_nco_code():
 
 
 def test_aggregate_labels_get_no_code():
-    from catalogue.nco_matching import is_non_occupation_aggregate, match_occupation
+    from app.services.classification.nco_matching import is_non_occupation_aggregate, match_occupation
 
     for label in ("ALL", "All", "Total", "TOTAL", "Grand Total", "Sub-total"):
         assert is_non_occupation_aggregate(label), label
@@ -31,7 +31,7 @@ def test_aggregate_labels_get_no_code():
 
 def test_residual_labels_get_no_code():
     """Others / Not stated catch-alls must not map onto NEC family codes."""
-    from catalogue.nco_matching import is_non_occupation_aggregate, match_occupation
+    from app.services.classification.nco_matching import is_non_occupation_aggregate, match_occupation
 
     residuals = (
         "OTHERS/NOT STATED",
@@ -79,12 +79,12 @@ def test_match_skips_poisoned_alias(monkeypatch):
     }
 
     monkeypatch.setattr(
-        "catalogue.nco_matching._lookup_alias",
+        "app.services.classification.nco_matching._lookup_alias",
         lambda conn, text: poisoned,
     )
     # Force empty concordance so we don't depend on DB — still must not
     # return the poisoned text code via the alias path.
-    monkeypatch.setattr("catalogue.nco_matching._load_all_codes", lambda conn: [])
+    monkeypatch.setattr("app.services.classification.nco_matching._load_all_codes", lambda conn: [])
 
     result = match_occupation(conn=object(), occupation_text="CLERICAL WORKERS", extractor=None)
     assert result is None or looks_like_nco_code(result.get("code"))

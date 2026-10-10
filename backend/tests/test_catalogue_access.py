@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from catalogue.query import _shape_dataset_row, _validate_column
+from app.services.catalogue.query import _shape_dataset_row, _validate_column
 
 
 def test_shape_dataset_row_basics():

@@ -1,6 +1,6 @@
-"""Spreadsheet extraction / reconstruction placeholder.
+"""Spreadsheet extraction helpers (upload grids).
 
-Upload grids: ``data_ingestion/excel.py``, ``data_ingestion/csv.py``,
-``data_ingestion/utils/grid.py``. Catalogue Excel extract:
-``catalogue/extract/extractor.py``.
+Upload grids: ``app.services.ingestion.excel``, ``app.services.ingestion.csv``,
+``app.services.ingestion.utils.grid``. Catalogue Excel extract:
+``app.services.ingestion.wizard``.
 """

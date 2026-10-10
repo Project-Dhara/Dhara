@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from app.api.dependencies import CurrentUser
 from app.db.repositories import pdf_jobs as pdf_jobs_repo
-from routes.pdf import _job_visible_to
+from app.api.routes.pdf import _job_visible_to
 
 
 def _user(org_id: uuid.UUID | None = None, email: str = "a@example.org") -> CurrentUser:
@@ -70,7 +70,7 @@ def test_pdf_jobs_repo_get_for_user_applies_org_filter():
 
 
 def test_access_api_list_filters_by_organisation():
-    from catalogue import query as catalogue_query
+    from app.services.catalogue import query as catalogue_query
 
     org_a = uuid.uuid4()
     org_b = uuid.uuid4()

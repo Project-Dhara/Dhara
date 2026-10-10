@@ -50,7 +50,7 @@ PostgreSQL (SoT)
 
 - Image: `pgvector/pgvector:pg16`
 - Init: `backend/db/init-pgvector.sql`
-- Module: `backend/core/vector_store.py`
+- Module: `backend/app/storage/vectors.py`
 - Health: `/api/ready` (and `/api/health`) report whether the `vector` extension is present; missing pgvector does not fail readiness
 - PDF Preview → Continue upserts `table_summary` (+ column chunks)
 

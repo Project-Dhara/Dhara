@@ -9,8 +9,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from data_ingestion.pdf.confidence_validation.stamp import _restore_missing_data_rows_from_candidate
-from data_ingestion.pdf.utils.header_utils import (
+from app.services.extraction.pdf.confidence_validation.stamp import _restore_missing_data_rows_from_candidate
+from app.services.extraction.pdf.utils.header_utils import (
     _is_measurement_number,
     _is_numeric_cell,
     dataframe_from_extracted_rows,

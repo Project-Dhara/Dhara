@@ -1,7 +1,7 @@
 """Blank groups must still be LLM-filled after KYDS writes Source."""
 import json
 
-from metadata.metadata_fill import _fill_empty_group_metadata
+from app.services.metadata.metadata_fill import _fill_empty_group_metadata
 
 
 class _FakeExtractor:

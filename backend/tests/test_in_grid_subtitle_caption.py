@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from data_ingestion.pdf.utils.header_utils import (
+from app.services.extraction.pdf.utils.header_utils import (
     _is_in_grid_subtitle,
     dataframe_from_extracted_rows,
     extract_in_grid_caption,

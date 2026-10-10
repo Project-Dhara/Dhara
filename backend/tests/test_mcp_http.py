@@ -9,7 +9,7 @@ from starlette.testclient import TestClient
 
 os.environ.setdefault("JWT_SECRET", "test-jwt-secret-for-mcp-http")
 
-from core import auth as _auth  # noqa: E402
+from app.core import security as _auth  # noqa: E402
 from main import app  # noqa: E402
 
 INIT_BODY = {

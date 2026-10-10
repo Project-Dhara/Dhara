@@ -1,4 +1,4 @@
-"""Local CLI for PDF step 1 (``python -m data_ingestion.pdf``)."""
+"""Local CLI for PDF step 1 (``python -m app.services.extraction.pdf``)."""
 from __future__ import annotations
 
 import argparse
@@ -9,9 +9,10 @@ from typing import Any, Dict
 
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parents[3] / ".env")
+# confidence_validation → pdf → extraction → services → app → backend
+load_dotenv(Path(__file__).resolve().parents[5] / ".env")
 
-from config import BATCH_SIZE, CPU_WORKERS, OPENAI_WORKERS, OUTPUT_DIR, PDF_PATH
+from app.services.llm_prompts import BATCH_SIZE, CPU_WORKERS, OPENAI_WORKERS, OUTPUT_DIR, PDF_PATH
 from app.services.extraction.pdf.confidence_validation.confidence_split import (
     _llm_pages_missing_tables,
     split_by_confidence,
@@ -22,7 +23,7 @@ from app.services.extraction.pdf.confidence_validation.llm import (
     validate_all_pages_batched,
 )
 from app.services.extraction.pdf.confidence_validation.table_confidence import build_pdf_outline_index
-from data_ingestion.pdf.utils.pymupdf import (
+from app.services.extraction.pdf.utils.pymupdf import (
     classify_pages,
     extract_all_tables,
     filter_candidate_pages,

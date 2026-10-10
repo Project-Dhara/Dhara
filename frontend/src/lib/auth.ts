@@ -67,7 +67,7 @@ export async function login(email: string, password: string) {
   if (!res.ok) {
     throw new Error(data.detail || 'Sign in failed')
   }
-  return data // { token, email, name, dept }
+  return data // { token, email, name, dept, role, user_id, organisation_id }
 }
 
 // POST /api/signup (dev only -- see backend ENABLE_SIGNUP). Throws with a
@@ -82,5 +82,5 @@ export async function signup(email: string, password: string, name: string, dept
   if (!res.ok) {
     throw new Error(data.detail || 'Sign up failed')
   }
-  return data // { token, email, name, dept }
+  return data // { token, email, name, dept, role, user_id, organisation_id }
 }

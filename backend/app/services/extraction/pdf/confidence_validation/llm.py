@@ -12,7 +12,7 @@ import openai
 import pandas as pd
 import pymupdf
 
-from config import (
+from app.services.llm_prompts import (
     BATCH_SIZE,
     BATCH_VALIDATION_MAX_TOKENS_CAP,
     LLM_VALIDATION_TEMPERATURE,
@@ -27,7 +27,7 @@ from config import (
 )
 from app.services.extraction.pdf.confidence_validation.confidence_split import df_to_text
 from app.services.extraction.pdf.confidence_validation.stamp import _stamp_llm_metadata
-from data_ingestion.pdf.utils.pymupdf import (
+from app.services.extraction.pdf.utils.pymupdf import (
     _distinct_ruled_candidates,
     dedupe_candidates_by_bbox,
     log,

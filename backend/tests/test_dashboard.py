@@ -1,6 +1,6 @@
 """Dashboard upload-centric rows and file-type Source labels."""
-from catalogue.dashboard import _infer_source_label
-from routes.dashboard import _pdf_dashboard_row
+from app.services.catalogue.dashboard import _infer_source_label
+from app.api.routes.dashboard import _pdf_dashboard_row
 
 
 def test_infer_source_label_file_types_only():

@@ -1,7 +1,7 @@
 """Tests for stripping Statement/Table labels from auto-accepted titles."""
 from __future__ import annotations
 
-from data_ingestion.pdf.confidence_validation.table_confidence import strip_caption_label_prefix
+from app.services.extraction.pdf.confidence_validation.table_confidence import strip_caption_label_prefix
 
 
 def test_strip_statement_prefix():
@@ -28,7 +28,7 @@ def test_keeps_plain_descriptive_title():
 
 
 def test_collapse_doubled_pdf_glyph_titles():
-    from data_ingestion.pdf.confidence_validation.table_confidence import collapse_doubled_pdf_glyphs
+    from app.services.extraction.pdf.confidence_validation.table_confidence import collapse_doubled_pdf_glyphs
 
     assert (
         collapse_doubled_pdf_glyphs(

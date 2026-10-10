@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { ArrowRight } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { withAuthHeaders } from '../../lib/auth'
-import { getLlmApiKey, withLlmKeyHeaders } from '../../lib/llmKey'
+import { withLlmKeyHeaders } from '../../lib/llmKey'
 import { useApp } from '../../context/AppContext'
 import { STATISTICS_OPTIONS } from '../../lib/settingsConfig'
 import {
@@ -62,7 +62,7 @@ export default function Classify({
 }) {
   const { keySaved } = useApp()
   const router = useRouter()
-  const hasLlmKey = hasKey || keySaved || Boolean(getLlmApiKey())
+  const hasLlmKey = hasKey || keySaved
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [classifiedColumns, setClassifiedColumns] = useState([])

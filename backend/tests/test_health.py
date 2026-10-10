@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 import main
-from catalogue import catalogue as _cat
+from app.db import psycopg as _cat
 
 client = TestClient(main.app)
 
@@ -28,8 +28,8 @@ def test_ready_ok_when_postgres_reachable():
     with (
         patch.object(_cat, "get_connection", return_value=conn) as get_conn,
         patch.object(_cat, "init_schema") as init_schema,
-        patch("core.vector_store.vector_extension_ready", return_value=True),
-        patch("core.vector_store.embedding_dim", return_value=384),
+        patch("app.storage.vectors.vector_extension_ready", return_value=True),
+        patch("app.storage.vectors.embedding_dim", return_value=384),
     ):
         r = client.get("/api/ready")
 
@@ -70,8 +70,8 @@ def test_ready_still_200_when_pgvector_missing():
 
     with (
         patch.object(_cat, "get_connection", return_value=conn),
-        patch("core.vector_store.vector_extension_ready", return_value=False),
-        patch("core.vector_store.embedding_dim", return_value=384),
+        patch("app.storage.vectors.vector_extension_ready", return_value=False),
+        patch("app.storage.vectors.embedding_dim", return_value=384),
     ):
         r = client.get("/api/ready")
 

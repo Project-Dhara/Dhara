@@ -1,8 +1,8 @@
 """Unit tests for catalogue group shaping and table code/definition append."""
 from __future__ import annotations
 
-from catalogue.group_export import append_code_definition_columns
-from catalogue.query import _shape_group_row
+from app.services.catalogue.group_export import append_code_definition_columns
+from app.services.catalogue.query import _shape_group_row
 
 
 def test_shape_group_row_includes_tables():

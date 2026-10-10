@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from data_ingestion.pdf.utils.header_utils import (
+from app.services.extraction.pdf.utils.header_utils import (
     dataframe_from_extracted_rows,
     expand_collapsed_sex_pair_rows,
 )
@@ -168,7 +168,7 @@ def test_expand_lone_f_with_stacked_age_lines():
 
 
 def test_expand_never_joins_overflow_into_last_measure_cell():
-    from data_ingestion.pdf.utils.header_utils import _split_measure_cell_to_n
+    from app.services.extraction.pdf.utils.header_utils import _split_measure_cell_to_n
 
     parts = _split_measure_cell_to_n("1\n2\n3\n4\n5\n6", 2)
     assert parts == ["1", "2"]
@@ -177,7 +177,7 @@ def test_expand_never_joins_overflow_into_last_measure_cell():
 
 def test_pair_labels_do_not_put_next_disease_on_f_row():
     """Sequential fill used to park 'All other types…' on Septicaemia's F row."""
-    from data_ingestion.pdf.utils.header_utils import _assign_pair_label_parts
+    from app.services.extraction.pdf.utils.header_utils import _assign_pair_label_parts
 
     out = _assign_pair_label_parts(
         ["Septicaemia (A40-A41)", "All other types of bacterial Diseases"],
@@ -190,7 +190,7 @@ def test_pair_labels_do_not_put_next_disease_on_f_row():
 
 
 def test_pair_labels_keep_wrap_on_f_row():
-    from data_ingestion.pdf.utils.header_utils import _assign_pair_label_parts
+    from app.services.extraction.pdf.utils.header_utils import _assign_pair_label_parts
 
     out = _assign_pair_label_parts(
         [
@@ -205,7 +205,7 @@ def test_pair_labels_keep_wrap_on_f_row():
 
 def test_sex_glue_tokens_still_pair_align_labels():
     """'0M' / 'eM' must not disable pair-aware name assignment."""
-    from data_ingestion.pdf.utils.header_utils import _sex_tokens_from_cell, expand_collapsed_sex_pair_rows
+    from app.services.extraction.pdf.utils.header_utils import _sex_tokens_from_cell, expand_collapsed_sex_pair_rows
 
     assert _sex_tokens_from_cell("M\nF\n0M\nF") == ["M", "F", "M", "F"]
     assert _sex_tokens_from_cell("eM\nF\nM\nF") == ["M", "F", "M", "F"]
@@ -231,7 +231,7 @@ def test_sex_glue_tokens_still_pair_align_labels():
 
 def test_long_title_wraps_do_not_become_extra_rows():
     """Multi-line disease titles must stay on one M/F pair (Protozoal-page style)."""
-    from data_ingestion.pdf.utils.header_utils import _assign_pair_label_parts
+    from app.services.extraction.pdf.utils.header_utils import _assign_pair_label_parts
 
     out = _assign_pair_label_parts(
         [
@@ -323,7 +323,7 @@ def test_dataframe_keeps_whooping_and_meningococcal_rows():
 
 
 def test_repair_moves_next_title_off_f_stub():
-    from data_ingestion.pdf.utils.header_utils import repair_sex_pair_next_row_label_bleed
+    from app.services.extraction.pdf.utils.header_utils import repair_sex_pair_next_row_label_bleed
 
     rows = [
         ["S.No.", "Name of the Disease", "Sex", "Total"],

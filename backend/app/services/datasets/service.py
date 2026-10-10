@@ -1,5 +1,6 @@
-"""Datasets service placeholder.
+"""Datasets service — publish extracted tables into the catalogue."""
+from __future__ import annotations
 
-Live: ``catalogue/datasets.py`` (``push_to_catalogue``),
-``catalogue/query.py``, ``routes/access.py``.
-"""
+from app.services.datasets.datasets import STANDARD_CONCEPTS, push_to_catalogue
+
+__all__ = ["STANDARD_CONCEPTS", "push_to_catalogue"]

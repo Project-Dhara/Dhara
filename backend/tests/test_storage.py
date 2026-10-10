@@ -17,11 +17,27 @@ def test_noop_object_store_returns_none(monkeypatch):
     assert store.enabled() is False
 
 
-def test_get_object_store_disabled_by_default(monkeypatch):
+def test_get_object_store_defaults_to_local(monkeypatch, tmp_path):
     monkeypatch.setenv("ENABLE_GCS", "false")
+    monkeypatch.setenv("STORAGE_BACKEND", "local")
+    monkeypatch.setenv("STORAGE_LOCAL_PATH", str(tmp_path / "blobs"))
     clear_settings_cache()
     store = get_object_store()
-    assert store.put_bytes("datasets/x.xlsx", b"x") is None
+    assert isinstance(store, LocalFileStore)
+    uri = store.put_bytes("datasets/x.xlsx", b"x")
+    assert uri and uri.startswith("file://")
+
+
+def test_get_object_store_gcs_requires_bucket(monkeypatch):
+    monkeypatch.setenv("STORAGE_BACKEND", "gcs")
+    monkeypatch.setenv("GCS_BUCKET_NAME", "")
+    monkeypatch.setenv("ENABLE_GCS", "true")
+    clear_settings_cache()
+    try:
+        get_object_store()
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "GCS_BUCKET_NAME" in str(exc)
 
 
 def test_local_file_store_writes_file(tmp_path, monkeypatch):

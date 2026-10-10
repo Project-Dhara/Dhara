@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from data_ingestion.pdf.utils.header_utils import (
+from app.services.extraction.pdf.utils.header_utils import (
     _is_parenthetical_share_token,
     _measure_parts_for_row_expand,
     dataframe_from_extracted_rows,

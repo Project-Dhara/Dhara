@@ -18,10 +18,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from data_ingestion import csv as ingest_csv
-from data_ingestion import excel as ingest_excel
-from data_ingestion.pipeline import run_upload_pipeline
-from data_ingestion.spreadsheet_pipeline import run_spreadsheet_upload_pipeline
+from app.services.ingestion import csv as ingest_csv
+from app.services.ingestion import excel as ingest_excel
+from app.services.ingestion.service import run_upload_pipeline
+from app.services.ingestion.spreadsheet_pipeline import run_spreadsheet_upload_pipeline
 
 TESTING_FILES = Path(__file__).resolve().parents[2] / "Testing files"
 

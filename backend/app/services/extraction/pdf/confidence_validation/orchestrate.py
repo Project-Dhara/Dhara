@@ -18,7 +18,7 @@ from app.services.extraction.pdf.confidence_validation.confidence_split import (
 )
 from app.services.extraction.pdf.confidence_validation.heuristic import heuristic_accept_pages
 from app.services.extraction.pdf.confidence_validation.llm import validate_all_pages_batched
-from data_ingestion.pdf.utils.pymupdf import log, run_pdf_extraction
+from app.services.extraction.pdf.utils.pymupdf import log, run_pdf_extraction
 
 def run_post_extraction_validation(
     pages_grouped: Dict[int, List[Dict[str, Any]]],

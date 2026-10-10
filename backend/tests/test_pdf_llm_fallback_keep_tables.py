@@ -7,12 +7,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from data_ingestion.pdf.confidence_validation.confidence_split import _llm_pages_missing_tables
-from data_ingestion.pdf.utils.header_utils import (
+from app.services.extraction.pdf.confidence_validation.confidence_split import _llm_pages_missing_tables
+from app.services.extraction.pdf.utils.header_utils import (
     _fill_blank_leading_serial_header,
     dataframe_from_extracted_rows,
 )
-from data_ingestion.pdf.confidence_validation.table_confidence import _structural_bucket_for_df
+from app.services.extraction.pdf.confidence_validation.table_confidence import _structural_bucket_for_df
 
 
 def test_llm_pages_missing_when_validation_omits_page():

@@ -1,7 +1,7 @@
 """Strict singleton LLM merge gates for automatic grouping."""
 from __future__ import annotations
 
-from pdf.pdf_grouping import (
+from app.services.grouping.pdf_grouping import (
     _titles_pair_compatible,
     _titles_strictly_compatible,
     _validate_singleton_merges,
@@ -95,7 +95,7 @@ def test_merge_maps_surrogate_ids_from_llm(monkeypatch):
         ]
 
     monkeypatch.setattr(
-        "pdf.pdf_grouping._call_singleton_merge_llm_batched", fake_batched
+        "app.services.grouping.pdf_grouping._call_singleton_merge_llm_batched", fake_batched
     )
     multi = {
         "name": "Already grouped",
@@ -156,7 +156,7 @@ def test_surrogate_id_remap_in_llm_response(monkeypatch):
                 def create(**kwargs):
                     return FakeResp()
 
-    import pdf.pdf_grouping as mod
+    import app.services.grouping.pdf_grouping as mod
 
     monkeypatch.setattr(mod, "OpenAI", FakeClient, raising=False)
 
@@ -168,7 +168,7 @@ def test_surrogate_id_remap_in_llm_response(monkeypatch):
     fake_openai.OpenAI = FakeClient
     monkeypatch.setitem(sys.modules, "openai", fake_openai)
 
-    from pdf.pdf_grouping import _call_singleton_merge_llm
+    from app.services.grouping.pdf_grouping import _call_singleton_merge_llm
 
     items = [
         {"id": "uuid-1", "title": "LIVE BIRTHS BY BIRTH ORDER AND BIRTH WEIGHT"},

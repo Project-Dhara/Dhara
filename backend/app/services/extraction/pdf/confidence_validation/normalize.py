@@ -17,12 +17,12 @@ from app.services.extraction.pdf.confidence_validation.constants import (
     REVIEW_REASONS,
     _REASON_PRIORITY,
 )
-from data_ingestion.pdf.utils.header_utils import (
+from app.services.extraction.pdf.utils.header_utils import (
     _is_descriptive_in_grid_title,
     _is_table_id_only,
     extract_in_grid_caption,
 )
-from data_ingestion.pdf.utils.pymupdf import _best_matching_ruled_candidate
+from app.services.extraction.pdf.utils.pymupdf import _best_matching_ruled_candidate
 from app.services.extraction.pdf.confidence_validation.table_confidence import (
     strip_caption_label_prefix,
     title_needs_review,

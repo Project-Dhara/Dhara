@@ -17,7 +17,7 @@ from app.services.extraction.pdf.confidence_validation.table_confidence import (
     extract_page_text_blocks,
     table_dict_from_df,
 )
-from data_ingestion.pdf.utils.pymupdf import (
+from app.services.extraction.pdf.utils.pymupdf import (
     _bboxes_same_table,
     dedupe_candidates_by_bbox,
     log,

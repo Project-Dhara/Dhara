@@ -69,14 +69,12 @@ dhara-poc/
 ├── Dockerfile                   Combined Next.js + FastAPI image (host :80 → :8080)
 ├── Dhara_logo.png               Brand mark (README / docs)
 ├── backend/                     FastAPI + openpyxl + LLM + Postgres + pgvector
-│   ├── main.py                  App setup + router registration (entrypoint)
-│   ├── routes/                  FastAPI routers: auth, kyds, catalogue, pdf, dashboard, access
-│   ├── mcp_server/              MCP tools (stdio + HTTP /mcp on FastAPI)
-│   ├── core/                    auth.py, deps.py, gcs_utils.py, vector_store.py
-│   ├── catalogue/               query.py, datasets.py, catalogue.py (shim), matching, NCO, staging, …
-│   ├── pdf/                     pdf_store.py, pdf_jobs.py, pdf_grouping.py, …
-│   ├── metadata/                metadata_excel.py, metadata_llm.py, metadata_fill.py, validation, …
-│   ├── extraction/              extractor.py, sql_extract.py, pdf_extraction.py, …
+│   ├── main.py                  Process entry (`uvicorn main:app` → `app.main`)
+│   ├── app/                     API, services, psycopg2 store, MCP
+│   │   ├── api/routes/          HTTP: auth, kyds, catalogue, pdf, upload, dashboard, access
+│   │   ├── db/                  psycopg.py, pdf_store.py, kyds_psycopg.py, SQLAlchemy repos
+│   │   ├── services/            ingestion, extraction, grouping, catalogue, metadata
+│   │   └── mcp/                 MCP tools (stdio `python -m app.mcp`, HTTP `/mcp`)
 │   ├── scripts/create_user.py   Admin user provisioning CLI
 │   ├── tests/                   test_nco_matching.py, test_pdf_pipeline.py
 │   ├── db/init-pgvector.sql     CREATE EXTENSION vector (first boot)

@@ -231,7 +231,14 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
           </div>
           <div className="flex flex-col gap-1.5">
             <label className={fieldLabelClass}>API key</label>
-            <input className={inputClass} type="password" value={local.apiKey} onChange={setField('apiKey')} placeholder="API key" autoComplete="off" />
+            <input
+              className={inputClass}
+              type="password"
+              value={local.apiKey}
+              onChange={setField('apiKey')}
+              placeholder={keySaved ? '•••••••• (enter a new key to replace)' : 'API key'}
+              autoComplete="off"
+            />
           </div>
         </div>
         <div className="flex items-center gap-3.5">

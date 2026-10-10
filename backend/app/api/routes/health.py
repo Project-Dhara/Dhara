@@ -1,7 +1,7 @@
 """Liveness and readiness probes (no JWT, no secrets)."""
 from fastapi import APIRouter, Response, status
 
-from catalogue import catalogue as _cat
+from app.db import psycopg as _cat
 
 router = APIRouter(tags=["Health"])
 
@@ -13,7 +13,7 @@ def _readiness_payload(response: Response) -> dict:
     """
     checks: dict = {"postgres": False, "pgvector": False}
     try:
-        from core import vector_store as _vs
+        from app.storage import vectors as _vs
 
         conn = _cat.get_connection()
         try:

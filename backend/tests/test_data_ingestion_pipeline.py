@@ -10,14 +10,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from data_ingestion import csv as ingest_csv
-from data_ingestion import excel as ingest_excel
-from data_ingestion.pipeline import run_upload_pipeline
-from data_ingestion.spreadsheet_pipeline import (
+from app.services.ingestion import csv as ingest_csv
+from app.services.ingestion import excel as ingest_excel
+from app.services.ingestion.service import run_upload_pipeline
+from app.services.ingestion.spreadsheet_pipeline import (
     ingest_spreadsheet_path,
     run_validation_from_pre_input,
 )
-from data_ingestion.utils.source_type import resolve_source_type
+from app.services.ingestion.utils.source_type import resolve_source_type
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TESTING_FILES = _REPO_ROOT / "Testing files"
@@ -151,7 +151,7 @@ def test_run_upload_pipeline_csv_no_llm_key(tmp_path):
 def test_run_upload_pipeline_pdf_unchanged(tmp_path):
     """PDF branch still matches direct run_pipeline (not PreValidationInput yet)."""
     pdf_path = _TESTING_FILES / "SDA_INDIA_222-224.pdf"
-    from data_ingestion.pdf import confidence_validation as pe
+    from app.services.extraction.pdf import confidence_validation as pe
 
     direct = pe.run_pipeline(pdf_path, api_key=None)
     via_upload = run_upload_pipeline(pdf_path, "pdf", api_key=None)

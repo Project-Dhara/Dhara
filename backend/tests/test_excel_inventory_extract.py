@@ -5,7 +5,7 @@ import io
 
 import openpyxl
 
-from catalogue.extract.extractor import TableExtractor
+from app.services.ingestion.wizard.extractor import TableExtractor
 
 
 def _sandbox_bytes() -> bytes:

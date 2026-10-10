@@ -7,7 +7,7 @@ import ErrorBanner from '../ui/ErrorBanner'
 import Button from '../ui/Button'
 import LlmKeyRequiredBanner from '../LlmKeyRequiredBanner'
 import { withAuthHeaders } from '../../lib/auth'
-import { getLlmApiKey, withLlmKeyHeaders } from '../../lib/llmKey'
+import { withLlmKeyHeaders } from '../../lib/llmKey'
 import { useApp } from '../../context/AppContext'
 
 // Upload only. Processing progress and review now live on their own routed
@@ -18,7 +18,7 @@ export default function PdfUpload({ onGoSettings }) {
   const [error, setError] = useState('')
   const router = useRouter()
   const { keySaved } = useApp()
-  const hasLlmKey = keySaved || Boolean(getLlmApiKey())
+  const hasLlmKey = keySaved
 
   const handleUpload = async (file) => {
     setError('')

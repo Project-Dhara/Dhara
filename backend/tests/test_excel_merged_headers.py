@@ -1,8 +1,8 @@
 """Excel multi-row / merged column headings must stay multi-level."""
 from __future__ import annotations
 
-from metadata.metadata_llm import _detect_header_rows, _flatten_headers, _heuristic_structure
-from catalogue.extract.extractor import TableExtractor
+from app.services.metadata.metadata_llm import _detect_header_rows, _flatten_headers, _heuristic_structure
+from app.services.ingestion.wizard.extractor import TableExtractor
 
 
 def test_detect_keeps_merged_group_and_leaf_header_rows():

@@ -15,6 +15,7 @@ import pymupdf
 from app.services.extraction.pdf.confidence_validation.alignment import (
     _apply_column_alignment_guard,
     _cell_is_empty,
+    _cell_is_numeric,
     _dataframe_numeric_fill_ratio,
     _row_is_column_index_strip,
     _stamp_bbox_from_candidate,
@@ -26,7 +27,7 @@ from app.services.extraction.pdf.confidence_validation.normalize import (
     _prefer_descriptive_llm_title,
     derive_human_review_needed,
 )
-from data_ingestion.pdf.utils.pymupdf import (
+from app.services.extraction.pdf.utils.pymupdf import (
     _best_matching_ruled_candidate,
     _bbox_iou,
     _distinct_ruled_candidates,

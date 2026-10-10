@@ -14,11 +14,7 @@ from app.core import security
 from app.db.repositories import organisations as org_repo
 from app.db.repositories import users as user_repo
 from app.db.session import get_db
-from catalogue.extract.extractor import TableExtractor
-
-LLM_KEY_HEADER = "x-llm-api-key"
-LLM_PROVIDER_HEADER = "x-llm-provider"
-_KNOWN_LLM_PROVIDERS = {"anthropic", "openai"}
+from app.services.credentials import service as credentials_service
 
 bearer_scheme = HTTPBearer(
     auto_error=False, bearerFormat="JWT", scheme_name="BearerAuth"
@@ -70,49 +66,38 @@ def require_user_email(
 
 
 def resolve_llm_credentials(
-    request: Request, user_email: str
+    request: Request,
+    user_email: str,
+    db: Session | None = None,
 ) -> Tuple[Optional[str], Optional[str]]:
-    """Return ``(api_key, provider)``. Header overrides stored ``llm_api_keys``."""
-    header_key = request.headers.get(LLM_KEY_HEADER, "").strip() or None
-    header_provider = (
-        request.headers.get(LLM_PROVIDER_HEADER, "").strip().lower() or None
-    )
-    if header_provider not in _KNOWN_LLM_PROVIDERS:
-        header_provider = None
+    """Return ``(api_key, provider)`` from encrypted storage.
 
-    if header_key:
-        return header_key, header_provider
+    ``request`` is accepted for call-site compatibility; header overrides are
+    no longer honoured so keys never travel in browser storage or request
+    headers.
+    """
+    del request  # unused — kept for signature compatibility during migration
+    if db is not None:
+        return credentials_service.resolve_for_user(db, user_email)
 
+    from app.db.session import get_session_factory
+
+    session = get_session_factory()()
     try:
-        from catalogue import catalogue as _cat
-
-        conn = _cat.get_connection()
-        try:
-            _cat.init_schema(conn)
-            row = _cat.get_llm_api_key(conn, user_email)
-        finally:
-            conn.close()
-    except Exception:
-        return None, None
-
-    if not row:
-        return None, None
-    stored_key = (row.get("api_key") or "").strip() or None
-    stored_provider = (row.get("provider") or "").strip().lower() or None
-    if stored_provider not in _KNOWN_LLM_PROVIDERS:
-        stored_provider = None
-    return stored_key, stored_provider
+        return credentials_service.resolve_for_user(session, user_email)
+    finally:
+        session.close()
 
 
-def _extractor_for(request: Request, user_email: str) -> TableExtractor:
+def _extractor_for(request: Request, user_email: str):
+    from app.services.ingestion.wizard.extractor import TableExtractor
+
     key, provider = resolve_llm_credentials(request, user_email)
     return TableExtractor(api_key=key, skip_llm=not key, provider=provider)
 
 
 __all__ = [
     "CurrentUser",
-    "LLM_KEY_HEADER",
-    "LLM_PROVIDER_HEADER",
     "bearer_scheme",
     "require_user",
     "require_user_email",

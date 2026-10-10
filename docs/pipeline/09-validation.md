@@ -33,7 +33,7 @@ Original value → rule/mapping → harmonised value → standard → approval
 
 ## In this codebase
 
-- `backend/metadata/validation.py` and related fill/match guards
+- `backend/app/services/metadata/validation.py` and related fill/match guards
 - PDF alignment / garbled flags surface issues earlier in Preview
 - Full post-transform QA dashboard is **roadmap**
 

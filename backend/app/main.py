@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.routing import Route
 
 from app.api.router import api_router
-from mcp_server.http_asgi import mcp_http_handler, mcp_http_lifespan
+from app.mcp.http_asgi import mcp_http_handler, mcp_http_lifespan
 
 OPENAPI_TAGS = [
     {
@@ -77,6 +77,9 @@ async def _lifespan(_app: FastAPI):
 
 def create_app() -> FastAPI:
     """Build and return the DHARA FastAPI application."""
+    from app.core.logging import configure_logging
+
+    configure_logging()
     application = FastAPI(
         title="DHARA API",
         description=(
@@ -94,10 +97,10 @@ def create_app() -> FastAPI:
             "## MCP\n\n"
             "Remote Streamable HTTP: **`/mcp`** "
             "(tools: search_datasets, get_metadata, get_table). "
-            "Open by default for published reads "
-            "(`MCP_HTTP_AUTH=jwt` or `token` to require Bearer; "
-            "optional `MCP_AUTH_TOKEN`). "
-            "Local stdio: `python -m mcp_server` from `backend/`."
+            "Requires Bearer JWT by default "
+            "(`MCP_HTTP_AUTH=jwt`; use `token` with `MCP_AUTH_TOKEN`, "
+            "or `off` only for trusted demos). "
+            "Local stdio: `python -m app.mcp` from `backend/`."
         ),
         openapi_tags=OPENAPI_TAGS,
         swagger_ui_parameters={"persistAuthorization": True},

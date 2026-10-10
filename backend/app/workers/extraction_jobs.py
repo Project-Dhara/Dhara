@@ -12,17 +12,17 @@ import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from catalogue import catalogue as _cat
+from app.db import pdf_store as _pdf_store
+from app.db import psycopg as _pg
 from app.services.ingestion.service import run_upload_pipeline
-from pdf import pdf_store as _pdf_store
 
 _pdf_jobs: Dict[str, Dict[str, Any]] = {}
 _pdf_jobs_lock = threading.Lock()
 
 
 def _pdf_db_conn():
-    conn = _cat.get_connection()
-    _cat.init_schema(conn)
+    conn = _pg.get_connection()
+    _pg.init_schema(conn)
     _pdf_store.init_pdf_schema(conn)
     return conn
 
