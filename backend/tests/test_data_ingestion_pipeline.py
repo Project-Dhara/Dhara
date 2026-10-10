@@ -151,7 +151,7 @@ def test_run_upload_pipeline_csv_no_llm_key(tmp_path):
 def test_run_upload_pipeline_pdf_unchanged(tmp_path):
     """PDF branch still matches direct run_pipeline (not PreValidationInput yet)."""
     pdf_path = _TESTING_FILES / "SDA_INDIA_222-224.pdf"
-    from extraction import pdf_extraction as pe
+    from data_ingestion.pdf import confidence_validation as pe
 
     direct = pe.run_pipeline(pdf_path, api_key=None)
     via_upload = run_upload_pipeline(pdf_path, "pdf", api_key=None)

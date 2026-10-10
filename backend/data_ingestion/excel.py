@@ -9,8 +9,8 @@ import openpyxl
 
 from data_ingestion.utils.grid import block_to_rows, context_text_from_grid
 from data_ingestion.utils.types import PagesGrouped, PreValidationInput, UnitContextText
-from extraction.extractor import TableExtractor
-from extraction.pdf_header_utils import dataframe_from_extracted_rows
+from catalogue.extract.extractor import TableExtractor
+from data_ingestion.pdf.utils.header_utils import dataframe_from_extracted_rows
 
 INGEST_METHOD = "excel_grid"
 

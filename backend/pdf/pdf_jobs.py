@@ -3,7 +3,7 @@ job -> review).
 
 Unlike the xlsx batch-extract flow, this can take several minutes (pymupdf
 extraction + batched OpenAI reconstruction/classification -- see
-extraction.pdf_extraction), far longer than a synchronous request should
+data_ingestion.pdf.pipeline), far longer than a synchronous request should
 block for. Jobs are cached in memory here for live progress and persisted to
 Postgres (pdf_store) -- never under backend/data/. Pipeline runs use ephemeral
 temp files that are deleted when extraction finishes.
@@ -15,6 +15,7 @@ import pathlib
 import re
 import tempfile
 import threading
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from catalogue import catalogue as _cat

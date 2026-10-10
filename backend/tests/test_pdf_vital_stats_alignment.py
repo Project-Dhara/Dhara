@@ -9,11 +9,11 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from extraction.pdf_extraction import (
+from data_ingestion.pdf.confidence_validation.alignment import (
     _apply_column_alignment_guard,
     _count_substantive_data_rows,
 )
-from extraction.pdf_table_confidence import (
+from data_ingestion.pdf.confidence_validation.table_confidence import (
     _structural_bucket_for_df,
     classify_page,
     profile_table,

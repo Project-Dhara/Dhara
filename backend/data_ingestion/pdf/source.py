@@ -1,7 +1,4 @@
-"""PDF data ingestion: validate source file before PyMuPDF extraction.
-
-Table detection (PyMuPDF) lives in ``extraction.pdf_extraction.run_pdf_extraction``.
-"""
+"""Validate PDF upload paths before PyMuPDF extraction."""
 
 from __future__ import annotations
 

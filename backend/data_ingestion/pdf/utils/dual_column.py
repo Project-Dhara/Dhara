@@ -1,20 +1,28 @@
 """
-Gated handling for dual newspaper-style tables on one page
-(e.g. SDG "PERFORMANCE BY INDICATORS"): left stack + right stack
-with the same columns, read top→bottom left then top→bottom right.
+Dual newspaper-style tables on one PDF page.
 
-Detection is narrow. Unmatched pages keep the normal extraction path.
+Some reports place two side-by-side ruled grids with the same column schema
+(left stack and right stack). Reading order is top→bottom on the left half,
+then top→bottom on the right. This module detects that layout, splits
+candidates by geometry (or mid-page re-extract when needed), and merges
+halves into one table for downstream validation.
+
+Detection is intentionally narrow; pages that do not match keep the normal path.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pymupdf
 
-# Title cue for the Performance-by-Indicators dual stack layout.
-_DUAL_TITLE_RE = re.compile(r"performance\s+by\s+indicators", re.I)
+# Optional page-text cue when geometry alone finds one wide bbox (common on scorecard pages).
+_DUAL_STACK_TITLE_RES = (
+    re.compile(r"performance\s+by\s+indicators", re.I),
+    re.compile(r"\bindicators?\s+by\s+", re.I),
+    re.compile(r"scorecard|dashboard", re.I),
+)
 
 # Vertical alignment / size similarity for two side-by-side ruled tables.
 _MAX_Y0_DELTA = 50.0
@@ -24,17 +32,10 @@ _MIN_ROWS = 5
 _MAX_NCOL_DELTA = 1
 _GUTTER_PT = 4.0
 
-# Standard 4-col schema for Performance-by-Indicators dual stacks.
-INDICATOR_STACK_COLUMNS = ["Indicator", "SDG Index 4", "SDG Index 3", "Direction"]
-
-# Glyphs pymupdf emits for the icon-font Direction column on SDA Index PDFs.
-# Green up / red down / gray dash vary by extract path:
-#   up   → U+F0E1 or Latin "Ç" (U+00C7)
-#   down → mojibake "â" / "á" or Latin "È" (U+00C8)
-#   same → en-dash; blank cells mean no arrow in the text layer (do not invent).
-_DIRECTION_UP = frozenset({"\uf0e1", "↑", "▲", "⬆", "up", "Ç", "ç"})
-_DIRECTION_DOWN = frozenset({"â", "á", "↓", "▼", "⬇", "down", "È", "è"})
-_DIRECTION_SAME = frozenset({"–", "—", "−", "‒", "same", "flat", "unchanged"})
+# Icon-font / mojibake trend glyphs in PDF text layers (do not infer trend from numeric columns).
+_TREND_UP = frozenset({"\uf0e1", "↑", "▲", "⬆", "up", "Ç", "ç"})
+_TREND_DOWN = frozenset({"â", "á", "↓", "▼", "⬇", "down", "È", "è"})
+_TREND_FLAT = frozenset({"–", "—", "−", "‒", "same", "flat", "unchanged"})
 
 
 def _header_key(name: Any) -> str:
@@ -46,6 +47,7 @@ def _cell_str(v: Any) -> Optional[str]:
         return None
     try:
         import math
+
         if isinstance(v, float) and math.isnan(v):
             return None
     except Exception:
@@ -68,67 +70,103 @@ def _looks_numeric(v: Any) -> bool:
         return False
 
 
-def map_direction_glyph(value: Any) -> Optional[str]:
-    """Map extracted Direction cell → up/down/same, or None if blank/unknown.
+def map_trend_glyph(value: Any) -> Optional[str]:
+    """Map an extracted trend/direction cell → up/down/same, or None if blank/unknown.
 
-    Does NOT infer from Index 4 vs Index 3 — SDG arrows mean methodological
-    improvement, not numeric increase (e.g. poverty MPI falling still shows ↑).
+    Uses only the cell text (icons, arrows, mojibake). Does not infer trend from
+    other numeric columns.
     """
     s = _cell_str(value)
     if s is None:
         return None
-    # Drop ASCII/C0/C1 controls (e.g. "È\\x03") but keep PUA icon glyphs
-    # like U+F0E1 — those fail str.isprintable() and must not be stripped.
     s = "".join(ch for ch in s if ord(ch) >= 32 and ord(ch) != 127).strip()
     if not s:
         return None
     low = s.lower()
-    if s in _DIRECTION_UP or low in _DIRECTION_UP:
+    if s in _TREND_UP or low in _TREND_UP:
         return "up"
-    if s in _DIRECTION_DOWN or low in _DIRECTION_DOWN:
+    if s in _TREND_DOWN or low in _TREND_DOWN:
         return "down"
-    if s in _DIRECTION_SAME or low in _DIRECTION_SAME:
+    if s in _TREND_FLAT or low in _TREND_FLAT:
         return "same"
-    # Single-char fallback after stripping junk.
     if len(s) > 1:
         head = s[0]
-        if head in _DIRECTION_UP or head.lower() in _DIRECTION_UP:
+        if head in _TREND_UP or head.lower() in _TREND_UP:
             return "up"
-        if head in _DIRECTION_DOWN or head.lower() in _DIRECTION_DOWN:
+        if head in _TREND_DOWN or head.lower() in _TREND_DOWN:
             return "down"
-        if head in _DIRECTION_SAME:
+        if head in _TREND_FLAT:
             return "same"
-    # Private-use / odd single glyphs: leave blank rather than invent.
     if len(s) <= 2 and any(ord(ch) >= 0xE000 for ch in s):
         return None
     return None
 
 
+# Backward-compatible name for tests/tools that imported the old symbol.
+map_direction_glyph = map_trend_glyph
+
+
 def _row_looks_like_real_column_header(cells: List[Optional[str]]) -> bool:
-    """True only for Indicator / SDG INDEX / Direc-tion style headers."""
+    """True when a row looks like short column labels (not a section banner or data row)."""
     keys = [_header_key(c) for c in cells if c]
     if not keys:
         return False
     blob = " ".join(keys)
-    has_dir = "direction" in blob or "direc" in blob or "trend" in blob
-    has_index = "index" in blob or "indicator" in blob or "value" in blob
-    # Real headers are short labels, not long indicator prose / SDG banners.
-    long_text = any(c and len(c) > 40 for c in cells)
-    if long_text:
+    has_trend = "direction" in blob or "direc" in blob or "trend" in blob or "change" in blob
+    has_measure = (
+        "index" in blob
+        or "indicator" in blob
+        or "value" in blob
+        or "metric" in blob
+        or "name" in blob
+        or "label" in blob
+    )
+    if any(c and len(c) > 40 for c in cells):
         return False
     if any(_looks_numeric(c) for c in cells):
         return False
-    return has_dir or (has_index and len(keys) >= 2)
+    return has_trend or (has_measure and len(keys) >= 2)
 
 
-def coerce_indicator_half_df(df: Any) -> Any:
+def _resolve_column_names(
+    ncol: int,
+    header_cells: Sequence[Optional[str]],
+    df_columns: Any,
+) -> List[str]:
+    """Infer column names from a header row or existing DataFrame columns."""
+    cells = list(header_cells[:ncol])
+    if _row_looks_like_real_column_header(cells):
+        return [
+            (str(c).strip() if c else "") or f"Col_{i + 1}" for i, c in enumerate(cells)
+        ]
+
+    from_pandas = [_cell_str(c) for c in list(df_columns)[:ncol]]
+    if from_pandas and _row_looks_like_real_column_header(from_pandas):
+        return [
+            (str(c).strip() if c else "") or f"Col_{i + 1}" for i, c in enumerate(from_pandas)
+        ]
+
+    return [f"Col_{i + 1}" for i in range(ncol)]
+
+
+def _trend_column_index(col_names: List[str]) -> Optional[int]:
+    for i, name in enumerate(col_names):
+        k = _header_key(name)
+        if not k:
+            continue
+        if "direction" in k or k.startswith("direc") or "trend" in k or "change" in k:
+            return i
+    return None
+
+
+def coerce_dual_stack_half_df(df: Any) -> Any:
     """
-    Rebuild a dual-stack half as Indicator | SDG Index 4 | SDG Index 3 | Direction.
+    Normalize one half of a dual-stack ruled table for vertical merge.
 
-    pymupdf builds DataFrames with rows[0] as the header. On these pages that
-    first row is usually an SDG banner (left) or a real data row (right) — so
-    the right half silently lost its first indicator and its numbers. Recover
-    the header-as-row whenever it does not look like a true column header.
+    PyMuPDF often promotes the wrong row to column headers (section banner vs true
+    header vs first data row). When the current columns do not look like real
+    headers, treat them as the first body row. Column names are taken from the
+    grid when possible, otherwise ``Col_1`` … ``Col_n``.
     """
     import pandas as pd
 
@@ -147,23 +185,26 @@ def coerce_indicator_half_df(df: Any) -> Any:
     for _, series in df.iterrows():
         body_rows.append([_cell_str(v) for v in series.tolist()])
 
+    col_names = _resolve_column_names(ncol, col_as_row, df.columns)
+    trend_idx = _trend_column_index(col_names)
+
     normalized: List[List[Optional[str]]] = []
     for raw in body_rows:
-        # Pad / trim to 4 columns (extra cols rare; drop trailing empties).
-        cells = list(raw[:4]) + [None] * max(0, 4 - len(raw))
-        cells = cells[:4]
-        cells[3] = map_direction_glyph(cells[3])
-        # Drop fully empty rows.
+        cells = list(raw[:ncol]) + [None] * max(0, ncol - len(raw))
+        cells = cells[:ncol]
+        if trend_idx is not None and trend_idx < len(cells):
+            cells[trend_idx] = map_trend_glyph(cells[trend_idx])
         if not any(cells):
             continue
         normalized.append(cells)
 
-    out = pd.DataFrame(normalized, columns=INDICATOR_STACK_COLUMNS, dtype=object)
-    return out
+    return pd.DataFrame(normalized, columns=col_names, dtype=object)
 
 
-def page_text_suggests_dual_indicator_stack(page_text: str) -> bool:
-    return bool(page_text and _DUAL_TITLE_RE.search(page_text))
+def page_text_suggests_dual_stack_layout(page_text: str) -> bool:
+    if not page_text:
+        return False
+    return any(p.search(page_text) for p in _DUAL_STACK_TITLE_RES)
 
 
 def _bbox_of(cand: Dict[str, Any]) -> Optional[Tuple[float, float, float, float]]:
@@ -180,11 +221,9 @@ def _side_by_side_pair(
     ba, bb = _bbox_of(a), _bbox_of(b)
     if not ba or not bb:
         return None
-    # Order by left edge.
     left, right = (a, b) if ba[0] <= bb[0] else (b, a)
     bl, br = _bbox_of(left), _bbox_of(right)
     assert bl and br
-    # Require a clear horizontal gap (or negligible overlap).
     if bl[2] > br[0] + 8:
         return None
     if abs(bl[1] - br[1]) > _MAX_Y0_DELTA:
@@ -252,7 +291,6 @@ def partition_side_by_side_candidates(
     for c in candidates:
         bb = _bbox_of(c)
         if bb is None:
-            # Keep unlocated candidates on both sides as weak context only on left.
             if c.get("method") == "pymupdf_lines_strict":
                 continue
             left_cands.append(_retag(c, "left"))
@@ -263,7 +301,6 @@ def partition_side_by_side_candidates(
         else:
             right_cands.append(_retag(c, "right"))
 
-    # Ensure the primary strict halves are present.
     if not any(c.get("method", "").startswith("pymupdf_lines_strict") for c in left_cands):
         left_cands.insert(0, _retag(left_s, "left"))
     if not any(c.get("method", "").startswith("pymupdf_lines_strict") for c in right_cands):
@@ -277,8 +314,8 @@ def partition_side_by_side_candidates(
 def _extract_clipped(
     pdf_path: str, page_num: int, clip: pymupdf.Rect, side: str
 ) -> List[Dict[str, Any]]:
-    """Run both pymupdf strategies inside a clip rectangle."""
-    from extraction.pdf_extraction_workers import _candidates_from_pymupdf_table
+    """Run pymupdf table strategies inside a clip rectangle."""
+    from data_ingestion.pdf.utils.workers import _candidates_from_pymupdf_table
 
     results: List[Dict[str, Any]] = []
     doc = pymupdf.open(pdf_path)
@@ -323,9 +360,11 @@ def _clip_halves_from_midpage(
 
     left = _extract_clipped(pdf_path, page_num, left_clip, "left")
     right = _extract_clipped(pdf_path, page_num, right_clip, "right")
+
     def _ruled(cands):
         strict = [c for c in cands if "lines_strict" in c.get("method", "")]
         return strict or [c for c in cands if c.get("method", "").startswith("pymupdf_lines_")]
+
     left_strict = _ruled(left)
     right_strict = _ruled(right)
     if not left_strict or not right_strict:
@@ -347,16 +386,16 @@ def try_dual_column_halves(
     page_text: str = "",
 ) -> Optional[Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]]:
     """
-    Detect a dual-column indicator stack and return (left_candidates, right_candidates).
+    Detect a dual-stack layout; return (left_candidates, right_candidates).
 
-    Prefer partitioning existing ruled tables. If the title cue matches but
-    partition fails (e.g. one wide bbox), re-extract with mid-page clips.
+    Prefer partitioning existing ruled tables. If page text suggests a dual-stack
+    scorecard but only one wide bbox was found, re-extract with mid-page clips.
     """
     partitioned = partition_side_by_side_candidates(candidates)
     if partitioned:
         return partitioned
 
-    if page_text_suggests_dual_indicator_stack(page_text):
+    if page_text_suggests_dual_stack_layout(page_text):
         return _clip_halves_from_midpage(pdf_path, page_num)
 
     return None
@@ -390,7 +429,6 @@ def _align_row_to_columns(
             out.append(row[idx] if idx < len(row) else None)
         else:
             out.append(None)
-    # Positional fallback when name align produced all-null but widths match.
     if dest_names and all(v is None for v in out) and len(row) == len(dest_names):
         return list(row)
     return out
@@ -401,14 +439,13 @@ def merge_reconstructed_tables(
     right: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
-    Vertically concatenate right under left, keeping left's column schema.
+    Vertically concatenate right under left, keeping a shared column schema.
     Reading order: left half top→bottom, then right half top→bottom.
     """
     merged = dict(left)
     left_names = _col_names(left)
     right_names = _col_names(right)
 
-    # Prefer a wider schema if right recovered Direction and left did not.
     if len(right_names) > len(left_names):
         merged["columns"] = list(right.get("columns") or [])
         dest_names = right_names
@@ -439,7 +476,6 @@ def merge_reconstructed_tables(
         notes.append(note)
     merged["notes"] = notes
 
-    # Combine uncertain cells; prefix right-half notes for clarity.
     unc: List[Any] = list(merged.get("uncertain_cells") or [])
     for u in right.get("uncertain_cells") or []:
         label = u if isinstance(u, str) else str(u)
@@ -455,7 +491,6 @@ def merge_reconstructed_tables(
         extraction["confidence"] = "llm_validated"
     merged["extraction"] = extraction
 
-    # Title: keep left unless empty.
     if not (merged.get("title") or "").strip() and (right.get("title") or "").strip():
         merged["title"] = right.get("title")
 

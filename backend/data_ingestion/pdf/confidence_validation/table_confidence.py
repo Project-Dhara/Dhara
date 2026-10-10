@@ -1,7 +1,7 @@
 """
 Deterministic (no-LLM) confidence scoring for extracted table candidates.
 
-The OpenAI validation step in extraction.pdf_extraction is doing real
+The LLM validation step in data_ingestion.pdf.confidence_validation is doing real
 reconstruction work for some pages (mangled/transposed cells, headers glued
 into the first data row, or a page where one detection strategy found
 nothing at all) -- see the false-positive investigation earlier in this
@@ -711,7 +711,7 @@ def _is_usable_inferred_title(title: str, columns: Optional[List[str]] = None) -
 
 def _is_caption_id_only(line: str) -> bool:
     """True for short TABLE/STATEMENT ids with no descriptive remainder."""
-    from extraction.pdf_header_utils import _is_table_id_only
+    from data_ingestion.pdf.utils.header_utils import _is_table_id_only
 
     s = _normalize_title_line(line)
     if not s:

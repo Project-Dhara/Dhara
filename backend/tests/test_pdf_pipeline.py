@@ -1,6 +1,6 @@
 """
 Robustness test harness for the PDF table extraction + AI classification
-pipeline (extraction.pdf_extraction.run_pipeline).
+pipeline (data_ingestion.pdf.confidence_validation.run_pipeline).
 
 Run (from backend/): python tests/test_pdf_pipeline.py /path/to/file1.pdf [/path/to/file2.pdf ...]
 
@@ -26,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from extraction import pdf_extraction as pipeline
+from data_ingestion.pdf import confidence_validation as pipeline
 
 
 def run_one(pdf_path: Path) -> dict:

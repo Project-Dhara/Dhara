@@ -1,6 +1,6 @@
 """
 Worker functions for parallel table extraction, run inside a
-ProcessPoolExecutor from extraction.pdf_extraction.
+ProcessPoolExecutor from data_ingestion.pdf.utils.pymupdf.
 
 Pulled out into their own module (rather than defined inline in the calling
 script) because ProcessPoolExecutor on macOS uses the "spawn" start method,
@@ -64,8 +64,8 @@ def _candidates_from_pymupdf_table(
     page_text: str = "",
 ) -> List[Dict[str, Any]]:
     """Build one candidate per physical table; split glued multi-TABLE grids."""
-    from extraction.pdf_header_utils import dataframe_from_extracted_rows, split_extracted_rows_on_table_markers
-    from extraction.pdf_table_confidence import looks_like_chart_candidate
+    from data_ingestion.pdf.utils.header_utils import dataframe_from_extracted_rows, split_extracted_rows_on_table_markers
+    from data_ingestion.pdf.confidence_validation.table_confidence import looks_like_chart_candidate
 
     rows = tab.extract()
     if not rows:

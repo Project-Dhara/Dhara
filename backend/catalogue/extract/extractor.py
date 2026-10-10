@@ -11,8 +11,13 @@ from anthropic import RateLimitError as AnthropicRateLimitError
 import openai
 from openai import RateLimitError as OpenAIRateLimitError
 
-ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
-OPENAI_MODEL = "gpt-4o-mini"
+from config import (
+    ANTHROPIC_MODEL,
+    OPENAI_MODEL,
+    excel_catalogue_enrichment_prompt,
+    excel_category_metadata_prompt,
+    excel_table_structure_prompt,
+)
 
 DDI_PREFIX = "DDI_DEL_DES_VS"
 DDI_YEAR   = "2024"
@@ -613,7 +618,7 @@ class TableExtractor:
         Falls back to the legacy first/second-row heuristic when no banner
         pattern is detected.
         """
-        from extraction.pdf_header_utils import extract_in_grid_caption
+        from data_ingestion.pdf.utils.header_utils import extract_in_grid_caption
 
         def row_text(row):
             seen_vals, parts = set(), []
@@ -732,22 +737,14 @@ class TableExtractor:
             lines.append(f"Row {i+1}:\t{vals}")
         grid_text = "\n".join(lines)
 
-        prompt = f"""Analyze this government statistical table body and return its structure.
-
-Table: {title}
-{f"Description: {description}" if description else ""}
-Columns: {n_cols}, Total rows: {len(body)}
-
-First {n_sample} rows (tab-separated):
-{grid_text}
-
-Return JSON with:
-- "header_rows": count of rows at start that are column headers (not data)
-- "skip_rows": 0-based row indices to skip (e.g. column-number rows like "(1)(2)(3)")
-- "columns": exactly {n_cols} flat column names
-
-For multi-level headers (group row + sub-column row), combine: "AGE_<1", "AGE_1-4"
-Return ONLY valid JSON, no markdown fences."""
+        prompt = excel_table_structure_prompt(
+            title=title,
+            description=description,
+            n_cols=n_cols,
+            n_rows=len(body),
+            n_sample=n_sample,
+            grid_text=grid_text,
+        )
 
         text = self._complete(prompt, max_tokens=2048)
         text = re.sub(r"```[a-z]*\n?", "", text).strip().rstrip("`").strip()
@@ -793,54 +790,25 @@ Return ONLY valid JSON, no markdown fences."""
             if vals:
                 data_sample_lines.append(f"  {vals}")
 
-        prompt = f"""You are analyzing a government statistical table to build a metadata catalogue.
-
-Table: {title}
-{f'Description: {description}' if description else ''}
-
-Original multi-level column headers (before flattening):
-{chr(10).join(header_lines) if header_lines else '  (single-level headers)'}
-
-Flat column names after AI extraction ({len(columns)} total):
-  {', '.join(columns[:30])}{'…' if len(columns) > 30 else ''}
-
-First few data rows (first 6 values each):
-{chr(10).join(data_sample_lines) if data_sample_lines else '  (no sample)'}
-{f"Source notes: {'; '.join(raw_notes[:4])}" if raw_notes else ''}
-
-Your task: identify EVERY categorical dimension in this table.
-A "category" is any grouping variable — examples:
-- Column-group headers like RURAL / URBAN (spans multiple sub-columns)
-- Sub-group headers like INSTITUTION / DOMICILIARY
-- Cross-tabulation variables like Male / Female, Age bands, Year
-- Row-dimension labels like State, District, Block, Taluk
-
-Rules:
-- Each category name must be UNIQUE — do not repeat the same category twice
-- Each value within a category must be UNIQUE — list each value only once
-- Merge overlapping categories into one (e.g. "Area" and "Location Type" are the same)
-- Omit "Total" or "Grand Total" rows — those are aggregates, not categories
-
-For each category:
-- Give it a clear human-readable name (e.g. "Area Type", "Care Setting", "Gender")
-- Write a one-sentence description of what it classifies
-- List every unique value you can identify from the headers and data sample
-- Generate a short UPPERCASE_UNDERSCORE code for each value
-- Write a brief plain-English description for each value
-
-Return ONLY a valid JSON object — no prose, no markdown fences:
-{{
-  "categories": [
-    {{
-      "name": "Area Type",
-      "description": "Classifies data by geographic area type",
-      "values": [
-        {{"value": "Rural", "code": "RURAL", "description": "Data from rural areas outside municipal limits"}},
-        {{"value": "Urban", "code": "URBAN", "description": "Data from urban areas within municipal limits"}}
-      ]
-    }}
-  ]
-}}"""
+        header_block = (
+            chr(10).join(header_lines) if header_lines else "  (single-level headers)"
+        )
+        columns_preview = f"{', '.join(columns[:30])}{'…' if len(columns) > 30 else ''}"
+        data_sample_block = (
+            chr(10).join(data_sample_lines) if data_sample_lines else "  (no sample)"
+        )
+        notes_line = (
+            f"Source notes: {'; '.join(raw_notes[:4])}" if raw_notes else ""
+        )
+        prompt = excel_category_metadata_prompt(
+            title=title,
+            description=description,
+            header_block=header_block,
+            n_columns=len(columns),
+            columns_preview=columns_preview,
+            data_sample_block=data_sample_block,
+            notes_line=notes_line,
+        )
 
         text = self._complete(prompt, max_tokens=1000)
         parsed = _extract_json_with_key(text, "categories")
@@ -864,40 +832,13 @@ Return ONLY a valid JSON object — no prose, no markdown fences:
         columns = table.get("columns", [])
         sample_rows = table.get("rows", [])[:6]
 
-        prompt = f"""You are a data cataloguer for the Delhi Economic Survey (DES). Given an extracted Excel table, generate structured catalogue metadata.
-
-Source Table ID: {table.get('table_id', '')}
-Sheet: {table.get('sheet', '')}
-Columns ({len(columns)}): {columns}
-Sample rows (first 6): {json.dumps(sample_rows, default=str)}
-Existing title: {table.get('title', '')}
-
-Return ONLY a JSON object with exactly these fields:
-{{
-  "short_description": "1-2 sentence factual summary of what data this table contains",
-  "long_description": "3-5 sentence detailed description: what is measured, geographic scope, time period, disaggregation levels, and how to interpret the data",
-  "units": "measurement unit as a short string, e.g. 'Count', 'Percentage', 'Rs. Crore', 'Lakhs', 'Rate per 1000'",
-  "classifications": {{
-    "dimension_name": ["value1", "value2"]
-  }},
-  "age_column_keys": {{
-    "col_name_or_key": "readable age label"
-  }}
-}}
-
-Rules for classifications:
-- Identify categorical dimensions from column names and sample data values (e.g. gender_classification, area_type, administrative_body, place_of_occurrence)
-- For each dimension list up to 15 unique values found in column names or sample data
-- Use snake_case dimension names
-- Do NOT include numeric/quantitative columns as classifications
-- If no clear categorical dimensions exist, return an empty object {{}}
-
-Rules for age_column_keys:
-- Only populate if the table has columns representing age groups (e.g. "<1", "1-4", "15-24", "65+")
-- Map the column name to a readable human label
-- Return empty object {{}} if no age-related columns exist
-
-Return only valid JSON, no markdown fences, no explanation."""
+        prompt = excel_catalogue_enrichment_prompt(
+            table_id=table.get("table_id", ""),
+            sheet=table.get("sheet", ""),
+            columns=columns,
+            sample_rows_json=json.dumps(sample_rows, default=str),
+            title=table.get("title", ""),
+        )
 
         text = self._complete(prompt, max_tokens=1500)
         # strip markdown fences

@@ -20,9 +20,9 @@ from metadata.metadata_fill import (
     _fill_empty_group_metadata,
     _group_metadata_is_empty,
 )
-from extraction.original_sheet_export import extract_sheet_with_formatting_from_bytes
-from extraction.sql_extract import extract_tables_from_sql
-from extraction.table_export import table_to_excel_bytes
+from catalogue.extract.original_sheet_export import extract_sheet_with_formatting_from_bytes
+from catalogue.extract.sql_extract import extract_tables_from_sql
+from catalogue.extract.table_export import table_to_excel_bytes
 from metadata.table_id_title import _catalogue_table_title, _validate_tables
 
 router = APIRouter(tags=["Catalogue"])

@@ -14,7 +14,7 @@ from typing import Any, Optional
 import psycopg2.extras
 
 from catalogue.classifications import _normalize_classification_values
-from extraction.table_export import safe_download_stem, table_to_excel_bytes
+from catalogue.extract.table_export import safe_download_stem, table_to_excel_bytes
 
 
 def _parse_json(value, fallback):

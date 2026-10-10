@@ -27,7 +27,7 @@ from pdf.pdf_jobs import (
     _save_pdf_job,
     queue_extraction_job,
 )
-from extraction.table_export import safe_download_stem, table_to_excel_bytes
+from catalogue.extract.table_export import safe_download_stem, table_to_excel_bytes
 
 router = APIRouter(tags=["PDF"])
 

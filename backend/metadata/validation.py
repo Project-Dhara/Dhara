@@ -231,7 +231,7 @@ def normalize_table_title(title: str, columns: Optional[List] = None) -> str:
     if not s:
         return ""
     try:
-        from extraction.pdf_table_confidence import collapse_doubled_pdf_glyphs
+        from data_ingestion.pdf.confidence_validation.table_confidence import collapse_doubled_pdf_glyphs
 
         s = collapse_doubled_pdf_glyphs(s)
     except Exception:

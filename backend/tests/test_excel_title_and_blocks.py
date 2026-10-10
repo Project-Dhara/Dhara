@@ -1,9 +1,9 @@
 """Excel title cleanup + unmarked-sheet block detection."""
 from __future__ import annotations
 
-from extraction.extractor import TableExtractor
+from catalogue.extract.extractor import TableExtractor
 from metadata.validation import normalize_table_title
-from extraction.pdf_header_utils import extract_in_grid_caption
+from data_ingestion.pdf.utils.header_utils import extract_in_grid_caption
 
 
 def test_normalize_drops_column_list_suffix():

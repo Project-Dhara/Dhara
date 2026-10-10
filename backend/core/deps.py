@@ -6,7 +6,7 @@ from fastapi import Depends, HTTPException, Request, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from core import auth as _auth
-from extraction.extractor import TableExtractor
+from catalogue.extract.extractor import TableExtractor
 
 LLM_KEY_HEADER = "x-llm-api-key"
 LLM_PROVIDER_HEADER = "x-llm-provider"

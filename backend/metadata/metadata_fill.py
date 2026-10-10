@@ -6,7 +6,7 @@ import os
 import re
 from typing import Any, Optional
 
-from extraction.extractor import TableExtractor
+from catalogue.extract.extractor import TableExtractor
 from metadata.metadata_llm import (
     METADATA_FIELDS,
     SDG_METADATA_FIELDS,

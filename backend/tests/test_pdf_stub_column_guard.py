@@ -9,8 +9,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from extraction.pdf_extraction import (
-    _apply_column_alignment_guard,
+from data_ingestion.pdf.confidence_validation.alignment import _apply_column_alignment_guard
+from data_ingestion.pdf.utils.pymupdf import (
     _llm_missing_identity_stubs,
     _llm_starts_at_sex_column,
     _score_candidate_for_table_shape,

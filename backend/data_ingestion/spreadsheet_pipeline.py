@@ -1,25 +1,25 @@
 """
 Excel / CSV upload path: data ingestion → ``PreValidationInput`` → validation.
 
-PDF uploads still use the legacy branch in ``pipeline.run_upload_pipeline``.
+Spreadsheet and PDF step-1 validation share
+``data_ingestion.pdf.confidence_validation``.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable, Dict, Literal, Optional
+from typing import Callable, Dict, Optional
 
 from data_ingestion import csv as ingest_csv
 from data_ingestion import excel as ingest_excel
+from data_ingestion.pdf.confidence_validation import run_post_extraction_validation
 from data_ingestion.utils.enrich import tag_tables_with_source_type
-from data_ingestion.utils.types import PreValidationInput
-from extraction import pdf_extraction as extraction
+from data_ingestion.utils.types import PreValidationInput, SourceType
 
-SpreadsheetSourceType = Literal["excel", "csv"]
 _PROGRESS = Optional[Callable[[str, int, str], None]]
 
 
-def ingest_spreadsheet_path(path: Path, source_type: SpreadsheetSourceType) -> PreValidationInput:
+def ingest_spreadsheet_path(path: Path, source_type: SourceType) -> PreValidationInput:
     path = Path(path)
     if source_type == "excel":
         return ingest_excel.ingest_path(path)
@@ -30,12 +30,12 @@ def ingest_spreadsheet_path(path: Path, source_type: SpreadsheetSourceType) -> P
 
 def run_validation_from_pre_input(
     pre: PreValidationInput,
-    source_type: SpreadsheetSourceType,
+    source_type: SourceType,
     *,
     api_key: Optional[str] = None,
     on_progress: _PROGRESS = None,
 ) -> Dict[int, Dict]:
-    """Shared confidence + LLM step for spreadsheet ``PreValidationInput``."""
+    """Confidence + LLM validation for any ``PreValidationInput`` (PDF, Excel, CSV)."""
     pages_grouped = pre.get("pages_grouped") or {}
     unit_context = pre.get("unit_context") or {}
 
@@ -44,11 +44,14 @@ def run_validation_from_pre_input(
             on_progress("done", 100, "No tables found after data ingestion")
         return {}
 
-    result = extraction.run_post_extraction_validation(
+    pdf_path = Path(pre["source_path"]) if pre.get("source_path") else None
+    outline_index = pre.get("outline_index") or {}
+
+    result = run_post_extraction_validation(
         pages_grouped,
         unit_context,
-        pdf_path=None,
-        outline_index={},
+        pdf_path=pdf_path,
+        outline_index=outline_index,
         api_key=api_key,
         on_progress=on_progress,
     )
@@ -57,7 +60,7 @@ def run_validation_from_pre_input(
 
 def run_spreadsheet_upload_pipeline(
     file_path: Path,
-    source_type: SpreadsheetSourceType,
+    source_type: SourceType,
     *,
     api_key: Optional[str] = None,
     on_progress: _PROGRESS = None,

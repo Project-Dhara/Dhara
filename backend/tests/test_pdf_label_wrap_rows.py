@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from extraction.pdf_header_utils import (
+from data_ingestion.pdf.utils.header_utils import (
     _assign_label_parts_to_n,
     _looks_like_name_continuation,
     dataframe_from_extracted_rows,

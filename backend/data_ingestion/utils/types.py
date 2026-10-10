@@ -18,12 +18,16 @@ UnitContextText = Dict[UnitId, str]
 
 class PreValidationInput(TypedDict):
     """
-    Grid candidates + per-unit grounding text for extraction validation
-    (confidence split + LLM). Excel/CSV produce this after data ingestion;
-    PDF will use the same shape later.
+    Grid candidates + per-unit grounding text, before confidence / LLM validation.
+
+    Produced by ``data_ingestion`` (Excel, CSV, PDF extract). Consumed by
+    ``extraction`` validation (next pipeline stage).
     """
 
     pages_grouped: PagesGrouped
     unit_context: UnitContextText
     source_type: NotRequired[SourceType]
     source_file: NotRequired[str]
+    # PDF-only: absolute path for title/bbox helpers during validation.
+    source_path: NotRequired[str]
+    outline_index: NotRequired[Dict[int, List[str]]]

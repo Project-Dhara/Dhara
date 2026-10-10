@@ -9,7 +9,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from extraction.pdf_table_confidence import looks_like_chart_candidate
+from data_ingestion.pdf.confidence_validation.table_confidence import looks_like_chart_candidate
 
 
 def test_wide_numeric_crumb_grid_is_chart():

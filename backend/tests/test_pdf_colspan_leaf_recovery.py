@@ -7,8 +7,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from extraction.pdf_header_utils import dataframe_from_extracted_rows
-from extraction.pdf_table_confidence import _structural_bucket_for_df, classify_page
+from data_ingestion.pdf.utils.header_utils import dataframe_from_extracted_rows
+from data_ingestion.pdf.confidence_validation.table_confidence import _structural_bucket_for_df, classify_page
 
 
 def _religion_all_missing_leaf_rows():
@@ -89,7 +89,7 @@ def test_page3_b12_pdf_stays_high_twelve_cols():
     if not pdf.is_file():
         return
     import pymupdf
-    from extraction.pdf_extraction import extract_pymupdf_chunk
+    from data_ingestion.pdf.utils.workers import extract_pymupdf_chunk
 
     cands = [
         c

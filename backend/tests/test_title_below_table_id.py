@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from extraction.pdf_table_confidence import (
+from data_ingestion.pdf.confidence_validation.table_confidence import (
     _descriptive_line_after_caption_id,
     _descriptive_line_near_caption_id,
     _is_caption_id_only,

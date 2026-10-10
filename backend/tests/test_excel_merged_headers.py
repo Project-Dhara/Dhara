@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from metadata.metadata_llm import _detect_header_rows, _flatten_headers, _heuristic_structure
-from extraction.extractor import TableExtractor
+from catalogue.extract.extractor import TableExtractor
 
 
 def test_detect_keeps_merged_group_and_leaf_header_rows():
