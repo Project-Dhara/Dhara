@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core import security
 from app.core.config import get_settings
+from app.core.exceptions import AppError, ConflictError, ForbiddenError, UnauthorizedError
 from app.db.repositories import organisations as org_repo
 from app.db.repositories import users as user_repo
 
@@ -23,13 +24,6 @@ class AuthResult:
     role: str
 
 
-class AuthError(Exception):
-    def __init__(self, message: str, status_code: int = 400):
-        super().__init__(message)
-        self.message = message
-        self.status_code = status_code
-
-
 def signup(
     session: Session,
     *,
@@ -40,16 +34,16 @@ def signup(
 ) -> AuthResult:
     settings = get_settings()
     if not settings.enable_signup:
-        raise AuthError(
-            "Signup is disabled — ask an admin to create your account", 403
+        raise ForbiddenError(
+            "Signup is disabled — ask an admin to create your account"
         )
     email = (email or "").strip().lower()
     if not security.is_valid_org_email(email):
-        raise AuthError("Email must be in name@organization.domain format")
+        raise AppError("Email must be in name@organization.domain format")
     if len(password or "") < 8:
-        raise AuthError("Password must be at least 8 characters")
+        raise AppError("Password must be at least 8 characters")
     if user_repo.get_by_email(session, email):
-        raise AuthError("An account with that email already exists", 409)
+        raise ConflictError("An account with that email already exists")
 
     user = user_repo.create_user(
         session, email, security.hash_password(password), name, dept
@@ -70,12 +64,12 @@ def signup(
 def login(session: Session, *, email: str, password: str) -> AuthResult:
     email = (email or "").strip().lower()
     if not security.is_valid_org_email(email):
-        raise AuthError("Email must be in name@organization.domain format")
+        raise AppError("Email must be in name@organization.domain format")
     if not password:
-        raise AuthError("Password is required")
+        raise AppError("Password is required")
     user = user_repo.get_by_email(session, email)
     if not user or not security.verify_password(password, user.password_hash):
-        raise AuthError("Invalid email or password", 401)
+        raise UnauthorizedError("Invalid email or password")
     membership = org_repo.ensure_membership(session, user)
     token = security.create_token(user.id, email=user.email)
     return AuthResult(
@@ -92,7 +86,7 @@ def login(session: Session, *, email: str, password: str) -> AuthResult:
 def me(session: Session, user_id: uuid.UUID) -> AuthResult:
     user = user_repo.get_by_id(session, user_id)
     if not user:
-        raise AuthError("Account not found — please sign in again", 401)
+        raise UnauthorizedError("Account not found — please sign in again")
     membership = org_repo.ensure_membership(session, user)
     return AuthResult(
         token="",

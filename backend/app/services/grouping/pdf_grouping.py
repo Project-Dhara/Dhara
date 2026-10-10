@@ -1,788 +1,49 @@
 """
 PDF Stage 5–7: propose table groups for human review.
 
-Default grouping matches Excel: tables that share a base title (trailing
-qualifiers like ``(URBAN)`` / ``(RURAL)`` stripped) land in one group.
-SDG indicator jobs still bucket by goal number. Embeddings remain a
-fallback for untitled leftovers only.
-
-After deterministic grouping, size-1 leftovers may be strictly re-merged by
-an LLM (titles only) when an API key is available — default is leave alone.
+Orchestrator + thin re-exports. Implementation split across embeddings,
+sdg_groups, and singleton_merge.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
-import math
-import os
 import re
 from collections import defaultdict
 from typing import Any, Optional
 
-from app.db import pdf_store
-from app.storage import vectors as vs
+from app.db.repositories import pdf_jobs as pdf_store
 from app.services.grouping.matching import _base_title, build_group_name
 
-EMBED_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
-# Cosine distance threshold for connecting untitled leftovers (pgvector <=> ).
-DEFAULT_DISTANCE_THRESHOLD = float(os.environ.get("PDF_GROUP_DISTANCE", "0.42"))
-TOP_K = int(os.environ.get("PDF_GROUP_TOP_K", "8"))
-GROUP_LLM_MODEL = os.environ.get("PDF_GROUP_LLM_MODEL", "gpt-4o-mini")
-# Soft lexical gate after the LLM: need shared content tokens, not near-duplicates only.
-_SINGLETON_MIN_SHARED_TOKENS = int(os.environ.get("PDF_GROUP_SINGLETON_SHARED", "2"))
-_SINGLETON_CONTAINMENT_RATIO = float(os.environ.get("PDF_GROUP_SINGLETON_CONTAINMENT", "0.7"))
-_SINGLETON_LLM_BATCH = int(os.environ.get("PDF_GROUP_SINGLETON_BATCH", "36"))
-_TITLE_STOPWORDS = {
-    "a", "an", "the", "of", "and", "or", "by", "for", "in", "on", "to", "with",
-    "as", "at", "from", "per", "no", "sl", "nos", "table", "statement",
-}
-_VARIANT_TOKENS = {
-    "urban", "rural", "all", "total", "male", "female", "others", "other",
-}
-
-
-def build_table_summary_chunk(table: dict) -> str:
-    """Text used for leftover embedding fallback — title only (not subject)."""
-    title = str(table.get("title") or "").strip()
-    if title:
-        return title
-    # Untitled tables: fall back to a thin structural cue so they don't all
-    # collapse into one embedding neighbourhood.
-    parts = [
-        table.get("table_id") or table.get("id") or "",
-        table.get("domain") or "",
-        table.get("entity") or "",
-        table.get("table_type") or "",
-    ]
-    return " | ".join(p for p in parts if p and str(p).strip())
-
-
-def build_column_chunks(table: dict, limit: int = 12) -> list[tuple[str, str]]:
-    """Return [(chunk_kind_suffix, text), ...] for important columns."""
-    out = []
-    cols = table.get("columns") or []
-    for i, col in enumerate(cols[:limit]):
-        if not isinstance(col, dict):
-            continue
-        name = col.get("name") or col.get("value") or f"col_{i}"
-        role = col.get("role")
-        if isinstance(role, dict):
-            role = role.get("value")
-        concept = col.get("concept")
-        if isinstance(concept, dict):
-            concept = concept.get("value")
-        text = " | ".join(str(x) for x in (name, role, concept) if x)
-        if text.strip():
-            out.append((f"column_meaning:{i}", text.strip()))
-    return out
-
-
-def _pseudo_embedding(text: str, dim: int) -> list[float]:
-    """Deterministic bag-of-tokens vector when OpenAI embeddings are unavailable."""
-    vec = [0.0] * dim
-    tokens = re.findall(r"[a-z0-9]+", (text or "").lower())
-    if not tokens:
-        tokens = ["empty"]
-    for tok in tokens:
-        h = hashlib.sha256(tok.encode("utf-8")).digest()
-        for i in range(0, min(32, dim), 4):
-            idx = int.from_bytes(h[i : i + 4], "big") % dim
-            vec[idx] += 1.0
-    norm = math.sqrt(sum(x * x for x in vec)) or 1.0
-    return [x / norm for x in vec]
-
-
-def embed_texts(texts: list[str], api_key: Optional[str] = None) -> list[list[float]]:
-    dim = vs.embedding_dim()
-    # Settings-scoped key only — never fall back to server OPENAI_API_KEY.
-    key = (api_key or "").strip()
-    if not key or not texts:
-        return [_pseudo_embedding(t, dim) for t in texts]
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=key)
-        out: list[list[float]] = []
-        for i in range(0, len(texts), 64):
-            chunk = texts[i : i + 64]
-            resp = client.embeddings.create(model=EMBED_MODEL, input=chunk)
-            by_idx = {d.index: d.embedding for d in resp.data}
-            out.extend(by_idx[j] for j in range(len(chunk)))
-        return out
-    except Exception as exc:
-        print(f"[pdf_grouping] embeddings fallback ({exc})", flush=True)
-        return [_pseudo_embedding(t, dim) for t in texts]
-
-
-def index_tables(conn, job_id: str, tables: list[dict], api_key: Optional[str] = None) -> int:
-    """Chunk + upsert embeddings for tables. Returns number of summary chunks written."""
-    vs.ensure_semantic_embeddings_table(conn)
-    summaries = [build_table_summary_chunk(t) for t in tables]
-    vectors = embed_texts(summaries, api_key=api_key)
-    n = 0
-    for table, text, emb in zip(tables, summaries, vectors):
-        if not text.strip():
-            text = table.get("table_id") or table.get("id") or "untitled"
-        vs.upsert_embedding(
-            conn,
-            object_type="pdf_table",
-            object_id=table["id"],
-            chunk_kind="table_summary",
-            chunk_text=text,
-            embedding=emb,
-            metadata={"job_id": job_id, "table_id": table.get("table_id"), "title": table.get("title")},
-            job_id=job_id,
-        )
-        n += 1
-
-        col_chunks = build_column_chunks(table)
-        if col_chunks:
-            col_texts = [c[1] for c in col_chunks]
-            col_vecs = embed_texts(col_texts, api_key=api_key)
-            for (kind, ctext), cemb in zip(col_chunks, col_vecs):
-                vs.upsert_embedding(
-                    conn,
-                    object_type="pdf_table",
-                    object_id=table["id"],
-                    chunk_kind=kind,
-                    chunk_text=ctext,
-                    embedding=cemb,
-                    metadata={"job_id": job_id, "table_id": table.get("table_id")},
-                    job_id=job_id,
-                )
-    return n
-
-
-def _load_summary_embeddings(conn, job_id: str) -> dict[str, list[float]]:
-    """object_id → embedding vector for table_summary chunks in this job."""
-    try:
-        from pgvector.psycopg2 import register_vector
-        register_vector(conn)
-    except Exception:
-        pass
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT object_id::text, embedding::text
-              FROM semantic_embeddings
-             WHERE chunk_kind = 'table_summary'
-               AND object_type = 'pdf_table'
-               AND (job_id = %s OR metadata->>'job_id' = %s)
-            """,
-            (job_id, job_id),
-        )
-        rows = cur.fetchall()
-    out = {}
-    for oid, emb in rows:
-        if emb is None:
-            continue
-        if hasattr(emb, "tolist"):
-            out[str(oid)] = list(emb.tolist())
-        elif isinstance(emb, (list, tuple)):
-            out[str(oid)] = list(emb)
-        else:
-            s = str(emb).strip()
-            if s.startswith("["):
-                out[str(oid)] = [float(x) for x in s[1:-1].split(",") if x.strip()]
-    return out
-
-
-def _cosine_distance(a: list[float], b: list[float]) -> float:
-    if not a or not b or len(a) != len(b):
-        return 1.0
-    dot = sum(x * y for x, y in zip(a, b))
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(y * y for y in b))
-    if not na or not nb:
-        return 1.0
-    return 1.0 - (dot / (na * nb))
-
-
-def _cluster_by_distance(
-    table_ids: list[str],
-    embeddings: dict[str, list[float]],
-    threshold: float,
-) -> list[list[str]]:
-    """Union-find clustering: connect pairs under distance threshold."""
-    parent = {tid: tid for tid in table_ids}
-
-    def find(x: str) -> str:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(a: str, b: str) -> None:
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[rb] = ra
-
-    for i, a in enumerate(table_ids):
-        ea = embeddings.get(a)
-        if not ea:
-            continue
-        # Compare to a limited neighbourhood of closest others
-        dists = []
-        for b in table_ids:
-            if a == b:
-                continue
-            eb = embeddings.get(b)
-            if not eb:
-                continue
-            dists.append((_cosine_distance(ea, eb), b))
-        dists.sort(key=lambda x: x[0])
-        for dist, b in dists[:TOP_K]:
-            if dist <= threshold:
-                union(a, b)
-
-    buckets: dict[str, list[str]] = defaultdict(list)
-    for tid in table_ids:
-        buckets[find(tid)].append(tid)
-    # Singletons stay as their own groups (user can merge); keep all clusters
-    return list(buckets.values())
-
-
-def _suggest_group_name(members: list[dict], index: int) -> str:
-    # Prefer shared base title (Excel-style), never subject — subject is often
-    # a coarse LLM label that collapses unrelated tables into one bucket.
-    bases = []
-    for m in members:
-        title = str(m.get("title") or "").strip()
-        if title:
-            bases.append(_base_title(title))
-    if bases:
-        best = max(set(bases), key=bases.count)
-        if best:
-            return _clean_group_display_name(build_group_name(best))[:120]
-    for key in ("domain", "entity", "title"):
-        vals = [str(m.get(key) or "").strip() for m in members]
-        vals = [v for v in vals if v]
-        if not vals:
-            continue
-        best = max(set(vals), key=vals.count)
-        if best:
-            return _clean_group_display_name(best)[:80]
-    return f"Group {index + 1}"
-
-
-def _propose_title_groups(tables: list[dict]) -> list[dict]:
-    """
-    Group by normalized title, same rule as Excel ``auto_group_tables``:
-    strip a trailing parenthetical qualifier so URBAN/RURAL/ALL variants
-    of the same caption share a group.
-    """
-    buckets: dict[str, list[dict]] = {}
-    order: list[str] = []
-    untitled: list[dict] = []
-
-    for t in tables:
-        title = str(t.get("title") or "").strip()
-        if not title:
-            untitled.append(t)
-            continue
-        key = _base_title(title)
-        if key not in buckets:
-            buckets[key] = []
-            order.append(key)
-        buckets[key].append(t)
-
-    groups: list[dict] = []
-    for i, key in enumerate(order):
-        members = buckets[key]
-        name = _clean_group_display_name(build_group_name(key))[:120]
-        groups.append(
-            {
-                "name": name or f"Group {i + 1}",
-                "tables": members,
-                "table_pks": [m["id"] for m in members],
-            }
-        )
-
-    # Untitled leftovers: each alone (caller may re-cluster via embeddings).
-    for j, t in enumerate(untitled):
-        label = str(t.get("table_id") or t.get("id") or j + 1)
-        groups.append(
-            {
-                "name": f"Untitled ({label})",
-                "tables": [t],
-                "table_pks": [t["id"]],
-            }
-        )
-    return groups
-
-
-# Merged multi-page tables append "(pages 1–2)" to the table title for
-# provenance; that suffix must not carry into the group display name.
-_PAGES_IN_TITLE_RE = re.compile(
-    r"\s*\(\s*pages?\s+\d+(?:\s*[–—\-]\s*\d+)?\s*\)\s*$",
-    re.IGNORECASE,
+from app.services.grouping.embeddings import (
+    DEFAULT_DISTANCE_THRESHOLD,
+    EMBED_MODEL,
+    TOP_K,
+    _cluster_by_distance,
+    _groups_from_clusters,
+    _load_summary_embeddings,
+    _propose_title_groups,
+    _pseudo_embedding,
+    build_column_chunks,
+    build_table_summary_chunk,
+    embed_texts,
+    index_tables,
 )
 
-
-def _clean_group_display_name(name: str) -> str:
-    cleaned = _PAGES_IN_TITLE_RE.sub("", name or "").strip()
-    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,-")
-    return cleaned or (name or "").strip()
-
-
-# --- SDG India Index / indicator-table grouping ---------------------------
-# When a job is clearly a set of per-goal indicator tables (e.g. titles like
-# "TABLE 1.1: … INDICATORS OF SDG 1", columns "SDG 1 Index Score"), bucket by
-# goal number instead of embedding similarity. Non-SDG jobs keep clustering.
-
-_SDG_GOAL_RE = re.compile(r"\bSDG\s*(\d{1,2})\b", re.IGNORECASE)
-_SDG_INDICATORS_RE = re.compile(
-    r"INDICATORS?\s+OF\s+SDG\s*(\d{1,2})\b", re.IGNORECASE
-)
-_SDG_INDEX_RE = re.compile(r"\bSDG\s*(\d{1,2})\s*Index\b", re.IGNORECASE)
-_TABLE_MAJOR_RE = re.compile(r"\bTABLE\s+(\d{1,2})\.\d+", re.IGNORECASE)
-_SDA_TITLE_HINT_RE = re.compile(
-    r"\b(SDG|INDICATOR|STATES?\s*/?\s*UTs?)\b", re.IGNORECASE
+from app.services.grouping.sdg_groups import (
+    _propose_sdg_groups,
+    corpus_looks_like_sdg_indicator_tables,
+    detect_sdg_goal,
 )
 
-
-def _valid_sdg_goal(n: int) -> Optional[int]:
-    return n if 1 <= n <= 17 else None
-
-
-def detect_sdg_goal(table: dict) -> Optional[int]:
-    """
-    Extract SDG goal 1–17 from title / columns / classification when present.
-    Returns None if the table does not look goal-tagged.
-    """
-    title = str(table.get("title") or "")
-    subject = str(table.get("subject") or "")
-    domain = str(table.get("domain") or "")
-    col_names: list[str] = []
-    for col in table.get("columns") or []:
-        if isinstance(col, dict):
-            col_names.append(str(col.get("name") or ""))
-        else:
-            col_names.append(str(col))
-    cols_blob = " | ".join(col_names)
-
-    m = _SDG_INDICATORS_RE.search(title)
-    if m:
-        return _valid_sdg_goal(int(m.group(1)))
-
-    m = _SDG_INDEX_RE.search(title)
-    if m:
-        return _valid_sdg_goal(int(m.group(1)))
-
-    m = _SDG_GOAL_RE.search(title)
-    if m:
-        return _valid_sdg_goal(int(m.group(1)))
-
-    # SDA India style: TABLE 3.1 + States/UTs / indicator wording → goal 3
-    m = _TABLE_MAJOR_RE.search(title)
-    if m and _SDA_TITLE_HINT_RE.search(title):
-        return _valid_sdg_goal(int(m.group(1)))
-
-    m = _SDG_INDEX_RE.search(cols_blob)
-    if m:
-        return _valid_sdg_goal(int(m.group(1)))
-
-    # Avoid weak "SDG" mentions in long column blobs that list many goals;
-    # only accept a single clear Index Score column match (above) or metadata.
-    for field in (subject, domain):
-        m = _SDG_GOAL_RE.search(field)
-        if m:
-            return _valid_sdg_goal(int(m.group(1)))
-
-    return None
-
-
-def corpus_looks_like_sdg_indicator_tables(tables: list[dict]) -> bool:
-    """
-    True when enough tables carry a detectable SDG goal that SDG-wise
-    buckets are safer than embedding clusters.
-    """
-    if len(tables) < 2:
-        return False
-    tagged_goals = [detect_sdg_goal(t) for t in tables]
-    tagged = [g for g in tagged_goals if g is not None]
-    if len(tagged) < 2:
-        return False
-    ratio = len(tagged) / len(tables)
-    distinct = set(tagged)
-    # Majority tagged, or several goals with a solid tagged share.
-    if ratio >= 0.5:
-        return True
-    if len(distinct) >= 2 and ratio >= 0.35:
-        return True
-    return False
-
-
-def _groups_from_clusters(
-    clusters: list[list[str]],
-    by_id: dict[str, dict],
-    name_start_index: int = 0,
-) -> list[dict]:
-    groups = []
-    for i, member_ids in enumerate(clusters):
-        members = [by_id[m] for m in member_ids if m in by_id]
-        if not members:
-            continue
-        name = _suggest_group_name(members, name_start_index + i)
-        groups.append(
-            {"name": name, "tables": members, "table_pks": [m["id"] for m in members]}
-        )
-    return groups
-
-
-def _propose_sdg_groups(
-    tables: list[dict],
-    embeddings: dict[str, list[float]],
-    threshold: float,
-) -> list[dict]:
-    """Bucket by SDG goal; leftover tables still use embedding clusters."""
-    by_goal: dict[int, list[dict]] = defaultdict(list)
-    leftovers: list[dict] = []
-    for t in tables:
-        goal = detect_sdg_goal(t)
-        if goal is not None:
-            by_goal[goal].append(t)
-        else:
-            leftovers.append(t)
-
-    groups: list[dict] = []
-    for goal in sorted(by_goal.keys()):
-        members = by_goal[goal]
-        groups.append(
-            {
-                "name": f"SDG {goal}",
-                "tables": members,
-                "table_pks": [m["id"] for m in members],
-            }
-        )
-
-    if leftovers:
-        by_id = {t["id"]: t for t in leftovers}
-        clusters = _cluster_by_distance(
-            [t["id"] for t in leftovers],
-            embeddings,
-            threshold,
-        )
-        groups.extend(_groups_from_clusters(clusters, by_id, name_start_index=len(groups)))
-
-    return groups
-
-
-def _significant_title_tokens(title: str) -> set[str]:
-    """Content tokens for overlap checks (drop stopwords / URBAN|RURAL)."""
-    base = _base_title(title or "")
-    tokens = re.findall(r"[a-z0-9]+", base.lower())
-    out = set()
-    for tok in tokens:
-        if len(tok) < 3:
-            continue
-        if tok in _TITLE_STOPWORDS or tok in _VARIANT_TOKENS:
-            continue
-        if tok.isdigit():
-            continue
-        out.add(tok)
-    return out
-
-
-def _title_token_jaccard(a: str, b: str) -> float:
-    ta, tb = _significant_title_tokens(a), _significant_title_tokens(b)
-    if not ta or not tb:
-        return 0.0
-    inter = len(ta & tb)
-    union = len(ta | tb)
-    return inter / union if union else 0.0
-
-
-def _titles_pair_compatible(a: str, b: str) -> bool:
-    """Accurate lexical check: enough shared tokens or title containment."""
-    ta, tb = _significant_title_tokens(a), _significant_title_tokens(b)
-    if not ta or not tb:
-        return False
-    inter = ta & tb
-    if len(inter) >= _SINGLETON_MIN_SHARED_TOKENS:
-        return True
-    smaller, larger = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
-    if not smaller:
-        return False
-    return (len(smaller & larger) / len(smaller)) >= _SINGLETON_CONTAINMENT_RATIO and len(inter) >= 1
-
-
-def _titles_strictly_compatible(titles: list[str]) -> bool:
-    """Every pair must pass the lexical gate."""
-    cleaned = [str(t or "").strip() for t in titles if str(t or "").strip()]
-    if len(cleaned) < 2:
-        return False
-    for i in range(len(cleaned)):
-        for j in range(i + 1, len(cleaned)):
-            if not _titles_pair_compatible(cleaned[i], cleaned[j]):
-                return False
-    return True
-
-
-def _column_name_preview(table: dict, limit: int = 6) -> list[str]:
-    names: list[str] = []
-    for col in (table.get("columns") or [])[:limit]:
-        if isinstance(col, dict):
-            n = str(col.get("name") or "").strip()
-        else:
-            n = str(col or "").strip()
-        if n:
-            names.append(n)
-    return names
-
-
-def _call_singleton_merge_llm(
-    items: list[dict[str, Any]],
-    *,
-    api_key: str,
-) -> list[dict[str, Any]]:
-    """Ask the model for merges among singleton titles. Uses short surrogate ids."""
-    from openai import OpenAI
-
-    # Short ids (t1, t2, …) — UUIDs / long catalogue ids are often mangled.
-    alias_to_real: dict[str, str] = {}
-    catalog = []
-    real_ids = {str(it["id"]) for it in items}
-    for i, it in enumerate(items):
-        alias = f"t{i + 1}"
-        alias_to_real[alias] = str(it["id"])
-        entry: dict[str, Any] = {"id": alias, "title": it["title"]}
-        cols = it.get("columns") or []
-        if cols:
-            entry["columns"] = cols
-        catalog.append(entry)
-
-    prompt = f"""You are grouping statistical tables from an Indian government report.
-These tables are currently alone after exact title matching. Merge them into
-accurate groups where titles clearly belong to the SAME logical table family.
-
-MERGE when:
-- Same subject/measure with geography or population variants (URBAN/RURAL/ALL,
-  male/female, etc.) that exact-match missed due to wording differences
-- Near-identical captions with a small qualifier difference
-- Clear series of the same indicator (e.g. same birth/death topic with closely
-  related breakdowns that a steward would put on one metadata card)
-
-DO NOT merge when:
-- Titles only share a broad domain (e.g. both "about births" but different
-  primary indicators or unrelated breakdowns)
-- Different SDG goals or unrelated measures
-
-Be decisive: if two titles clearly belong together, merge them with
-confidence "high". If unsure, leave them out of merges.
-
-Return ONLY valid JSON (no markdown):
-{{
-  "merges": [
-    {{
-      "table_ids": ["t1", "t2"],
-      "name": "short shared group name",
-      "confidence": "high"
-    }}
-  ]
-}}
-
-Rules:
-- confidence must be exactly "high" for every merge you include
-- each id in at most one merge; every merge has >= 2 catalog ids
-- use only ids from the catalog (t1, t2, …); never invent ids
-- omit tables that should stay alone
-
-Catalog:
-{json.dumps(catalog, ensure_ascii=False)}
-"""
-
-    client = OpenAI(api_key=api_key)
-    resp = client.chat.completions.create(
-        model=GROUP_LLM_MODEL,
-        response_format={"type": "json_object"},
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=6000,
-        temperature=0,
-    )
-    text = (resp.choices[0].message.content or "").strip()
-    data = json.loads(text) if text else {}
-    merges = data.get("merges") if isinstance(data, dict) else None
-    if not isinstance(merges, list):
-        return []
-
-    out: list[dict[str, Any]] = []
-    for m in merges:
-        if not isinstance(m, dict):
-            continue
-        ids_raw = m.get("table_ids") or m.get("ids") or []
-        if not isinstance(ids_raw, list):
-            continue
-        mapped: list[str] = []
-        for x in ids_raw:
-            alias = str(x or "").strip()
-            real = alias_to_real.get(alias) or alias_to_real.get(alias.lower())
-            if not real and alias in real_ids:
-                real = alias
-            if real and real not in mapped:
-                mapped.append(real)
-        if len(mapped) < 2:
-            continue
-        out.append(
-            {
-                "table_ids": mapped,
-                "name": m.get("name"),
-                "confidence": m.get("confidence"),
-            }
-        )
-    return out
-
-
-def _call_singleton_merge_llm_batched(
-    items: list[dict[str, Any]],
-    *,
-    api_key: str,
-) -> list[dict[str, Any]]:
-    """Sort by title and batch so similar captions share a window."""
-    ordered = sorted(items, key=lambda it: str(it.get("title") or "").lower())
-    batch_n = max(8, _SINGLETON_LLM_BATCH)
-    if len(ordered) <= batch_n:
-        return _call_singleton_merge_llm(ordered, api_key=api_key)
-
-    merges: list[dict[str, Any]] = []
-    step = max(6, batch_n - 8)
-    for start in range(0, len(ordered), step):
-        batch = ordered[start : start + batch_n]
-        if len(batch) < 2:
-            break
-        merges.extend(_call_singleton_merge_llm(batch, api_key=api_key))
-        if start + batch_n >= len(ordered):
-            break
-    return merges
-
-
-def _validate_singleton_merges(
-    merges: list[dict[str, Any]],
-    singleton_by_id: dict[str, dict],
-) -> list[list[str]]:
-    """Keep only high-confidence, structurally valid, lexically compatible merges."""
-    used: set[str] = set()
-    accepted: list[list[str]] = []
-    for raw in merges:
-        conf = str(raw.get("confidence") or "").strip().lower()
-        if conf != "high":
-            continue
-        ids_raw = raw.get("table_ids") or raw.get("ids") or []
-        if not isinstance(ids_raw, list):
-            continue
-        ids: list[str] = []
-        for x in ids_raw:
-            tid = str(x or "").strip()
-            if not tid or tid not in singleton_by_id or tid in used:
-                continue
-            if tid not in ids:
-                ids.append(tid)
-        if len(ids) < 2:
-            continue
-        titles = [
-            str((singleton_by_id[tid].get("tables") or [{}])[0].get("title") or "")
-            for tid in ids
-        ]
-        if not _titles_strictly_compatible(titles):
-            continue
-        for tid in ids:
-            used.add(tid)
-        accepted.append(ids)
-    return accepted
-
-
-def merge_singleton_groups_strict(
-    groups: list[dict],
-    *,
-    api_key: Optional[str] = None,
-) -> tuple[list[dict], bool]:
-    """
-    LLM pass over size-1 groups only. Multi-member groups are untouched.
-
-    Returns (possibly updated groups, whether any merge was applied).
-    On missing key / API failure / empty singletons, returns groups unchanged.
-    """
-    key = (api_key or "").strip()
-    if not key or not groups:
-        print(
-            f"[pdf_grouping] singleton LLM skipped (key={'yes' if bool(key) else 'no'}, groups={len(groups or [])})",
-            flush=True,
-        )
-        return groups, False
-
-    multi: list[dict] = []
-    singletons: list[dict] = []
-    for g in groups:
-        members = g.get("tables") or []
-        if len(members) == 1 and str((members[0] or {}).get("title") or "").strip():
-            singletons.append(g)
-        else:
-            multi.append(g)
-
-    if len(singletons) < 2:
-        print(
-            f"[pdf_grouping] singleton LLM skipped (singletons={len(singletons)})",
-            flush=True,
-        )
-        return groups, False
-
-    singleton_by_id: dict[str, dict] = {}
-    items: list[dict[str, Any]] = []
-    for g in singletons:
-        t = (g.get("tables") or [None])[0] or {}
-        tid = str(t.get("id") or "")
-        if not tid:
-            continue
-        singleton_by_id[tid] = g
-        items.append(
-            {
-                "id": tid,
-                "title": str(t.get("title") or "").strip(),
-                "columns": _column_name_preview(t),
-            }
-        )
-
-    if len(items) < 2:
-        return groups, False
-
-    try:
-        raw_merges = _call_singleton_merge_llm_batched(items, api_key=key)
-    except Exception as exc:
-        print(f"[pdf_grouping] singleton LLM merge skipped ({exc})", flush=True)
-        return groups, False
-
-    accepted = _validate_singleton_merges(raw_merges, singleton_by_id)
-    print(
-        f"[pdf_grouping] singleton LLM: candidates={len(items)} "
-        f"proposed={len(raw_merges)} accepted={len(accepted)}",
-        flush=True,
-    )
-    if not accepted:
-        return groups, False
-
-    merged_ids: set[str] = set()
-    new_groups: list[dict] = list(multi)
-    for i, ids in enumerate(accepted):
-        members = []
-        for tid in ids:
-            g = singleton_by_id[tid]
-            members.extend(g.get("tables") or [])
-            merged_ids.add(tid)
-        name = _suggest_group_name(members, len(new_groups) + i)
-        new_groups.append(
-            {
-                "name": name,
-                "tables": members,
-                "table_pks": [m["id"] for m in members],
-            }
-        )
-
-    for tid, g in singleton_by_id.items():
-        if tid not in merged_ids:
-            new_groups.append(g)
-
-    return new_groups, True
-
+from app.services.grouping.singleton_merge import (
+    GROUP_LLM_MODEL,
+    _call_singleton_merge_llm,
+    _call_singleton_merge_llm_batched,
+    _titles_pair_compatible,
+    _titles_strictly_compatible,
+    _validate_singleton_merges,
+    merge_singleton_groups_strict,
+)
 
 def propose_groups_from_table_dicts(
     tables: list[dict],
@@ -891,7 +152,6 @@ def propose_groups_from_table_dicts(
         "threshold": threshold,
     }
 
-
 def proposal_to_catalogue_match_result(
     proposal: dict,
     *,
@@ -941,9 +201,8 @@ def proposal_to_catalogue_match_result(
         "method": proposal.get("method"),
     }
 
-
 def propose_groups(
-    conn,
+    session,
     job_id: str,
     *,
     threshold: float = DEFAULT_DISTANCE_THRESHOLD,
@@ -957,8 +216,12 @@ def propose_groups(
     goal numbers. Embeddings are only used to cluster untitled leftovers when
     reindex/embeddings are available. Remaining titled singletons may be
     strictly merged by LLM when an API key is available.
+
+    ``session`` is a SQLAlchemy Session for tables and vector index I/O.
     """
-    tables = pdf_store.list_active_tables(conn, job_id)
+    from app.storage import vectors as vs
+
+    tables = pdf_store.list_active_tables(session, job_id)
     if not tables:
         return {
             "groups": [],
@@ -972,11 +235,13 @@ def propose_groups(
     key = (api_key or "").strip() or None
 
     if corpus_looks_like_sdg_indicator_tables(tables):
-        embeddings = _load_summary_embeddings(conn, job_id)
+        embeddings = _load_summary_embeddings(session, job_id)
         missing = [t for t in tables if t["id"] not in embeddings]
         if reindex or missing:
-            indexed = index_tables(conn, job_id, tables if reindex else missing, api_key=key)
-            embeddings = _load_summary_embeddings(conn, job_id)
+            indexed = index_tables(
+                session, job_id, tables if reindex else missing, api_key=key
+            )
+            embeddings = _load_summary_embeddings(session, job_id)
         if len(embeddings) < len(tables):
             for t in tables:
                 if t["id"] not in embeddings:
@@ -996,16 +261,16 @@ def propose_groups(
     ]
     leftovers = [m for g in untitled_groups for m in (g.get("tables") or [])]
     if len(leftovers) >= 2:
-        embeddings = _load_summary_embeddings(conn, job_id)
+        embeddings = _load_summary_embeddings(session, job_id)
         missing = [t for t in leftovers if t["id"] not in embeddings]
         if reindex or missing:
             indexed = index_tables(
-                conn,
+                session,
                 job_id,
                 tables if reindex else leftovers,
                 api_key=key,
             )
-            embeddings = _load_summary_embeddings(conn, job_id)
+            embeddings = _load_summary_embeddings(session, job_id)
         for t in leftovers:
             if t["id"] not in embeddings:
                 embeddings[t["id"]] = _pseudo_embedding(
@@ -1028,15 +293,38 @@ def propose_groups(
     return result
 
 
-def apply_proposal_to_db(conn, job_id: str, proposal: dict) -> dict:
-    """Persist proposal via pdf_store.save_grouping and return load_grouping shape."""
+def apply_proposal_to_db(session, job_id: str, proposal: dict) -> dict:
+    """Persist proposal via pdf_jobs.save_grouping and return load_grouping shape."""
     groups_payload = [
         {"name": g["name"], "table_pks": g.get("table_pks") or [t["id"] for t in g.get("tables") or []]}
         for g in proposal.get("groups") or []
     ]
-    pdf_store.save_grouping(conn, job_id=job_id, groups=groups_payload)
-    loaded = pdf_store.load_grouping(conn, job_id)
+    pdf_store.save_grouping(session, job_id=job_id, groups=groups_payload)
+    loaded = pdf_store.load_grouping(session, job_id)
     loaded["method"] = proposal.get("method")
     loaded["indexed"] = proposal.get("indexed", 0)
     loaded["threshold"] = proposal.get("threshold")
     return loaded
+
+__all__ = [
+    "apply_proposal_to_db",
+    "propose_groups",
+    "propose_groups_from_table_dicts",
+    "proposal_to_catalogue_match_result",
+    "build_table_summary_chunk",
+    "build_column_chunks",
+    "embed_texts",
+    "index_tables",
+    "detect_sdg_goal",
+    "corpus_looks_like_sdg_indicator_tables",
+    "merge_singleton_groups_strict",
+    "_titles_pair_compatible",
+    "_titles_strictly_compatible",
+    "_validate_singleton_merges",
+    "_call_singleton_merge_llm",
+    "_call_singleton_merge_llm_batched",
+    "EMBED_MODEL",
+    "DEFAULT_DISTANCE_THRESHOLD",
+    "TOP_K",
+    "GROUP_LLM_MODEL",
+]

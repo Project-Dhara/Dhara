@@ -1,7 +1,8 @@
 """Engine and session factory (SQLAlchemy 2.x).
 
-Legacy ``catalogue.db.get_connection`` continues to use psycopg2 for
-unmigrated call sites. New code should prefer ``get_db`` / ``session_scope``.
+Prefer ``get_db`` / ``session_scope`` for app-DB access. Legacy cursor helpers
+may use ``dbapi_connection(session)`` or ``app.db.psycopg.get_connection``
+(pooled raw connection) until fully migrated.
 """
 from __future__ import annotations
 
@@ -82,3 +83,12 @@ def ping_database() -> bool:
         return True
     except Exception:
         return False
+
+
+def dbapi_connection(session: Session):
+    """Return the pooled DBAPI connection bound to ``session``.
+
+    For legacy helpers that still call ``conn.cursor()``. Prefer rewriting
+    those helpers to use ``session.execute`` / repositories.
+    """
+    return session.connection().connection

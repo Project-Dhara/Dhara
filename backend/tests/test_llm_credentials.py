@@ -27,6 +27,22 @@ def test_encrypt_decrypt_round_trip(fernet_env):
     assert ct != "sk-test-secret"
 
 
+def test_encrypt_uses_auto_file_key_when_env_unset(tmp_path, monkeypatch):
+    monkeypatch.delenv("LLM_CREDENTIALS_KEY", raising=False)
+    store = tmp_path / "object_store"
+    monkeypatch.setenv("STORAGE_LOCAL_PATH", str(store))
+    from app.core.config import clear_settings_cache
+
+    clear_settings_cache()
+    from app.core.crypto import decrypt_secret, encrypt_secret
+
+    ct = encrypt_secret("sk-from-settings-ui")
+    assert decrypt_secret(ct) == "sk-from-settings-ui"
+    key_file = store.parent / ".llm_credentials_fernet_key"
+    assert key_file.is_file()
+    clear_settings_cache()
+
+
 def test_redact_secrets():
     from app.core.logging import redact_secrets
 

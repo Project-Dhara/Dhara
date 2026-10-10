@@ -21,13 +21,17 @@ from . import mcp
 
 
 def _auth_mode() -> str:
-    """``off`` (default), ``jwt``, or ``token`` (MCP_AUTH_TOKEN only).
+    """``jwt`` (default), ``token`` (MCP_AUTH_TOKEN only), or ``off``.
 
-    Default is open read for published catalogue so a copied ``/mcp`` URL
-    works in any agent without extra headers. Lock down with
-    ``MCP_HTTP_AUTH=jwt`` (or ``token``) in production if required.
+    Default matches Settings / OpenAPI: Bearer JWT required. Use
+    ``MCP_HTTP_AUTH=off`` only for trusted demos.
     """
-    return (os.environ.get("MCP_HTTP_AUTH") or "off").strip().lower()
+    from app.core.config import get_settings
+
+    env = (os.environ.get("MCP_HTTP_AUTH") or "").strip().lower()
+    if env:
+        return env
+    return (get_settings().mcp_http_auth or "jwt").strip().lower()
 
 
 def _static_token() -> str:
@@ -78,13 +82,36 @@ async def _send_json(send: Send, status: int, payload: dict) -> None:
     await send({"type": "http.response.body", "body": body})
 
 
-async def _authorize_or_reject(scope: Scope, send: Send) -> bool:
-    """Return True if the request may proceed."""
+def _resolve_org_from_token(token: str):
+    """Return organisation UUID for a validated JWT, or None."""
+    if not token:
+        return None
+    static = _static_token()
+    if static and token == static:
+        return None
+    try:
+        from app.db.repositories import organisations as org_repo
+        from app.db.repositories import users as user_repo
+        from app.db.session import session_scope
+
+        user_id = _auth.decode_token(token)
+        with session_scope() as session:
+            user = user_repo.get_by_id(session, user_id)
+            if not user:
+                return None
+            membership = org_repo.ensure_membership(session, user)
+            return membership.organisation_id
+    except Exception:
+        return None
+
+
+async def _authorize_or_reject(scope: Scope, send: Send):
+    """Return organisation_id (may be None) if authorized, else False."""
     if scope["type"] != "http" or scope.get("method") == "OPTIONS":
-        return True
+        return None
     mode = _auth_mode()
     if mode == "off":
-        return True
+        return None
     if mode == "token" and not _static_token():
         await _send_json(
             send,
@@ -109,7 +136,9 @@ async def _authorize_or_reject(scope: Scope, send: Send) -> bool:
             },
         )
         return False
-    return True
+    if mode == "jwt":
+        return _resolve_org_from_token(token)
+    return None
 
 
 def _fresh_session_manager():
@@ -123,9 +152,16 @@ class McpHttpASGI:
     """Auth gate + Streamable HTTP, always using the live session manager."""
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if not await _authorize_or_reject(scope, send):
+        from app.mcp import mcp_organisation_id
+
+        auth = await _authorize_or_reject(scope, send)
+        if auth is False:
             return
-        await StreamableHTTPASGIApp(mcp.session_manager)(scope, receive, send)
+        token = mcp_organisation_id.set(auth)
+        try:
+            await StreamableHTTPASGIApp(mcp.session_manager)(scope, receive, send)
+        finally:
+            mcp_organisation_id.reset(token)
 
 
 def mcp_http_handler() -> McpHttpASGI:

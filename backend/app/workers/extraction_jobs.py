@@ -1,10 +1,11 @@
 """Upload extraction jobs — in-memory progress + durable Postgres state.
 
-Jobs survive process restarts via ``pdf_store``; live progress uses a process-local
+Jobs survive process restarts via ``pdf_jobs``; live progress uses a process-local
 cache shared by PDF/upload routes and the dashboard.
 """
 from __future__ import annotations
 
+import logging
 import pathlib
 import re
 import tempfile
@@ -12,19 +13,14 @@ import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.db import pdf_store as _pdf_store
-from app.db import psycopg as _pg
+from app.db.repositories import pdf_jobs as _pdf_jobs_repo
+from app.db.session import session_scope
 from app.services.ingestion.service import run_upload_pipeline
+
+logger = logging.getLogger(__name__)
 
 _pdf_jobs: Dict[str, Dict[str, Any]] = {}
 _pdf_jobs_lock = threading.Lock()
-
-
-def _pdf_db_conn():
-    conn = _pg.get_connection()
-    _pg.init_schema(conn)
-    _pdf_store.init_pdf_schema(conn)
-    return conn
 
 
 def _save_pdf_job(
@@ -35,53 +31,41 @@ def _save_pdf_job(
 ) -> None:
     """Persist working job state to Postgres (best-effort)."""
     try:
-        conn = _pdf_db_conn()
-        try:
-            _pdf_store.save_working_job(
-                conn,
+        with session_scope() as session:
+            _pdf_jobs_repo.save_working_job(
+                session,
                 job,
                 pdf_bytes=pdf_bytes,
                 clear_pdf_bytes=clear_pdf_bytes,
             )
-        finally:
-            conn.close()
     except Exception as e:
-        print(f"Warning: could not persist PDF job {job.get('job_id')}: {e}", flush=True)
+        logger.warning("could not persist PDF job %s: %s", job.get("job_id"), e)
 
 
 def _load_pdf_job(job_id: str) -> Optional[Dict[str, Any]]:
     try:
-        conn = _pdf_db_conn()
-        try:
-            return _pdf_store.load_working_job(conn, job_id)
-        finally:
-            conn.close()
+        with session_scope() as session:
+            return _pdf_jobs_repo.load_working_job(session, job_id)
     except Exception as e:
-        print(f"Warning: could not load PDF job {job_id}: {e}", flush=True)
+        logger.warning("could not load PDF job %s: %s", job_id, e)
         return None
 
 
 def _list_pdf_jobs_for_user(user_email: str) -> List[Dict[str, Any]]:
     try:
-        conn = _pdf_db_conn()
-        try:
-            return _pdf_store.list_working_jobs(conn, user_email)
-        finally:
-            conn.close()
+        with session_scope() as session:
+            return _pdf_jobs_repo.list_working_jobs(session, user_email)
     except Exception as e:
-        print(f"Warning: could not list PDF jobs: {e}", flush=True)
+        logger.warning("could not list PDF jobs: %s", e)
         return []
 
 
 def _get_pdf_bytes(job_id: str) -> Optional[bytes]:
     try:
-        conn = _pdf_db_conn()
-        try:
-            return _pdf_store.get_pdf_bytes(conn, job_id)
-        finally:
-            conn.close()
+        with session_scope() as session:
+            return _pdf_jobs_repo.get_pdf_bytes(session, job_id)
     except Exception as e:
-        print(f"Warning: could not load PDF bytes for {job_id}: {e}", flush=True)
+        logger.warning("could not load PDF bytes for %s: %s", job_id, e)
         return None
 
 

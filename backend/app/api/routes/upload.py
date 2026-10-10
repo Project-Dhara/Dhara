@@ -4,7 +4,8 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
-from app.api.dependencies import CurrentUser, require_user, resolve_llm_credentials
+from app.api.dependencies import CurrentUser, resolve_llm_credentials
+from app.core.permissions import MUTATING_ROLES, require_roles
 from app.services.ingestion.utils.source_type import resolve_source_type
 from app.workers.extraction_jobs import (
     _run_extraction_job,
@@ -19,7 +20,7 @@ async def unified_upload(
     request: Request,
     file: UploadFile = File(...),
     type: str = Form(..., description="pdf, excel, or csv"),
-    user: CurrentUser = Depends(require_user),
+    user: CurrentUser = Depends(require_roles(*MUTATING_ROLES)),
 ):
     """
     Accept one dataset file and start a background extraction job.

@@ -6,6 +6,10 @@
 set -e
 
 cd /app/backend
+if [ "${SKIP_DB_MIGRATIONS:-}" != "1" ] && [ "${SKIP_DB_MIGRATIONS:-}" != "true" ]; then
+  echo "Applying database migrations (alembic upgrade head)..."
+  alembic upgrade head
+fi
 uvicorn main:app --host 0.0.0.0 --port "${BACKEND_PORT:-8000}" &
 BACKEND_PID=$!
 

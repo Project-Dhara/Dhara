@@ -54,12 +54,11 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
+      # CMD-SHELL: Podman/rootless mangles CMD + python -c arg splitting.
       test:
         [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/ready')",
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/ready')\"",
         ]
       interval: 10s
       timeout: 5s
@@ -67,7 +66,16 @@ services:
       start_period: 20s
     volumes:
       - ./backend:/backend
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    command:
+      [
+        "uvicorn",
+        "main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+      ]
 
   frontend:
     build:
@@ -117,12 +125,11 @@ services:
         condition: service_healthy
     healthcheck:
       # Hit FastAPI directly (Next proxies /api on :8080; backend is on BACKEND_PORT).
+      # CMD-SHELL: Podman/rootless mangles CMD + python -c arg splitting.
       test:
         [
-          "CMD",
-          "python3",
-          "-c",
-          "import os,urllib.request; p=os.environ.get('BACKEND_PORT','8000'); urllib.request.urlopen(f'http://127.0.0.1:{p}/api/ready')",
+          "CMD-SHELL",
+          "python3 -c \"import os,urllib.request; p=os.environ.get('BACKEND_PORT','8000'); urllib.request.urlopen(f'http://127.0.0.1:{p}/api/ready')\"",
         ]
       interval: 10s
       timeout: 5s

@@ -1,13 +1,14 @@
 """Dashboard readiness (uploaded files + catalogue Excel/SQL) and pipeline
 step tracking routes."""
 import asyncio
+import uuid
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-import psycopg2.extras
 
 from app.api.dependencies import CurrentUser, require_user
-from app.db import psycopg as _cat
+from app.db.repositories import pdf_jobs as pdf_jobs_repo
+from app.db.session import session_scope
 from app.services.catalogue.dashboard import list_dashboard
 from app.workers.extraction_jobs import _get_pdf_job, _hydrate_user_pdf_jobs, _pdf_job_public, _pdf_jobs, _pdf_jobs_lock
 
@@ -155,8 +156,6 @@ async def pdf_set_pipeline_step(
     job_id: str, request: Request, user: CurrentUser = Depends(require_user)
 ):
     """Persist console pipeline step for dashboard readiness (steps 3–6)."""
-    from app.db import pdf_store
-
     body = await request.json()
     if not isinstance(body, dict):
         raise HTTPException(400, "Body must be a JSON object")
@@ -171,11 +170,8 @@ async def pdf_set_pipeline_step(
     org_id = str(user.organisation_id)
 
     def _run():
-        conn = _cat.get_connection()
-        try:
-            _cat.init_schema(conn)
-            pdf_store.init_pdf_schema(conn)
-            job_row = pdf_store.get_job(conn, job_id)
+        with session_scope() as session:
+            job_row = pdf_jobs_repo.get_job(session, job_id)
             if not job_row or job_row.get("user_email") != user_email:
                 with _pdf_jobs_lock:
                     mem = _get_pdf_job(job_id)
@@ -184,8 +180,8 @@ async def pdf_set_pipeline_step(
                 job_org = mem.get("organisation_id")
                 if job_org and str(job_org) != org_id:
                     return None
-                pdf_store.upsert_job(
-                    conn,
+                pdf_jobs_repo.upsert_job(
+                    session,
                     job_id=job_id,
                     user_email=user_email,
                     filename=mem.get("filename"),
@@ -195,10 +191,8 @@ async def pdf_set_pipeline_step(
                 job_org = job_row.get("organisation_id")
                 if job_org and str(job_org) != org_id:
                     return None
-            pdf_store.set_pipeline_step(conn, job_id, step)
-            return pdf_store.get_pipeline_step(conn, job_id)
-        finally:
-            conn.close()
+            pdf_jobs_repo.set_pipeline_step(session, job_id, step)
+            return pdf_jobs_repo.get_pipeline_step(session, job_id)
 
     try:
         saved = await asyncio.to_thread(_run)
@@ -223,32 +217,29 @@ async def get_dashboard(user: CurrentUser = Depends(require_user)):
     included only for Excel/SQL (or when the user has no PDF uploads), so a
     single PDF is not exploded into many table/group rows.
     """
-    from app.db import pdf_store
-
     user_email = user.email
     org_id = str(user.organisation_id)
+    org_uuid = uuid.UUID(org_id)
 
     def _run():
-        conn = _cat.get_connection()
-        try:
-            _cat.init_schema(conn)
-            pdf_store.init_pdf_schema(conn)
-            base = list_dashboard(conn, user_email)
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute(
-                    """
-                    SELECT job_id, filename, status, grouping_status, pipeline_step,
-                           created_at, updated_at, organisation_id
-                    FROM pdf_jobs
-                    WHERE user_email = %s
-                      AND (organisation_id = %s::uuid OR organisation_id IS NULL)
-                    ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
-                    """,
-                    (user_email, org_id),
-                )
-                pdf_db = {r["job_id"]: dict(r) for r in cur.fetchall()}
-        finally:
-            conn.close()
+        with session_scope() as session:
+            base = list_dashboard(session, user_email)
+            jobs = pdf_jobs_repo.list_for_user(
+                session, user_email=user_email, organisation_id=org_uuid
+            )
+            pdf_db = {
+                j.job_id: {
+                    "job_id": j.job_id,
+                    "filename": j.filename,
+                    "status": j.status,
+                    "grouping_status": j.grouping_status,
+                    "pipeline_step": j.pipeline_step,
+                    "created_at": j.created_at,
+                    "updated_at": j.updated_at,
+                    "organisation_id": j.organisation_id,
+                }
+                for j in jobs
+            }
         return base, pdf_db
 
     base, pdf_db = await asyncio.to_thread(_run)

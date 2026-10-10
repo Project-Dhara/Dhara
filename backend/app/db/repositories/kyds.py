@@ -51,6 +51,18 @@ def get_latest_for_user(
     return session.scalars(stmt).first()
 
 
+def get_latest_responses(
+    session: Session,
+    user_email: str,
+    organisation_id: uuid.UUID | None = None,
+) -> dict[str, Any] | None:
+    """Return latest KYDS responses dict for metadata fill, or None."""
+    entry = get_latest_for_user(
+        session, user_email, organisation_id=organisation_id
+    )
+    return entry.responses if entry else None
+
+
 def update_entry(
     session: Session,
     entry_id: int,

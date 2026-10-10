@@ -3,8 +3,9 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends
 
+from app.core.exceptions import ForbiddenError
 from app.db.models.organisation import (
     ROLE_ADMINISTRATOR,
     ROLE_DATA_STEWARD,
@@ -48,7 +49,7 @@ def require_roles(*allowed: str):
 
     def _dep(user: CurrentUser = Depends(require_user)) -> CurrentUser:
         if (user.role or "").strip().lower() not in allowed_set:
-            raise HTTPException(403, "Insufficient permissions for this action")
+            raise ForbiddenError("Insufficient permissions for this action")
         return user
 
     return _dep

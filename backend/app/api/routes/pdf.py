@@ -17,7 +17,7 @@ from app.api.dependencies import (
     require_user_email,
     resolve_llm_credentials,
 )
-from app.db import psycopg as _cat
+from app.db.session import session_scope
 from app.workers.extraction_jobs import (
     _get_pdf_bytes,
     _get_pdf_job,
@@ -550,36 +550,32 @@ async def pdf_persist_approved(job_id: str, request: Request, user_email: str = 
             job["reviews"] = reviews
             _save_pdf_job(job)
 
-    conn = _cat.get_connection()
-    try:
-        _cat.init_schema(conn)
+    with session_scope() as session:
         persisted = pdf_store.persist_approved_tables(
-            conn,
+            session,
             job_id=job_id,
             user_email=user_email,
             filename=filename,
             tables=tables,
         )
-        proposal = pdf_grouping.propose_groups(conn, job_id, api_key=api_key, reindex=True)
-        grouping = pdf_grouping.apply_proposal_to_db(conn, job_id, proposal)
+        proposal = pdf_grouping.propose_groups(
+            session, job_id, api_key=api_key, reindex=True
+        )
+        grouping = pdf_grouping.apply_proposal_to_db(session, job_id, proposal)
         return {
             "ok": True,
             "job_id": job_id,
             "table_count": len(persisted),
             "grouping": grouping,
         }
-    finally:
-        conn.close()
 
 
 @router.get("/api/pdf/jobs/{job_id}/grouping")
 async def pdf_get_grouping(job_id: str, user_email: str = Depends(require_user_email)):
     from app.db import pdf_store
 
-    conn = _cat.get_connection()
-    try:
-        _cat.init_schema(conn)
-        job_row = pdf_store.get_job(conn, job_id)
+    with session_scope() as session:
+        job_row = pdf_store.get_job(session, job_id)
         if not job_row or job_row.get("user_email") != user_email:
             # Fall back: allow read if JSON job exists and belongs to user (not yet persisted)
             with _pdf_jobs_lock:
@@ -587,8 +583,8 @@ async def pdf_get_grouping(job_id: str, user_email: str = Depends(require_user_e
             if not job or job.get("user_email") != user_email:
                 raise HTTPException(404, "Job not found — continue from Preview to persist tables first.")
             raise HTTPException(409, "Tables not persisted yet — click Continue on Preview.")
-        grouping = pdf_store.load_grouping(conn, job_id)
-        tables = pdf_store.list_active_tables(conn, job_id)
+        grouping = pdf_store.load_grouping(session, job_id)
+        tables = pdf_store.list_active_tables(session, job_id)
         return {
             "job_id": job_id,
             "filename": job_row.get("filename"),
@@ -596,8 +592,6 @@ async def pdf_get_grouping(job_id: str, user_email: str = Depends(require_user_e
             "table_count": len(tables),
             **grouping,
         }
-    finally:
-        conn.close()
 
 
 @router.post("/api/pdf/jobs/{job_id}/grouping/propose")
@@ -614,17 +608,15 @@ async def pdf_propose_grouping(job_id: str, request: Request, user_email: str = 
         body = {}
     reindex = bool(body.get("reindex")) if isinstance(body, dict) else False
 
-    conn = _cat.get_connection()
-    try:
-        _cat.init_schema(conn)
-        job_row = pdf_store.get_job(conn, job_id)
+    with session_scope() as session:
+        job_row = pdf_store.get_job(session, job_id)
         if not job_row or job_row.get("user_email") != user_email:
             raise HTTPException(404, "Job not found — continue from Preview first.")
-        proposal = pdf_grouping.propose_groups(conn, job_id, api_key=api_key, reindex=reindex)
-        grouping = pdf_grouping.apply_proposal_to_db(conn, job_id, proposal)
+        proposal = pdf_grouping.propose_groups(
+            session, job_id, api_key=api_key, reindex=reindex
+        )
+        grouping = pdf_grouping.apply_proposal_to_db(session, job_id, proposal)
         return {"ok": True, "job_id": job_id, **grouping}
-    finally:
-        conn.close()
 
 
 @router.put("/api/pdf/jobs/{job_id}/grouping")
@@ -639,13 +631,11 @@ async def pdf_save_grouping(job_id: str, request: Request, user_email: str = Dep
     if not isinstance(groups_in, list):
         raise HTTPException(400, "groups must be an array")
 
-    conn = _cat.get_connection()
-    try:
-        _cat.init_schema(conn)
-        job_row = pdf_store.get_job(conn, job_id)
+    with session_scope() as session:
+        job_row = pdf_store.get_job(session, job_id)
         if not job_row or job_row.get("user_email") != user_email:
             raise HTTPException(404, "Job not found")
-        active = {t["id"] for t in pdf_store.list_active_tables(conn, job_id)}
+        active = {t["id"] for t in pdf_store.list_active_tables(session, job_id)}
         normalized = []
         for g in groups_in:
             if not isinstance(g, dict):
@@ -655,7 +645,5 @@ async def pdf_save_grouping(job_id: str, request: Request, user_email: str = Dep
             pks = [str(x) for x in raw_ids if str(x) in active]
             if pks:
                 normalized.append({"name": name, "table_pks": pks})
-        pdf_store.save_grouping(conn, job_id=job_id, groups=normalized)
-        return {"ok": True, **pdf_store.load_grouping(conn, job_id)}
-    finally:
-        conn.close()
+        pdf_store.save_grouping(session, job_id=job_id, groups=normalized)
+        return {"ok": True, **pdf_store.load_grouping(session, job_id)}

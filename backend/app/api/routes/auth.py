@@ -14,10 +14,7 @@ async def me(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ):
-    try:
-        profile = auth_service.me(db, user.id)
-    except auth_service.AuthError as e:
-        raise HTTPException(e.status_code, e.message) from e
+    profile = auth_service.me(db, user.id)
     return {
         "email": profile.email,
         "name": profile.name,
@@ -41,8 +38,6 @@ async def signup(request: Request, db: Session = Depends(get_db)):
         )
     except RuntimeError as e:
         raise HTTPException(500, str(e)) from e
-    except auth_service.AuthError as e:
-        raise HTTPException(e.status_code, e.message) from e
     return {
         "token": result.token,
         "email": result.email,
@@ -65,8 +60,6 @@ async def login(request: Request, db: Session = Depends(get_db)):
         )
     except RuntimeError as e:
         raise HTTPException(500, str(e)) from e
-    except auth_service.AuthError as e:
-        raise HTTPException(e.status_code, e.message) from e
     return {
         "token": result.token,
         "email": result.email,

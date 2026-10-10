@@ -6,17 +6,19 @@ This document is the target layout and the current execution path. It replaces t
 
 Nothing in this file was verified by running the application or a database. Claims below are from reading imports and handlers. Items that need a running stack are marked **runtime**.
 
-## Layout after the structure migration (2026-10-11)
+## Layout after modularisation (2026-10-11)
 
-Application code lives under `backend/app/`. `backend/main.py` re-exports `app.main.app` so `uvicorn main:app` (run.sh, Docker, Render) stays valid. MCP stdio is `python -m app.mcp`.
+Application code lives under `backend/app/`. `backend/main.py` re-exports `app.main.app` so `uvicorn main:app` stays valid. MCP stdio is `python -m app.mcp`.
 
-psycopg2 and request-time DDL are unchanged and intentional. They live in `app/db/psycopg.py` (`get_connection`, `init_schema`) and `app/db/pdf_store.py`. `DISABLE_REQUEST_TIME_DDL` still defaults to off. `app/db/repositories/pdf_jobs.py` is a separate narrow SQLAlchemy helper; PDF routes use `app/db/pdf_store.py`.
+**Persistence:** App-DB access goes through SQLAlchemy (`session_scope` / `get_db` / repositories). `DISABLE_REQUEST_TIME_DDL` defaults **true**; Alembic `001` + `002` own schema (including HNSW). `app/db/psycopg.get_connection` is a pooled DBAPI bridge for leftover cursor helpers only (`init_schema` is a no-op). `pdf_store.py` re-exports `repositories/pdf_jobs`.
 
-`init_schema` order is catalogue DDL, then `app.storage.vectors`, then PDF schema, then extract staging, then the bundled NCO standard.
+**HTTP:** `app/api/routes/` — catalogue is split into `catalogue_extract`, `catalogue_publish`, `catalogue_browse`, `catalogue_standards`. Domain errors use `AppError` with a global handler. Mutating routes use `require_roles(*MUTATING_ROLES)`; catalogue/access list/get pass `organisation_id`.
 
-HTTP handlers are `app/api/routes/` (health, auth, kyds, llm_key, catalogue, pdf, upload, dashboard, access). MCP tools are `app/mcp/` (`search_datasets`, `get_metadata`, `get_table`), still without an organisation filter. `MCP_HTTP_AUTH` still defaults to `off`.
+**MCP:** JWT by default (`MCP_HTTP_AUTH=jwt`); tools filter by organisation from the Bearer token context.
 
-The sections below were written on 2026-10-10, before this move. Behavior notes (approval rule, organisation filters, plaintext-versus-encrypted credentials, two spreadsheet extractors) still apply. Directory names from that date map as follows: `routes/` → `app/api/routes/`, `pdf/pdf_store.py` → `app/db/pdf_store.py`, `catalogue/db.py` → `app/db/psycopg.py`, `data_ingestion/` and `metadata/` and `catalogue/*` logic → `app/services/`, `core/` → `app/core/`, `app/api/dependencies.py`, and `app/storage/`, `mcp_server/` → `app/mcp/`, `backend/config.py` → `app/services/llm_prompts.py`.
+**Mega-modules:** `header_utils`, `table_confidence`, `metadata_llm`, and `pdf_grouping` are split with stable re-export facades.
+
+Some older sections below may still describe pre-migration behavior; prefer `RESIDUE_AUDIT.md` and `REFACTOR_CHECKLIST.md` for current residue.
 
 ## Entry points
 

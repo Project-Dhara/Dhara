@@ -49,13 +49,19 @@ Only do this when the live schema already matches revision 001.
 
 ## Docker / compose
 
-Run `alembic upgrade head` once before (or as a one-shot init container ahead of)
-starting the API. Do **not** put `alembic upgrade` inside the per-request path.
+The backend **dev** image (`backend/docker-entrypoint.sh`) and the combined **prod**
+image (`start.sh`) run `alembic upgrade head` once before Uvicorn starts. Fresh
+Postgres volumes get schema automatically on `docker compose up` or Render deploys.
 
-Example (manual):
+Do **not** put `alembic upgrade` inside the per-request path.
+
+To skip migrations (e.g. read-only debug): set `SKIP_DB_MIGRATIONS=true`.
+
+Manual re-run:
 
 ```bash
-docker compose exec backend alembic upgrade head
+make migrate
+# or: docker compose exec backend alembic upgrade head
 ```
 
 Then set `DISABLE_REQUEST_TIME_DDL=true` on the backend service.

@@ -485,11 +485,11 @@ class TableExtractor:
         # clearly data (LLM/heuristic swallowed early records). Do not use
         # later body rows — genuine group+leaf headers are followed by data.
         try:
-            from app.services.metadata.metadata_llm import _looks_like_data_row
+            from app.services.metadata.excel_facts import looks_like_data_row
             if header_rows > 1 and body:
                 claimed = body[1:header_rows]
                 if any(
-                    (not self._blank(r)) and _looks_like_data_row(r)
+                    (not self._blank(r)) and looks_like_data_row(r)
                     for r in claimed
                 ):
                     header_rows = 1
@@ -864,5 +864,5 @@ class TableExtractor:
     def _heuristic_structure(body: List[List[Any]], n_cols: int) -> Dict:
         # Use the richer multi-row header flattener shared with metadata facts —
         # the local one-row heuristic left many scheme sheets under-extracted.
-        from app.services.metadata.metadata_llm import _heuristic_structure as _better_heuristic
+        from app.services.metadata.excel_facts import heuristic_structure as _better_heuristic
         return _better_heuristic(body, n_cols)

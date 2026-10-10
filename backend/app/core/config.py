@@ -117,7 +117,7 @@ def get_settings() -> Settings:
         bootstrap_admin_email=(
             (os.environ.get("BOOTSTRAP_ADMIN_EMAIL") or "").strip().lower() or None
         ),
-        disable_request_time_ddl=_env_bool("DISABLE_REQUEST_TIME_DDL", False),
+        disable_request_time_ddl=_env_bool("DISABLE_REQUEST_TIME_DDL", True),
         enable_signup=_env_bool("ENABLE_SIGNUP", True),
         enable_gcs=_env_bool("ENABLE_GCS", False),
         gcs_bucket_name=_gcs_bucket_from_env(),

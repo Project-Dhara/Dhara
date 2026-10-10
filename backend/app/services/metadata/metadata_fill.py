@@ -259,9 +259,8 @@ def _fill_empty_group_metadata(
       - uploaded Excel workbook bytes (`dataset_bytes_by_filename` + extract_excel_facts), or
       - already-extracted in-memory tables (SQL / any source without workbook bytes)
         via extract_facts_from_tables.
-    KYDS responses come from Postgres. HTTP writes use
-    ``app.db.repositories.kyds``; metadata fill reads
-    ``app.db.kyds_psycopg.get_latest_kyds_responses``.
+    KYDS responses come from Postgres via ``app.db.repositories.kyds``
+    (``get_latest_responses``).
 
     `extractor` supplies the LLM call, built from the caller's own Settings
     key/provider (see `deps._extractor_for`) rather than a server-side env var.

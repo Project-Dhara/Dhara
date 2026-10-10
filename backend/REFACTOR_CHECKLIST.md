@@ -1,45 +1,39 @@
 # Dhara refactor checklist
 
-Branch: `code-revamp`. Updated as work completes.
-
-## Pytest baseline (before edits)
-
-Command: `.venv/bin/python -m pytest -q -m "not postgres and not slow"` from `backend/`.
-
-Result (2026-10-10, `venv` Python 3.14): **23 collection ERRORs**. Root cause is an environment break (`ImportError: No module named expat` / missing `_XML_SetAllocTrackerActivationThreshold` when importing `openpyxl`), not assertion failures. Suite could not run to completion. Re-run after domain move; prefer Python 3.11 if available.
+Branch: `code-revamp`. Updated 2026-10-11 after modularisation phases 1–6.
 
 ## Feature status
 
-Structure migration (2026-10-11): domain modules live under `app/`. `backend/main.py` is the process entry. MCP lives in `app/mcp/`. psycopg2 and request-time DDL were not replaced.
-
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Auth signup/login/me | Complete | `app/api/routes/auth.py` |
-| Org membership | Partial | DB + ensure_membership live; route enforcement incomplete |
-| LLM credentials | In `app/` | HTTP uses the SQLAlchemy repository; encryption behavior is whatever that repository already did |
-| Permissions / logging | Missing | Placeholder modules |
-| Ingestion orchestration | In `app/services/ingestion` | Upload and wizard extractors stay separate |
-| Confidence validation | Complete | `app/services/extraction/pdf/confidence_validation/` |
-| PDF parse pipeline | In `app/services/extraction/pdf` | |
-| Spreadsheet ingest | In `app/services/ingestion` | |
-| Catalogue wizard extract | In `app/services/ingestion/wizard` | |
-| PDF jobs / review / grouping | In `app/` | Routes in `app/api/routes/pdf.py`; store in `app/db/pdf_store.py` |
-| Catalogue publish / browse | In `app/` | `app/api/routes/catalogue.py` plus `app/services` |
-| Classification / NCO / standards | In `app/services/classification` and `app/services/standards` | |
-| Metadata / KYDS fill | In `app/services/metadata` | Fill read is `app/db/kyds_psycopg.py`; HTTP KYDS is SQLAlchemy |
-| Dashboard / access API | In `app/api/routes` | |
-| Object storage | Partial | GCS or silent no-op; local unused |
-| Vector store | In `app/storage/vectors.py` | |
-| MCP | In `app/mcp/` | No org scope; `MCP_HTTP_AUTH` default `off` |
-| Alembic baseline | Partial | Missing HNSW; request-time DDL still on |
-| Startup / Docker | `uvicorn main:app` via `backend/main.py` | |
-| Frontend API contracts | Unchanged by the structure move | |
+| Auth signup/login/me | Complete | `AppError` hierarchy; global handler in `app.main` |
+| Org membership | Complete | `organisations` service + repo; role gates on writes/reads |
+| LLM credentials | Complete | SQLAlchemy repository |
+| Permissions / logging | Complete | `require_roles`, `assert_org_access`; logging configured at startup |
+| Domain exceptions | Complete | `AppError` → JSON via FastAPI handler |
+| Ingestion orchestration | Complete | `app/services/ingestion` |
+| Confidence validation | Complete | Under `app/services/extraction/pdf/confidence_validation/` |
+| Catalogue / PDF / metadata | In `app/` | Session + repositories; some cursor helpers via `dbapi_connection` |
+| Object storage | Partial | GCS / local via `STORAGE_BACKEND` |
+| Vector store | Session API | `app/storage/vectors.py` |
+| MCP | JWT default | Org-scoped query tools; `MCP_HTTP_AUTH=jwt` |
+| Alembic | `001` + `002` | HNSW/indexes; request-time DDL off by default |
+| Mega-module splits | Complete | header_utils, table_confidence, metadata_llm, pdf_grouping, catalogue routes |
 
 ## Slice progress
 
 - [x] Move domain modules into `app/`
-- [x] Delete legacy packages (except `main.py`, the uvicorn entry)
-- [ ] Credentials, permissions, logging, frontend auth/key behavior changes
-- [ ] Repositories replace psycopg2; thin-route cleanup; approval gate
-- [ ] Clean Alembic baseline; remove request-time DDL
-- [ ] MCP organisation scope and storage-backend selection
+- [x] Delete legacy top-level packages
+- [x] AppError handler + AuthError fold
+- [x] Alembic 002 + disable request-time DDL by default
+- [x] SQLAlchemy repositories (catalogue, datasets, pdf_jobs, staging, standards, kyds, vectors)
+- [x] Hot paths use `session_scope` / `get_db` (pool via SA; no separate app-DB `psycopg2.connect`)
+- [x] Org filters + `require_roles` on mutating routes; MCP JWT + org scope
+- [x] Mega-module mechanical splits + catalogue route split
+- [x] Leftovers: spreadsheet stub removed; `kyds_psycopg` removed; docs synced
+
+## Remaining residue
+
+- Cursor-based helpers in classification/standards/group_export still take a DBAPI connection from `dbapi_connection(session)` — rewrite to `session.execute` when touched next.
+- External wizard `sql_extract` still uses `psycopg2.connect` for **user-supplied** DSNs (intentional).
+- Legacy `organisation_id IS NULL` rows remain visible (`allow_null_legacy`).

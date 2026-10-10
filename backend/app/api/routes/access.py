@@ -10,19 +10,15 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.dependencies import CurrentUser, require_user
-from app.db import psycopg as _cat
+from app.db.session import session_scope
 from app.services.catalogue import query as catalogue_query
 
 router = APIRouter(prefix="/api/v1", tags=["Access"])
 
 
-def _with_conn(fn):
-    conn = _cat.get_connection()
-    try:
-        _cat.init_schema(conn)
-        return fn(conn)
-    finally:
-        conn.close()
+def _with_session(fn):
+    with session_scope() as session:
+        return fn(session)
 
 
 @router.get("", summary="Access API index")
@@ -60,9 +56,9 @@ async def list_datasets(
     user: CurrentUser = Depends(require_user),
 ):
     def _run():
-        return _with_conn(
-            lambda conn: catalogue_query.search_catalogue_datasets(
-                conn,
+        return _with_session(
+            lambda session: catalogue_query.search_catalogue_datasets(
+                session,
                 q=q,
                 metadata_id=metadata_id,
                 limit=limit,
@@ -77,9 +73,9 @@ async def list_datasets(
 @router.get("/datasets/{dataset_id}", summary="Get published dataset metadata")
 async def get_dataset(dataset_id: str, user: CurrentUser = Depends(require_user)):
     def _run():
-        return _with_conn(
-            lambda conn: catalogue_query.get_catalogue_dataset(
-                conn, dataset_id, organisation_id=user.organisation_id
+        return _with_session(
+            lambda session: catalogue_query.get_catalogue_dataset(
+                session, dataset_id, organisation_id=user.organisation_id
             )
         )
 
@@ -100,24 +96,24 @@ async def get_dataset_rows(
     user: CurrentUser = Depends(require_user),
 ):
     def _run():
-        # Verify dataset is visible to this org before returning rows.
-        def _inner(conn):
+        def _inner(session):
             ds = catalogue_query.get_catalogue_dataset(
-                conn, dataset_id, organisation_id=user.organisation_id
+                session, dataset_id, organisation_id=user.organisation_id
             )
             if not ds:
                 return None
             return catalogue_query.query_dataset_rows(
-                conn,
+                session,
                 dataset_id,
                 limit=limit,
                 offset=offset,
                 column=column,
                 equals=equals,
                 contains=contains,
+                organisation_id=user.organisation_id,
             )
 
-        return _with_conn(_inner)
+        return _with_session(_inner)
 
     result = await asyncio.to_thread(_run)
     if result is None:

@@ -33,16 +33,14 @@ Local Compose sets a development database user and password in `docker-compose.y
 
 ### Migrations
 
-Schema changes belong in Alembic (`backend/migrations/`, revision `001_baseline` today).
+Schema changes belong in Alembic (`backend/migrations/`, revisions `001_baseline` + `002_indexes_hnsw`).
 
 ```bash
 cd backend
 alembic upgrade head
 ```
 
-`catalogue.db.init_schema()` still runs DDL on many requests when `DISABLE_REQUEST_TIME_DDL` is unset or false. `/api/ready` does not run DDL.
-
-After a backup and a successful upgrade, set `DISABLE_REQUEST_TIME_DDL=true`. Alembic 001 does not create the HNSW index that `core/vector_store.py` creates. On a fresh database, semantic search indexes may be missing until that function runs or a later migration adds them. Confirm with `\d semantic_embeddings` (**runtime**).
+Request-time DDL is **off by default** (`DISABLE_REQUEST_TIME_DDL=true`). Run Alembic before serving traffic. `/api/ready` never runs DDL. Revision `002` adds HNSW and secondary indexes formerly created only on request.
 
 Do not drop tables to "fix" drift. Add a forward migration.
 
@@ -57,7 +55,7 @@ Do not drop tables to "fix" drift. Add a forward migration.
 | `DEFAULT_ORGANISATION_NAME` | Display name used when the row is created. |
 | `BOOTSTRAP_ADMIN_EMAIL` | If set, that email's first membership is `administrator`. Otherwise the first member of the org is admin and later signups are `data_steward`. |
 
-Roles are stored and returned by `/api/me`. No HTTP handler enforces them yet. See `ARCHITECTURE.md`.
+Roles are stored and returned by `/api/me`. Mutating catalogue/PDF/upload routes require `administrator` or `data_steward`; access API requires a read role. MCP HTTP auth defaults to Bearer JWT (`MCP_HTTP_AUTH=jwt`).
 
 CORS allows every origin. Tighten this before exposing the API to a browser on the public internet.
 
@@ -142,9 +140,9 @@ cp .env.example .env
 Compose:
 
 ```bash
-docker compose up -d postgres
-docker compose run --rm backend alembic upgrade head
-docker compose up -d --build backend frontend
+docker compose up -d --build
+# Migrations run automatically in backend/docker-entrypoint.sh before Uvicorn.
+# Manual: make migrate  or  docker compose exec backend alembic upgrade head
 ```
 
 Health: `GET /api/ready`.

@@ -3,7 +3,8 @@ import json
 import os
 from typing import Optional
 
-import psycopg2.extras
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from app.services.classification.classifications import _classification_fill_ratio
 
@@ -58,7 +59,7 @@ def _infer_source_label(*candidates: Optional[str], fallback: str = "—") -> st
     return fallback
 
 
-def list_dashboard(conn, user_email: str) -> dict:
+def list_dashboard(session: Session, user_email: str) -> dict:
     """
     Catalogue-side readiness for the Dashboard.
 
@@ -66,8 +67,9 @@ def list_dashboard(conn, user_email: str) -> dict:
     no ``pdf_jobs`` upload record. PDF uploads are listed from ``pdf_jobs``
     in ``routes/dashboard.py`` (one row per uploaded file).
     """
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute("""
+    result = session.execute(
+        text(
+            """
             SELECT
               m.metadata_id,
               m.title,
@@ -80,10 +82,13 @@ def list_dashboard(conn, user_email: str) -> dict:
               m.user_email,
               (SELECT COUNT(*)::int FROM datasets d WHERE d.metadata_id = m.metadata_id) AS dataset_count
             FROM metadata_groups m
-            WHERE m.user_email = %s
+            WHERE m.user_email = :user_email
             ORDER BY m.last_updated_date DESC NULLS LAST, m.metadata_id DESC
-        """, (user_email,))
-        groups = [dict(r) for r in cur.fetchall()]
+            """
+        ),
+        {"user_email": user_email},
+    )
+    groups = [dict(r) for r in result.mappings()]
 
     products = set()
     rows = []

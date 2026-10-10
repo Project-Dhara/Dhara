@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 
 import pytest
 from starlette.testclient import TestClient
@@ -10,6 +11,7 @@ from starlette.testclient import TestClient
 os.environ.setdefault("JWT_SECRET", "test-jwt-secret-for-mcp-http")
 
 from app.core import security as _auth  # noqa: E402
+from app.core.config import clear_settings_cache  # noqa: E402
 from main import app  # noqa: E402
 
 INIT_BODY = {
@@ -45,8 +47,24 @@ def client():
         yield c
 
 
-def test_mcp_open_by_default(client, monkeypatch):
+@pytest.fixture(autouse=True)
+def _clear_settings():
+    clear_settings_cache()
+    yield
+    clear_settings_cache()
+
+
+def test_mcp_requires_auth_by_default(client, monkeypatch):
     monkeypatch.delenv("MCP_HTTP_AUTH", raising=False)
+    clear_settings_cache()
+    r = client.post("/mcp", json=INIT_BODY, headers=MCP_HEADERS)
+    assert r.status_code == 401
+    assert r.json()["error"] == "unauthorized"
+
+
+def test_mcp_open_when_auth_off(client, monkeypatch):
+    monkeypatch.setenv("MCP_HTTP_AUTH", "off")
+    clear_settings_cache()
     r = client.post("/mcp", json=INIT_BODY, headers=MCP_HEADERS)
     assert r.status_code == 200
     body = _parse_payload(r)
@@ -55,6 +73,7 @@ def test_mcp_open_by_default(client, monkeypatch):
 
 def test_mcp_requires_bearer_when_jwt_mode(client, monkeypatch):
     monkeypatch.setenv("MCP_HTTP_AUTH", "jwt")
+    clear_settings_cache()
     r = client.post("/mcp", json=INIT_BODY, headers=MCP_HEADERS)
     assert r.status_code == 401
     assert r.json()["error"] == "unauthorized"
@@ -62,7 +81,8 @@ def test_mcp_requires_bearer_when_jwt_mode(client, monkeypatch):
 
 def test_mcp_accepts_jwt_on_both_paths(client, monkeypatch):
     monkeypatch.setenv("MCP_HTTP_AUTH", "jwt")
-    token = _auth.create_token("mcp-tester@example.gov.in")
+    clear_settings_cache()
+    token = _auth.create_token(uuid.uuid4(), email="mcp-tester@example.gov.in")
     headers = {**MCP_HEADERS, "Authorization": f"Bearer {token}"}
     for path in ("/mcp", "/mcp/"):
         r = client.post(path, json=INIT_BODY, headers=headers)
@@ -74,13 +94,15 @@ def test_mcp_accepts_jwt_on_both_paths(client, monkeypatch):
 def test_mcp_accepts_static_token(client, monkeypatch):
     monkeypatch.setenv("MCP_HTTP_AUTH", "jwt")
     monkeypatch.setenv("MCP_AUTH_TOKEN", "static-agent-token")
+    clear_settings_cache()
     headers = {**MCP_HEADERS, "Authorization": "Bearer static-agent-token"}
     r = client.post("/mcp", json=INIT_BODY, headers=headers)
     assert r.status_code == 200
 
 
-def test_mcp_lists_tools_without_auth(client, monkeypatch):
-    monkeypatch.delenv("MCP_HTTP_AUTH", raising=False)
+def test_mcp_lists_tools_when_auth_off(client, monkeypatch):
+    monkeypatch.setenv("MCP_HTTP_AUTH", "off")
+    clear_settings_cache()
     r = client.post(
         "/mcp",
         json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"},

@@ -8,13 +8,14 @@ from __future__ import annotations
 import pathlib
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.routing import Route
 
 from app.api.router import api_router
+from app.core.exceptions import AppError
 from app.mcp.http_asgi import mcp_http_handler, mcp_http_lifespan
 
 OPENAPI_TAGS = [
@@ -113,6 +114,13 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @application.exception_handler(AppError)
+    async def _app_error_handler(_request: Request, exc: AppError) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.message},
+        )
 
     application.include_router(api_router)
 

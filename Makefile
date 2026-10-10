@@ -7,7 +7,7 @@ BACKEND_URL  ?= http://localhost:8000
 PROD_URL     ?= http://localhost:80
 API_DOCS     ?= $(BACKEND_URL)/docs
 
-.PHONY: help urls up down logs build restart ps psql postgres prod prod-down clean
+.PHONY: help urls up down logs build restart ps psql postgres migrate prod prod-down clean
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -28,9 +28,13 @@ up: ## Start Postgres, backend (:8000), and frontend (:80)
 	# Retry once: Docker+systemd cgroup setup can fail transiently with
 	# "Message recipient disconnected from message bus without replying".
 	@$(COMPOSE) up -d --build || { \
-		echo "Compose up failed; retrying created containers..."; \
+		echo "Compose up failed; retrying..."; \
 		sleep 2; \
-		$(COMPOSE) start || $(COMPOSE) up -d; \
+		$(COMPOSE) start 2>/dev/null || { \
+			echo "Removing stale fixed-name containers (if any)..."; \
+			docker rm -f dhara-postgres dhara-backend dhara-frontend dhara-app 2>/dev/null || true; \
+			$(COMPOSE) up -d --build; \
+		}; \
 	}
 	@echo ""
 	@echo "  UI:      $(FRONTEND_URL)"
@@ -56,6 +60,9 @@ ps: ## Show container status
 
 psql: ## Open a psql shell on the Docker Postgres
 	$(COMPOSE) exec postgres psql -U dhara -d dhara
+
+migrate: ## Apply Alembic migrations (Postgres + backend must be up)
+	$(COMPOSE) exec backend alembic upgrade head
 
 postgres: ## Start only Postgres (run backend/frontend on the host)
 	$(COMPOSE) up -d postgres

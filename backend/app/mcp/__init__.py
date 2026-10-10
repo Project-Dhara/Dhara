@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import json
 import sys
+from contextvars import ContextVar
 from pathlib import Path
+from typing import Optional
+from uuid import UUID
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 if str(_BACKEND_ROOT) not in sys.path:
@@ -29,11 +32,14 @@ load_dotenv(_BACKEND_ROOT / ".env")
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
-from app.db import psycopg as _pg
+from app.db.session import session_scope
 from app.services.catalogue import query as catalogue_query
 
-# host=0.0.0.0 avoids localhost-only DNS-rebinding defaults so /mcp works
-# behind the public deploy hostname. Stateless mode is safe on Cloud Run.
+# Set by Streamable HTTP auth when JWT is validated.
+mcp_organisation_id: ContextVar[Optional[UUID]] = ContextVar(
+    "mcp_organisation_id", default=None
+)
+
 mcp = FastMCP(
     "DHARA Catalogue",
     instructions=(
@@ -44,20 +50,18 @@ mcp = FastMCP(
     host="0.0.0.0",
     streamable_http_path="/mcp",
     stateless_http=True,
-    # Prefer JSON bodies over SSE streams — more reliable through Next.js
-    # rewrites / reverse proxies and common remote MCP clients (Cursor, etc.).
     json_response=True,
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
 
-def _with_conn(fn):
-    conn = _pg.get_connection()
-    try:
-        _pg.init_schema(conn)
-        return fn(conn)
-    finally:
-        conn.close()
+def _with_session(fn):
+    with session_scope() as session:
+        return fn(session)
+
+
+def _org_id() -> Optional[UUID]:
+    return mcp_organisation_id.get()
 
 
 def _json(payload) -> str:
@@ -79,13 +83,15 @@ def search_datasets(
         limit: Max datasets to return (1–500).
         offset: Pagination offset.
     """
-    result = _with_conn(
-        lambda conn: catalogue_query.search_catalogue_datasets(
-            conn,
+    org = _org_id()
+    result = _with_session(
+        lambda session: catalogue_query.search_catalogue_datasets(
+            session,
             q=q or None,
             metadata_id=metadata_id or None,
             limit=limit,
             offset=offset,
+            organisation_id=org,
         )
     )
     return _json(result)
@@ -98,7 +104,12 @@ def get_metadata(dataset_id: str) -> str:
     Args:
         dataset_id: Catalogue dataset id (same as REST /api/v1/datasets/{id}).
     """
-    dataset = _with_conn(lambda conn: catalogue_query.get_catalogue_dataset(conn, dataset_id))
+    org = _org_id()
+    dataset = _with_session(
+        lambda session: catalogue_query.get_catalogue_dataset(
+            session, dataset_id, organisation_id=org
+        )
+    )
     if not dataset:
         return _json({"error": "not_found", "dataset_id": dataset_id})
     return _json({"dataset": dataset})
@@ -123,16 +134,18 @@ def get_table(
         equals: Exact match on column (requires column).
         contains: Substring match on column (requires column; ignored if equals set).
     """
+    org = _org_id()
     try:
-        payload = _with_conn(
-            lambda conn: catalogue_query.query_dataset_rows(
-                conn,
+        payload = _with_session(
+            lambda session: catalogue_query.query_dataset_rows(
+                session,
                 dataset_id,
                 limit=limit,
                 offset=offset,
                 column=column or None,
                 equals=equals if equals != "" else None,
                 contains=contains if contains != "" and equals == "" else None,
+                organisation_id=org,
             )
         )
     except ValueError as exc:
