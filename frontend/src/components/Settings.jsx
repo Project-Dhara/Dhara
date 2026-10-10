@@ -56,8 +56,8 @@ function defaultNameFromFile(file) {
   return file.name.replace(/\.csv$/i, '').replace(/[_-]+/g, ' ').trim()
 }
 
-// LLM provider/key + user info. API key/provider persist in localStorage via
-// AppContext (`llmKey.ts`); classification standards live in Postgres.
+// LLM provider/key + user info. API key/provider persist in Postgres via
+// GET/POST /api/llm-key (AppContext); classification standards also in Postgres.
 const VALID_TABS = new Set(CONFIG_TABS.map((t) => t.key))
 
 export default function Settings({ settings, onSettingsChange, keySaved, onSaveKey, user, onUserChange, initialTab }) {

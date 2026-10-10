@@ -13,6 +13,12 @@ from catalogue.kyds import (
     save_kyds_entry,
     get_latest_kyds_responses,
     get_own_latest_kyds_entry,
+    update_kyds_entry,
+)
+from catalogue.llm_keys import (
+    get_llm_api_key,
+    upsert_llm_api_key,
+    delete_llm_api_key,
 )
 from catalogue.nco_aliases import (
     NCO_2015_CSV_PATH,
@@ -57,6 +63,10 @@ __all__ = [
     "save_kyds_entry",
     "get_latest_kyds_responses",
     "get_own_latest_kyds_entry",
+    "update_kyds_entry",
+    "get_llm_api_key",
+    "upsert_llm_api_key",
+    "delete_llm_api_key",
     "NCO_2015_CSV_PATH",
     "seed_nco_2015",
     "lookup_nco_alias",

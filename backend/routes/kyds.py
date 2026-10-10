@@ -54,4 +54,39 @@ async def get_my_kyds(user_email: str = Depends(require_user)):
         raise HTTPException(500, f"KYDS fetch error: {e}")
     if entry and entry.get("created_at"):
         entry["created_at"] = entry["created_at"].isoformat()
+    if entry and entry.get("updated_at"):
+        entry["updated_at"] = entry["updated_at"].isoformat()
     return {"entry": entry}
+
+
+@router.patch("/api/kyds/{entry_id}")
+async def patch_kyds(entry_id: int, request: Request, user_email: str = Depends(require_user)):
+    """Update ``responses`` on an existing KYDS row owned by the caller.
+
+    Returns 404 if the id is missing or belongs to someone else. Does not
+    insert a new row — use POST /api/kyds to create.
+    """
+    data = await request.json()
+    responses = data.get("responses")
+    if not isinstance(responses, dict):
+        raise HTTPException(400, "responses must be an object")
+
+    def _run():
+        conn = _cat.get_connection()
+        try:
+            _cat.init_schema(conn)
+            return _cat.update_kyds_entry(conn, entry_id, user_email, responses)
+        finally:
+            conn.close()
+
+    try:
+        entry = await asyncio.to_thread(_run)
+    except Exception as e:
+        raise HTTPException(500, f"KYDS update error: {e}")
+    if not entry:
+        raise HTTPException(404, "KYDS entry not found")
+    if entry.get("created_at"):
+        entry["created_at"] = entry["created_at"].isoformat()
+    if entry.get("updated_at"):
+        entry["updated_at"] = entry["updated_at"].isoformat()
+    return {"entry": entry, "status": "updated"}

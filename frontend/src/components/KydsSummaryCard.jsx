@@ -6,9 +6,8 @@ import Button from './ui/Button'
 import { withAuthHeaders } from '../lib/auth'
 import { notifyKydsChanged, onKydsChanged } from '../lib/kydsEvents'
 
-// Shows the caller's own KYDS entry (if any), with an edit option — editing
-// re-saves to Postgres via the same /api/kyds endpoint used for the initial
-// submission (see backend/catalogue.py save_kyds_entry / get_own_latest_kyds_entry).
+// Shows the caller's own KYDS entry (if any). Create uses POST /api/kyds;
+// edit uses PATCH /api/kyds/{id} so the same row is updated.
 // Lives in the Dataset Inventory stage regardless of which step within it
 // (mode pick, preview, grouping) is showing, so it stays visible even after
 // "Change files" or a stage-nav jump straight to the preview.
@@ -46,8 +45,11 @@ export default function KydsSummaryCard({ variant = 'card' }) {
   }, [])
 
   const saveKydsEdit = async (form) => {
-    const res = await fetch('/api/kyds', withAuthHeaders({
-      method: 'POST',
+    const editingExisting = Boolean(kydsEntry?.id) && !creatingKyds
+    const url = editingExisting ? `/api/kyds/${kydsEntry.id}` : '/api/kyds'
+    const method = editingExisting ? 'PATCH' : 'POST'
+    const res = await fetch(url, withAuthHeaders({
+      method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ responses: form }),
     }))
@@ -56,7 +58,8 @@ export default function KydsSummaryCard({ variant = 'card' }) {
       throw new Error(err.detail || 'Could not save KYDS entry — please try again.')
     }
     const data = await res.json()
-    setKydsEntry({ id: data.id, responses: form })
+    const id = editingExisting ? kydsEntry.id : data.id
+    setKydsEntry({ id, responses: form, ...(data.entry || {}) })
     setEditingKyds(false)
     setCreatingKyds(false)
     notifyKydsChanged()

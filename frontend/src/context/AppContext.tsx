@@ -36,6 +36,25 @@ const AppCtx = createContext<AppContextValue | null>(null)
 
 const EMPTY_USER: StoredUser = { name: '', role: 'Administrator', email: '', dept: '' }
 
+function normalizeProvider(raw: string): string {
+  if (raw === 'OpenAI' || raw === 'Anthropic' || raw === 'MEITY-empanelled LLM') {
+    return 'openai'
+  }
+  return raw || 'openai'
+}
+
+async function fetchStoredLlmKey(): Promise<Settings | null> {
+  const res = await fetch('/api/llm-key', withAuthHeaders())
+  if (!res.ok) return null
+  const data = await res.json()
+  const apiKey = String(data.api_key || '').trim()
+  if (!apiKey) return { provider: 'openai', apiKey: '' }
+  return {
+    provider: normalizeProvider(String(data.provider || 'openai')),
+    apiKey,
+  }
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
   // Auth state is only known for certain once mounted on the client
   // (localStorage doesn't exist during server rendering) -- authChecked
@@ -52,16 +71,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     let cancelled = false
 
     async function restoreSession() {
-      const savedKey = getLlmApiKey()
-      const rawProvider = getLlmProvider() || 'openai'
-      // Migrate legacy Settings labels to API provider ids.
-      const provider = (
-        rawProvider === 'OpenAI' || rawProvider === 'Anthropic' || rawProvider === 'MEITY-empanelled LLM'
-          ? 'openai'
-          : rawProvider
-      )
-      setSettings({ provider, apiKey: savedKey })
-      setKeySaved(!!savedKey)
+      // Cache only until /api/me succeeds and we load from Postgres.
+      const cachedKey = getLlmApiKey()
+      const cachedProvider = normalizeProvider(getLlmProvider() || 'openai')
+      setSettings({ provider: cachedProvider, apiKey: cachedKey })
+      setKeySaved(!!cachedKey)
 
       const token = getToken()
       const storedUser = getStoredUser()
@@ -90,6 +104,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setSession(token, nextUser)
         setUser(nextUser)
         setLoggedIn(true)
+
+        const fromServer = await fetchStoredLlmKey()
+        if (!cancelled && fromServer) {
+          setLlmApiKey(fromServer.apiKey)
+          setLlmProvider(fromServer.provider)
+          setSettings(fromServer)
+          setKeySaved(!!fromServer.apiKey)
+        }
       } catch {
         clearSession()
         if (!cancelled) {
@@ -120,10 +142,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const next = fromForm || settings
     const key = String(next.apiKey || '').trim()
     const provider = String(next.provider || '').trim() || 'openai'
-    setLlmApiKey(key)
-    setLlmProvider(provider)
     setSettings({ provider, apiKey: key })
-    setKeySaved(!!key)
+
+    void (async () => {
+      try {
+        const res = await fetch('/api/llm-key', withAuthHeaders({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: key, provider }),
+        }))
+        if (!res.ok) {
+          setKeySaved(false)
+          return
+        }
+        setLlmApiKey(key)
+        setLlmProvider(provider)
+        setKeySaved(!!key)
+      } catch {
+        setKeySaved(false)
+      }
+    })()
   }
 
   const login = (data: LoginData) => {
@@ -132,6 +170,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setUser(nextUser)
     setLoggedIn(true)
     setShowKyds(true)
+    void (async () => {
+      const fromServer = await fetchStoredLlmKey()
+      if (fromServer) {
+        setLlmApiKey(fromServer.apiKey)
+        setLlmProvider(fromServer.provider)
+        setSettings(fromServer)
+        setKeySaved(!!fromServer.apiKey)
+      }
+    })()
   }
 
   const signOut = () => {

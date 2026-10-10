@@ -46,9 +46,31 @@ def get_own_latest_kyds_entry(conn, user_email):
     console."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute("""
-            SELECT id, responses, created_at FROM kyds_entries
+            SELECT id, responses, created_at, updated_at FROM kyds_entries
             WHERE user_email = %s
             ORDER BY created_at DESC LIMIT 1
         """, (user_email,))
         row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def update_kyds_entry(conn, entry_id, user_email, responses):
+    """Update ``responses`` on an existing KYDS row owned by ``user_email``.
+
+    Returns the updated row dict, or None if the id is missing or belongs to
+    someone else (caller should treat that as 404).
+    """
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            UPDATE kyds_entries
+               SET responses = %s,
+                   updated_at = NOW()
+             WHERE id = %s AND user_email = %s
+         RETURNING id, responses, created_at, updated_at
+            """,
+            (json.dumps(responses), entry_id, user_email),
+        )
+        row = cur.fetchone()
+    conn.commit()
     return dict(row) if row else None

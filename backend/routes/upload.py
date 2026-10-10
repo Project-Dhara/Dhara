@@ -5,7 +5,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
-from core.deps import LLM_KEY_HEADER, require_user
+from core.deps import require_user, resolve_llm_credentials
 from data_ingestion import resolve_source_type
 from pdf.pdf_jobs import (
     _pdf_jobs_lock,
@@ -44,7 +44,7 @@ async def unified_upload(
         )
 
     job_id = uuid.uuid4().hex
-    api_key = request.headers.get(LLM_KEY_HEADER, "").strip() or None
+    api_key, _provider = resolve_llm_credentials(request, user_email)
 
     queue_extraction_job(
         job_id=job_id,

@@ -141,8 +141,21 @@ def init_schema(conn):
             )
         """)
         cur.execute("""
+            ALTER TABLE kyds_entries ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ
+        """)
+        cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_kyds_entries_created_at
                 ON kyds_entries (created_at DESC)
+        """)
+        # Per-user LLM credentials — separate from users (not a column on users).
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS llm_api_keys (
+                user_email  TEXT PRIMARY KEY,
+                provider    TEXT,
+                api_key     TEXT NOT NULL,
+                created_at  TIMESTAMPTZ DEFAULT NOW(),
+                updated_at  TIMESTAMPTZ DEFAULT NOW()
+            )
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS nco_2015_codes (

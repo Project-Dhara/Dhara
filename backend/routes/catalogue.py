@@ -11,7 +11,7 @@ from fastapi.responses import Response
 
 from catalogue import catalogue as _cat
 from catalogue.catalogue_matching import match_tables_to_metadata
-from core.deps import LLM_KEY_HEADER, _extractor_for, require_user
+from core.deps import _extractor_for, require_user, resolve_llm_credentials
 from core.gcs_utils import _upload_excel_to_gcs, _upload_original_sheet_to_gcs, _upload_table_excel_to_gcs
 from metadata.metadata_excel import parse_metadata_workbook, parse_concept_file
 from metadata.metadata_fill import (
@@ -32,7 +32,7 @@ router = APIRouter(tags=["Catalogue"])
 async def table_metadata(request: Request, user_email: str = Depends(require_user)):
     """LLM-based semantic category extraction from a table's raw structure."""
     data = await request.json()
-    extractor = _extractor_for(request)
+    extractor = _extractor_for(request, user_email)
     try:
         categories = extractor.extract_category_metadata(
             title=data.get("table_id", ""),
@@ -69,7 +69,7 @@ async def batch_extract(request: Request, files: list[UploadFile] = File(...), u
     concurrently (each file's sheets are also processed concurrently, see
     TableExtractor.extract_from_file) and returns one combined table list,
     each tagged with its source file."""
-    extractor = _extractor_for(request)
+    extractor = _extractor_for(request, user_email)
     for f in files:
         if not f.filename.lower().endswith(".xlsx"):
             raise HTTPException(400, f"Only .xlsx files are supported ({f.filename})")
@@ -127,7 +127,7 @@ async def batch_extract(request: Request, files: list[UploadFile] = File(...), u
     await asyncio.to_thread(
         _validate_tables,
         all_tables,
-        request.headers.get(LLM_KEY_HEADER, "").strip() or None,
+        resolve_llm_credentials(request, user_email)[0],
     )
 
     # Stage full tables server-side so batch-push can send slim refs only
@@ -244,8 +244,8 @@ async def batch_match(
     `dataset_files` is accepted for backwards compatibility but no longer
     triggers autofill here."""
     tables = _json.loads(tables_json)
-    # Same header as PDF grouping — browser LLM key preferred over env.
-    api_key = request.headers.get(LLM_KEY_HEADER, "").strip() or None
+    # Header overrides; else the caller's stored llm_api_keys row.
+    api_key, _provider = resolve_llm_credentials(request, user_email)
 
     metadata_payloads = []
     if metadata_files:
@@ -288,7 +288,7 @@ async def fill_group_metadata(request: Request, user_email: str = Depends(requir
       standard? — `nmds` (default) or `sdg` for SDG indicator fields
       dataset_files_b64? — optional { filename: base64 } map of workbook bytes
     """
-    extractor = _extractor_for(request)
+    extractor = _extractor_for(request, user_email)
     try:
         body = await request.json()
     except Exception:
@@ -761,7 +761,7 @@ async def fill_definitions(request: Request, user_email: str = Depends(require_u
     if not isinstance(columns, list):
         raise HTTPException(400, "columns must be a list")
     allow_occupation = bool(data.get("allow_occupation"))
-    extractor = _extractor_for(request)
+    extractor = _extractor_for(request, user_email)
     if extractor.skip_llm:
         raise HTTPException(400, "Configure an LLM key in Settings to fill definitions.")
 
@@ -914,7 +914,7 @@ async def match_nco(request: Request, user_email: str = Depends(require_user)):
         s = str(v).strip() if v is not None else ""
         if s and s not in unique:
             unique.append(s)
-    extractor = _extractor_for(request)
+    extractor = _extractor_for(request, user_email)
 
     def _run():
         conn = _cat.get_connection()

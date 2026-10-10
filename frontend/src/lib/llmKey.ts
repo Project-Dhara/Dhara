@@ -1,7 +1,7 @@
-// The user's own LLM API key (and chosen provider), entered in Settings.
-// Persisted in localStorage so it survives reloads; sent to the backend on
-// every LLM-backed request instead of relying on the backend's own .env
-// key/SKIP_LLM toggle.
+// The user's LLM API key (and chosen provider). Persisted in Postgres via
+// GET/POST /api/llm-key. localStorage is a short-lived cache so request
+// headers stay available before the server round-trip completes; AppContext
+// treats the API as the source of truth after login.
 const STORAGE_KEY = 'dhara.llmApiKey'
 const PROVIDER_STORAGE_KEY = 'dhara.llmProvider'
 export const LLM_KEY_HEADER = 'X-Llm-Api-Key'

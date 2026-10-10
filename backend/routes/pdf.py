@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 
 from catalogue import catalogue as _cat
-from core.deps import LLM_KEY_HEADER, require_user
+from core.deps import require_user, resolve_llm_credentials
 from pdf.pdf_jobs import (
     _get_pdf_bytes,
     _get_pdf_job,
@@ -46,9 +46,9 @@ async def pdf_upload(request: Request, file: UploadFile = File(...), user_email:
 
     job_id = uuid.uuid4().hex
 
-    # Settings-scoped key only (X-Llm-Api-Key). Optional — without it, PDF
-    # extraction falls back to heuristics (no server OPENAI_API_KEY fallback).
-    api_key = request.headers.get(LLM_KEY_HEADER, "").strip() or None
+    # Header X-Llm-Api-Key overrides; else the caller's stored llm_api_keys row.
+    # Optional — without a key, PDF extraction falls back to heuristics.
+    api_key, _provider = resolve_llm_credentials(request, user_email)
 
     queue_extraction_job(
         job_id=job_id,
@@ -477,7 +477,7 @@ async def pdf_persist_approved(job_id: str, request: Request, user_email: str = 
     from pdf import pdf_store
     from pdf import pdf_grouping
 
-    api_key = request.headers.get(LLM_KEY_HEADER, "").strip() or None
+    api_key, _provider = resolve_llm_credentials(request, user_email)
     body = {}
     try:
         body = await request.json()
@@ -580,7 +580,7 @@ async def pdf_propose_grouping(job_id: str, request: Request, user_email: str = 
     from pdf import pdf_store
     from pdf import pdf_grouping
 
-    api_key = request.headers.get(LLM_KEY_HEADER, "").strip() or None
+    api_key, _provider = resolve_llm_credentials(request, user_email)
     body = {}
     try:
         body = await request.json()
