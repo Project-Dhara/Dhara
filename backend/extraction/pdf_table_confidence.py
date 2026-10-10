@@ -473,6 +473,8 @@ def classify_page(candidates: List[Dict[str, Any]]) -> Tuple[str, str, Dict[str,
     ruled = [c for c in candidates if c["method"] == "pymupdf_lines_strict"]
     if not ruled:
         ruled = [c for c in candidates if c["method"] == "pymupdf_lines"]
+    if not ruled:
+        ruled = [c for c in candidates if c.get("method") in ("excel_grid", "csv_grid")]
 
     if not ruled:
         return "llm", "no ruled-border candidate (should not happen post-filter)", {}
@@ -487,7 +489,10 @@ def classify_page(candidates: List[Dict[str, Any]]) -> Tuple[str, str, Dict[str,
         if bucket != "high":
             return bucket, reason, info
 
-    label = "lines_strict" if ruled[0]["method"] == "pymupdf_lines_strict" else "lines"
+    method0 = str(ruled[0].get("method") or "")
+    if method0 in ("excel_grid", "csv_grid"):
+        return "high", f"all {method0} tables pass structural checks", last_info
+    label = "lines_strict" if method0 == "pymupdf_lines_strict" else "lines"
     return "high", f"all {label} tables pass structural checks", last_info
 
 

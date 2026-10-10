@@ -51,6 +51,7 @@ def init_pdf_schema(conn) -> None:
             "ALTER TABLE pdf_jobs ADD COLUMN IF NOT EXISTS pdf_bytes BYTEA",
             "ALTER TABLE pdf_jobs ADD COLUMN IF NOT EXISTS created_at_epoch DOUBLE PRECISION",
             "ALTER TABLE pdf_jobs ADD COLUMN IF NOT EXISTS pipeline_step INTEGER",
+            "ALTER TABLE pdf_jobs ADD COLUMN IF NOT EXISTS source_type TEXT",
             """
             CREATE INDEX IF NOT EXISTS idx_pdf_jobs_user_updated
                 ON pdf_jobs (user_email, updated_at DESC)
@@ -181,7 +182,7 @@ def upsert_job(conn, *, job_id: str, user_email: str, filename: Optional[str], s
 _WORKING_JOB_SELECT = """
     job_id, user_email, filename, status, stage, percent, message, error,
     result, reviews, deleted_table_ids, grouping_status, pipeline_step,
-    created_at, created_at_epoch, updated_at
+    source_type, created_at, created_at_epoch, updated_at
 """
 
 
@@ -226,6 +227,7 @@ def _row_to_working_job(row: dict) -> dict:
         "deleted_table_ids": _json_obj(row.get("deleted_table_ids"), []) or [],
         "grouping_status": row.get("grouping_status"),
         "pipeline_step": int(row["pipeline_step"]) if row.get("pipeline_step") is not None else None,
+        "source_type": row.get("source_type") or "pdf",
     }
 
 
@@ -249,11 +251,12 @@ def save_working_job(
                 """
                 INSERT INTO pdf_jobs (
                     job_id, user_email, filename, status, stage, percent, message, error,
-                    result, reviews, deleted_table_ids, pdf_bytes, created_at_epoch, updated_at
+                    result, reviews, deleted_table_ids, pdf_bytes, source_type,
+                    created_at_epoch, updated_at
                 )
                 VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, NOW()
+                    %s, %s, %s, %s, %s, %s, NOW()
                 )
                 ON CONFLICT (job_id) DO UPDATE SET
                     user_email = EXCLUDED.user_email,
@@ -267,6 +270,7 @@ def save_working_job(
                     reviews = EXCLUDED.reviews,
                     deleted_table_ids = EXCLUDED.deleted_table_ids,
                     pdf_bytes = EXCLUDED.pdf_bytes,
+                    source_type = COALESCE(EXCLUDED.source_type, pdf_jobs.source_type),
                     created_at_epoch = COALESCE(pdf_jobs.created_at_epoch, EXCLUDED.created_at_epoch),
                     updated_at = NOW()
                 """,
@@ -283,6 +287,7 @@ def save_working_job(
                     psycopg2.extras.Json(reviews),
                     psycopg2.extras.Json(deleted),
                     None if clear_pdf_bytes else psycopg2.Binary(pdf_bytes),
+                    job.get("source_type") or "pdf",
                     created_epoch,
                 ),
             )
@@ -291,11 +296,11 @@ def save_working_job(
                 """
                 INSERT INTO pdf_jobs (
                     job_id, user_email, filename, status, stage, percent, message, error,
-                    result, reviews, deleted_table_ids, created_at_epoch, updated_at
+                    result, reviews, deleted_table_ids, source_type, created_at_epoch, updated_at
                 )
                 VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, NOW()
+                    %s, %s, %s, %s, %s, NOW()
                 )
                 ON CONFLICT (job_id) DO UPDATE SET
                     user_email = EXCLUDED.user_email,
@@ -308,6 +313,7 @@ def save_working_job(
                     result = EXCLUDED.result,
                     reviews = EXCLUDED.reviews,
                     deleted_table_ids = EXCLUDED.deleted_table_ids,
+                    source_type = COALESCE(EXCLUDED.source_type, pdf_jobs.source_type),
                     created_at_epoch = COALESCE(pdf_jobs.created_at_epoch, EXCLUDED.created_at_epoch),
                     updated_at = NOW()
                 """,
@@ -323,6 +329,7 @@ def save_working_job(
                     psycopg2.extras.Json(result) if result is not None else None,
                     psycopg2.extras.Json(reviews),
                     psycopg2.extras.Json(deleted),
+                    job.get("source_type") or "pdf",
                     created_epoch,
                 ),
             )

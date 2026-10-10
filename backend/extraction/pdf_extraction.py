@@ -621,17 +621,22 @@ def _ruled_tables_from_candidates(
 ) -> List[Dict[str, Any]]:
     """Build table dicts from ruled-border candidates (no LLM)."""
     candidates = dedupe_candidates_by_bbox(list(candidates or []))
-    has_strict = any(c.get("method") == "pymupdf_lines_strict" for c in candidates)
-    ruled_methods = {"pymupdf_lines_strict"} if has_strict else {"pymupdf_lines"}
+    spreadsheet = {c.get("method") for c in candidates} & {"excel_grid", "csv_grid"}
+    if spreadsheet:
+        ruled_methods = spreadsheet
+        ordered = [c for c in candidates if c.get("method") in ruled_methods]
+    else:
+        has_strict = any(c.get("method") == "pymupdf_lines_strict" for c in candidates)
+        ruled_methods = {"pymupdf_lines_strict"} if has_strict else {"pymupdf_lines"}
+        ordered = [
+            c for c in candidates
+            if c.get("method") in ruled_methods
+        ] + (
+            [c for c in candidates if c.get("method") == "pymupdf_lines"]
+            if has_strict else []
+        )
     tables: List[Dict[str, Any]] = []
     taken_bboxes: List[List[float]] = []
-    ordered = [
-        c for c in candidates
-        if c.get("method") in ruled_methods
-    ] + (
-        [c for c in candidates if c.get("method") == "pymupdf_lines"]
-        if has_strict else []
-    )
     seen: set = set()
     for c in ordered:
         cid = id(c)
@@ -657,6 +662,10 @@ def _ruled_tables_from_candidates(
             outline_sections=outline_sections,
         )
         table["page"] = page_num
+        if c.get("sheet"):
+            table["sheet"] = c.get("sheet")
+        if c.get("source_file"):
+            table["source_file"] = c.get("source_file")
         if bbox_f:
             table["bbox"] = bbox_f
         if force_review:
@@ -3339,68 +3348,57 @@ def _log_representative_examples(llm_results: Dict[int, Dict[str, Any]], high_re
         log("  (no LLM-classified tables to show examples from)")
 
 
-def run_pipeline(pdf_path: Path, on_progress: Optional[Callable[[str, int, str], None]] = None,
-                  api_key: Optional[str] = None) -> Dict[int, Dict[str, Any]]:
-    """Programmatic entry point for running the full pipeline on an arbitrary
-    PDF (used by the /api/pdf/* endpoints in main.py for a user-uploaded
-    file). Mirrors main()'s CLI orchestration but takes an explicit path,
-    returns the validated-by-page dict directly instead of writing a JSON
-    file, and reports coarse progress via on_progress(stage, percent, message)
-    so a caller (e.g. a FastAPI background job) can surface a progress bar.
-
-    Runs synchronously and blocks for as long as the pipeline takes (minutes,
-    for a large PDF) -- callers on an event loop must wrap this in
-    asyncio.to_thread rather than awaiting it directly."""
+def run_post_extraction_validation(
+    pages_grouped: Dict[int, List[Dict[str, Any]]],
+    page_text: Dict[int, str],
+    *,
+    pdf_path: Optional[Path] = None,
+    outline_index: Optional[Dict[int, List[str]]] = None,
+    api_key: Optional[str] = None,
+    on_progress: Optional[Callable[[str, int, str], None]] = None,
+) -> Dict[int, Dict[str, Any]]:
+    """Shared confidence split + LLM validation (PDF, Excel, CSV after ingest)."""
 
     def progress(stage: str, percent: int, message: str) -> None:
         log(message)
         if on_progress:
             on_progress(stage, percent, message)
 
-    progress("classify", 2, f"Scanning {pdf_path.name} for text-bearing pages")
-    text_pages, page_text = classify_pages(pdf_path)
-    progress("classify", 10, f"{len(text_pages)} text-bearing page(s) found")
-
-    progress("extract", 10, f"Extracting tables from {len(text_pages)} page(s)")
-    all_tables = extract_all_tables(
-        pdf_path, text_pages,
-        progress_cb=lambda done, total: progress("extract", 10 + int(35 * done / total), f"Extracted {done}/{total} page(s)"),
-    )
-    progress("extract", 45, f"{len(all_tables)} table candidate(s) found")
-
-    pages_grouped = filter_candidate_pages(group_by_page(all_tables))
-    pages_grouped = resolve_dual_column_pages(pdf_path, pages_grouped, page_text)
-    outline_index = build_pdf_outline_index(pdf_path)
+    outline_index = outline_index or {}
     high_results, llm_pages, reason_counts = split_by_confidence(
         pages_grouped,
         page_text,
         pdf_path=pdf_path,
         outline_index=outline_index,
     )
-    progress("classify_confidence", 55,
-              f"{len(high_results)} page(s) auto-accepted, {len(llm_pages)} page(s) need AI validation")
+    progress(
+        "classify_confidence",
+        55,
+        f"{len(high_results)} unit(s) auto-accepted, {len(llm_pages)} unit(s) need AI validation",
+    )
 
     validated_by_page: Dict[int, Dict[str, Any]] = dict(high_results)
     if llm_pages:
         key = (api_key or "").strip() or None
         if key:
             llm_results = validate_all_pages_batched(
-                llm_pages, page_text, api_key=key,
+                llm_pages,
+                page_text,
+                api_key=key,
                 progress_cb=lambda done, total: progress(
                     "validate",
                     55 + int(45 * done / total),
-                    f"Validated {done}/{total} page(s)",
+                    f"Validated {done}/{total} unit(s)",
                 ),
             )
             validated_by_page.update(llm_results)
-            # Keep ruled-grid tables when LLM auth/quota/parse fails or returns [].
             missing = _llm_pages_missing_tables(llm_pages, llm_results)
             if missing:
                 progress(
                     "validate",
                     90,
-                    f"LLM returned no tables for {len(missing)} page(s) — "
-                    f"keeping ruled-border extractions for review",
+                    f"LLM returned no tables for {len(missing)} unit(s) — "
+                    f"keeping grid extractions for review",
                 )
                 heuristic = heuristic_accept_pages(
                     missing,
@@ -3414,7 +3412,7 @@ def run_pipeline(pdf_path: Path, on_progress: Optional[Callable[[str, int, str],
             progress(
                 "validate",
                 60,
-                f"No MEITY-empanelled LLM key — heuristic-accepting {len(llm_pages)} page(s) for review",
+                f"No MEITY-empanelled LLM key — heuristic-accepting {len(llm_pages)} unit(s) for review",
             )
             heuristic = heuristic_accept_pages(
                 llm_pages,
@@ -3423,10 +3421,64 @@ def run_pipeline(pdf_path: Path, on_progress: Optional[Callable[[str, int, str],
                 outline_index=outline_index,
             )
             validated_by_page.update(heuristic)
-            progress("validate", 95, f"Heuristic-accepted {len(heuristic)} page(s)")
+            progress("validate", 95, f"Heuristic-accepted {len(heuristic)} unit(s)")
 
-    progress("done", 100, f"Pipeline complete -- {len(validated_by_page)} page(s) with tables")
+    progress("done", 100, f"Pipeline complete -- {len(validated_by_page)} unit(s) with tables")
     return dict(sorted(validated_by_page.items()))
+
+
+def run_pdf_extraction(
+    pdf_path: Path,
+    on_progress: Optional[Callable[[str, int, str], None]] = None,
+) -> Tuple[Dict[int, List[Dict[str, Any]]], Dict[int, str], Dict[int, List[str]]]:
+    """PyMuPDF extraction only: page scan → table candidates (no confidence / LLM)."""
+
+    def progress(stage: str, percent: int, message: str) -> None:
+        log(message)
+        if on_progress:
+            on_progress(stage, percent, message)
+
+    progress("classify", 2, f"Scanning {pdf_path.name} for text-bearing pages")
+    text_pages, page_text = classify_pages(pdf_path)
+    progress("classify", 10, f"{len(text_pages)} text-bearing page(s) found")
+
+    progress("extract", 10, f"Extracting tables from {len(text_pages)} page(s)")
+    all_tables = extract_all_tables(
+        pdf_path,
+        text_pages,
+        progress_cb=lambda done, total: progress(
+            "extract", 10 + int(35 * done / total), f"Extracted {done}/{total} page(s)"
+        ),
+    )
+    progress("extract", 45, f"{len(all_tables)} table candidate(s) found")
+
+    pages_grouped = filter_candidate_pages(group_by_page(all_tables))
+    pages_grouped = resolve_dual_column_pages(pdf_path, pages_grouped, page_text)
+    outline_index = build_pdf_outline_index(pdf_path)
+    return pages_grouped, page_text, outline_index
+
+
+def run_pipeline(pdf_path: Path, on_progress: Optional[Callable[[str, int, str], None]] = None,
+                  api_key: Optional[str] = None) -> Dict[int, Dict[str, Any]]:
+    """Programmatic entry point for running the full pipeline on an arbitrary
+    PDF (used by the /api/pdf/* endpoints in main.py for a user-uploaded
+    file). Mirrors main()'s CLI orchestration but takes an explicit path,
+    returns the validated-by-page dict directly instead of writing a JSON
+    file, and reports coarse progress via on_progress(stage, percent, message)
+    so a caller (e.g. a FastAPI background job) can surface a progress bar.
+
+    Runs synchronously and blocks for as long as the pipeline takes (minutes,
+    for a large PDF) -- callers on an event loop must wrap this in
+    asyncio.to_thread rather than awaiting it directly."""
+    pages_grouped, page_text, outline_index = run_pdf_extraction(pdf_path, on_progress=on_progress)
+    return run_post_extraction_validation(
+        pages_grouped,
+        page_text,
+        pdf_path=pdf_path,
+        outline_index=outline_index,
+        api_key=api_key,
+        on_progress=on_progress,
+    )
 
 
 # ── Orchestration ─────────────────────────────────────────────────────────

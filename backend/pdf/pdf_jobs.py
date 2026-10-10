@@ -18,7 +18,7 @@ import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 from catalogue import catalogue as _cat
-from extraction import pdf_extraction as _pdf_pipeline
+from data_ingestion import resolve_source_type, run_upload_pipeline
 from pdf import pdf_store as _pdf_store
 
 _pdf_jobs: Dict[str, Dict[str, Any]] = {}
@@ -129,15 +129,45 @@ def _pdf_job_public(job: Dict[str, Any]) -> Dict[str, Any]:
     return public
 
 
-def _run_pdf_job(job_id: str, pdf_bytes: bytes, api_key: Optional[str]) -> None:
-    """Runs synchronously (called via asyncio.to_thread from the upload
-    endpoint) -- this thread just blocks for the pipeline's duration while
-    the event loop keeps serving other requests, including this job's own
-    status-polling requests from the frontend.
+_SUFFIX_BY_TYPE = {"pdf": ".pdf", "excel": ".xlsx", "csv": ".csv"}
 
-    Writes an ephemeral tempfile for pymupdf (deleted in finally); durable
-    state is Postgres only.
-    """
+
+def queue_extraction_job(
+    *,
+    job_id: str,
+    filename: str,
+    user_email: str,
+    source_type: str,
+    file_bytes: bytes,
+) -> None:
+    """Register an in-memory job and persist initial state (caller starts the worker)."""
+    with _pdf_jobs_lock:
+        _pdf_jobs[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "stage": "queued",
+            "percent": 0,
+            "message": "Queued",
+            "filename": filename,
+            "user_email": user_email,
+            "source_type": source_type,
+            "created_at": time.time(),
+            "result": None,
+            "error": None,
+            "reviews": {},
+            "deleted_table_ids": [],
+        }
+        store_bytes = file_bytes if source_type == "pdf" else None
+        _save_pdf_job(_pdf_jobs[job_id], pdf_bytes=store_bytes)
+
+
+def _run_extraction_job(
+    job_id: str,
+    file_bytes: bytes,
+    source_type: str,
+    api_key: Optional[str],
+) -> None:
+    """Background worker: type-specific ingest → shared confidence + LLM validation."""
     last_flush = {"stage": None, "bucket": -1}
 
     def on_progress(stage: str, percent: int, message: str) -> None:
@@ -151,20 +181,32 @@ def _run_pdf_job(job_id: str, pdf_bytes: bytes, api_key: Optional[str]) -> None:
                     last_flush["bucket"] = bucket
                     _save_pdf_job(job)
 
+    suffix = _SUFFIX_BY_TYPE.get(source_type, ".bin")
     tmp_path: Optional[pathlib.Path] = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp.write(pdf_bytes)
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(file_bytes)
             tmp_path = pathlib.Path(tmp.name)
-        result = _pdf_pipeline.run_pipeline(tmp_path, on_progress=on_progress, api_key=api_key)
+        result = run_upload_pipeline(
+            tmp_path,
+            source_type,
+            api_key=api_key,
+            on_progress=on_progress,
+        )
         with _pdf_jobs_lock:
             job = _pdf_jobs.get(job_id)
             if job is not None:
-                job.update(status="done", stage="done", percent=100, message="Complete", result=result)
-                # Keep source PDF bytes in Postgres for review snapshots.
-                _save_pdf_job(job, pdf_bytes=pdf_bytes)
+                job.update(
+                    status="done",
+                    stage="done",
+                    percent=100,
+                    message="Complete",
+                    result=result,
+                )
+                pdf_store_bytes = file_bytes if source_type == "pdf" else None
+                _save_pdf_job(job, pdf_bytes=pdf_store_bytes)
     except Exception as e:
-        print(f"PDF job {job_id} failed: {e}")
+        print(f"Extraction job {job_id} ({source_type}) failed: {e}")
         with _pdf_jobs_lock:
             job = _pdf_jobs.get(job_id)
             if job is not None:
@@ -176,6 +218,11 @@ def _run_pdf_job(job_id: str, pdf_bytes: bytes, api_key: Optional[str]) -> None:
                 tmp_path.unlink(missing_ok=True)
             except Exception:
                 pass
+
+
+def _run_pdf_job(job_id: str, pdf_bytes: bytes, api_key: Optional[str]) -> None:
+    """Backward-compatible entry for legacy PDF upload route."""
+    _run_extraction_job(job_id, pdf_bytes, "pdf", api_key)
 
 
 def _normalize_pdf_header_name(name: Any) -> str:

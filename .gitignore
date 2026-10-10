@@ -72,3 +72,6 @@ frontend/tsconfig.tsbuildinfo
 # Generated test/tool output — not source
 backend/pdf_pipeline_test_report.json
 .playwright-mcp/
+
+Testing files
+.venv312

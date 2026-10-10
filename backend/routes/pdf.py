@@ -2,7 +2,6 @@
 import asyncio
 import io
 import pathlib
-import time
 import uuid
 import zipfile
 from typing import Any, List
@@ -24,8 +23,9 @@ from pdf.pdf_jobs import (
     _pdf_table_header_key,
     _pdf_table_sort_key,
     _pdf_tables_from_job,
-    _run_pdf_job,
+    _run_extraction_job,
     _save_pdf_job,
+    queue_extraction_job,
 )
 from extraction.table_export import safe_download_stem, table_to_excel_bytes
 
@@ -50,25 +50,16 @@ async def pdf_upload(request: Request, file: UploadFile = File(...), user_email:
     # extraction falls back to heuristics (no server OPENAI_API_KEY fallback).
     api_key = request.headers.get(LLM_KEY_HEADER, "").strip() or None
 
-    with _pdf_jobs_lock:
-        _pdf_jobs[job_id] = {
-            "job_id": job_id,
-            "status": "queued",
-            "stage": "queued",
-            "percent": 0,
-            "message": "Queued",
-            "filename": file.filename,
-            "user_email": user_email,
-            "created_at": time.time(),
-            "result": None,
-            "error": None,
-            "reviews": {},
-            "deleted_table_ids": [],
-        }
-        _save_pdf_job(_pdf_jobs[job_id], pdf_bytes=content)
+    queue_extraction_job(
+        job_id=job_id,
+        filename=file.filename,
+        user_email=user_email,
+        source_type="pdf",
+        file_bytes=content,
+    )
 
-    asyncio.create_task(asyncio.to_thread(_run_pdf_job, job_id, content, api_key))
-    return {"job_id": job_id}
+    asyncio.create_task(asyncio.to_thread(_run_extraction_job, job_id, content, "pdf", api_key))
+    return {"job_id": job_id, "source_type": "pdf"}
 
 
 @router.get("/api/pdf/jobs", include_in_schema=False)

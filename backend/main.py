@@ -18,6 +18,7 @@ from routes import catalogue as routes_catalogue
 from routes import dashboard as routes_dashboard
 from routes import kyds as routes_kyds
 from routes import pdf as routes_pdf
+from routes import upload as routes_upload
 
 OPENAPI_TAGS = [
     {
@@ -31,6 +32,7 @@ OPENAPI_TAGS = [
     {"name": "KYDS", "description": "Know Your Dataset survey. JWT required."},
     {"name": "Catalogue", "description": "Excel/SQL extract → match → classify → publish. JWT required."},
     {"name": "PDF", "description": "PDF extract → preview → grouping. JWT required."},
+    {"name": "Upload", "description": "Unified upload → data ingestion by source type → extraction/validation job. JWT required."},
     {"name": "Dashboard", "description": "Workspace readiness rows. JWT required."},
     {"name": "Access", "description": "Published catalogue query API (v1) for apps and agents. JWT required. MCP tools mirror these routes."},
 ]
@@ -79,6 +81,7 @@ app.include_router(routes_auth.router)
 app.include_router(routes_kyds.router)
 app.include_router(routes_catalogue.router)
 app.include_router(routes_pdf.router)
+app.include_router(routes_upload.router)
 app.include_router(routes_dashboard.router)
 app.include_router(routes_access.router)
 
