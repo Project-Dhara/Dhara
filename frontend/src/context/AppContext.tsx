@@ -26,6 +26,13 @@ type LoginData = {
 
 type Settings = { provider: string; apiKey: string }
 
+type LlmKeyStatus = {
+  configured: boolean
+  provider: string
+  apiKey: string
+  cryptoError: boolean
+}
+
 type AppContextValue = {
   loggedIn: boolean
   authChecked: boolean
@@ -35,6 +42,7 @@ type AppContextValue = {
   setShowKyds: (v: boolean) => void
   settings: Settings
   keySaved: boolean
+  llmCryptoError: boolean
   onSettingsChange: (next: Settings) => void
   onSaveKey: (override?: Settings) => void
   login: (data: LoginData) => void
@@ -61,14 +69,28 @@ function normalizeRole(raw: string | undefined | null): string {
   return raw || ''
 }
 
-async function fetchLlmKeyStatus(): Promise<{ configured: boolean; provider: string } | null> {
+async function fetchLlmKeyStatus(): Promise<LlmKeyStatus | null> {
   const res = await fetch('/api/llm-key', withAuthHeaders())
   if (!res.ok) return null
   const data = await res.json()
   return {
     configured: Boolean(data.configured),
     provider: normalizeProvider(String(data.provider || 'openai')),
+    apiKey: typeof data.api_key === 'string' ? data.api_key : '',
+    cryptoError: Boolean(data.crypto_error),
   }
+}
+
+function applyLlmStatus(
+  status: LlmKeyStatus,
+  setSettings: (s: Settings) => void,
+  setKeySaved: (v: boolean) => void,
+  setLlmCryptoError: (v: boolean) => void,
+) {
+  setLlmProvider(status.provider)
+  setSettings({ provider: status.provider, apiKey: status.apiKey })
+  setKeySaved(status.configured)
+  setLlmCryptoError(status.cryptoError)
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -78,6 +100,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [showKyds, setShowKyds] = useState(false)
   const [settings, setSettings] = useState<Settings>({ provider: 'openai', apiKey: '' })
   const [keySaved, setKeySaved] = useState(false)
+  const [llmCryptoError, setLlmCryptoError] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -116,9 +139,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         const status = await fetchLlmKeyStatus()
         if (!cancelled && status) {
-          setLlmProvider(status.provider)
-          setSettings({ provider: status.provider, apiKey: '' })
-          setKeySaved(status.configured)
+          applyLlmStatus(status, setSettings, setKeySaved, setLlmCryptoError)
         }
       } catch {
         clearSession()
@@ -138,6 +159,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const handleSettingsChange = (next: Settings) => {
     setSettings(next)
     if (next.apiKey) setKeySaved(false)
+    setLlmCryptoError(false)
   }
 
   const handleSaveKey = (override?: Settings) => {
@@ -159,12 +181,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
           setKeySaved(false)
           return
         }
-        const data = await res.json().catch(() => ({}))
-        setLlmProvider(provider)
-        // Clear the input — the server holds the secret.
-        setSettings({ provider, apiKey: '' })
-        setKeySaved(Boolean(data.configured) || Boolean(key))
         clearLegacyLlmKeyStorage()
+        // Reload from DB so the visible key always comes from Postgres.
+        const status = await fetchLlmKeyStatus()
+        if (status) {
+          applyLlmStatus(status, setSettings, setKeySaved, setLlmCryptoError)
+        } else {
+          setLlmProvider(provider)
+          setSettings({ provider, apiKey: key })
+          setKeySaved(Boolean(key))
+          setLlmCryptoError(false)
+        }
       } catch {
         setKeySaved(false)
       }
@@ -185,9 +212,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void (async () => {
       const status = await fetchLlmKeyStatus()
       if (status) {
-        setLlmProvider(status.provider)
-        setSettings({ provider: status.provider, apiKey: '' })
-        setKeySaved(status.configured)
+        applyLlmStatus(status, setSettings, setKeySaved, setLlmCryptoError)
       }
     })()
   }
@@ -198,6 +223,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setLlmProvider('')
     setSettings({ provider: 'openai', apiKey: '' })
     setKeySaved(false)
+    setLlmCryptoError(false)
     setLoggedIn(false)
     setShowKyds(false)
   }
@@ -205,7 +231,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value: AppContextValue = {
     loggedIn, authChecked, user, setUser,
     showKyds, setShowKyds,
-    settings, keySaved,
+    settings, keySaved, llmCryptoError,
     onSettingsChange: handleSettingsChange,
     onSaveKey: handleSaveKey,
     login, signOut,

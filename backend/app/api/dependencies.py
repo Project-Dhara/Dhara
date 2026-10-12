@@ -89,10 +89,14 @@ def resolve_llm_credentials(
         session.close()
 
 
-def _extractor_for(request: Request, user_email: str):
+def _extractor_for(
+    request: Request,
+    user_email: str,
+    db: Session | None = None,
+):
     from app.services.ingestion.wizard.extractor import TableExtractor
 
-    key, provider = resolve_llm_credentials(request, user_email)
+    key, provider = resolve_llm_credentials(request, user_email, db=db)
     return TableExtractor(api_key=key, skip_llm=not key, provider=provider)
 
 

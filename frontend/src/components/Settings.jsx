@@ -56,11 +56,20 @@ function defaultNameFromFile(file) {
   return file.name.replace(/\.csv$/i, '').replace(/[_-]+/g, ' ').trim()
 }
 
-// LLM provider/key + user info. API key/provider persist in Postgres via
-// GET/POST /api/llm-key (AppContext); classification standards also in Postgres.
+// LLM provider/key + user info. API key is loaded decrypted from Postgres via
+// GET /api/llm-key (AppContext); classification standards also in Postgres.
 const VALID_TABS = new Set(CONFIG_TABS.map((t) => t.key))
 
-export default function Settings({ settings, onSettingsChange, keySaved, onSaveKey, user, onUserChange, initialTab }) {
+export default function Settings({
+  settings,
+  onSettingsChange,
+  keySaved,
+  llmCryptoError = false,
+  onSaveKey,
+  user,
+  onUserChange,
+  initialTab,
+}) {
   const [local, setLocal] = useState(settings)
   const [standards, setStandards] = useState([])
   const [standardsLoading, setStandardsLoading] = useState(false)
@@ -80,8 +89,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
   const [savedMetadataStandard, setSavedMetadataStandard] = useState(getMetadataStandard)
   const [pickingFields, setPickingFields] = useState(false)
 
-  // AppContext restores the key from localStorage after mount — keep the form
-  // in sync so a Settings reload shows the saved key instead of an empty field.
+  // AppContext loads the decrypted key from GET /api/llm-key — keep the form in sync.
   useEffect(() => {
     setLocal(settings)
   }, [settings])
@@ -99,8 +107,20 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
   }
   const setUserField = (key) => (e) => onUserChange({ ...user, [key]: e.target.value })
 
-  const status = keySaved ? 'Key saved' : local.apiKey ? 'Unsaved changes' : 'No key configured'
-  const statusClass = keySaved ? 'settings-key-status-ok' : local.apiKey ? 'settings-key-status-warn' : 'settings-key-status-none'
+  const status = llmCryptoError
+    ? 'Stored key could not be decrypted — enter a new key'
+    : keySaved
+      ? 'Key saved'
+      : local.apiKey
+        ? 'Unsaved changes'
+        : 'No key configured'
+  const statusClass = llmCryptoError
+    ? 'settings-key-status-warn'
+    : keySaved
+      ? 'settings-key-status-ok'
+      : local.apiKey
+        ? 'settings-key-status-warn'
+        : 'settings-key-status-none'
 
   const datasetIdDirty = JSON.stringify(datasetIdConfig) !== JSON.stringify(savedDatasetIdConfig)
   const requiredFieldsDirty = JSON.stringify(extraRequiredFields) !== JSON.stringify(savedRequiredFields)
@@ -233,11 +253,12 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
             <label className={fieldLabelClass}>API key</label>
             <input
               className={inputClass}
-              type="password"
+              type="text"
               value={local.apiKey}
               onChange={setField('apiKey')}
-              placeholder={keySaved ? '•••••••• (enter a new key to replace)' : 'API key'}
+              placeholder={llmCryptoError ? 'Re-enter API key' : 'API key'}
               autoComplete="off"
+              spellCheck={false}
             />
           </div>
         </div>

@@ -8,13 +8,14 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
+from sqlalchemy.orm import Session
 
 from app.api.dependencies import (
     CurrentUser,
     _extractor_for,
+    get_db,
     require_user,
     require_user_email,
-    resolve_llm_credentials,
 )
 from app.core.permissions import MUTATING_ROLES, READ_ROLES, require_roles
 from app.db.repositories import kyds as kyds_repo
@@ -62,7 +63,11 @@ from app.services.metadata.table_id_title import _catalogue_table_title, _valida
 
 router = APIRouter(tags=["Catalogue"])
 @router.post("/api/catalogue/fill-definitions")
-async def fill_definitions(request: Request, user_email: str = Depends(require_user_email)):
+async def fill_definitions(
+    request: Request,
+    user_email: str = Depends(require_user_email),
+    db: Session = Depends(get_db),
+):
     """Fill classification definitions from values + catalogue/excel facts.
     Occupation columns are skipped by default (NCO matching owns those).
     Pass allow_occupation=true when no concordance is uploaded and the steward
@@ -75,7 +80,7 @@ async def fill_definitions(request: Request, user_email: str = Depends(require_u
     if not isinstance(columns, list):
         raise HTTPException(400, "columns must be a list")
     allow_occupation = bool(data.get("allow_occupation"))
-    extractor = _extractor_for(request, user_email)
+    extractor = _extractor_for(request, user_email, db=db)
     if extractor.skip_llm:
         raise HTTPException(400, "Configure an LLM key in Settings to fill definitions.")
 
@@ -194,7 +199,11 @@ async def delete_classification_standard_route(
 
 
 @router.post("/api/catalogue/match-nco")
-async def match_nco(request: Request, user_email: str = Depends(require_user_email)):
+async def match_nco(
+    request: Request,
+    user_email: str = Depends(require_user_email),
+    db: Session = Depends(get_db),
+):
     """Suggest the coarsest fitting NCO 2015 level (division, subdivision, or family).
     Does not return specific .xxxx job codes. Dynamic: alias → embed/fuzzy → LLM.
     Codes come from the classification standard selected in Settings."""
@@ -208,7 +217,7 @@ async def match_nco(request: Request, user_email: str = Depends(require_user_ema
         s = str(v).strip() if v is not None else ""
         if s and s not in unique:
             unique.append(s)
-    extractor = _extractor_for(request, user_email)
+    extractor = _extractor_for(request, user_email, db=db)
 
     def _run():
         with session_scope() as session:

@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
-from app.api.dependencies import CurrentUser, resolve_llm_credentials
+from app.api.dependencies import CurrentUser
 from app.core.permissions import MUTATING_ROLES, require_roles
 from app.services.ingestion.utils.source_type import resolve_source_type
 from app.workers.extraction_jobs import (
@@ -43,8 +43,8 @@ async def unified_upload(
         )
 
     job_id = uuid.uuid4().hex
-    api_key, _provider = resolve_llm_credentials(request, user.email)
 
+    # Worker decrypts the caller's stored llm_api_keys row at run time.
     queue_extraction_job(
         job_id=job_id,
         filename=filename,
@@ -56,6 +56,6 @@ async def unified_upload(
     )
 
     asyncio.create_task(
-        asyncio.to_thread(_run_extraction_job, job_id, content, source_type, api_key)
+        asyncio.to_thread(_run_extraction_job, job_id, content, source_type)
     )
     return {"job_id": job_id, "source_type": source_type}

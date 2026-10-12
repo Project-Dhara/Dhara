@@ -21,6 +21,8 @@ class LlmKeyStatus:
     configured: bool
     provider: str | None
     updated_at: str | None
+    api_key: str | None = None
+    crypto_error: bool = False
 
 
 def get(session: Session, user_email: str) -> LlmApiKey | None:
@@ -28,13 +30,35 @@ def get(session: Session, user_email: str) -> LlmApiKey | None:
 
 
 def get_status(session: Session, user_email: str) -> LlmKeyStatus:
+    """Status for the key owner: ``configured`` only when decrypt succeeds."""
     row = get(session, user_email)
     if not row or not (row.api_key or "").strip():
         return LlmKeyStatus(configured=False, provider=None, updated_at=None)
+    updated_at = row.updated_at.isoformat() if row.updated_at else None
+    provider = (row.provider or "").strip().lower() or None
+    raw = (row.api_key or "").strip()
+    if is_fernet_token(raw):
+        try:
+            plaintext = decrypt_secret(raw)
+        except CredentialCryptoError:
+            return LlmKeyStatus(
+                configured=False,
+                provider=provider,
+                updated_at=updated_at,
+                crypto_error=True,
+            )
+        return LlmKeyStatus(
+            configured=True,
+            provider=provider,
+            updated_at=updated_at,
+            api_key=plaintext,
+        )
+    # Legacy plaintext row — still usable until re-saved encrypted.
     return LlmKeyStatus(
         configured=True,
-        provider=row.provider,
-        updated_at=row.updated_at.isoformat() if row.updated_at else None,
+        provider=provider,
+        updated_at=updated_at,
+        api_key=raw,
     )
 
 
@@ -42,20 +66,10 @@ def get_decrypted(
     session: Session, user_email: str
 ) -> tuple[str | None, str | None]:
     """Return ``(api_key, provider)`` for server-side provider calls only."""
-    row = get(session, user_email)
-    if not row:
+    status = get_status(session, user_email)
+    if not status.configured or not status.api_key:
         return None, None
-    raw = (row.api_key or "").strip()
-    if not raw:
-        return None, None
-    provider = (row.provider or "").strip().lower() or None
-    if is_fernet_token(raw):
-        try:
-            return decrypt_secret(raw), provider
-        except CredentialCryptoError:
-            return None, None
-    # Legacy plaintext row — still usable until re-saved encrypted.
-    return raw, provider
+    return status.api_key, status.provider
 
 
 def upsert(

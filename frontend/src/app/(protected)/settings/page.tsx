@@ -6,7 +6,7 @@ import Settings from '../../../components/Settings'
 import { useApp } from '../../../context/AppContext'
 
 function SettingsPageInner() {
-  const { settings, onSettingsChange, keySaved, onSaveKey, user, setUser } = useApp()
+  const { settings, onSettingsChange, keySaved, llmCryptoError, onSaveKey, user, setUser } = useApp()
   const searchParams = useSearchParams()
   const initialTab = searchParams.get('tab') || undefined
   return (
@@ -14,6 +14,7 @@ function SettingsPageInner() {
       settings={settings}
       onSettingsChange={onSettingsChange}
       keySaved={keySaved}
+      llmCryptoError={llmCryptoError}
       onSaveKey={onSaveKey}
       user={user}
       onUserChange={setUser}

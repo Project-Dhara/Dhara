@@ -8,10 +8,12 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
+from sqlalchemy.orm import Session
 
 from app.api.dependencies import (
     CurrentUser,
     _extractor_for,
+    get_db,
     require_user,
     require_user_email,
     resolve_llm_credentials,
@@ -64,10 +66,14 @@ router = APIRouter(tags=["Catalogue"])
 
 
 @router.post("/api/table-metadata")
-async def table_metadata(request: Request, user_email: str = Depends(require_user_email)):
+async def table_metadata(
+    request: Request,
+    user_email: str = Depends(require_user_email),
+    db: Session = Depends(get_db),
+):
     """LLM-based semantic category extraction from a table's raw structure."""
     data = await request.json()
-    extractor = _extractor_for(request, user_email)
+    extractor = _extractor_for(request, user_email, db=db)
     try:
         categories = extractor.extract_category_metadata(
             title=data.get("table_id", ""),
@@ -99,12 +105,17 @@ async def parse_concept_metadata_file(file: UploadFile = File(...), user_email: 
 
 
 @router.post("/api/catalogue/batch-extract")
-async def batch_extract(request: Request, files: list[UploadFile] = File(...), user_email: str = Depends(require_user_email)):
+async def batch_extract(
+    request: Request,
+    files: list[UploadFile] = File(...),
+    user_email: str = Depends(require_user_email),
+    db: Session = Depends(get_db),
+):
     """Runs table extraction across multiple uploaded dataset workbooks
     concurrently (each file's sheets are also processed concurrently, see
     TableExtractor.extract_from_file) and returns one combined table list,
     each tagged with its source file."""
-    extractor = _extractor_for(request, user_email)
+    extractor = _extractor_for(request, user_email, db=db)
     for f in files:
         if not f.filename.lower().endswith(".xlsx"):
             raise HTTPException(400, f"Only .xlsx files are supported ({f.filename})")
@@ -162,7 +173,7 @@ async def batch_extract(request: Request, files: list[UploadFile] = File(...), u
     await asyncio.to_thread(
         _validate_tables,
         all_tables,
-        resolve_llm_credentials(request, user_email)[0],
+        resolve_llm_credentials(request, user_email, db=db)[0],
     )
 
     # Stage full tables server-side so batch-push can send slim refs only
@@ -263,6 +274,7 @@ async def batch_match(
     metadata_files: list[UploadFile] = File(None),
     dataset_files: list[UploadFile] = File(None),
     user_email: str = Depends(require_user_email),
+    db: Session = Depends(get_db),
 ):
     """Parses multiple metadata workbooks and matches them against a set of
     already-extracted tables. Returns a proposed mapping for review --
@@ -273,8 +285,8 @@ async def batch_match(
     `dataset_files` is accepted for backwards compatibility but no longer
     triggers autofill here."""
     tables = _json.loads(tables_json)
-    # Header overrides; else the caller's stored llm_api_keys row.
-    api_key, _provider = resolve_llm_credentials(request, user_email)
+    # Caller's decrypted llm_api_keys row (server-side only).
+    api_key, _provider = resolve_llm_credentials(request, user_email, db=db)
 
     metadata_payloads = []
     if metadata_files:
@@ -307,7 +319,11 @@ async def batch_match(
 
 
 @router.post("/api/catalogue/fill-group-metadata")
-async def fill_group_metadata(request: Request, user_email: str = Depends(require_user_email)):
+async def fill_group_metadata(
+    request: Request,
+    user_email: str = Depends(require_user_email),
+    db: Session = Depends(get_db),
+):
     """Stage 4 — after grouping is confirmed, fill empty catalogue metadata
     on each group from KYDS + in-memory table facts (and optional Excel
     workbook bytes if the client still has them).
@@ -317,7 +333,7 @@ async def fill_group_metadata(request: Request, user_email: str = Depends(requir
       standard? — `nmds` (default) or `sdg` for SDG indicator fields
       dataset_files_b64? — optional { filename: base64 } map of workbook bytes
     """
-    extractor = _extractor_for(request, user_email)
+    extractor = _extractor_for(request, user_email, db=db)
     try:
         body = await request.json()
     except Exception:

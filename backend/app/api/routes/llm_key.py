@@ -1,4 +1,4 @@
-"""GET/POST the authenticated caller's stored LLM API key (metadata only)."""
+"""GET/POST the authenticated caller's stored LLM API key."""
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
@@ -11,17 +11,26 @@ from app.db.session import get_db
 router = APIRouter(tags=["Settings"])
 
 
-@router.get("/api/llm-key", summary="Get LLM credential status")
+def _status_payload(status: llm_repo.LlmKeyStatus, *, extra: dict | None = None) -> dict:
+    body = {
+        "configured": status.configured,
+        "provider": status.provider,
+        "updated_at": status.updated_at,
+        "api_key": status.api_key if status.configured else None,
+        "crypto_error": status.crypto_error,
+    }
+    if extra:
+        body.update(extra)
+    return body
+
+
+@router.get("/api/llm-key", summary="Get LLM credential (decrypted for owner)")
 async def get_llm_key(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     status = llm_repo.get_status(db, user.email)
-    return {
-        "configured": status.configured,
-        "provider": status.provider,
-        "updated_at": status.updated_at,
-    }
+    return _status_payload(status)
 
 
 @router.post("/api/llm-key", summary="Save or clear stored LLM API key")
@@ -39,15 +48,17 @@ async def save_llm_key(
             provider = "openai" if provider.startswith("meity") else provider
     if not api_key:
         llm_repo.delete_key(db, user.email)
-        return {"status": "cleared", "configured": False, "provider": None}
+        return {
+            "status": "cleared",
+            "configured": False,
+            "provider": None,
+            "api_key": None,
+            "crypto_error": False,
+            "updated_at": None,
+        }
     try:
         llm_repo.upsert(db, user.email, api_key, provider)
     except CredentialCryptoError as e:
         raise HTTPException(500, str(e)) from e
     status = llm_repo.get_status(db, user.email)
-    return {
-        "status": "saved",
-        "configured": status.configured,
-        "provider": status.provider,
-        "updated_at": status.updated_at,
-    }
+    return _status_payload(status, extra={"status": "saved"})

@@ -11,8 +11,11 @@ from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 
+from sqlalchemy.orm import Session
+
 from app.api.dependencies import (
     CurrentUser,
+    get_db,
     require_user,
     require_user_email,
     resolve_llm_credentials,
@@ -67,10 +70,8 @@ async def pdf_upload(
 
     job_id = uuid.uuid4().hex
 
-    # Header X-Llm-Api-Key overrides; else the caller's stored llm_api_keys row.
+    # Worker decrypts the caller's stored llm_api_keys row at run time.
     # Optional — without a key, PDF extraction falls back to heuristics.
-    api_key, _provider = resolve_llm_credentials(request, user.email)
-
     queue_extraction_job(
         job_id=job_id,
         filename=file.filename,
@@ -81,7 +82,7 @@ async def pdf_upload(
         user_id=str(user.id),
     )
 
-    asyncio.create_task(asyncio.to_thread(_run_extraction_job, job_id, content, "pdf", api_key))
+    asyncio.create_task(asyncio.to_thread(_run_extraction_job, job_id, content, "pdf"))
     return {"job_id": job_id, "source_type": "pdf"}
 
 
@@ -491,7 +492,12 @@ async def pdf_download_tables_zip_selected(
 
 
 @router.post("/api/pdf/jobs/{job_id}/persist-approved")
-async def pdf_persist_approved(job_id: str, request: Request, user_email: str = Depends(require_user_email)):
+async def pdf_persist_approved(
+    job_id: str,
+    request: Request,
+    user_email: str = Depends(require_user_email),
+    db: Session = Depends(get_db),
+):
     """
     Continue from Preview: write approved tables to Postgres and propose
     title-based groups (same base-title rule as Excel; SDG jobs by goal).
@@ -503,7 +509,7 @@ async def pdf_persist_approved(job_id: str, request: Request, user_email: str = 
     from app.db import pdf_store
     from app.services.grouping import pdf_grouping
 
-    api_key, _provider = resolve_llm_credentials(request, user_email)
+    api_key, _provider = resolve_llm_credentials(request, user_email, db=db)
     body = {}
     try:
         body = await request.json()
@@ -595,12 +601,17 @@ async def pdf_get_grouping(job_id: str, user_email: str = Depends(require_user_e
 
 
 @router.post("/api/pdf/jobs/{job_id}/grouping/propose")
-async def pdf_propose_grouping(job_id: str, request: Request, user_email: str = Depends(require_user_email)):
+async def pdf_propose_grouping(
+    job_id: str,
+    request: Request,
+    user_email: str = Depends(require_user_email),
+    db: Session = Depends(get_db),
+):
     """Re-run automatic title-based grouping and overwrite saved groups."""
     from app.db import pdf_store
     from app.services.grouping import pdf_grouping
 
-    api_key, _provider = resolve_llm_credentials(request, user_email)
+    api_key, _provider = resolve_llm_credentials(request, user_email, db=db)
     body = {}
     try:
         body = await request.json()

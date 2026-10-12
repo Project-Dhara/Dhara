@@ -148,14 +148,45 @@ def queue_extraction_job(
         _save_pdf_job(_pdf_jobs[job_id], pdf_bytes=store_bytes)
 
 
+def _resolve_job_api_key(
+    job_id: str, legacy_api_key: Optional[str] = None
+) -> Optional[str]:
+    """Decrypt the job owner's stored LLM key at run time (DB is source of truth)."""
+    job = _get_pdf_job(job_id)
+    user_email = (job or {}).get("user_email") if job else None
+    if user_email:
+        try:
+            from app.services.credentials import service as credentials_service
+
+            with session_scope() as session:
+                key, _provider = credentials_service.resolve_for_user(
+                    session, user_email
+                )
+            if key:
+                return key
+        except Exception as e:
+            logger.warning(
+                "could not resolve LLM key for job %s (%s): %s",
+                job_id,
+                user_email,
+                e,
+            )
+    return (legacy_api_key or "").strip() or None
+
+
 def _run_extraction_job(
     job_id: str,
     file_bytes: bytes,
     source_type: str,
-    api_key: Optional[str],
+    api_key: Optional[str] = None,
 ) -> None:
-    """Background worker: ingest → shared confidence + LLM validation."""
+    """Background worker: ingest → shared confidence + LLM validation.
+
+    ``api_key`` is a legacy fallback when the job has no ``user_email``; the
+    worker prefers the decrypted key from Postgres for the job owner.
+    """
     last_flush = {"stage": None, "bucket": -1}
+    resolved_key = _resolve_job_api_key(job_id, api_key)
 
     def on_progress(stage: str, percent: int, message: str) -> None:
         with _pdf_jobs_lock:
@@ -179,7 +210,7 @@ def _run_extraction_job(
         result = run_upload_pipeline(
             tmp_path,
             source_type,
-            api_key=api_key,
+            api_key=resolved_key,
             on_progress=on_progress,
         )
         with _pdf_jobs_lock:

@@ -1,7 +1,8 @@
 """Encrypted LLM credential storage and status responses."""
 from __future__ import annotations
 
-import os
+from datetime import datetime, timezone
+from unittest.mock import MagicMock
 
 import pytest
 from cryptography.fernet import Fernet
@@ -54,26 +55,129 @@ def test_redact_secrets():
     assert "***" in out
 
 
-def test_llm_key_status_shape(fernet_env):
-    """Repository status never includes the raw key."""
-    from unittest.mock import MagicMock
-
+def test_get_status_includes_decrypted_api_key(fernet_env):
+    """Owner status includes plaintext after successful decrypt."""
+    from app.core.crypto import encrypt_secret
     from app.db.repositories import llm_keys as llm_repo
 
     session = MagicMock()
     row = MagicMock()
-    row.api_key = "gAAAA" + "x" * 80
+    row.api_key = encrypt_secret("sk-live-owner-key")
+    row.provider = "openai"
+    row.updated_at = datetime(2026, 1, 15, tzinfo=timezone.utc)
+
+    original = llm_repo.get
+    llm_repo.get = lambda _s, _e: row  # type: ignore
+    try:
+        status = llm_repo.get_status(session, "u@example.com")
+        key, provider = llm_repo.get_decrypted(session, "u@example.com")
+    finally:
+        llm_repo.get = original
+
+    assert status.configured is True
+    assert status.crypto_error is False
+    assert status.provider == "openai"
+    assert status.api_key == "sk-live-owner-key"
+    assert status.updated_at is not None
+    assert key == "sk-live-owner-key"
+    assert provider == "openai"
+
+
+def test_get_status_crypto_error_when_decrypt_fails(fernet_env):
+    """Tampered / wrong-key ciphertext → configured false + crypto_error."""
+    from app.db.repositories import llm_keys as llm_repo
+
+    session = MagicMock()
+    row = MagicMock()
+    # Looks like Fernet but is not valid under the current key.
+    row.api_key = "gAAAA" + ("x" * 80)
     row.provider = "openai"
     row.updated_at = None
-    session.scalar.return_value = row
 
-    # Bypass DB: call get_status with patched get
+    original = llm_repo.get
+    llm_repo.get = lambda _s, _e: row  # type: ignore
+    try:
+        status = llm_repo.get_status(session, "u@example.com")
+        key, provider = llm_repo.get_decrypted(session, "u@example.com")
+    finally:
+        llm_repo.get = original
+
+    assert status.configured is False
+    assert status.crypto_error is True
+    assert status.api_key is None
+    assert status.provider == "openai"
+    assert key is None
+    assert provider is None
+
+
+def test_get_status_legacy_plaintext(fernet_env):
+    """Pre-encryption rows remain usable until re-saved."""
+    from app.db.repositories import llm_keys as llm_repo
+
+    session = MagicMock()
+    row = MagicMock()
+    row.api_key = "sk-legacy-plaintext"
+    row.provider = "Anthropic"
+    row.updated_at = None
+
     original = llm_repo.get
     llm_repo.get = lambda _s, _e: row  # type: ignore
     try:
         status = llm_repo.get_status(session, "u@example.com")
     finally:
         llm_repo.get = original
+
     assert status.configured is True
-    assert status.provider == "openai"
-    assert not hasattr(status, "api_key")
+    assert status.crypto_error is False
+    assert status.api_key == "sk-legacy-plaintext"
+    assert status.provider == "anthropic"
+
+
+def test_status_payload_shape(fernet_env):
+    """HTTP payload helpers expose api_key only when configured."""
+    from app.api.routes.llm_key import _status_payload
+    from app.db.repositories.llm_keys import LlmKeyStatus
+
+    ok = LlmKeyStatus(
+        configured=True,
+        provider="openai",
+        updated_at="2026-01-01T00:00:00+00:00",
+        api_key="sk-visible",
+    )
+    body = _status_payload(ok)
+    assert body["configured"] is True
+    assert body["api_key"] == "sk-visible"
+    assert body["crypto_error"] is False
+
+    bad = LlmKeyStatus(
+        configured=False,
+        provider="openai",
+        updated_at=None,
+        crypto_error=True,
+    )
+    body_bad = _status_payload(bad)
+    assert body_bad["configured"] is False
+    assert body_bad["api_key"] is None
+    assert body_bad["crypto_error"] is True
+
+
+def test_resolve_for_user_returns_decrypted(fernet_env):
+    from app.core.crypto import encrypt_secret
+    from app.db.repositories import llm_keys as llm_repo
+    from app.services.credentials import service as credentials_service
+
+    session = MagicMock()
+    row = MagicMock()
+    row.api_key = encrypt_secret("sk-for-provider")
+    row.provider = "openai"
+    row.updated_at = None
+
+    original = llm_repo.get
+    llm_repo.get = lambda _s, _e: row  # type: ignore
+    try:
+        key, provider = credentials_service.resolve_for_user(session, "u@example.com")
+    finally:
+        llm_repo.get = original
+
+    assert key == "sk-for-provider"
+    assert provider == "openai"

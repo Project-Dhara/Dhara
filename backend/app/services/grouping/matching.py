@@ -200,9 +200,9 @@ def _groups_without_metadata(
     Excel, SQL, and PDF all bucket tables the same way after preview.
     Lazy-import avoids a circular import with ``pdf_grouping``.
 
-    ``api_key`` is the steward's Settings key (browser ``X-Llm-Api-Key`` header).
-    There is no server ``OPENAI_API_KEY`` fallback — without a key, singleton
-    LLM merge is skipped (title-base grouping still runs).
+    ``api_key`` is the steward's Settings key (decrypted server-side from
+    ``llm_api_keys``). There is no server ``OPENAI_API_KEY`` fallback — without
+    a key, singleton LLM merge is skipped (title-base grouping still runs).
     """
     from app.services.grouping.pdf_grouping import (
         propose_groups_from_table_dicts,
