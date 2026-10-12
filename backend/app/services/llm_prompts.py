@@ -408,3 +408,34 @@ Rules for age_column_keys:
 - Return empty object {{}} if no age-related columns exist
 
 Return only valid JSON, no markdown fences, no explanation."""
+
+
+# ── Preview: AI search over extracted table titles ──────────────────────────
+
+TABLE_AI_SEARCH_PROMPT = """You help a data steward search a list of extracted tables by natural language.
+
+The steward wrote this request:
+{prompt}
+
+Here is the catalog of tables still in the review (id, page, title, optional summary).
+Use ONLY these ids.
+{catalog_json}
+
+Return ONLY valid JSON (no markdown):
+{{
+  "intent": "find",
+  "table_ids": ["1-0", "2-1"],
+  "rationale": "one short sentence explaining the selection"
+}}
+
+Intent rules:
+- Use "find" for search, locate, identify, show, or filter requests.
+- Use "remove" ONLY when the steward clearly asks to remove, delete, drop, or discard tables.
+- When unsure between find and remove, choose "find".
+
+Selection rules:
+- Prefer precision over recall: only include tables that clearly match the request.
+- If nothing matches, return "table_ids": [] and a brief rationale.
+- Never invent ids. Every id must appear in the catalog.
+- Match on title, page, summary, or obvious patterns (appendix, blank, chart, duplicate, topic).
+"""

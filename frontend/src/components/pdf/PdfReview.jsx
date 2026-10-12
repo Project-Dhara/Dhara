@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, ArrowRight, Check, Download, Loader2, Search, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, Download, Loader2, Search, Sparkles, X } from 'lucide-react'
 import { withAuthHeaders } from '../../lib/auth'
 import { withLlmKeyHeaders } from '../../lib/llmKey'
 import Badge from '../ui/Badge'
@@ -120,6 +120,11 @@ export default function PdfReview({ jobId, filename, onDone }) {
   const [deleting, setDeleting] = useState(false)
   const [merging, setMerging] = useState(false)
   const [continuing, setContinuing] = useState(false)
+  // AI search over the existing list — null match set means regular text search.
+  const [aiSearching, setAiSearching] = useState(false)
+  const [aiMatchIds, setAiMatchIds] = useState(null)
+  const [aiIntent, setAiIntent] = useState(null)
+  const [aiRationale, setAiRationale] = useState('')
   // 'persist' | 'group' — drives the Continue placeholder stepper
   const [continuePhase, setContinuePhase] = useState('persist')
   const [downloadingZip, setDownloadingZip] = useState(false)
@@ -349,6 +354,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
         ids.forEach((id) => next.delete(id))
         return next
       })
+      setAiMatchIds((prev) => (prev ? prev.filter((id) => !idSet.has(id)) : prev))
       if (expanded && idSet.has(expanded)) setExpanded(null)
       setPendingDeleteIds(null)
       setSelectedIds(new Set())
@@ -358,6 +364,73 @@ export default function PdfReview({ jobId, filename, onDone }) {
       setPendingDeleteIds(null)
     } finally {
       setDeleting(false)
+    }
+  }
+
+  const clearAiSearch = ({ keepSelectMode = false } = {}) => {
+    setAiMatchIds(null)
+    setAiIntent(null)
+    setAiRationale('')
+    if (!keepSelectMode && selectMode === 'delete') {
+      // Leaving AI remove selection — drop select mode unless steward is mid-delete.
+      setSelectMode(null)
+      setSelectedIds(new Set())
+    }
+  }
+
+  const runAiSearch = async () => {
+    const prompt = tableSearch.trim()
+    if (!prompt || aiSearching || !tables?.length) return
+    setAiSearching(true)
+    setError('')
+    try {
+      const res = await fetch(
+        `/api/pdf/jobs/${jobId}/tables/ai-search`,
+        withLlmKeyHeaders(withAuthHeaders({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt,
+            tables: tables.map((t) => ({
+              table_id: t.table_id,
+              title: t.title ?? null,
+              banner_table_id: t.banner_table_id ?? null,
+              page: t.page,
+              short_description: t.short_description ?? t.description ?? null,
+            })),
+          }),
+        })),
+      )
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(typeof body.detail === 'string' ? body.detail : 'AI search failed')
+      }
+      const data = await res.json()
+      const alive = new Set((tables || []).map((t) => t.table_id))
+      const ids = (data.table_ids || []).map(String).filter((id) => alive.has(id))
+      const intent = data.intent === 'remove' ? 'remove' : 'find'
+      setAiMatchIds(ids)
+      setAiIntent(intent)
+      setAiRationale(typeof data.rationale === 'string' ? data.rationale : '')
+      setExpanded(null)
+      setTablePage(0)
+
+      if (intent === 'remove' && ids.length) {
+        // Select in the existing delete workflow — never auto-delete.
+        setSelectMode('delete')
+        setSelectedIds(new Set(ids))
+      } else if (selectMode === 'delete' && intent !== 'remove') {
+        setSelectMode(null)
+        setSelectedIds(new Set())
+      }
+
+      if (!ids.length) {
+        setError(data.rationale || 'No tables matched that AI search.')
+      }
+    } catch (e) {
+      setError(e.message || 'AI search failed')
+    } finally {
+      setAiSearching(false)
     }
   }
 
@@ -551,8 +624,13 @@ export default function PdfReview({ jobId, filename, onDone }) {
       && matchesSourceTypeFilter(t, sourceTypeFilter)
   )
   // Search is additive: status / reason / merge filters stay unchanged.
+  // AI "find" filters the list; AI "remove" only selects checkboxes so the
+  // full list stays accessible for manual adjustments.
   const searchQuery = tableSearch.trim()
-  if (searchQuery) {
+  if (aiMatchIds && aiIntent === 'find') {
+    const idSet = new Set(aiMatchIds)
+    filteredTables = filteredTables.filter((t) => idSet.has(t.table_id))
+  } else if (!aiMatchIds && searchQuery) {
     filteredTables = filteredTables.filter((t) => matchesTableSearch(t, searchQuery))
   }
   // Merge mode: after the first selection, only show tables with the same headers.
@@ -696,40 +774,101 @@ export default function PdfReview({ jobId, filename, onDone }) {
       <div className="rounded-xl border border-line bg-white shadow-sm">
         <div className="sticky top-0 z-20 space-y-2 rounded-t-xl border-b border-line bg-white px-5 py-3 sm:px-6">
           <div className="space-y-1">
-            <label className="flex min-w-0 items-center gap-2 rounded-lg border border-line bg-cream px-2.5 py-2 focus-within:border-teal focus-within:shadow-focus-ring">
-              <Search className="h-4 w-4 flex-none text-ink-soft" strokeWidth={2} aria-hidden />
-              <input
-                type="text"
-                value={tableSearch}
-                onChange={(e) => {
-                  setTableSearch(e.target.value)
-                  setExpanded(null)
-                  setTablePage(0)
-                }}
-                placeholder="Search by table name or page…"
-                className="min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 text-[13.5px] text-ink shadow-none outline-none placeholder:text-ink-soft focus:outline-none focus:ring-0"
-                aria-label="Search tables by name or page number"
-                autoComplete="off"
-                spellCheck={false}
-              />
-              {tableSearch ? (
-                <button
-                  type="button"
-                  className="flex-none text-ink-soft hover:text-teal"
-                  onClick={() => {
-                    setTableSearch('')
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
+              <label
+                className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-2.5 py-2 focus-within:border-teal focus-within:shadow-focus-ring ${
+                  aiMatchIds
+                    ? 'border-teal/50 bg-sage/40'
+                    : 'border-line bg-cream'
+                }`}
+              >
+                {aiMatchIds ? (
+                  <Sparkles className="h-4 w-4 flex-none text-teal" strokeWidth={2} aria-hidden />
+                ) : (
+                  <Search className="h-4 w-4 flex-none text-ink-soft" strokeWidth={2} aria-hidden />
+                )}
+                <input
+                  type="text"
+                  value={tableSearch}
+                  onChange={(e) => {
+                    setTableSearch(e.target.value)
+                    if (aiMatchIds) clearAiSearch({ keepSelectMode: true })
                     setExpanded(null)
                     setTablePage(0)
                   }}
-                  aria-label="Clear search"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault()
+                      runAiSearch()
+                    }
+                  }}
+                  placeholder={aiMatchIds ? 'AI search active — edit to return to regular search' : 'Search by table name or page…'}
+                  className="min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 text-[13.5px] text-ink shadow-none outline-none placeholder:text-ink-soft focus:outline-none focus:ring-0"
+                  aria-label="Search tables by name or page number"
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={aiSearching}
+                />
+                {(tableSearch || aiMatchIds) ? (
+                  <button
+                    type="button"
+                    className="flex-none text-ink-soft hover:text-teal"
+                    onClick={() => {
+                      setTableSearch('')
+                      clearAiSearch()
+                      setExpanded(null)
+                      setTablePage(0)
+                    }}
+                    aria-label="Clear search"
+                  >
+                    <X className="h-3.5 w-3.5" strokeWidth={2} />
+                  </button>
+                ) : null}
+              </label>
+              <Button
+                variant="secondary"
+                className="sm:flex-none"
+                disabled={aiSearching || !tableSearch.trim() || !tables?.length}
+                onClick={runAiSearch}
+                title="Interpret this as a natural-language search (⌘/Ctrl+Enter)"
+              >
+                {aiSearching ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} aria-hidden />
+                    Searching…
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Sparkles className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+                    Search with AI
+                  </span>
+                )}
+              </Button>
+            </div>
+            {aiMatchIds ? (
+              <div className="flex flex-wrap items-center gap-2 px-0.5">
+                <span className="inline-flex items-center gap-1 rounded-full border border-teal/30 bg-sage px-2 py-0.5 text-[11.5px] font-semibold text-teal-deep">
+                  <Sparkles className="h-3 w-3" strokeWidth={2} aria-hidden />
+                  AI {aiIntent === 'remove' ? 'remove selection' : 'results'}
+                  <span className="tabular-nums">· {aiMatchIds.length}</span>
+                </span>
+                {aiRationale ? (
+                  <span className="min-w-0 flex-1 truncate text-[11.5px] text-ink-soft">{aiRationale}</span>
+                ) : null}
+                <button
+                  type="button"
+                  className="text-[11.5px] font-semibold text-teal hover:text-teal-dark"
+                  onClick={() => clearAiSearch()}
                 >
-                  <X className="h-3.5 w-3.5" strokeWidth={2} />
+                  Regular search
                 </button>
-              ) : null}
-            </label>
-            <p className="m-0 px-0.5 text-[11.5px] leading-snug text-ink-soft">
-              Tip: jump to a page with <span className="font-medium text-ink">15</span>, <span className="font-medium text-ink">p15</span>, or <span className="font-medium text-ink">page 15</span>
-            </p>
+              </div>
+            ) : (
+              <p className="m-0 px-0.5 text-[11.5px] leading-snug text-ink-soft">
+                Tip: jump to a page with <span className="font-medium text-ink">15</span>, <span className="font-medium text-ink">p15</span>, or <span className="font-medium text-ink">page 15</span>
+                {' '}· or use <span className="font-medium text-ink">Search with AI</span> for natural language
+              </p>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="flex-none text-[13px] font-bold tracking-wide text-ink">

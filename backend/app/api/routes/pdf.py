@@ -261,6 +261,72 @@ async def pdf_delete_tables(job_id: str, request: Request, user_email: str = Dep
     return {"ok": True, "deleted": ids, "deleted_count": len(ids)}
 
 
+@router.post("/api/pdf/jobs/{job_id}/tables/ai-search")
+async def pdf_ai_search_tables(
+    job_id: str,
+    request: Request,
+    user_email: str = Depends(require_user_email),
+    db: Session = Depends(get_db),
+):
+    """Natural-language search over extracted table titles.
+
+    Returns ``{ intent: "find"|"remove", table_ids, rationale }``. Never deletes
+    tables — ``remove`` only identifies candidates for the Preview selection UI.
+    """
+    from app.services.extraction.pdf.suggest_search import suggest_tables_from_prompt
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    prompt = str(body.get("prompt") or body.get("query") or "").strip()
+    if not prompt:
+        raise HTTPException(400, "prompt is required")
+
+    api_key, _provider = resolve_llm_credentials(request, user_email, db=db)
+    if not (api_key or "").strip():
+        raise HTTPException(400, "Save an LLM API key in Settings before using AI search")
+
+    with _pdf_jobs_lock:
+        job = _get_pdf_job(job_id)
+        if not job or job.get("user_email") != user_email:
+            raise HTTPException(404, "Job not found")
+        if not job_extraction_complete(job["status"]):
+            raise HTTPException(409, f"Job not finished yet (status={job['status']})")
+        tables = _pdf_tables_from_job(job)
+
+    # Prefer titles / summaries from the live Preview payload when sent.
+    client_tables = body.get("tables")
+    if isinstance(client_tables, list) and client_tables:
+        by_id = {
+            str(t.get("table_id")): t
+            for t in client_tables
+            if isinstance(t, dict) and t.get("table_id")
+        }
+        for t in tables:
+            override = by_id.get(str(t.get("table_id") or ""))
+            if not override:
+                continue
+            for key in ("title", "banner_table_id", "short_description", "description", "summary"):
+                if key in override:
+                    t[key] = override.get(key)
+
+    try:
+        result = await asyncio.to_thread(
+            suggest_tables_from_prompt,
+            prompt=prompt,
+            tables=tables,
+            api_key=api_key,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except Exception as e:
+        raise HTTPException(500, f"Could not run AI search: {e}") from e
+    return result
+
+
 @router.post("/api/pdf/jobs/{job_id}/tables/merge")
 async def pdf_merge_tables(job_id: str, request: Request, user_email: str = Depends(require_user_email)):
     """
