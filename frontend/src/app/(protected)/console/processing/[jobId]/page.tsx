@@ -23,7 +23,23 @@ const STAGES = [
 ]
 const STAGE_ORDER = STAGES.map((s) => s.key)
 
-type Job = { status: string; stage: string; percent: number; message?: string; filename?: string }
+type BatchFile = {
+  file_job_id: string
+  filename: string
+  source_type: string
+  status: string
+  error?: string | null
+}
+
+type Job = {
+  status: string
+  stage: string
+  percent: number
+  message?: string
+  filename?: string
+  is_batch?: boolean
+  batch_files?: BatchFile[]
+}
 
 function buildSteps(job: Job | null, sawValidate: boolean) {
   if (!job) return STAGES.map((s) => ({ ...s, status: 'pending' }))
@@ -64,10 +80,10 @@ export default function PdfProcessingPage() {
         if (cancelled) return
         if (data.stage === 'validate') sawValidateRef.current = true
         setJob(data)
-        if (data.status === 'done') {
+        if (data.status === 'done' || data.status === 'completed_with_errors') {
           if (pollRef.current) clearInterval(pollRef.current)
           router.push(`/console/review/${jobId}`)
-        } else if (data.status === 'error') {
+        } else if (data.status === 'error' || data.status === 'failed') {
           if (pollRef.current) clearInterval(pollRef.current)
           setError(data.message || 'PDF processing failed')
         }
@@ -105,6 +121,24 @@ export default function PdfProcessingPage() {
           
         </div>
         <ProcessingStepper steps={buildSteps(job, sawValidateRef.current)} />
+        {job?.is_batch && job.batch_files?.length ? (
+          <ul className="flex flex-col gap-2 rounded-lg border border-line bg-white p-4 text-[13px]">
+            {job.batch_files.map((f) => (
+              <li key={f.file_job_id} className="flex flex-wrap items-center justify-between gap-2">
+                <span className="min-w-0 truncate font-medium text-ink">{f.filename}</span>
+                <span className={`text-[12px] font-semibold uppercase tracking-wide ${
+                  f.status === 'done'
+                    ? 'text-green'
+                    : f.status === 'error'
+                      ? 'text-coral'
+                      : 'text-ink-soft'
+                }`}>
+                  {f.status === 'running' ? 'Processing…' : f.status}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </div>
     </PdfConsoleLayout>
   )

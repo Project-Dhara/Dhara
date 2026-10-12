@@ -1,10 +1,9 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
 import KydsSummaryCard from '../KydsSummaryCard'
 import TableViewer from '../TableViewer'
-import BatchUpload from './BatchUpload'
 import SqlUpload from './SqlUpload'
 import ReconcileIds from './ReconcileIds'
 import GroupingWorkspace from './GroupingWorkspace'
@@ -34,9 +33,8 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
     filteredPreviewTables,
     goToStep,
     groupingToast,
-    handleDatasetFile,
     handleMatched,
-    handlePdfFile,
+    startDatasetProcessing,
     handleRequestAutomatic,
     info,
     manualGrouping,
@@ -95,6 +93,12 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   const [classificationComplete, setClassificationComplete] = useState(false)
   const goToHarmRef = useRef(null)
   const stageBack = withinStageBack(step)
+  const step1Processing = pdfUploading
+
+  const handleStartStep1Processing = useCallback(() => {
+    if (step1Processing || !hasLlmKey) return
+    if (pendingDatasetFiles.length > 0) startDatasetProcessing()
+  }, [step1Processing, hasLlmKey, pendingDatasetFiles.length, startDatasetProcessing])
 
   const requestHarmonisation = () => {
     if (goToHarmRef.current) goToHarmRef.current()
@@ -153,7 +157,11 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                 <div className="dhara-page-title">{info.title}</div>
               )}
             </div>
-            {stageIdx === 0 && (step === 1 || step === 2) && <KydsSummaryCard variant="corner" />}
+            {step >= 1 && step <= 4 && (
+              <div className="flex flex-none flex-shrink-0 flex-wrap items-center justify-end gap-2.5">
+                <KydsSummaryCard variant="corner" />
+              </div>
+            )}
           </div>
         </div>
         )}
@@ -178,17 +186,18 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
             <UploadChoice
               choice={uploadChoice}
               onChoose={setUploadChoice}
-              onDatasetFile={handleDatasetFile}
               onDatasetFilesAdd={addPendingDatasetFiles}
               onDatasetFileRemove={removePendingDatasetFile}
               datasetFiles={pendingDatasetFiles}
-              onPdfFile={handlePdfFile}
+              onStartProcessing={handleStartStep1Processing}
+              processing={step1Processing}
               pdfUploading={pdfUploading}
               pdfError={pdfError}
               onClearPdfError={() => setPdfError('')}
               metadataFiles={step1MetadataFiles}
               onMetadataFilesAdd={addStep1MetadataFiles}
               onMetadataFileRemove={removeStep1MetadataFile}
+              disabled={!hasLlmKey}
               sqlPanel={(
                 <SqlUpload
                   onMatched={handleMatched}
@@ -198,17 +207,6 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                 />
               )}
             />
-            {uploadChoice === 'xlsx' && pendingDatasetFiles.length > 0 && (
-              <BatchUpload
-                onMatched={handleMatched}
-                datasetFiles={pendingDatasetFiles}
-                onDatasetFilesChange={setPendingDatasetFiles}
-                metadataFiles={step1MetadataFiles}
-                onMetadataFilesChange={setStep1MetadataFiles}
-                hideMetadataSection
-                hideDatasetSection
-              />
-            )}
           </div>
         )}
 

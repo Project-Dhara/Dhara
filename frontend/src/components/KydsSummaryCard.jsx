@@ -65,7 +65,12 @@ export default function KydsSummaryCard({ variant = 'card' }) {
     notifyKydsChanged()
   }
 
-  if (kydsLoading) return null
+  if (kydsLoading) {
+    if (variant === 'corner') {
+      return <div className="h-[34px] min-w-[120px] flex-none" aria-hidden />
+    }
+    return null
+  }
 
   if (!kydsEntry) {
     if (variant !== 'corner') return null

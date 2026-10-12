@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { ArrowRight, Plus, X } from 'lucide-react'
 import { withLlmKeyHeaders } from '../../lib/llmKey'
 import { withAuthHeaders } from '../../lib/auth'
@@ -23,9 +23,10 @@ function FileList({ files, onRemove }) {
   )
 }
 
-export default function BatchUpload({
+const BatchUpload = forwardRef(function BatchUpload({
   onMatched,
   onError,
+  onBusyChange,
   initialDatasetFiles = [],
   datasetFiles: controlledDatasetFiles,
   onDatasetFilesChange,
@@ -33,7 +34,8 @@ export default function BatchUpload({
   onMetadataFilesChange,
   hideMetadataSection = false,
   hideDatasetSection = false,
-}) {
+  hideRunButton = false,
+}, ref) {
   const [internalDatasetFiles, setInternalDatasetFiles] = useState([])
   const [internalMetadataFiles, setInternalMetadataFiles] = useState([])
   const [stage, setStage] = useState('idle') // idle | extracting | matching | error
@@ -83,6 +85,10 @@ export default function BatchUpload({
 
   const busy = stage === 'extracting' || stage === 'matching'
   const canRun = datasetFiles.length > 0 && !busy
+
+  useEffect(() => {
+    onBusyChange?.(busy)
+  }, [busy, onBusyChange])
 
   const runMatch = async () => {
     setError('')
@@ -142,6 +148,8 @@ export default function BatchUpload({
       onError?.(e)
     }
   }
+
+  useImperativeHandle(ref, () => ({ runMatch }), [datasetFiles, metadataFiles])
 
   return (
     <div className="flex w-full flex-col gap-[18px]">
@@ -210,20 +218,22 @@ export default function BatchUpload({
 
       {error && <ErrorBanner>{error}</ErrorBanner>}
 
-      <div className="flex items-center gap-4">
-        <Button disabled={!canRun} onClick={runMatch}>
-          {busy && <span className="inline-block h-[13px] w-[13px] animate-spin rounded-full border-2 border-white/50 border-t-white" />}
-          {stage === 'extracting' && 'Extracting & validating tables…'}
-          {stage === 'matching' && 'Matching to metadata…'}
-          {(stage === 'idle' || stage === 'error') && (
-            <span className="inline-flex items-center gap-1.5">
-              Preview files
-              <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
-            </span>
-          )}
-        </Button>
-        {!busy && <span className="text-xs text-ink-soft">{datasetFiles.length} dataset · {metadataFiles.length} metadata</span>}
-      </div>
+      {!hideRunButton && (
+        <div className="flex items-center gap-4">
+          <Button disabled={!canRun} onClick={runMatch}>
+            {busy && <span className="inline-block h-[13px] w-[13px] animate-spin rounded-full border-2 border-white/50 border-t-white" />}
+            {stage === 'extracting' && 'Extracting & validating tables…'}
+            {stage === 'matching' && 'Matching to metadata…'}
+            {(stage === 'idle' || stage === 'error') && (
+              <span className="inline-flex items-center gap-1.5">
+                Start processing
+                <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
+              </span>
+            )}
+          </Button>
+          {!busy && <span className="text-xs text-ink-soft">{datasetFiles.length} dataset · {metadataFiles.length} metadata</span>}
+        </div>
+      )}
 
       {busy && (
         <div className="flex flex-col gap-2">
@@ -237,4 +247,6 @@ export default function BatchUpload({
       )}
     </div>
   )
-}
+})
+
+export default BatchUpload

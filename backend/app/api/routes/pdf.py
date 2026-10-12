@@ -35,6 +35,7 @@ from app.workers.extraction_jobs import (
     _pdf_tables_from_job,
     _run_extraction_job,
     _save_pdf_job,
+    job_extraction_complete,
     queue_extraction_job,
 )
 from app.services.ingestion.wizard.table_export import safe_download_stem, table_to_excel_bytes
@@ -121,21 +122,11 @@ async def pdf_job_result(job_id: str, user: CurrentUser = Depends(require_user))
         job = _get_pdf_job(job_id)
         if not _job_visible_to(job, user):
             raise HTTPException(404, "Job not found. Please upload the PDF again.")
-        if job["status"] != "done":
+        if job["status"] not in ("done", "completed_with_errors"):
             raise HTTPException(409, f"Job not finished yet (status={job['status']})")
-        reviews = dict(job.get("reviews") or {})
-        deleted = set(job.get("deleted_table_ids") or [])
-        result = job["result"] or {}
         filename = job["filename"]
-    tables = []
-    for page_num in sorted(result.keys(), key=lambda k: int(k) if str(k).isdigit() else str(k)):
-        for idx, t in enumerate(result[page_num].get("tables", [])):
-            table_id = f"{page_num}-{idx}"
-            if table_id in deleted:
-                continue
-            merged = {**t, **reviews.get(table_id, {}), "table_id": table_id}
-            tables.append(merged)
-    return {"job_id": job_id, "filename": filename, "tables": tables}
+        tables = _pdf_tables_from_job(job)
+    return {"job_id": job_id, "filename": filename, "tables": tables, "is_batch": job.get("source_type") == "batch"}
 
 
 @router.patch("/api/pdf/jobs/{job_id}/tables/{table_id}")
@@ -167,11 +158,13 @@ async def pdf_table_snapshot(job_id: str, table_id: str, user_email: str = Depen
         job = _get_pdf_job(job_id)
         if not job or job.get("user_email") != user_email:
             raise HTTPException(404, "Job not found")
-        if job.get("status") != "done":
+        if not job_extraction_complete(job.get("status")):
             raise HTTPException(409, f"Job not finished yet (status={job.get('status')})")
         reviews = dict(job.get("reviews") or {})
         deleted = set(job.get("deleted_table_ids") or [])
-        result = job.get("result") or {}
+        from app.services.ingestion.review_tables import result_pages_only
+
+        result = result_pages_only(job.get("result"))
 
     if table_id in deleted:
         raise HTTPException(404, "Table was deleted")
@@ -255,7 +248,7 @@ async def pdf_delete_tables(job_id: str, request: Request, user_email: str = Dep
         job = _get_pdf_job(job_id)
         if not job or job.get("user_email") != user_email:
             raise HTTPException(404, "Job not found")
-        if job["status"] != "done":
+        if not job_extraction_complete(job["status"]):
             raise HTTPException(409, f"Job not finished yet (status={job['status']})")
         deleted = set(job.get("deleted_table_ids") or [])
         deleted.update(ids)
@@ -294,7 +287,7 @@ async def pdf_merge_tables(job_id: str, request: Request, user_email: str = Depe
         job = _get_pdf_job(job_id)
         if not job or job.get("user_email") != user_email:
             raise HTTPException(404, "Job not found")
-        if job["status"] != "done":
+        if not job_extraction_complete(job["status"]):
             raise HTTPException(409, f"Job not finished yet (status={job['status']})")
 
         approved = {str(t["table_id"]): t for t in _pdf_tables_from_job(job)}
@@ -395,7 +388,7 @@ async def pdf_download_table(job_id: str, table_id: str, user_email: str = Depen
         job = _get_pdf_job(job_id)
         if not job or job.get("user_email") != user_email:
             raise HTTPException(404, "Job not found")
-        if job["status"] != "done":
+        if not job_extraction_complete(job["status"]):
             raise HTTPException(409, f"Job not finished yet (status={job['status']})")
         tables = _pdf_merged_tables_for_job(job)
 
@@ -437,7 +430,7 @@ async def pdf_download_tables_zip(job_id: str, user_email: str = Depends(require
         job = _get_pdf_job(job_id)
         if not job or job.get("user_email") != user_email:
             raise HTTPException(404, "Job not found")
-        if job["status"] != "done":
+        if not job_extraction_complete(job["status"]):
             raise HTTPException(409, f"Job not finished yet (status={job['status']})")
         tables = _pdf_merged_tables_for_job(job)
         job_name = job.get("filename") or job_id
@@ -473,7 +466,7 @@ async def pdf_download_tables_zip_selected(
         job = _get_pdf_job(job_id)
         if not job or job.get("user_email") != user_email:
             raise HTTPException(404, "Job not found")
-        if job["status"] != "done":
+        if not job_extraction_complete(job["status"]):
             raise HTTPException(409, f"Job not finished yet (status={job['status']})")
         tables = _pdf_merged_tables_for_job(job)
         job_name = job.get("filename") or job_id
@@ -522,7 +515,7 @@ async def pdf_persist_approved(
         job = _get_pdf_job(job_id)
         if not job or job.get("user_email") != user_email:
             raise HTTPException(404, "Job not found")
-        if job["status"] != "done":
+        if not job_extraction_complete(job["status"]):
             raise HTTPException(409, f"Job not finished yet (status={job['status']})")
         tables = _pdf_tables_from_job(job)
         filename = job.get("filename")

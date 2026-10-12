@@ -281,6 +281,42 @@ export const ROLE_OPTIONS = ['identifier', 'dimension', 'measure', 'attribute', 
  *  stay nested under "Review needed" and only appear once that filter is active. */
 export const PRIMARY_FILTERS = ['needs_review', 'no_review']
 
+export const SOURCE_TYPE_FILTERS = [
+  { id: 'all', label: 'All types' },
+  { id: 'pdf', label: 'PDF' },
+  { id: 'excel', label: 'Excel' },
+  { id: 'csv', label: 'CSV' },
+]
+
+export function tableSourceType(table) {
+  const st = String(table?.source_type || '').toLowerCase()
+  if (st === 'pdf' || st === 'excel' || st === 'csv') return st
+  return null
+}
+
+export function matchesSourceTypeFilter(table, filterId) {
+  if (!filterId || filterId === 'all') return true
+  return tableSourceType(table) === filterId
+}
+
+export function tableSourceSubtitle(table) {
+  const parts = []
+  const file = String(table?.source_filename || table?.source_file || '').trim()
+  if (file) parts.push(file)
+  const loc = String(table?.source_location || '').trim()
+  if (loc) parts.push(loc)
+  else if (table?.page != null && String(table.page).trim() && tableSourceType(table) === 'pdf') {
+    parts.push(`Page ${table.page}`)
+  } else if (table?.sheet) {
+    parts.push(`Sheet ${table.sheet}`)
+  }
+  const st = tableSourceType(table)
+  if (st === 'pdf') parts.push('PDF')
+  else if (st === 'excel') parts.push('Excel')
+  else if (st === 'csv') parts.push('CSV')
+  return parts.filter(Boolean).join(' · ')
+}
+
 export const REASON_FILTER_IDS = Object.keys(REASON_LABELS)
 
 
@@ -465,7 +501,16 @@ export function matchesTableSearch(table, query) {
   const title = displayTitle(table) || String(table?.title || '').trim()
   const banner = String(table?.banner_table_id || '').trim()
   const tableId = String(table?.table_id ?? '').trim()
-  const haystack = normalizeSearchText([title, banner, page ? `page ${page}` : '', tableId].join(' '))
+  const sourceFile = String(table?.source_filename || table?.source_file || '').trim()
+  const sheet = String(table?.sheet || '').trim()
+  const haystack = normalizeSearchText([
+    title,
+    banner,
+    page ? `page ${page}` : '',
+    tableId,
+    sourceFile,
+    sheet ? `sheet ${sheet}` : '',
+  ].join(' '))
   const words = haystack ? haystack.split(' ') : []
 
   const tokens = normalizeSearchText(raw).split(' ').filter(Boolean)

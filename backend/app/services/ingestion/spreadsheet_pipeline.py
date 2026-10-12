@@ -55,7 +55,11 @@ def run_validation_from_pre_input(
         api_key=api_key,
         on_progress=on_progress,
     )
-    return tag_tables_with_source_type(result, source_type)
+    return tag_tables_with_source_type(
+        result,
+        source_type,
+        source_filename=pre.get("source_file"),
+    )
 
 
 def run_spreadsheet_upload_pipeline(

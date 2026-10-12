@@ -18,6 +18,7 @@ import { loadPersistedConsoleState, CONSOLE_STORAGE_KEY } from '../../lib/consol
 import { subscribeConsoleTableEdits } from '../../lib/consoleTableEdit'
 import { stepInfoFor } from './ConsoleUploadChoice'
 import { withinStageBack } from './ConsoleStages'
+import { isDatasetFile, uploadDatasetBatch, useSinglePdfUpload } from '../../lib/datasetUpload'
 
 export function useConsolePipeline() {
   const persisted = loadPersistedConsoleState()
@@ -403,42 +404,23 @@ export function useConsolePipeline() {
     return base
   })()
 
-  const handleDatasetFile = (type, file) => {
-    if (type === 'xlsx' && file) {
-      setPendingDatasetFiles((prev) => {
-        const exists = prev.some((f) => f.name === file.name && f.size === file.size)
-        return exists ? prev : [...prev, file]
-      })
-      setUploadChoice('xlsx')
-    }
-  }
-
   const addPendingDatasetFiles = (files) => {
-    const xlsx = (files || []).filter((f) => /\.(xlsx|xls)$/i.test(f.name))
-    if (!xlsx.length) return
+    const datasets = (files || []).filter((f) => isDatasetFile(f.name))
+    if (!datasets.length) return
     setPendingDatasetFiles((prev) => {
       const next = [...prev]
-      xlsx.forEach((file) => {
+      datasets.forEach((file) => {
         const exists = next.some((f) => f.name === file.name && f.size === file.size)
         if (!exists) next.push(file)
       })
       return next
     })
-    setUploadChoice('xlsx')
+    if (uploadChoice === 'sql') setUploadChoice(null)
   }
 
   const removePendingDatasetFile = (index) => {
-    setPendingDatasetFiles((prev) => {
-      const next = prev.filter((_, i) => i !== index)
-      return next
-    })
+    setPendingDatasetFiles((prev) => prev.filter((_, i) => i !== index))
   }
-
-  useEffect(() => {
-    if (uploadChoice === 'xlsx' && pendingDatasetFiles.length === 0) {
-      setUploadChoice(null)
-    }
-  }, [uploadChoice, pendingDatasetFiles.length])
 
   const addStep1MetadataFiles = (files) => {
     setStep1MetadataFiles((prev) => [...prev, ...files])
@@ -454,6 +436,7 @@ export function useConsolePipeline() {
   }
 
   const handlePdfFile = async (file) => {
+    if (!file) return
     setPdfError('')
     setPdfUploading(true)
     try {
@@ -468,6 +451,25 @@ export function useConsolePipeline() {
       router.push(`/console/processing/${job_id}`)
     } catch (e) {
       setPdfError(e.message)
+      setPdfUploading(false)
+    }
+  }
+
+  const startDatasetProcessing = async () => {
+    const files = pendingDatasetFiles
+    if (!files.length) return
+    setPdfError('')
+    setPdfUploading(true)
+    try {
+      if (useSinglePdfUpload(files)) {
+        await handlePdfFile(files[0])
+        return
+      }
+      const data = await uploadDatasetBatch(files)
+      const jobId = data.job_id || data.batch_id
+      router.push(`/console/processing/${jobId}`)
+    } catch (e) {
+      setPdfError(e.message || 'Upload failed')
       setPdfUploading(false)
     }
   }
@@ -574,9 +576,9 @@ export function useConsolePipeline() {
     filteredPreviewTables,
     goToStep,
     groupingToast,
-    handleDatasetFile,
     handleMatched,
     handlePdfFile,
+    startDatasetProcessing,
     handleRequestAutomatic,
     info,
     manualGrouping,

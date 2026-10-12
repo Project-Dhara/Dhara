@@ -75,7 +75,13 @@ def _row_to_working_job(job: PdfJob) -> dict:
         epoch = float(epoch)
     else:
         epoch = time.time()
-    return {
+    result = _json_obj(job.result, None)
+    batch_files = None
+    if isinstance(result, dict):
+        meta = result.get("__batch_meta__")
+        if isinstance(meta, dict) and meta.get("batch_files"):
+            batch_files = meta.get("batch_files")
+    row = {
         "job_id": job.job_id,
         "status": job.status or "queued",
         "stage": job.stage or job.status or "queued",
@@ -84,7 +90,7 @@ def _row_to_working_job(job: PdfJob) -> dict:
         "filename": job.filename,
         "user_email": job.user_email,
         "created_at": epoch,
-        "result": _json_obj(job.result, None),
+        "result": result,
         "error": job.error,
         "reviews": _json_obj(job.reviews, {}) or {},
         "deleted_table_ids": _json_obj(job.deleted_table_ids, []) or [],
@@ -95,6 +101,9 @@ def _row_to_working_job(job: PdfJob) -> dict:
         "source_type": job.source_type or "pdf",
         "organisation_id": str(job.organisation_id) if job.organisation_id else None,
     }
+    if batch_files:
+        row["batch_files"] = batch_files
+    return row
 
 
 def _row_to_table(row: PdfTable) -> dict:

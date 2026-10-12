@@ -21,9 +21,12 @@ import {
   displayTitle,
   isAiClassified,
   matchesStatusFilter,
+  matchesSourceTypeFilter,
   matchesTableSearch,
+  SOURCE_TYPE_FILTERS,
   tableHasMissingTitle,
   tableHeaderKey,
+  tableSourceSubtitle,
 } from '../../lib/pdfReviewHelpers'
 import { DeleteConfirmDialog, MergeConfirmDialog, ReviewBadge, ScrollToTopButton, TableExpandPanel } from './PdfReviewAtoms'
 import { TableDetail, TableTitleDisplay } from './TableDetail'
@@ -106,6 +109,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
   const [expanded, setExpanded] = useState(null)
   const [reviewedIds, setReviewedIds] = useState(() => new Set())
   const [statusFilter, setStatusFilter] = useState('all')
+  const [sourceTypeFilter, setSourceTypeFilter] = useState('all')
   const [tableSearch, setTableSearch] = useState('')
   const [tablePage, setTablePage] = useState(0)
   const [selectedIds, setSelectedIds] = useState(() => new Set())
@@ -531,8 +535,20 @@ export default function PdfReview({ jobId, filename, onDone }) {
     activeFilter === 'needs_review' || REASON_FILTER_IDS.includes(activeFilter)
   ) && reasonFilterOptions.length > 0
 
+  const sourceTypeCounts = { all: tables.length, pdf: 0, excel: 0, csv: 0 }
+  for (const t of tables) {
+    const st = (t.source_type || '').toLowerCase()
+    if (st === 'pdf') sourceTypeCounts.pdf += 1
+    else if (st === 'excel') sourceTypeCounts.excel += 1
+    else if (st === 'csv') sourceTypeCounts.csv += 1
+  }
+  const sourceFilterOptions = SOURCE_TYPE_FILTERS.filter(
+    (o) => o.id === 'all' || sourceTypeCounts[o.id] > 0,
+  )
+
   let filteredTables = tables.filter((t) =>
     matchesStatusFilter(t, activeFilter, reviewedIds.has(t.table_id))
+      && matchesSourceTypeFilter(t, sourceTypeFilter)
   )
   // Search is additive: status / reason / merge filters stay unchanged.
   const searchQuery = tableSearch.trim()
@@ -657,7 +673,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
             onClick={onDone}
           >
             <ArrowLeft className="h-4 w-4" strokeWidth={2} aria-hidden />
-            Upload another PDF
+            Upload another file
           </button>
           <div className="font-display text-[26px] font-medium leading-tight text-ink">Review Extracted Tables</div>
           <div className="mt-1.5 text-[13px] font-medium text-ink">
@@ -776,6 +792,31 @@ export default function PdfReview({ jobId, filename, onDone }) {
               </div>
             ) : null}
           </div>
+
+          {sourceFilterOptions.length > 2 && (
+            <div className="flex flex-wrap items-center gap-2 border-t border-line/70 pt-2">
+              <span className="flex-none text-[12px] font-semibold tracking-wide text-ink-soft">Source:</span>
+              {sourceFilterOptions.map(({ id, label }) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={chipClass(sourceTypeFilter === id)}
+                  onClick={() => {
+                    setSourceTypeFilter(id)
+                    setExpanded(null)
+                    setTablePage(0)
+                  }}
+                >
+                  {label}
+                  <span className={`rounded-full px-1.5 py-px text-[11px] font-bold ${
+                    sourceTypeFilter === id ? 'bg-cream/20 text-cream' : 'bg-cream text-ink-soft'
+                  }`}>
+                    {sourceTypeCounts[id] ?? 0}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
 
           <TableExpandPanel open={showReasonFilters}>
             <div
@@ -919,7 +960,8 @@ export default function PdfReview({ jobId, filename, onDone }) {
                     <div className="min-w-0 flex-1">
                       <TableTitleDisplay table={t} />
                       <div className="mt-0.5 text-[11.5px] leading-snug text-ink-soft">
-                        Page {t.page} · {t.semantic_status === 'classified' ? 'AI-classified' : 'Auto-accepted (no AI review)'}
+                        {tableSourceSubtitle(t) || `Page ${t.page}`}
+                        {' · '}{t.semantic_status === 'classified' ? 'AI-classified' : 'Auto-accepted (no AI review)'}
                       </div>
                     </div>
                     <div className="flex flex-none items-center gap-2">

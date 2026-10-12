@@ -7,8 +7,15 @@ from typing import Dict
 from app.services.ingestion.contracts import SourceType
 
 
-def tag_tables_with_source_type(result: Dict[int, Dict], source_type: SourceType) -> Dict[int, Dict]:
+def tag_tables_with_source_type(
+    result: Dict[int, Dict],
+    source_type: SourceType,
+    *,
+    source_filename: str | None = None,
+) -> Dict[int, Dict]:
     for _unit, page in result.items():
         for table in page.get("tables") or []:
             table["source_type"] = source_type
+            if source_filename and not table.get("source_filename"):
+                table["source_filename"] = source_filename
     return result

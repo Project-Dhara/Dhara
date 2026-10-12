@@ -23,7 +23,13 @@ from app.services.extraction.pdf.utils.header_utils import (
     extract_in_grid_caption,
 )
 from app.services.extraction.pdf.utils.pymupdf import _best_matching_ruled_candidate
+from app.services.extraction.pdf.confidence_validation.alignment import (
+    _looks_garbled,
+    _rows_look_garbled,
+    _uncertain_note_is_alignment_mismatch,
+)
 from app.services.extraction.pdf.confidence_validation.table_confidence import (
+    dedupe_column_names,
     strip_caption_label_prefix,
     title_needs_review,
 )

@@ -35,7 +35,8 @@ def validate_pre_input(
         api_key=api_key,
         on_progress=on_progress,
     )
-    return tag_tables_with_source_type(result, "pdf")
+    name = Path(pre["source_path"]).name if pre.get("source_path") else None
+    return tag_tables_with_source_type(result, "pdf", source_filename=name)
 
 
 def run_pdf_upload_pipeline(

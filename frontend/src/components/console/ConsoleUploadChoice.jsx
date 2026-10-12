@@ -1,16 +1,17 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import { Plus, X } from 'lucide-react'
+import { ArrowRight, Plus, X } from 'lucide-react'
 import Button from '../ui/Button'
 import ErrorBanner from '../ui/ErrorBanner'
+import { isDatasetFile, useSinglePdfUpload } from '../../lib/datasetUpload'
 
 export function stepInfoFor(step) {
   return [
     null,
     {
       title: 'Select dataset and metadata files',
-      purpose: 'Upload dataset files (PDF, XLSX, or SQL) and optional metadata tag workbooks for this release.',
+      purpose: 'Upload dataset files (PDF, XLSX, CSV, or SQL) and optional metadata tag workbooks for this release.',
       next: 'Next: preview the extracted tables.',
     },
     {
@@ -107,11 +108,11 @@ function DatasetFileList({ files, onRemove }) {
 export function UploadChoice({
   choice,
   onChoose,
-  onDatasetFile,
   onDatasetFilesAdd,
   onDatasetFileRemove,
   datasetFiles = [],
-  onPdfFile,
+  onStartProcessing,
+  processing,
   pdfUploading,
   pdfError,
   onClearPdfError,
@@ -126,32 +127,17 @@ export function UploadChoice({
   const [datasetDragging, setDatasetDragging] = useState(false)
   const [metadataDragging, setMetadataDragging] = useState(false)
 
+  const fileTab = choice !== 'sql'
   const hasDatasetFiles = datasetFiles.length > 0
-  const uploadsBlocked = disabled || pdfUploading
+  const singlePdfQueued = useSinglePdfUpload(datasetFiles)
+  const uploadsBlocked = disabled || processing || pdfUploading
+  const showStartProcessing = fileTab && hasDatasetFiles && onStartProcessing
 
   const routeDatasetFiles = (fileList) => {
     if (uploadsBlocked) return
-    const files = Array.from(fileList || [])
+    const files = Array.from(fileList || []).filter((f) => isDatasetFile(f.name))
     if (!files.length) return
-
-    // Once XLSX workbooks are queued, only accept more XLSX — keep adding under this box.
-    if (hasDatasetFiles) {
-      const xlsx = files.filter((f) => /\.(xlsx|xls)$/i.test(f.name))
-      if (xlsx.length) onDatasetFilesAdd?.(xlsx)
-      return
-    }
-
-    const first = files[0]
-    if (/\.pdf$/i.test(first.name)) {
-      onPdfFile?.(first)
-      return
-    }
-    const xlsx = files.filter((f) => /\.(xlsx|xls)$/i.test(f.name))
-    if (xlsx.length === 1 && onDatasetFile) {
-      onDatasetFile('xlsx', xlsx[0])
-      return
-    }
-    if (xlsx.length) onDatasetFilesAdd?.(xlsx)
+    onDatasetFilesAdd?.(files)
   }
 
   const takeMetadataFiles = (fileList) => {
@@ -160,7 +146,6 @@ export function UploadChoice({
     if (files.length) onMetadataFilesAdd?.(files)
   }
 
-  const fileTab = choice !== 'sql'
   const dropZoneClass = (dragging) =>
     `flex min-h-[168px] flex-1 flex-col items-center justify-center gap-2 rounded-xl border border-dashed px-5 py-6 text-center transition-colors ${
       uploadsBlocked
@@ -182,8 +167,8 @@ export function UploadChoice({
       <input
         ref={datasetInputRef}
         type="file"
-        accept={hasDatasetFiles ? '.xlsx,.xls' : '.pdf,.xlsx,.xls'}
-        multiple={hasDatasetFiles}
+        accept=".pdf,.xlsx,.xls,.csv"
+        multiple
         className="hidden"
         disabled={uploadsBlocked}
         onChange={(e) => {
@@ -248,13 +233,13 @@ export function UploadChoice({
                   setDatasetDragging(false)
                   routeDatasetFiles(e.dataTransfer.files)
                 }}
-                className={`${dropZoneClass(datasetDragging)} ${pdfUploading ? 'pointer-events-none opacity-60' : ''}`}
+                className={`${dropZoneClass(datasetDragging)} ${processing ? 'pointer-events-none opacity-60' : ''}`}
               >
                 <Plus className="h-5 w-5 text-teal" strokeWidth={2} aria-hidden />
-                {pdfUploading ? (
+                {processing ? (
                   <>
-                    <div className="text-[15px] font-semibold tracking-tight text-ink">Uploading PDF…</div>
-                    <div className="max-w-[280px] text-[13px] leading-snug text-ink-soft">Starting extraction…</div>
+                    <div className="text-[15px] font-semibold tracking-tight text-ink">Processing…</div>
+                    <div className="max-w-[280px] text-[13px] leading-snug text-ink-soft">Uploading and starting extraction…</div>
                   </>
                 ) : disabled ? (
                   <>
@@ -264,12 +249,17 @@ export function UploadChoice({
                     </div>
                   </>
                 ) : hasDatasetFiles ? (
-                  <div className="text-[15px] font-semibold tracking-tight text-ink">XLSX — drag and drop or browse</div>
+                  <>
+                    <div className="text-[15px] font-semibold tracking-tight text-ink">Files ready</div>
+                    <div className="max-w-[280px] text-[13px] leading-snug text-ink-soft">
+                      Add more PDF, XLSX, or CSV files, then use Start processing below.
+                    </div>
+                  </>
                 ) : (
                   <>
                     <div className="text-[15px] font-semibold tracking-tight text-ink">Upload dataset files</div>
                     <div className="max-w-[280px] text-[13px] leading-snug text-ink-soft">
-                      Click or drop PDF reports or XLSX workbooks — the matching pipeline runs automatically.
+                      Click or drop PDF reports, Excel workbooks, or CSV files — extraction runs when you start processing.
                     </div>
                   </>
                 )}
@@ -320,6 +310,30 @@ export function UploadChoice({
           </div>
         </div>
       </div>
+      {showStartProcessing && (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            disabled={uploadsBlocked}
+            onClick={() => !uploadsBlocked && onStartProcessing?.()}
+          >
+            {processing && (
+              <span className="mr-1.5 inline-block h-[13px] w-[13px] animate-spin rounded-full border-2 border-white/50 border-t-white" />
+            )}
+            <span className="inline-flex items-center gap-1.5">
+              {processing ? 'Processing…' : 'Start processing'}
+              {!processing && <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />}
+            </span>
+          </Button>
+          {!processing && (
+            <span className="text-xs text-ink-soft">
+              {singlePdfQueued
+                ? '1 PDF'
+                : `${datasetFiles.length} dataset file${datasetFiles.length === 1 ? '' : 's'}`}
+              {metadataFiles.length > 0 ? ` · ${metadataFiles.length} metadata` : ''}
+            </span>
+          )}
+        </div>
+      )}
       {pdfError && (
         <div className="flex flex-col gap-2">
           <ErrorBanner>{pdfError}</ErrorBanner>

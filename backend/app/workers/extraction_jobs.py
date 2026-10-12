@@ -97,14 +97,16 @@ def _pdf_job_public(job: Dict[str, Any]) -> Dict[str, Any]:
         for k, v in job.items()
         if k not in ("result", "reviews", "deleted_table_ids", "pdf_bytes")
     }
-    if job.get("status") == "done" and job.get("result") is not None:
-        deleted = set(job.get("deleted_table_ids") or [])
-        tables = []
-        for page_num, page in job["result"].items():
-            for idx, t in enumerate(page.get("tables", [])):
-                table_id = f"{page_num}-{idx}"
-                if table_id not in deleted:
-                    tables.append(t)
+    from app.services.ingestion.review_tables import batch_meta_from_result
+
+    meta = batch_meta_from_result(job.get("result"))
+    batch_files = job.get("batch_files") or meta.get("batch_files")
+    if batch_files:
+        public["batch_files"] = batch_files
+        public["is_batch"] = True
+    status = job.get("status")
+    if status in ("done", "completed_with_errors") and job.get("result") is not None:
+        tables = _pdf_tables_from_job(job)
         public["table_count"] = len(tables)
         public["needs_review_count"] = sum(
             1 for t in tables if t.get("human_review_needed")
@@ -124,9 +126,14 @@ def queue_extraction_job(
     file_bytes: bytes,
     organisation_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    persist_file_bytes: bool = False,
+    parent_batch_id: Optional[str] = None,
 ) -> None:
     """Register an in-memory job and persist initial state (caller starts the worker)."""
     with _pdf_jobs_lock:
+        reviews: Dict[str, Any] = {}
+        if persist_file_bytes:
+            reviews["__retain_file_bytes"] = True
         _pdf_jobs[job_id] = {
             "job_id": job_id,
             "status": "queued",
@@ -141,10 +148,11 @@ def queue_extraction_job(
             "created_at": time.time(),
             "result": None,
             "error": None,
-            "reviews": {},
+            "reviews": reviews,
             "deleted_table_ids": [],
+            "parent_batch_id": parent_batch_id,
         }
-        store_bytes = file_bytes if source_type == "pdf" else None
+        store_bytes = file_bytes if (source_type == "pdf" or persist_file_bytes) else None
         _save_pdf_job(_pdf_jobs[job_id], pdf_bytes=store_bytes)
 
 
@@ -223,7 +231,8 @@ def _run_extraction_job(
                     message="Complete",
                     result=result,
                 )
-                pdf_store_bytes = file_bytes if source_type == "pdf" else None
+                retain = bool((job.get("reviews") or {}).get("__retain_file_bytes"))
+                pdf_store_bytes = file_bytes if (source_type == "pdf" or retain) else None
                 _save_pdf_job(job, pdf_bytes=pdf_store_bytes)
     except Exception as e:
         print(f"Extraction job {job_id} ({source_type}) failed: {e}")
@@ -272,26 +281,14 @@ def _pdf_table_sort_key(table_id: str) -> Tuple[Any, int]:
 
 
 def _pdf_tables_from_job(job: Dict[str, Any]) -> list:
-    reviews = dict(job.get("reviews") or {})
-    deleted = set(job.get("deleted_table_ids") or [])
-    result = job.get("result") or {}
-    tables = []
-    for page_num in sorted(
-        result.keys(), key=lambda k: int(k) if str(k).isdigit() else str(k)
-    ):
-        for idx, t in enumerate(result[page_num].get("tables", [])):
-            table_id = f"{page_num}-{idx}"
-            if table_id in deleted:
-                continue
-            merged = {
-                **t,
-                **reviews.get(table_id, {}),
-                "table_id": table_id,
-                "page": t.get("page", page_num),
-            }
-            tables.append(merged)
-    return tables
+    from app.services.ingestion.review_tables import flatten_job_result_to_review_tables
+
+    return flatten_job_result_to_review_tables(job)
 
 
 def _pdf_merged_tables_for_job(job: Dict[str, Any]) -> list:
     return _pdf_tables_from_job(job)
+
+
+def job_extraction_complete(status: Optional[str]) -> bool:
+    return status in ("done", "completed_with_errors")

@@ -14,6 +14,7 @@ import pymupdf
 
 from app.services.extraction.pdf.confidence_validation.alignment import (
     _apply_column_alignment_guard,
+    _best_lines_strict_candidate,
     _cell_is_empty,
     _cell_is_numeric,
     _dataframe_numeric_fill_ratio,
