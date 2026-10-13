@@ -36,7 +36,7 @@ judge whether extracted tables match the intended product.
 ## In this codebase
 
 - Table: `kyds_entries`
-- API: KYDS routes under `backend/routes/kyds.py`
+- API: KYDS routes under `backend/app/api/routes/kyds.py`
 - UI: KYDS modal / dashboard entry points
 
 ## Next / design notes

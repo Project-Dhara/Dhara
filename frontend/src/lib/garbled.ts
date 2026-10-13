@@ -1,4 +1,4 @@
-// Mirrors backend's _GARBLED_RE in backend/sda_india_pdf_extraction.py --
+// Mirrors backend's _GARBLED_RE in backend/extraction/pdf_extraction.py --
 // keep these in sync if that pattern ever changes.
 //   - U+E000-U+F8FF: Private Use Area glyphs (icon-font characters with no
 //     real Unicode mapping, render as tofu/boxes -- e.g. trend-arrow icons)

@@ -136,17 +136,6 @@ export default function SqlUpload({
 
   return (
     <div className="flex w-full flex-col gap-[18px]">
-      <div className="rounded-lg border border-line bg-mist/80 px-4 py-3 text-[13px] leading-relaxed text-ink-soft">
-        Connect to a <span className="font-semibold text-ink">PostgreSQL</span> database.
-        Leave the SQL box empty to auto-extract tables. DHARA catalogue databases
-        (<code className="rounded bg-cream px-1 text-[12px] text-ink">datasets</code>
-        {' '}+{' '}
-        <code className="rounded bg-cream px-1 text-[12px] text-ink">dataset_rows</code>)
-        {' '}are expanded into one logical table per dataset — not the registry surface.
-        Ordinary databases still extract every user table/view.
-        {' '}If the API runs in Docker, use host <code className="rounded bg-cream px-1 text-[12px] text-ink">postgres</code>
-        {' '}for this project’s Compose DB.
-      </div>
 
       <div className="flex flex-wrap gap-2" role="tablist" aria-label="Connection mode">
         <button
@@ -305,9 +294,6 @@ export default function SqlUpload({
             </span>
           )}
         </Button>
-        {!busy && !hasQuery && (
-          <span className="text-xs text-ink-soft">No SQL needed — catalogue DBs expand datasets automatically</span>
-        )}
       </div>
     </div>
   )

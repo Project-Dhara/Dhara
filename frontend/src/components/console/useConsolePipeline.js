@@ -17,6 +17,8 @@ import {
 import { loadPersistedConsoleState, CONSOLE_STORAGE_KEY } from '../../lib/consolePersist'
 import { subscribeConsoleTableEdits } from '../../lib/consoleTableEdit'
 import { stepInfoFor } from './ConsoleUploadChoice'
+import { withinStageBack } from './ConsoleStages'
+import { isDatasetFile, uploadDatasetBatch, useSinglePdfUpload } from '../../lib/datasetUpload'
 
 export function useConsolePipeline() {
   const persisted = loadPersistedConsoleState()
@@ -338,7 +340,7 @@ export function useConsolePipeline() {
       key: 'classifyToPublish',
       after: () => {
         setStatusPage(null)
-        setStep(6)
+        setStep(7)
       },
     })
   }
@@ -374,7 +376,10 @@ export function useConsolePipeline() {
     })
   }
 
-  const back = () => setStep((s) => Math.max(1, s - 1))
+  const back = () => {
+    const target = withinStageBack(step)
+    if (target) setStep(target.step)
+  }
 
   const stageIdx = stageIndexForStep(step)
 
@@ -399,14 +404,22 @@ export function useConsolePipeline() {
     return base
   })()
 
-  const handleDatasetFile = (type, file) => {
-    if (type === 'xlsx' && file) {
-      setPendingDatasetFiles((prev) => {
-        const exists = prev.some((f) => f.name === file.name && f.size === file.size)
-        return exists ? prev : [...prev, file]
+  const addPendingDatasetFiles = (files) => {
+    const datasets = (files || []).filter((f) => isDatasetFile(f.name))
+    if (!datasets.length) return
+    setPendingDatasetFiles((prev) => {
+      const next = [...prev]
+      datasets.forEach((file) => {
+        const exists = next.some((f) => f.name === file.name && f.size === file.size)
+        if (!exists) next.push(file)
       })
-      setUploadChoice('xlsx')
-    }
+      return next
+    })
+    if (uploadChoice === 'sql') setUploadChoice(null)
+  }
+
+  const removePendingDatasetFile = (index) => {
+    setPendingDatasetFiles((prev) => prev.filter((_, i) => i !== index))
   }
 
   const addStep1MetadataFiles = (files) => {
@@ -423,11 +436,18 @@ export function useConsolePipeline() {
   }
 
   const handlePdfFile = async (file) => {
+    if (!file) return
     setPdfError('')
     setPdfUploading(true)
     try {
       const fd = new FormData()
       fd.append('file', file)
+      fd.append(
+        'dataset_id_config',
+        JSON.stringify(
+          (await import('../../lib/settingsConfig')).datasetIdConfigPayload(),
+        ),
+      )
       const res = await fetch('/api/pdf/upload', withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: fd })))
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Upload failed' }))
@@ -437,6 +457,25 @@ export function useConsolePipeline() {
       router.push(`/console/processing/${job_id}`)
     } catch (e) {
       setPdfError(e.message)
+      setPdfUploading(false)
+    }
+  }
+
+  const startDatasetProcessing = async () => {
+    const files = pendingDatasetFiles
+    if (!files.length) return
+    setPdfError('')
+    setPdfUploading(true)
+    try {
+      if (useSinglePdfUpload(files)) {
+        await handlePdfFile(files[0])
+        return
+      }
+      const data = await uploadDatasetBatch(files)
+      const jobId = data.job_id || data.batch_id
+      router.push(`/console/processing/${jobId}`)
+    } catch (e) {
+      setPdfError(e.message || 'Upload failed')
       setPdfUploading(false)
     }
   }
@@ -489,6 +528,11 @@ export function useConsolePipeline() {
     setSavedIds((prev) => (prev.has(uid) ? prev : new Set(prev).add(uid)))
     if (correction) patchTables({ [uid]: correction })
   }
+  const updatePreviewTableId = (uid, nextId) => {
+    const trimmed = String(nextId || '').trim()
+    if (!uid || !trimmed) return
+    patchTables({ [uid]: { id: trimmed } })
+  }
   // Scoped to the currently selected dataset (falls back to all tables when
   // no filter is applied) so the banner only warns about the dataset in view.
   const mismatchedPreviewTables = visiblePreviewTables.filter((t) => t.id_title_mismatch)
@@ -526,6 +570,7 @@ export function useConsolePipeline() {
 
   return {
     STATUS_TRANSITIONS,
+    addPendingDatasetFiles,
     addStep1MetadataFiles,
     applyReconcile,
     autoMatchResultRef,
@@ -537,15 +582,17 @@ export function useConsolePipeline() {
     filteredPreviewTables,
     goToStep,
     groupingToast,
-    handleDatasetFile,
     handleMatched,
     handlePdfFile,
+    startDatasetProcessing,
     handleRequestAutomatic,
     info,
     manualGrouping,
     markTableSaved,
+    updatePreviewTableId,
     matchResult,
     maxStepReached,
+    setMaxStepReached,
     metaLabel,
     metadataFiles,
     metadataFilling,
@@ -563,6 +610,7 @@ export function useConsolePipeline() {
     previewSelected,
     previewTables,
     publishFromClassify,
+    removePendingDatasetFile,
     removeStep1MetadataFile,
     requestContinueToMetadata,
     resetUploadChoice,
@@ -578,6 +626,7 @@ export function useConsolePipeline() {
     setMetadataId,
     setMetadataIds,
     setPdfError,
+    setPendingDatasetFiles,
     setPendingGroups,
     setPreviewReviewFilter,
     setStatusPage,

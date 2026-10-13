@@ -31,7 +31,7 @@ optional object storage for Excel downloads.
 2. Set secrets: `DATABASE_URL`, `JWT_SECRET`, provider keys as needed.
 3. Set `ENABLE_SIGNUP=false` for non-demo environments.
 4. Deploy the **root** `Dockerfile` (combined image).
-5. Confirm `GET /api/health` and log in via the UI.
+5. Confirm `GET /api/ready` (or `/api/live`) and log in via the UI.
 
 See [configuration](./configuration.md).
 
@@ -65,9 +65,7 @@ JWT_SECRET=…
 ENABLE_SIGNUP=false
 ENABLE_GCS=true|false
 GCS_BUCKET_NAME=…                    # if ENABLE_GCS=true
-ANTHROPIC_API_KEY=…                  # optional MEITY-empanelled / Anthropic-compatible
-OPENAI_API_KEY=…                     # optional MEITY-empanelled / OpenAI-compatible + embeddings
-SKIP_LLM=false                       # prefer “no key” for heuristic PDF/Excel; see on-prem.md
+# LLM keys: paste in Settings after login (no server OPENAI_/ANTHROPIC_ fallback)
 ```
 
 ### Cloud SQL
@@ -98,11 +96,10 @@ the runtime SA is granted access.
 type: web
 dockerfilePath: ./Dockerfile
 envVars:
-  ANTHROPIC_API_KEY   # MEITY-empanelled / Anthropic-compatible — sync: false → set in dashboard
-  OPENAI_API_KEY      # MEITY-empanelled / OpenAI-compatible
   DATABASE_URL        # e.g. Neon
   JWT_SECRET
   ENABLE_GCS: "false"
+  # LLM keys: configure in Settings UI after login
 ```
 
 ### Steps
@@ -110,7 +107,7 @@ envVars:
 1. Create a Render Blueprint from the repo or manually attach the Dockerfile.
 2. Attach a Postgres (or external Neon) with pgvector enabled.
 3. Paste secrets in the dashboard.
-4. Deploy; open `https://<service>/` and `/api/health`.
+4. Deploy; open `https://<service>/` and `/api/ready`.
 
 Render injects `PORT`; no extra port mapping is required.
 

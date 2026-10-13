@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft } from 'lucide-react'
 import { withAuthHeaders } from '../../lib/auth'
 import { withLlmKeyHeaders } from '../../lib/llmKey'
 import { getMetadataStandard } from '../../lib/settingsConfig'
@@ -93,6 +92,8 @@ export default function PdfGrouping({ jobId }) {
     Boolean(persisted?.matchResult && (persisted?.pipelineStep ?? 3) >= 4),
   )
   const [statusPage, setStatusPage] = useState(null)
+  const [classificationComplete, setClassificationComplete] = useState(false)
+  const goToHarmRef = useRef(null)
   const continueOkRef = useRef(false)
 
   useEffect(() => {
@@ -329,6 +330,14 @@ export default function PdfGrouping({ jobId }) {
     })
   }
 
+  const requestHarmonisation = () => {
+    if (goToHarmRef.current) goToHarmRef.current()
+    else if (classificationComplete) {
+      setPipelineStep(6)
+      setMaxStepReached((prev) => Math.max(prev, 6))
+    }
+  }
+
   const goToPipelineStep = (targetStep) => {
     if (targetStep === 1) {
       goToConsoleFiles(router)
@@ -342,10 +351,19 @@ export default function PdfGrouping({ jobId }) {
       setPipelineStep(3)
       return
     }
+    if (targetStep === 6) {
+      requestHarmonisation()
+      return
+    }
     if (targetStep >= 4 && targetStep <= maxStepReached) {
       if (targetStep === 4 && !matchResult) return
       setPipelineStep(targetStep)
     }
+  }
+
+  const isStepReachable = (s) => {
+    if (s === 6) return classificationComplete
+    return s <= maxStepReached
   }
 
   const tableCount = matchResult
@@ -360,6 +378,7 @@ export default function PdfGrouping({ jobId }) {
         step={pipelineStep}
         maxStepReached={maxStepReached}
         onGoToStep={goToPipelineStep}
+        isStepReachable={isStepReachable}
       >
         <div className="rounded-xl border border-line bg-white p-5 shadow-sm sm:p-6">
           <ConsoleStatusPlaceholder
@@ -381,18 +400,11 @@ export default function PdfGrouping({ jobId }) {
       step={pipelineStep}
       maxStepReached={maxStepReached}
       onGoToStep={goToPipelineStep}
+      isStepReachable={isStepReachable}
     >
       {pipelineStep === 3 && (
         <div className="flex flex-col gap-[18px]">
           <div className="min-w-0">
-            <button
-              type="button"
-              className="mb-3.5 inline-flex items-center gap-1.5 text-[15px] font-semibold text-teal hover:text-teal-dark"
-              onClick={() => router.push(`/console/review/${jobId}`)}
-            >
-              <ArrowLeft className="h-4 w-4" strokeWidth={2} aria-hidden />
-              Back to preview
-            </button>
             <div className="font-display text-[26px] font-medium leading-tight text-ink">Group tables</div>
             <div className="mt-1.5 text-[13px] font-medium text-ink">
               {filename || 'PDF report'}
@@ -422,6 +434,7 @@ export default function PdfGrouping({ jobId }) {
               toast={toast}
               onDismissToast={() => setToast(null)}
               preferTableId
+              idColumnLabel="Dataset ID"
               titleColumnLabel="Title"
               continueDisabled={saving}
             />
@@ -457,17 +470,29 @@ export default function PdfGrouping({ jobId }) {
               },
             })
           }}
+          onClassifyPhaseChange={(next) => {
+            if (next === 'harmonisation') {
+              setPipelineStep(6)
+              setMaxStepReached((prev) => Math.max(prev, 6))
+            } else if (next === 'classification') {
+              setPipelineStep(5)
+            }
+          }}
+          onClassificationCompleteChange={setClassificationComplete}
+          onRegisterGoToHarmonisation={(fn) => { goToHarmRef.current = fn }}
+          classificationComplete={classificationComplete}
           onClassifyContinue={() => {
             setStatusPage({
               ...STATUS_TRANSITIONS.classifyToPublish,
               key: 'classifyToPublish',
               after: () => {
                 setStatusPage(null)
-                setPipelineStep(6)
-                setMaxStepReached((prev) => Math.max(prev, 6))
+                setPipelineStep(7)
+                setMaxStepReached((prev) => Math.max(prev, 7))
               },
             })
           }}
+          showClassifyHeading
           onGoSettings={() => router.push('/settings')}
           onGoDashboard={() => router.push('/dashboard')}
           onGoCatalogue={() => router.push('/catalogue')}
@@ -475,6 +500,7 @@ export default function PdfGrouping({ jobId }) {
             clearPdfPipeline(jobId)
             goToConsoleFiles(router)
           }}
+          onMatchResultChange={setMatchResult}
         />
       )}
     </PdfConsoleLayout>

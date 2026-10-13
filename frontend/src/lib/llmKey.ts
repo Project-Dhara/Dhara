@@ -1,26 +1,17 @@
-// The user's own LLM API key (and chosen provider), entered in Settings.
-// Persisted in localStorage so it survives reloads; sent to the backend on
-// every LLM-backed request instead of relying on the backend's own .env
-// key/SKIP_LLM toggle.
-const STORAGE_KEY = 'dhara.llmApiKey'
+// LLM credential status helpers. The raw API key is never stored in
+// localStorage and is never sent on subsequent requests — the backend
+// decrypts the stored secret for provider calls.
+
 const PROVIDER_STORAGE_KEY = 'dhara.llmProvider'
-export const LLM_KEY_HEADER = 'X-Llm-Api-Key'
-export const LLM_PROVIDER_HEADER = 'X-Llm-Provider'
 
-export function getLlmApiKey(): string {
-  try {
-    return localStorage.getItem(STORAGE_KEY) || ''
-  } catch {
-    return ''
-  }
-}
+/** @deprecated Cleared on load; do not write secrets here. */
+const LEGACY_KEY_STORAGE = 'dhara.llmApiKey'
 
-export function setLlmApiKey(key: string) {
+export function clearLegacyLlmKeyStorage() {
   try {
-    if (key) localStorage.setItem(STORAGE_KEY, key)
-    else localStorage.removeItem(STORAGE_KEY)
+    localStorage.removeItem(LEGACY_KEY_STORAGE)
   } catch {
-    // ignore (e.g. localStorage disabled)
+    // ignore
   }
 }
 
@@ -41,25 +32,7 @@ export function setLlmProvider(provider: string) {
   }
 }
 
-// Merge the saved key (and provider, if set) into a fetch() init object's
-// headers.
+/** Auth-only headers — LLM keys stay server-side. */
 export function withLlmKeyHeaders(init: RequestInit = {}): RequestInit {
-  const key = getLlmApiKey()
-  if (!key) return init
-  let provider = (getLlmProvider() || '').trim().toLowerCase()
-  if (provider === 'meity-empanelled llm' || provider === 'openai' || provider === '') {
-    provider = 'openai'
-  } else if (provider === 'anthropic') {
-    provider = 'anthropic'
-  } else if (provider === 'self-hosted') {
-    provider = ''
-  }
-  return {
-    ...init,
-    headers: {
-      ...(init.headers || {}),
-      [LLM_KEY_HEADER]: key,
-      ...(provider ? { [LLM_PROVIDER_HEADER]: provider } : {}),
-    },
-  }
+  return init
 }

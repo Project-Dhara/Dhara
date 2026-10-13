@@ -6,16 +6,13 @@ services:
     region: singapore   # change to your preferred region
     plan: free
     envVars:
-      - key: ANTHROPIC_API_KEY
-        sync: false       # you will paste the value in the Render dashboard
-      - key: OPENAI_API_KEY
-        sync: false       # you will paste the value in the Render dashboard
       - key: DATABASE_URL
         sync: false       # paste Neon connection string in the Render dashboard
       - key: JWT_SECRET
         sync: false       # paste a random secret in the Render dashboard
       - key: ENABLE_GCS
         value: "false"
+    # LLM keys: configure in the app Settings UI (not server env).
     # Render sets $PORT itself; the Dockerfile's start.sh reads it for
     # Next.js's public-facing port and always runs FastAPI internally on
     # BACKEND_PORT (8000, not publicly exposed) -- no port config needed here.

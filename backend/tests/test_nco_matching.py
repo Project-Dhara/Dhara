@@ -16,7 +16,7 @@ import sys
 # `catalogue` package (and its sibling packages) import regardless of cwd.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from catalogue import nco_matching as nco
+from app.services.classification import nco_matching as nco
 
 CSV_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "nco_2015_concordance.csv")
 

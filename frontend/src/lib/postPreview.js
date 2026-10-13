@@ -76,8 +76,11 @@ export function pdfGroupingToMatchResult(grouping, sourceFile = 'pdf', pdfJobId 
     matched_tables: (g.tables || []).map((t) => ({
       table: {
         ...t,
+        // Keep UUID pk for grouping membership; expose human id as dataset_id.
         _uid: t.id || t._uid || t.table_id,
         id: t.id || t._uid || t.table_id,
+        dataset_id: t.dataset_id || t.table_id || t.id,
+        table_id: t.table_id || t.dataset_id || t.id,
         source_file: sourceFile || t.source_file || 'pdf',
         source_type: t.source_type || 'pdf',
         sheet: t.sheet || t.title || t.table_id || 'data',
@@ -91,6 +94,8 @@ export function pdfGroupingToMatchResult(grouping, sourceFile = 'pdf', pdfJobId 
       ...t,
       _uid: t.id || t._uid || t.table_id,
       id: t.id || t._uid || t.table_id,
+      dataset_id: t.dataset_id || t.table_id || t.id,
+      table_id: t.table_id || t.dataset_id || t.id,
       source_file: sourceFile || t.source_file || 'pdf',
       source_type: t.source_type || 'pdf',
       sheet: t.sheet || t.title || t.table_id || 'data',
@@ -199,17 +204,15 @@ export function createMatchGroup(matchResult, name, tableIds) {
   if (!matchResult) return matchResult
   const idSet = new Set(tableIds)
   const pulled = []
-  const groups = matchResult.groups
-    .map((g) => {
-      const keep = []
-      ;(g.matched_tables || []).forEach((mt) => {
-        const id = mt.table.id || mt.table._uid
-        if (idSet.has(id)) pulled.push({ table: mt.table, inventory_item: null, confidence: 'manual' })
-        else keep.push(mt)
-      })
-      return { ...g, matched_tables: keep }
+  const groups = matchResult.groups.map((g) => {
+    const keep = []
+    ;(g.matched_tables || []).forEach((mt) => {
+      const id = mt.table.id || mt.table._uid
+      if (idSet.has(id)) pulled.push({ table: mt.table, inventory_item: null, confidence: 'manual' })
+      else keep.push(mt)
     })
-    .filter((g) => (g.matched_tables || []).length > 0)
+    return { ...g, matched_tables: keep }
+  })
   const unmatchedKeep = []
   ;(matchResult.unmatched_tables || []).forEach((u) => {
     const id = u.table.id || u.table._uid
@@ -261,6 +264,7 @@ export async function fillGroupMetadataForMatchResult(matchResult, {
       toast: `${detail} — fill metadata in manually below.`,
       matchResult: {
         ...matchResult,
+        autofill_attempted: true,
         llm_autofill_skipped_no_key: false,
         kyds_missing: false,
         autofill_errors: [{ group: 'all', error: detail }],
@@ -271,6 +275,7 @@ export async function fillGroupMetadataForMatchResult(matchResult, {
   const autofillErrors = Array.isArray(data.autofill_errors) ? data.autofill_errors : []
   const metaPatches = Array.isArray(data.group_metadata) ? data.group_metadata : null
   let nextGroups = matchResult.groups
+  const aiFilledFieldsByGroup = {}
   if (metaPatches) {
     nextGroups = matchResult.groups.map((g, i) => {
       const patch = metaPatches.find((p) => p.index === i) || metaPatches[i]
@@ -286,6 +291,14 @@ export async function fillGroupMetadataForMatchResult(matchResult, {
       if (patch.catalogue_metadata && Object.keys(patch.catalogue_metadata).length) {
         next.catalogue_metadata = { ...(g.catalogue_metadata || {}), ...patch.catalogue_metadata }
       }
+      if (patch.llm_filled) {
+        next.llm_filled = true
+        const fields = Array.isArray(patch.llm_filled_fields)
+          ? patch.llm_filled_fields.filter((k) => String(next.metadata?.[k] || next.concept_metadata?.[k] || '').trim())
+          : Object.keys(next.metadata || {}).filter((k) => String(next.metadata[k] || '').trim())
+        next.llm_filled_fields = fields
+        aiFilledFieldsByGroup[i] = fields
+      }
       return next
     })
   } else if (Array.isArray(data.groups) && data.groups.length === matchResult.groups.length) {
@@ -295,9 +308,15 @@ export async function fillGroupMetadataForMatchResult(matchResult, {
       metadata: data.groups[i]?.metadata && Object.keys(data.groups[i].metadata).length
         ? { ...(g.metadata || {}), ...data.groups[i].metadata }
         : g.metadata,
+      llm_filled: Boolean(data.groups[i]?._llm_filled || data.groups[i]?.llm_filled),
+      llm_filled_fields: data.groups[i]?._llm_filled_fields || data.groups[i]?.llm_filled_fields || [],
     }))
+    nextGroups.forEach((g, i) => {
+      if (g.llm_filled) aiFilledFieldsByGroup[i] = g.llm_filled_fields || []
+    })
   }
   const filledCount = Number(data.autofill_filled_count) || 0
+  const llmFilledCount = Number(data.autofill_llm_filled_count) || Object.keys(aiFilledFieldsByGroup).length
   let toast = null
   if (data.kyds_missing) {
     toast = 'Fill in Know Your Dataset first so metadata can be auto-mapped — or fill fields manually on the next step.'
@@ -310,6 +329,8 @@ export async function fillGroupMetadataForMatchResult(matchResult, {
       : autofillErrors.length === 1
         ? `Auto-fill failed for 1 group (${sample}). Fill that group in manually.`
         : `Auto-fill failed for ${autofillErrors.length} groups. Fill those groups in manually.`
+  } else if (llmFilledCount > 0) {
+    toast = `AI auto-filled metadata for ${llmFilledCount} group${llmFilledCount !== 1 ? 's' : ''}.`
   }
   return {
     ok: true,
@@ -317,10 +338,13 @@ export async function fillGroupMetadataForMatchResult(matchResult, {
     matchResult: {
       ...matchResult,
       groups: nextGroups,
+      autofill_attempted: true,
       llm_autofill_skipped_no_key: Boolean(data.llm_autofill_skipped_no_key),
       kyds_missing: Boolean(data.kyds_missing),
       autofill_errors: autofillErrors,
       autofill_filled_count: filledCount,
+      autofill_llm_filled_count: llmFilledCount,
+      ai_filled_fields_by_group: aiFilledFieldsByGroup,
     },
   }
 }

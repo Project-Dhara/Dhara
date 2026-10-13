@@ -5,16 +5,21 @@ import { useRouter } from 'next/navigation'
 import FileUpload from '../FileUpload'
 import ErrorBanner from '../ui/ErrorBanner'
 import Button from '../ui/Button'
+import LlmKeyRequiredBanner from '../LlmKeyRequiredBanner'
 import { withAuthHeaders } from '../../lib/auth'
 import { withLlmKeyHeaders } from '../../lib/llmKey'
+import { datasetIdConfigPayload } from '../../lib/settingsConfig'
+import { useApp } from '../../context/AppContext'
 
 // Upload only. Processing progress and review now live on their own routed
 // pages (/console/processing/:jobId, /console/review/:jobId) -- this
 // component's only job is picking a file, POSTing it, and navigating away.
-export default function PdfUpload() {
+export default function PdfUpload({ onGoSettings }) {
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
   const router = useRouter()
+  const { keySaved } = useApp()
+  const hasLlmKey = keySaved
 
   const handleUpload = async (file) => {
     setError('')
@@ -22,6 +27,7 @@ export default function PdfUpload() {
     try {
       const fd = new FormData()
       fd.append('file', file)
+      fd.append('dataset_id_config', JSON.stringify(datasetIdConfigPayload()))
       const res = await fetch('/api/pdf/upload', withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: fd })))
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Upload failed' }))
@@ -37,6 +43,9 @@ export default function PdfUpload() {
 
   return (
     <div className="mx-auto flex max-w-[760px] flex-col gap-3">
+      {!hasLlmKey && (
+        <LlmKeyRequiredBanner onGoSettings={onGoSettings || (() => router.push('/settings'))} />
+      )}
       <FileUpload
         onUpload={handleUpload}
         loading={uploading}

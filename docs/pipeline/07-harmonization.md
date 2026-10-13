@@ -39,12 +39,14 @@ NMDS · LGD · NCO · NIC · domain-specific lists
 - Console **Classification & harmonisation** step (`Classify.jsx`)
 - `backend/catalogue/classifications.py` — steward code lists / definitions
 - `nco_matching.py` + `nco_aliases.py` — occupation matching (LLM optional)
-- `classification_standards.py` — upload concordance CSV in
+- `classification_standards.py` — concordance CSV in
   **Settings → Classification code configuration**; codes stored in Postgres
 - Working matching set still read from `nco_2015_codes` shape
 
-NCO concordance files are **not** redistributed in the repo. Stewards upload
-them; see `backend/data/nco_2015_concordance.csv.example` for columns.
+NCO concordance files are **not** redistributed in the repo. Place a local copy
+at `backend/data/nco_2015_concordance.csv` and it auto-appears as **NCO 2015** in
+Settings; stewards can also upload additional files. See
+`backend/data/nco_2015_concordance.csv.example` for columns.
 
 ### Configuration modules (required for this stage)
 

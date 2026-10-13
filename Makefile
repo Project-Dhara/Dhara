@@ -2,12 +2,12 @@ COMPOSE ?= docker compose
 .DEFAULT_GOAL := help
 
 # Local URLs (override if you change ports in docker-compose.yml)
-FRONTEND_URL ?= http://localhost:3000
+FRONTEND_URL ?= http://localhost:80
 BACKEND_URL  ?= http://localhost:8000
-PROD_URL     ?= http://localhost:8080
+PROD_URL     ?= http://localhost:80
 API_DOCS     ?= $(BACKEND_URL)/docs
 
-.PHONY: help urls up down logs build restart ps psql postgres prod prod-down clean
+.PHONY: help urls up down logs build restart ps psql postgres migrate prod prod-down clean
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -17,13 +17,25 @@ urls: ## Print local service URLs
 	@echo "  Dev UI:      $(FRONTEND_URL)"
 	@echo "  Dev API:     $(BACKEND_URL)"
 	@echo "  API docs:    $(API_DOCS)"
-	@echo "  Health:      $(BACKEND_URL)/api/health"
+	@echo "  Liveness:    $(BACKEND_URL)/api/live"
+	@echo "  Readiness:   $(BACKEND_URL)/api/ready"
 	@echo "  Access API:  $(BACKEND_URL)/api/v1"
 	@echo "  Prod (all):  $(PROD_URL)"
 	@echo ""
 
-up: ## Start Postgres, backend (:8000), and frontend (:3000)
-	$(COMPOSE) up -d --build
+up: ## Start Postgres, backend (:8000), and frontend (:80)
+	@test -f backend/.env || { cp backend/.env.example backend/.env && echo "Created backend/.env from .env.example (set JWT_SECRET for non-dev use)"; }
+	# Retry once: Docker+systemd cgroup setup can fail transiently with
+	# "Message recipient disconnected from message bus without replying".
+	@$(COMPOSE) up -d --build || { \
+		echo "Compose up failed; retrying..."; \
+		sleep 2; \
+		$(COMPOSE) start 2>/dev/null || { \
+			echo "Removing stale fixed-name containers (if any)..."; \
+			docker rm -f dhara-postgres dhara-backend dhara-frontend dhara-app 2>/dev/null || true; \
+			$(COMPOSE) up -d --build; \
+		}; \
+	}
 	@echo ""
 	@echo "  UI:      $(FRONTEND_URL)"
 	@echo "  Backend: $(BACKEND_URL)"
@@ -49,6 +61,9 @@ ps: ## Show container status
 psql: ## Open a psql shell on the Docker Postgres
 	$(COMPOSE) exec postgres psql -U dhara -d dhara
 
+migrate: ## Apply Alembic migrations (Postgres + backend must be up)
+	$(COMPOSE) exec backend alembic upgrade head
+
 postgres: ## Start only Postgres (run backend/frontend on the host)
 	$(COMPOSE) up -d postgres
 	@echo ""
@@ -57,11 +72,13 @@ postgres: ## Start only Postgres (run backend/frontend on the host)
 	@echo "  Backend:  $(BACKEND_URL)  (run backend on host)"
 	@echo ""
 
-prod: ## Start Postgres + combined app image on :8080
+prod: ## Start Postgres + combined app image on :80
+	@test -f backend/.env || { cp backend/.env.example backend/.env && echo "Created backend/.env from .env.example (set JWT_SECRET for non-dev use)"; }
 	$(COMPOSE) --profile prod up -d --build postgres app
 	@echo ""
 	@echo "  App (UI + API): $(PROD_URL)"
-	@echo "  API health:     $(PROD_URL)/api/health"
+	@echo "  Liveness:       $(PROD_URL)/api/live"
+	@echo "  Readiness:      $(PROD_URL)/api/ready"
 	@echo ""
 
 prod-down: ## Stop prod-profile services

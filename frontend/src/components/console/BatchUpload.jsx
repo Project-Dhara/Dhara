@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
-import { ArrowRight, X } from 'lucide-react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { ArrowRight, Plus, X } from 'lucide-react'
 import { withLlmKeyHeaders } from '../../lib/llmKey'
 import { withAuthHeaders } from '../../lib/auth'
 import Button from '../ui/Button'
@@ -23,15 +23,20 @@ function FileList({ files, onRemove }) {
   )
 }
 
-export default function BatchUpload({
+const BatchUpload = forwardRef(function BatchUpload({
   onMatched,
   onError,
+  onBusyChange,
   initialDatasetFiles = [],
+  datasetFiles: controlledDatasetFiles,
+  onDatasetFilesChange,
   metadataFiles: controlledMetadataFiles,
   onMetadataFilesChange,
   hideMetadataSection = false,
-}) {
-  const [datasetFiles, setDatasetFiles] = useState([])
+  hideDatasetSection = false,
+  hideRunButton = false,
+}, ref) {
+  const [internalDatasetFiles, setInternalDatasetFiles] = useState([])
   const [internalMetadataFiles, setInternalMetadataFiles] = useState([])
   const [stage, setStage] = useState('idle') // idle | extracting | matching | error
   const [error, setError] = useState('')
@@ -43,10 +48,13 @@ export default function BatchUpload({
   const metadataControlled = controlledMetadataFiles != null
   const metadataFiles = metadataControlled ? controlledMetadataFiles : internalMetadataFiles
   const setMetadataFiles = metadataControlled ? onMetadataFilesChange : setInternalMetadataFiles
+  const datasetControlled = controlledDatasetFiles != null
+  const datasetFiles = datasetControlled ? controlledDatasetFiles : internalDatasetFiles
+  const setDatasetFiles = datasetControlled ? onDatasetFilesChange : setInternalDatasetFiles
 
   useEffect(() => {
-    if (!initialDatasetFiles.length) return
-    setDatasetFiles((prev) => {
+    if (datasetControlled || !initialDatasetFiles.length) return
+    setInternalDatasetFiles((prev) => {
       const next = [...prev]
       initialDatasetFiles.forEach((file) => {
         const exists = next.some((f) => f.name === file.name && f.size === file.size)
@@ -54,7 +62,7 @@ export default function BatchUpload({
       })
       return next
     })
-  }, [initialDatasetFiles])
+  }, [initialDatasetFiles, datasetControlled])
 
   const excelOnly = (fileList) => Array.from(fileList).filter((f) => /\.(xlsx|xls)$/i.test(f.name))
 
@@ -77,6 +85,10 @@ export default function BatchUpload({
 
   const busy = stage === 'extracting' || stage === 'matching'
   const canRun = datasetFiles.length > 0 && !busy
+
+  useEffect(() => {
+    onBusyChange?.(busy)
+  }, [busy, onBusyChange])
 
   const runMatch = async () => {
     setError('')
@@ -137,18 +149,24 @@ export default function BatchUpload({
     }
   }
 
+  useImperativeHandle(ref, () => ({ runMatch }), [datasetFiles, metadataFiles])
+
   return (
     <div className="flex w-full flex-col gap-[18px]">
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".xlsx,.xls"
-        multiple
-        style={{ display: 'none' }}
-        onChange={(e) => { handleFilesChosen(e.target.files); e.target.value = '' }}
-      />
+      {(!hideDatasetSection || !hideMetadataSection) && (
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".xlsx,.xls"
+          multiple
+          style={{ display: 'none' }}
+          onChange={(e) => { handleFilesChosen(e.target.files); e.target.value = '' }}
+        />
+      )}
 
-      <div className={`grid w-full grid-cols-1 gap-5 ${hideMetadataSection ? '' : 'sm:grid-cols-2'}`}>
+      {(!hideDatasetSection || !hideMetadataSection) && (
+      <div className={`grid w-full grid-cols-1 gap-5 ${hideMetadataSection || hideDatasetSection ? '' : 'sm:grid-cols-2'}`}>
+        {!hideDatasetSection && (
         <div className="dhara-surface flex min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-white shadow-card">
           <div className="flex h-[40px] items-center gap-2 border-b border-line bg-mist px-3.5">
             <span className="h-2 w-2 rounded-sm bg-teal" />
@@ -156,9 +174,10 @@ export default function BatchUpload({
           </div>
           <div className="flex flex-col gap-2 p-3">
             <div
-              className={`flex h-[84px] cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-line bg-white transition-colors hover:border-teal/40 hover:bg-mist/80 ${busy ? 'cursor-not-allowed opacity-60' : ''}`}
+              className={`flex h-[96px] cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-line bg-white transition-colors hover:border-teal/40 hover:bg-sage/70 ${busy ? 'cursor-not-allowed opacity-60' : ''}`}
               onClick={() => !busy && openPicker('dataset')}
             >
+              <Plus className="h-5 w-5 text-teal" strokeWidth={2} aria-hidden />
               <div className="text-[15px] font-semibold text-ink">Add dataset files</div>
               <div className="text-[13px] text-ink-soft">XLSX — drag and drop or browse</div>
             </div>
@@ -169,6 +188,7 @@ export default function BatchUpload({
             )}
           </div>
         </div>
+        )}
 
         {!hideMetadataSection && (
           <div className="dhara-surface flex min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-white shadow-card">
@@ -178,9 +198,10 @@ export default function BatchUpload({
             </div>
             <div className="flex flex-col gap-2 p-3">
               <div
-                className={`flex h-[84px] cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-line bg-white transition-colors hover:border-teal/40 hover:bg-mist/80 ${busy ? 'cursor-not-allowed opacity-60' : ''}`}
+                className={`flex h-[96px] cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-line bg-white transition-colors hover:border-teal/40 hover:bg-sage/70 ${busy ? 'cursor-not-allowed opacity-60' : ''}`}
                 onClick={() => !busy && openPicker('metadata')}
               >
+                <Plus className="h-5 w-5 text-ink-soft" strokeWidth={2} aria-hidden />
                 <div className="text-[15px] font-semibold text-ink">Add metadata files</div>
                 <div className="text-[13px] text-ink-soft">XLSX tag files</div>
               </div>
@@ -193,23 +214,26 @@ export default function BatchUpload({
           </div>
         )}
       </div>
+      )}
 
       {error && <ErrorBanner>{error}</ErrorBanner>}
 
-      <div className="flex items-center gap-4">
-        <Button disabled={!canRun} onClick={runMatch}>
-          {busy && <span className="inline-block h-[13px] w-[13px] animate-spin rounded-full border-2 border-white/50 border-t-white" />}
-          {stage === 'extracting' && 'Extracting & validating tables…'}
-          {stage === 'matching' && 'Matching to metadata…'}
-          {(stage === 'idle' || stage === 'error') && (
-            <span className="inline-flex items-center gap-1.5">
-              Preview files
-              <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
-            </span>
-          )}
-        </Button>
-        {!busy && <span className="text-xs text-ink-soft">{datasetFiles.length} dataset · {metadataFiles.length} metadata</span>}
-      </div>
+      {!hideRunButton && (
+        <div className="flex items-center gap-4">
+          <Button disabled={!canRun} onClick={runMatch}>
+            {busy && <span className="inline-block h-[13px] w-[13px] animate-spin rounded-full border-2 border-white/50 border-t-white" />}
+            {stage === 'extracting' && 'Extracting & validating tables…'}
+            {stage === 'matching' && 'Matching to metadata…'}
+            {(stage === 'idle' || stage === 'error') && (
+              <span className="inline-flex items-center gap-1.5">
+                Start processing
+                <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
+              </span>
+            )}
+          </Button>
+          {!busy && <span className="text-xs text-ink-soft">{datasetFiles.length} dataset · {metadataFiles.length} metadata</span>}
+        </div>
+      )}
 
       {busy && (
         <div className="flex flex-col gap-2">
@@ -223,4 +247,6 @@ export default function BatchUpload({
       )}
     </div>
   )
-}
+})
+
+export default BatchUpload

@@ -1,13 +1,20 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, ArrowRight, Check, Info } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AlertTriangle, ArrowRight, Info } from 'lucide-react'
 import { withLlmKeyHeaders } from '../../lib/llmKey'
 import { withAuthHeaders } from '../../lib/auth'
 import { CLICK_THROUGH_ENABLED } from '../../lib/clickThrough'
 import { getConceptStandardConfig } from '../../lib/metadataConcepts'
-import { getMetadataStandard } from '../../lib/settingsConfig'
-import MetadataSheetGrid, { METADATA_COLUMNS } from './MetadataSheetGrid'
+import { getMetadataRequiredFields, getMetadataStandard } from '../../lib/settingsConfig'
+import { fillGroupMetadataForMatchResult } from '../../lib/postPreview'
+import { onKydsChanged } from '../../lib/kydsEvents'
+import { useApp } from '../../context/AppContext'
+import MetadataSheetGrid, {
+  METADATA_COLUMNS,
+  applyRequiredFieldsToColumns,
+  missingRequiredSheetFields,
+} from './MetadataSheetGrid'
 import NmdsGroupPanel from './NmdsGroupPanel'
 import ConsoleStatusPlaceholder from './ConsoleStatusPlaceholder'
 import Button from '../ui/Button'
@@ -27,6 +34,17 @@ function isMetadataAutoMapped(metadata, fieldKeys) {
     return fieldKeys.some((key) => String(metadata?.[key] || '').trim())
   }
   return entries.some(([key, value]) => key !== 'title' && String(value || '').trim())
+}
+
+/** Product is dataset-wide — keep every group's value identical. */
+function shareProductAcrossGroups(groups) {
+  if (!Array.isArray(groups) || groups.length === 0) return groups
+  const shared = groups.map((g) => String(g?.metadata?.product || '').trim()).find(Boolean) || ''
+  return groups.map((g) => {
+    const current = String(g?.metadata?.product || '')
+    if (current === shared) return g
+    return { ...g, metadata: { ...(g.metadata || {}), product: shared } }
+  })
 }
 
 function emptyConceptGroupState(emptyFields) {
@@ -68,9 +86,24 @@ function seedConceptFieldsFromGroup(group, emptyFields, mergeConcepts) {
   return base
 }
 
-export default function BatchReview({ matchResult, metadataFiles, onDone, onCancel, pdfJobId = null }) {
+export default function BatchReview({
+  matchResult,
+  metadataFiles,
+  onDone,
+  onCancel,
+  pdfJobId = null,
+  onMatchResultChange,
+  onGoSettings,
+}) {
+  const { keySaved } = useApp()
+  const hasLlmKey = keySaved
   const conceptConfig = useMemo(() => getConceptStandardConfig(getMetadataStandard()), [])
-  const sheetColumns = conceptConfig.sheetColumns || METADATA_COLUMNS
+  const sheetColumns = useMemo(() => {
+    const base = conceptConfig.sheetColumns || METADATA_COLUMNS
+    // SDG sheet already marks every concept required; NMDS merges Settings → Metadata configuration.
+    if (conceptConfig.usesSdgSheet) return base
+    return applyRequiredFieldsToColumns(base, getMetadataRequiredFields())
+  }, [conceptConfig])
   const sheetFieldKeys = useMemo(() => sheetColumns.map((c) => c.key), [sheetColumns])
 
   const {
@@ -85,10 +118,9 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
     usesSdgSheet,
   } = conceptConfig
 
-  const [groups, setGroups] = useState(matchResult.groups)
+  const [groups, setGroups] = useState(() => shareProductAcrossGroups(matchResult.groups))
   const [assignments, setAssignments] = useState({}) // unmatchedTableIndex -> groupIndex ('' = skip)
-  const [step, setStep] = useState('review') // review | pushing | done | error
-  const [result, setResult] = useState(null)
+  const [step, setStep] = useState('review') // review | pushing | error
   const [error, setError] = useState('')
 
   // One concept upload/fields state per metadata group, keyed by group index.
@@ -98,12 +130,43 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
   })))
   const [nmdsModalGroup, setNmdsModalGroup] = useState(null) // group index whose fields modal is open, or null
   const [toast, setToast] = useState(null) // { type: 'warn' | 'success', message } | null
+  const [refilling, setRefilling] = useState(false)
+  const [autofillKick, setAutofillKick] = useState(0)
+  // Avoid re-running autofill in a loop for the same blocker state (e.g. still
+  // missing KYDS). Cleared when the steward saves KYDS or clicks Retry.
+  const autofillAttemptTokenRef = useRef('')
+  // Last kick value we already auto-ran for — used to skip a redundant second
+  // Stage 4 call after continue-to-metadata already filled, while still
+  // allowing KYDS-save / Retry kicks to re-run.
+  const lastAutofillKickRef = useRef(0)
+  // Per-group field keys still carrying an AI autofill value (cleared when the steward edits).
+  const [aiFilledByGroup, setAiFilledByGroup] = useState(() => {
+    const fromResult = matchResult?.ai_filled_fields_by_group
+    if (fromResult && typeof fromResult === 'object') {
+      return Object.fromEntries(
+        Object.entries(fromResult).map(([k, fields]) => [Number(k), new Set(fields || [])]),
+      )
+    }
+    const next = {}
+    ;(matchResult?.groups || []).forEach((g, i) => {
+      if (g?.llm_filled && Array.isArray(g.llm_filled_fields)) next[i] = new Set(g.llm_filled_fields)
+    })
+    return next
+  })
 
   useEffect(() => {
     if (!toast) return undefined
     const timer = setTimeout(() => setToast(null), 6000)
     return () => clearTimeout(timer)
   }, [toast])
+
+  // Re-attempt Stage 4 fill after the steward submits/edits KYDS (common case:
+  // land on metadata → fill KYDS → fields were still empty because fill ran
+  // before KYDS existed).
+  useEffect(() => onKydsChanged(() => {
+    autofillAttemptTokenRef.current = ''
+    setAutofillKick((n) => n + 1)
+  }), [])
 
   // BatchReview stays mounted across a trip back to the grouping step (step
   // 3) so metadata already typed in isn't lost -- but that also means its
@@ -112,13 +175,111 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
   // hands down a new matchResult (which only happens on a grouping change),
   // so the metadata page reflects the current groups without a refresh.
   useEffect(() => {
-    setGroups(matchResult.groups)
+    setGroups(shareProductAcrossGroups(matchResult.groups))
     setNmdsByGroup(matchResult.groups.map((g) => ({
       ...emptyConceptGroupState(emptyFields),
       fields: seedConceptFieldsFromGroup(g, emptyFields, mergeConcepts),
     })))
     setAssignments({})
+    const fromResult = matchResult?.ai_filled_fields_by_group
+    if (fromResult && typeof fromResult === 'object') {
+      setAiFilledByGroup(
+        Object.fromEntries(
+          Object.entries(fromResult).map(([k, fields]) => [Number(k), new Set(fields || [])]),
+        ),
+      )
+    } else {
+      const next = {}
+      ;(matchResult.groups || []).forEach((g, i) => {
+        if (g?.llm_filled && Array.isArray(g.llm_filled_fields)) next[i] = new Set(g.llm_filled_fields)
+      })
+      setAiFilledByGroup(next)
+    }
   }, [matchResult, emptyFields, mergeConcepts])
+
+  const groupsNeedAiFill = useMemo(() => {
+    const list = matchResult?.groups || []
+    if (!list.length) return false
+    return list.some((g) => {
+      if (g?.llm_filled) return false
+      return !isMetadataAutoMapped(g.metadata, usesSdgSheet ? sheetFieldKeys : null)
+    })
+  }, [matchResult, usesSdgSheet, sheetFieldKeys])
+
+  const retryAutofill = useCallback(async ({ force = false } = {}) => {
+    if (refilling || !hasLlmKey || !onMatchResultChange) return null
+    if (!force && !groupsNeedAiFill) return null
+    setRefilling(true)
+    setToast(null)
+    try {
+      const filled = await fillGroupMetadataForMatchResult(matchResult, {
+        withAuthHeaders,
+        withLlmKeyHeaders,
+        getMetadataStandard,
+      })
+      onMatchResultChange(filled.matchResult)
+      const llmCount = Number(filled.matchResult.autofill_llm_filled_count) || 0
+      if (filled.matchResult.llm_autofill_skipped_no_key) {
+        setToast({ type: 'warn', message: filled.toast || 'LLM key not configured — autofill did not run.' })
+      } else if (filled.matchResult.kyds_missing) {
+        setToast({ type: 'warn', message: filled.toast || 'Know Your Dataset is missing — fill KYDS, then retry autofill.' })
+      } else if (filled.toast) {
+        setToast({ type: llmCount > 0 ? 'success' : 'warn', message: filled.toast })
+      } else if (llmCount > 0) {
+        setToast({ type: 'success', message: 'Metadata auto-fill completed with your saved LLM key.' })
+      } else {
+        setToast({ type: 'warn', message: 'Autofill ran but no catalogue fields were filled. You can still enter them manually.' })
+      }
+      return filled.matchResult
+    } catch (e) {
+      setToast({ type: 'warn', message: e.message || 'Could not auto-fill metadata' })
+      return null
+    } finally {
+      setRefilling(false)
+    }
+  }, [refilling, hasLlmKey, onMatchResultChange, groupsNeedAiFill, matchResult])
+
+  // Auto-run Stage 4 fill when the steward has a key and groups are still
+  // empty — including after they add a key or save KYDS (not only the old
+  // "skipped_no_key" path). Skip when continue-to-metadata already ran fill
+  // for this group set (autofill_attempted) unless a kick bumps retry.
+  useEffect(() => {
+    if (!hasLlmKey || !onMatchResultChange || !groupsNeedAiFill || refilling) return
+    const token = [
+      hasLlmKey ? 'key' : 'nokey',
+      matchResult?.llm_autofill_skipped_no_key ? 'skipped' : 'ok',
+      matchResult?.kyds_missing ? 'nokyds' : 'kyds',
+      `kick:${autofillKick}`,
+      `groups:${(matchResult?.groups || []).length}`,
+    ].join('|')
+    if (autofillAttemptTokenRef.current === token) return
+
+    // Stage 4 already completed (success, empty, or per-group errors) during
+    // the grouping → metadata transition. Don't immediately re-call the LLM
+    // for the same outcome. Still auto-run when key/KYDS blockers clear, or
+    // when kick advances (KYDS save / Retry button).
+    const alreadyAttempted = Boolean(matchResult?.autofill_attempted)
+      && !matchResult?.llm_autofill_skipped_no_key
+    if (alreadyAttempted && autofillKick === lastAutofillKickRef.current) {
+      autofillAttemptTokenRef.current = token
+      return
+    }
+
+    autofillAttemptTokenRef.current = token
+    lastAutofillKickRef.current = autofillKick
+    void retryAutofill({ force: true })
+  }, [
+    hasLlmKey,
+    onMatchResultChange,
+    groupsNeedAiFill,
+    refilling,
+    matchResult?.llm_autofill_skipped_no_key,
+    matchResult?.kyds_missing,
+    matchResult?.autofill_attempted,
+    matchResult?.groups,
+    autofillKick,
+    retryAutofill,
+  ])
 
   const patchNmdsGroup = (groupIndex, patch) => {
     setNmdsByGroup((prev) => prev.map((g, i) => (i === groupIndex ? { ...g, ...patch } : g)))
@@ -153,8 +314,27 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
     setToast({ type: 'success', message: `${standardName} fields applied to all other groups.` })
   }
 
-  const updateMetadata = (groupIndex, metadata) => {
-    setGroups((prev) => prev.map((g, i) => (i === groupIndex ? { ...g, metadata } : g)))
+  const setAppliedToAll = (groupIndex, checked) => {
+    if (checked) {
+      applyNmdsToAll(groupIndex)
+      return
+    }
+    setNmdsByGroup((prev) => prev.map((g) => ({ ...g, appliedToAll: false })))
+  }
+
+  const updateMetadata = (groupIndex, metadata, { syncProduct = false } = {}) => {
+    setGroups((prev) => prev.map((g, i) => {
+      if (syncProduct) {
+        return {
+          ...g,
+          metadata: {
+            ...(i === groupIndex ? metadata : (g.metadata || {})),
+            product: metadata?.product ?? '',
+          },
+        }
+      }
+      return i === groupIndex ? { ...g, metadata } : g
+    }))
     if (usesSdgSheet) {
       const nextFields = { ...emptyFields() }
       for (const key of Object.keys(nextFields)) {
@@ -162,6 +342,23 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
       }
       patchNmdsGroup(groupIndex, { fields: nextFields })
     }
+  }
+
+  const updateMetadataField = (groupIndex, key, value) => {
+    const prevMeta = groups[groupIndex]?.metadata || {}
+    updateMetadata(
+      groupIndex,
+      { ...prevMeta, [key]: value },
+      { syncProduct: key === 'product' },
+    )
+    // Steward edit replaces the AI value for this field.
+    setAiFilledByGroup((prev) => {
+      const current = prev[groupIndex]
+      if (!current?.has(key)) return prev
+      const nextSet = new Set(current)
+      nextSet.delete(key)
+      return { ...prev, [groupIndex]: nextSet }
+    })
   }
 
   const updateConceptField = (groupIndex, concept, value) => {
@@ -184,7 +381,6 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
   // workbook covered any group), so the heading doesn't claim a review of
   // an auto-mapping that never happened.
   const noneAutoMapped = groups.length > 0 && groups.every((g) => !isMetadataAutoMapped(g.metadata, usesSdgSheet ? sheetFieldKeys : null))
-  const someAutoMapped = groups.some((g) => isMetadataAutoMapped(g.metadata, usesSdgSheet ? sheetFieldKeys : null))
   const autofillErrors = Array.isArray(matchResult.autofill_errors) ? matchResult.autofill_errors : []
   const failedGroupIndexes = new Set(
     autofillErrors.map((e) => e.index).filter((i) => Number.isInteger(i)),
@@ -199,35 +395,85 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
   }
   // Only treat the whole page as "fill everything" when nothing was mapped.
   // Partial autofill success should keep the review framing for filled groups.
-  const showFillInHeading = matchResult.llm_autofill_skipped_no_key || matchResult.kyds_missing || noneAutoMapped
+  // Prefer live client key state over a stale backend flag from when fill ran.
+  const keyNotConfigured = !hasLlmKey
+  const showFillInHeading = keyNotConfigured || matchResult.llm_autofill_skipped_no_key || matchResult.kyds_missing || noneAutoMapped
+  const llmFilledGroupCount = Number(matchResult.autofill_llm_filled_count)
+    || Object.keys(aiFilledByGroup).filter((k) => (aiFilledByGroup[k]?.size || 0) > 0).length
+  const totalAiFieldCount = Object.values(aiFilledByGroup).reduce((sum, set) => sum + (set?.size || 0), 0)
 
-  const autofillReasonSummary = (() => {
-    if (matchResult.llm_autofill_skipped_no_key) {
-      return 'LLM key not configured — set an API key in Settings, or fill the fields below by hand.'
+  const autofillStatus = (() => {
+    if (refilling) {
+      return {
+        tone: 'pending',
+        title: 'AI autofill in progress',
+        body: 'Auto-filling metadata with your saved LLM key…',
+      }
+    }
+    if (keyNotConfigured || matchResult.llm_autofill_skipped_no_key) {
+      return {
+        tone: 'missing',
+        title: 'AI autofill did not run',
+        body: keyNotConfigured
+          ? 'LLM key not configured — no fields were AI-filled. Set an API key in Settings, or fill every field below by hand.'
+          : 'Previous auto-fill was skipped because no LLM key was set. Retry with your saved key, or fill the fields below by hand.',
+      }
     }
     if (matchResult.kyds_missing) {
-      return 'Know Your Dataset is missing — fill KYDS first for better auto-mapping, or enter fields below by hand.'
+      return {
+        tone: 'warn',
+        title: 'AI autofill did not run',
+        body: 'Know Your Dataset is missing — fill KYDS first for better auto-mapping, or enter fields below by hand.',
+      }
     }
-    if (autofillErrors.length > 0 && someAutoMapped) {
-      const sample = autofillErrors.slice(0, 3).map((e) => e.group || e.error).filter(Boolean)
-      const more = autofillErrors.length > 3 ? ` (+${autofillErrors.length - 3} more)` : ''
-      return `Auto-fill succeeded for other groups. Failed for ${autofillErrors.length}: ${sample.join(' · ')}${more}. Only those groups need manual entry (marked below).`
+    if (autofillErrors.length > 0 && llmFilledGroupCount > 0) {
+      return {
+        tone: 'partial',
+        title: 'AI autofill partially completed',
+        body: `AI filled ${totalAiFieldCount} field${totalAiFieldCount !== 1 ? 's' : ''} across ${llmFilledGroupCount} group${llmFilledGroupCount !== 1 ? 's' : ''}. ${autofillErrors.length} group${autofillErrors.length !== 1 ? 's' : ''} still need manual entry (marked below).`,
+      }
     }
     if (autofillErrors.length > 0) {
-      const sample = autofillErrors.slice(0, 3).map((e) => {
+      const sample = autofillErrors.slice(0, 2).map((e) => {
         const group = e.group && e.group !== 'all' ? `${e.group}: ` : ''
         return `${group}${e.error}`
       })
-      const more = autofillErrors.length > 3 ? ` (+${autofillErrors.length - 3} more)` : ''
-      return `Auto-fill failed for ${autofillErrors.length} group${autofillErrors.length !== 1 ? 's' : ''}: ${sample.join(' · ')}${more}. You can still fill every field below manually.`
+      return {
+        tone: 'warn',
+        title: 'AI autofill failed',
+        body: `Auto-fill failed for ${autofillErrors.length} group${autofillErrors.length !== 1 ? 's' : ''}: ${sample.join(' · ')}. You can still fill every field below manually.`,
+      }
+    }
+    if (llmFilledGroupCount > 0) {
+      return {
+        tone: 'ok',
+        title: 'AI autofill completed',
+        body: `AI filled ${totalAiFieldCount} field${totalAiFieldCount !== 1 ? 's' : ''} across ${llmFilledGroupCount} group${llmFilledGroupCount !== 1 ? 's' : ''}. Fields marked AI below came from the model — review them before pushing.`,
+      }
     }
     if (noneAutoMapped) {
-      return usesSdgSheet
-        ? 'No SDG indicator fields were auto-mapped for these groups. Fill them in manually below.'
-        : 'No catalogue fields were auto-mapped for these groups. Fill them in manually below.'
+      return {
+        tone: 'warn',
+        title: 'AI autofill did not fill any fields',
+        body: usesSdgSheet
+          ? 'No SDG indicator fields were auto-mapped for these groups. Fill them in manually below.'
+          : 'No catalogue fields were auto-mapped for these groups. Fill them in manually below.',
+      }
     }
-    return null
+    return {
+      tone: 'ok',
+      title: 'Metadata ready for review',
+      body: 'Review the fields below. Empty fields still need a value before you continue.',
+    }
   })()
+
+  const autofillStatusClass = {
+    missing: 'border-[#f3c98b] bg-[#fffaf1] text-[#8a5a12]',
+    warn: 'border-[#f3c98b] bg-[#fffaf1] text-[#8a5a12]',
+    partial: 'border-[#f3c98b] bg-[#fffaf1] text-[#8a5a12]',
+    pending: 'border-line bg-mist text-ink-soft',
+    ok: 'border-green/35 bg-[#eef6e6] text-[#2f5d22]',
+  }[autofillStatus.tone]
 
   const handleNmdsFileSelected = async (groupIndex, file) => {
     patchNmdsGroup(groupIndex, { file, appliedFrom: null, appliedToAll: false, parseError: '', fileMismatch: false })
@@ -282,6 +528,14 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
   }
 
   const handleSaveGroup = (groupIndex) => {
+    const missingSheet = missingRequiredSheetFields(groups[groupIndex]?.metadata, sheetColumns)
+    if (missingSheet.length > 0) {
+      setToast({
+        type: 'warn',
+        message: `Required metadata fields not filled: ${missingSheet.map((c) => c.label).join(', ')}.`,
+      })
+      return
+    }
     const complete = isComplete(nmdsByGroup[groupIndex]?.fields || emptyFields())
     if (!complete) {
       setToast({ type: 'warn', message: `${standardName} fields not filled. Fill all ${standardName} details for this group.` })
@@ -291,6 +545,15 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
   }
 
   const handlePush = async () => {
+    const incompleteSheet = groups.findIndex((g) => missingRequiredSheetFields(g.metadata, sheetColumns).length > 0)
+    if (incompleteSheet !== -1) {
+      const missing = missingRequiredSheetFields(groups[incompleteSheet].metadata, sheetColumns)
+      setToast({
+        type: 'warn',
+        message: `Required metadata fields not filled in group ${incompleteSheet + 1}: ${missing.map((c) => c.label).join(', ')}.`,
+      })
+      return
+    }
     const allComplete = nmdsByGroup.every((g) => isComplete(g?.fields || emptyFields()))
     if (!allComplete) {
       setToast({ type: 'warn', message: `${standardName} fields not filled. Fill all ${standardName} details.` })
@@ -301,12 +564,16 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
     setError('')
     setToast(null)
 
+    const finish = (ids = []) => {
+      const label = groups[0]?.metadata?.title || groups[0]?.file_name || ''
+      onDone(label, ids)
+    }
+
     // Click-through mode (VITE_ENABLE_CLICK_THROUGH=true): skip the real
     // push and continue as if it succeeded. Leave this off to write
     // catalogue rows (GCS is optional via ENABLE_GCS).
     if (CLICK_THROUGH_ENABLED) {
-      setResult({ groups_pushed: groups.length, results: [] })
-      setStep('done')
+      finish([])
       return
     }
 
@@ -332,12 +599,14 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
       const finalGroups = groups.map((g, gi) => {
         const conceptFields = nmdsByGroup[gi]?.fields || emptyFields()
         const conceptList = fieldsToList(conceptFields)
-        let metadata = g.metadata || {}
+        let metadata = { ...(g.metadata || {}) }
+        // Catalogue title is the group name (not an editable sheet field).
+        metadata.title = g.file_name || metadata.title || ''
         if (usesSdgSheet) {
           const catalogue = g.catalogue_metadata || {}
           metadata = {
             ...catalogue,
-            title: catalogue.title || conceptFields.Indicator || conceptFields.Goal || g.file_name || '',
+            title: g.file_name || catalogue.title || conceptFields.Indicator || conceptFields.Goal || '',
             description: catalogue.description || conceptFields.Target || '',
             data_source: catalogue.data_source || conceptFields['International organisations(s) responsible for global monitoring'] || '',
             last_updated: catalogue.last_updated || conceptFields['Metadata update'] || '',
@@ -382,12 +651,14 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
 
       const res = await fetch('/api/catalogue/batch-push', withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: fd })))
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: 'Push failed' }))
-        throw new Error(err.detail || 'Push failed')
+        const err = await res.json().catch(() => ({}))
+        const detail = typeof err.detail === 'string'
+          ? err.detail
+          : (Array.isArray(err.detail) ? err.detail.map((d) => d?.msg || d).filter(Boolean).join('; ') : '')
+        throw new Error(detail || `Push failed (HTTP ${res.status})`)
       }
       const data = await res.json()
-      setResult(data)
-      setStep('done')
+      finish((data.results || []).map((r) => r.metadata_id).filter(Boolean))
     } catch (e) {
       setError(e.message)
       setStep('error')
@@ -403,29 +674,6 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
         msPerStep={1200}
         onComplete={() => {}}
       />
-    )
-  }
-
-  if (step === 'done' && result) {
-    const label = groups[0]?.metadata?.title || groups[0]?.file_name || ''
-    return (
-      <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6">
-        <div className="flex flex-col items-center gap-2.5 px-5 py-10 text-center">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#e6f7f3] text-[#0a6e57]">
-            <Check className="h-8 w-8" strokeWidth={2.5} aria-hidden />
-          </div>
-          <div className="text-base font-bold text-ink">
-            {result.groups_pushed} metadata group{result.groups_pushed !== 1 ? 's' : ''} pushed
-          </div>
-          <Button
-            size="sm"
-            onClick={() => onDone(label, (result.results || []).map((r) => r.metadata_id).filter(Boolean))}
-          >
-            Continue to classification
-            <ArrowRight className="ml-1.5 inline h-4 w-4" strokeWidth={2} aria-hidden />
-          </Button>
-        </div>
-      </div>
     )
   }
 
@@ -455,23 +703,97 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
 
       {error && <ErrorBanner>{error}</ErrorBanner>}
 
-      {step === 'review' && autofillReasonSummary && (
-        <div className="rounded-lg border border-[#f3c98b] bg-[#fffaf1] px-4 py-3 text-sm leading-relaxed text-[#8a5a12]">
-          <strong>Why auto-fill didn’t complete</strong>
-          <div className="mt-1 [overflow-wrap:anywhere]">{autofillReasonSummary}</div>
+      {step === 'review' && autofillStatus && (
+        <div className={`rounded-lg border px-4 py-3 text-sm leading-relaxed ${autofillStatusClass}`}>
+          <strong>{autofillStatus.title}</strong>
+          <div className="mt-1 [overflow-wrap:anywhere]">{autofillStatus.body}</div>
+          {(keyNotConfigured || matchResult.llm_autofill_skipped_no_key || llmFilledGroupCount > 0 || noneAutoMapped) && (
+            <div className="mt-2 flex flex-wrap gap-2 text-[12px]">
+              <span className="inline-flex items-center rounded-md border border-current/20 bg-white/50 px-2 py-0.5 font-semibold">
+                {keyNotConfigured || matchResult.llm_autofill_skipped_no_key
+                  ? 'Autofill: did not run'
+                  : llmFilledGroupCount > 0
+                    ? `Autofill: ran (${llmFilledGroupCount} group${llmFilledGroupCount !== 1 ? 's' : ''})`
+                    : 'Autofill: ran, no fields filled'}
+              </span>
+              {totalAiFieldCount > 0 && (
+                <span className="inline-flex items-center rounded-md border border-teal/30 bg-white/70 px-2 py-0.5 font-semibold text-teal-deep">
+                  {totalAiFieldCount} AI-filled field{totalAiFieldCount !== 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+          )}
+          {keyNotConfigured && onGoSettings && (
+            <div className="mt-3 flex flex-wrap items-center gap-2.5">
+              <Button type="button" onClick={onGoSettings}>Open Settings</Button>
+              <span className="text-[13px] opacity-90">Add your LLM API key, then return here — auto-fill will retry.</span>
+            </div>
+          )}
+          {!keyNotConfigured && onMatchResultChange && groupsNeedAiFill && (
+            <div className="mt-3 flex flex-wrap items-center gap-2.5">
+              <Button
+                type="button"
+                disabled={refilling}
+                onClick={() => {
+                  autofillAttemptTokenRef.current = ''
+                  setAutofillKick((n) => {
+                    const next = n + 1
+                    // Keep the effect from immediately scheduling a second run;
+                    // this click already invokes retryAutofill below.
+                    lastAutofillKickRef.current = next
+                    return next
+                  })
+                  void retryAutofill({ force: true })
+                }}
+              >
+                {refilling ? 'Auto-filling…' : 'Run AI autofill'}
+              </Button>
+              {matchResult.kyds_missing && (
+                <span className="text-[13px] opacity-90">If this fails, fill Know Your Dataset first, then click again.</span>
+              )}
+            </div>
+          )}
         </div>
       )}
 
       {step !== 'done' && (
         <MetadataSheetGrid
           columns={sheetColumns}
-          rows={groups.map((g, gi) => ({
-            id: gi,
-            label: g.file_name,
-            values: g.metadata,
-            manual: groupFailedAutofill(g, gi) || (!isMetadataAutoMapped(g.metadata, usesSdgSheet ? sheetFieldKeys : null) && !matchResult.llm_autofill_skipped_no_key),
-          }))}
-          onChange={(gi, key, value) => updateMetadata(gi, { ...groups[gi].metadata, [key]: value })}
+          rows={groups.map((g, gi) => {
+            const aiKeys = aiFilledByGroup[gi] || new Set()
+            const aiFilled = !keyNotConfigured && !matchResult.llm_autofill_skipped_no_key && (g.llm_filled || aiKeys.size > 0)
+            const notAiFilled = keyNotConfigured || matchResult.llm_autofill_skipped_no_key || groupFailedAutofill(g, gi) || (!aiFilled && !isMetadataAutoMapped(g.metadata, usesSdgSheet ? sheetFieldKeys : null))
+            return {
+              id: gi,
+              label: g.file_name,
+              values: g.metadata,
+              manual: notAiFilled && !aiFilled,
+              aiFilled,
+              aiFilledKeys: [...aiKeys],
+              autofillSkippedNoKey: keyNotConfigured || Boolean(matchResult.llm_autofill_skipped_no_key),
+            }
+          })}
+          onChange={(gi, key, value) => updateMetadataField(gi, key, value)}
+          renderGroupHeaderActions={(row, gi) => {
+            if (usesSdgSheet) return null
+            const nmdsState = nmdsByGroup[gi] || emptyConceptGroupState(emptyFields)
+            const filledCount = fieldsToList(nmdsState.fields).length
+            const complete = isComplete(nmdsState.fields || emptyFields())
+            return (
+              <button
+                type="button"
+                className={`rounded-lg border px-3 py-1.5 font-sans text-[12.5px] font-semibold transition-colors ${
+                  complete
+                    ? 'border-green/40 bg-[#eef6e6] text-green hover:border-green hover:bg-green hover:text-white'
+                    : 'border-coral/50 bg-[rgba(217,91,104,0.1)] text-coral hover:border-coral hover:bg-coral hover:text-white'
+                }`}
+                onClick={() => setNmdsModalGroup(gi)}
+              >
+                View/Fill {standardName} details
+                {filledCount > 0 ? ` (${filledCount})` : ''}
+              </button>
+            )
+          }}
           renderGroupFooter={(row, gi) => {
             const nmdsState = nmdsByGroup[gi] || emptyConceptGroupState(emptyFields)
             return (
@@ -485,13 +807,12 @@ export default function BatchReview({ matchResult, metadataFiles, onDone, onCanc
                 parseError={nmdsState.parseError}
                 fileMismatch={nmdsState.fileMismatch}
                 modalOpen={nmdsModalGroup === gi}
-                onOpenModal={() => setNmdsModalGroup(gi)}
                 onCloseModal={() => setNmdsModalGroup(null)}
-                groupLabel={row.label}
+                groupLabel={row.label || row.values?.title}
                 onSaveGroup={() => handleSaveGroup(gi)}
                 canApplyToAll={groups.length > 1}
                 appliedToAll={!!nmdsState.appliedToAll}
-                onApplyToAll={() => applyNmdsToAll(gi)}
+                onApplyToAllChange={(checked) => setAppliedToAll(gi, checked)}
                 standardName={standardName}
                 topics={topics}
                 placeholders={placeholders}

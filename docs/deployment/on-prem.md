@@ -13,16 +13,16 @@ PaaS. All required services can run in Docker.
 ## LLM and PDF extraction (important)
 
 DHARA does **not** need a public SaaS LLM vendor name — configure a
-**MEITY-empanelled LLM** API key in Settings (or `OPENAI_API_KEY` /
-`ANTHROPIC_API_KEY` in `.env` for an OpenAI-/Anthropic-compatible endpoint).
+**MEITY-empanelled LLM** API key in **Settings**. Server `.env` keys are not
+used for AI calls.
 
 | Mode | What happens |
 |------|----------------|
-| **With MEITY-empanelled LLM key** | Full PDF path: PyMuPDF candidates → confidence split → LLM reconstruct/classify for ambiguous pages; richer Excel assist, NCO suggest, singleton grouping merge |
-| **Without LLM key** | PyMuPDF still extracts ruled tables. **High-confidence** pages are auto-accepted. **Ambiguous** pages fall back to the same heuristic grid (`table_dict_from_df`) and are flagged for human review — no remote LLM call. Excel extract uses structural heuristics. Title-base grouping still works; embedding / LLM singleton merge is skipped |
+| **With Settings LLM key** | Full PDF path: PyMuPDF candidates → confidence split → LLM reconstruct/classify for ambiguous pages; richer Excel assist, NCO suggest, singleton grouping merge |
+| **Without Settings key** | Uploads still work. PyMuPDF extracts ruled tables; ambiguous pages use heuristics and need more steward review. Excel extract is structural; AI fill / NCO / LLM singleton merge are skipped. There is no server-side key fallback |
 
-Air-gapped PDF ingest is therefore usable, but expect more steward review on
-complex multi-header pages than with a MEITY-empanelled model available.
+Air-gapped PDF ingest is usable without a key, with more human review on
+complex pages. Paste a MEITY-compatible key in Settings when AI assist is available.
 
 ## 1. Quick start (recommended)
 
@@ -30,17 +30,18 @@ From the repo root:
 
 ```bash
 cp backend/.env.example backend/.env
-# Edit JWT_SECRET; optional MEITY-empanelled LLM key (OPENAI_API_KEY / ANTHROPIC_API_KEY)
+# Edit JWT_SECRET; paste MEITY-empanelled LLM key in Settings after login
 make up
 make urls
 ```
 
 | Service | URL |
 |---------|-----|
-| UI | http://localhost:3000 |
+| UI | http://localhost:80 |
 | API | http://localhost:8000 |
 | Swagger | http://localhost:8000/docs |
-| Health | http://localhost:8000/api/health |
+| Liveness | http://localhost:8000/api/live |
+| Readiness | http://localhost:8000/api/ready |
 
 Useful targets:
 
@@ -61,12 +62,12 @@ port:
 
 ```bash
 make prod
-# → http://localhost:8080
+# → http://localhost:80
 ```
 
 `start.sh` runs uvicorn on `BACKEND_PORT` (default 8000, internal) and
-`next start` on `PORT` (default 8080, public). Next rewrites `/api/*` to the
-backend.
+`next start` on `PORT` (default 8080, container-internal). Compose maps host
+`:80` → container `:8080`. Next rewrites `/api/*` to the backend.
 
 Stop:
 
@@ -76,7 +77,7 @@ make prod-down
 
 ### Reverse proxy (on-prem)
 
-Put nginx / Caddy / Traefik in front of `:8080` (or `:3000`+`:8000` in three-
+Put nginx / Caddy / Traefik in front of `:80` (or `:80`+`:8000` in three-
 container mode):
 
 - Terminate TLS
@@ -87,7 +88,7 @@ Example conceptual Caddy site:
 
 ```text
 dhara.internal {
-  reverse_proxy localhost:8080
+  reverse_proxy localhost:80
 }
 ```
 

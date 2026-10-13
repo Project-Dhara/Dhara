@@ -15,6 +15,7 @@ import {
   columnHeaderPath,
   columnParentPath,
   displayTitle,
+  summarizeUncertainCellNotes,
   invertActionFlash,
   isNumericColumn,
   materializeCellMerges,
@@ -28,6 +29,7 @@ import {
   reshapeRows,
   resolveEditorBodySpans,
   setHeaderPathLevel,
+  tableHasMissingTitle,
   titleForEdit,
   unmergeAt,
   withParentPath,
@@ -41,13 +43,16 @@ export function TableTitleDisplay({ table, className = '' }) {
   const title = displayTitle(table)
   if (title) {
     return (
-      <div className={`min-w-0 truncate text-[14px] font-semibold leading-snug text-ink ${className}`}>
+      <div
+        className={`min-w-0 whitespace-normal break-words text-[14px] font-semibold leading-snug text-ink ${className}`}
+        title={title}
+      >
         {title}
       </div>
     )
   }
   return (
-    <div className={`min-w-0 truncate text-[14px] font-semibold italic leading-snug text-ink-soft ${className}`}>
+    <div className={`min-w-0 text-[14px] font-semibold italic leading-snug text-ink-soft ${className}`}>
       No title — review
     </div>
   )
@@ -60,8 +65,8 @@ export function TableDetail({
   table,
   jobId,
   onSave,
-  onTitleLive,
-  onTitleCommit,
+  onTitleLive = undefined,
+  onTitleCommit = undefined,
   editorOnly = false,
   editorCloseHref = null,
   editorFooterHint = null,
@@ -89,6 +94,8 @@ export function TableDetail({
   const actionFlashRef = useRef(null)
   const undoStackRef = useRef([])
   const redoStackRef = useRef([])
+  // Title value when the field was focused — blur only commits if it changed.
+  const titleAtFocusRef = useRef(null)
   draftRef.current = draft
   actionFlashRef.current = actionFlash
   undoStackRef.current = undoStack
@@ -582,7 +589,12 @@ export function TableDetail({
     || Boolean(draft.mergesExplicit) !== Boolean(
       table.cell_merges_explicit || (Array.isArray(table.cell_merges) && table.cell_merges.length > 0)
     )
-  const canSave = (table.human_review_needed || structureDirty || titleDirty) && !saved
+  const canSave = (
+    table.human_review_needed
+    || tableHasMissingTitle(table)
+    || structureDirty
+    || titleDirty
+  ) && !saved
 
   const handleSave = () => {
     const columns = draft.columns.map((c) => ({
@@ -730,19 +742,25 @@ export function TableDetail({
     <div className="flex flex-col gap-3 border-t border-line px-3.5 pb-3.5 pt-3">
       <label className="flex flex-col gap-1">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-teal">Table title</span>
-        <input
-          type="text"
-          className="rounded-md border border-line bg-white px-2.5 py-1.5 text-[13.5px] font-semibold text-ink outline-none focus:border-teal"
+        <textarea
+          rows={Math.min(4, Math.max(2, Math.ceil(((draft.title || '').length || 1) / 56)))}
+          className="min-h-[2.5rem] w-full resize-y rounded-md border border-line bg-white px-2.5 py-1.5 text-[13.5px] font-semibold leading-snug text-ink outline-none focus:border-teal"
           value={draft.title}
           placeholder="Add a table title"
+          onFocus={(e) => {
+            titleAtFocusRef.current = (e.target.value || '').trim() || null
+          }}
           onChange={(e) => {
             const nextTitle = e.target.value
             markDirty()
             setDraft((prev) => ({ ...prev, title: nextTitle }))
             onTitleLive?.(nextTitle.trim() || null)
           }}
-          onBlur={() => {
-            onTitleCommit?.(draft.title.trim() || null)
+          onBlur={(e) => {
+            const next = (e.target.value || '').trim() || null
+            if (next === titleAtFocusRef.current) return
+            onTitleCommit?.(next)
+            titleAtFocusRef.current = next
           }}
         />
       </label>
@@ -761,7 +779,9 @@ export function TableDetail({
         <>
           <div className="text-[11px] font-bold uppercase tracking-wide text-ink-soft">Extraction uncertainties</div>
           <ul className="list-disc pl-5 text-[13px] text-ink">
-            {table.uncertain_cells.map((note, i) => <li key={i}>{note}</li>)}
+            {summarizeUncertainCellNotes(table.uncertain_cells).map((note, i) => (
+              <li key={i}>{note}</li>
+            ))}
           </ul>
         </>
       )}
@@ -819,7 +839,9 @@ export function TableDetail({
 
       {canSave && (
         <Button variant="primary" className="self-start" onClick={handleSave}>
-          {table.human_review_needed ? 'Save review & mark resolved' : 'Save changes'}
+          {table.human_review_needed || tableHasMissingTitle(table)
+            ? 'Save review & mark resolved'
+            : 'Save changes'}
         </Button>
       )}
       {saved && (

@@ -1,16 +1,18 @@
 'use client'
 
 import { useEffect } from 'react'
-import { AlertTriangle, Check, Minus } from 'lucide-react'
 import { isOccupationColumn, rowMapped } from '../../../lib/classifyColumns'
 
-const saveBtnClass = 'h-8 rounded-md border-0 px-3.5 text-[12.5px] font-semibold text-white transition-colors bg-teal hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]'
-const ghostBtnClass = 'flex h-8 items-center rounded-md border border-line bg-white px-2.5 text-[12px] font-semibold text-ink-soft hover:border-teal/35 hover:text-teal disabled:cursor-default disabled:opacity-50'
-const fieldClass = 'box-border h-7 w-full min-w-0 rounded border border-line bg-cream px-1.5 font-sans text-[12px] text-ink placeholder:text-[#c2b8a6] focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal'
+const primaryBtn =
+  'inline-flex h-9 items-center justify-center rounded-md bg-teal px-4 text-[13px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]'
+const ghostBtn =
+  'inline-flex h-9 items-center justify-center rounded-md border border-line bg-white px-3.5 text-[13px] font-semibold text-ink-soft transition-colors hover:border-teal/35 hover:text-teal disabled:cursor-default disabled:opacity-50'
+const fieldClass =
+  'box-border h-9 w-full min-w-0 border-0 bg-transparent px-3 font-sans text-[13px] text-ink placeholder:text-[#c2b8a6] focus:bg-white focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal'
 
 /**
  * One list row per clubbed column family. Verify once applies codes to every
- * related table; the sidebar shows "+N to be harmonized" instead of N rows.
+ * related table; the sidebar shows related-table count instead of N rows.
  */
 export default function HarmonisePanel({
   classifiedColumns,
@@ -108,145 +110,153 @@ export default function HarmonisePanel({
     })
   }
 
+  const relatedLabel = (count) => {
+    if (!count || count <= 1) return null
+    return `${count} related tables`
+  }
+
   return (
-    <div className="overflow-hidden rounded-[10px] border border-line bg-white">
-      <div className="flex flex-wrap items-center gap-2 border-b border-line px-[18px] py-2.5">
-        <span className="text-[14px] font-semibold text-ink">Harmonisation</span>
-        <span className="rounded-full bg-cream px-2 py-0.5 text-[11px] font-semibold tabular-nums text-ink-soft">
-          {mappedLists}/{classifiedColumns.length} mapped
-        </span>
-        {harmoniseClubs.length > 0 && (
-          <span className="text-[12px] text-[#8E9398]">
-            · {pendingCount} club{pendingCount === 1 ? '' : 's'} to review
-          </span>
-        )}
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          {verifiableClubs.length > 0 && (
-            <button type="button" className={saveBtnClass} onClick={verifyAllReady}>
-              Verify all ready ({verifiableClubs.length})
-            </button>
-          )}
+    <div className="overflow-hidden rounded-xl border border-line bg-white">
+      {/* Page chrome — one quiet summary row */}
+      <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line px-6 py-4">
+        <div className="min-w-0 flex-1">
+          <h2 className="m-0 text-[15px] font-semibold tracking-tight text-ink">Harmonisation</h2>
+          <p className="m-0 mt-1 text-[12.5px] leading-snug text-ink-soft">
+            {mappedLists}/{classifiedColumns.length} columns mapped
+            {harmoniseClubs.length > 0 && pendingCount > 0
+              ? ` · ${pendingCount} left to review`
+              : harmoniseClubs.length > 0
+                ? ' · all clubs reviewed'
+                : ''}
+          </p>
         </div>
-      </div>
+        {verifiableClubs.length > 0 && (
+          <button type="button" className={primaryBtn} onClick={verifyAllReady}>
+            Verify all ({verifiableClubs.length})
+          </button>
+        )}
+      </header>
 
       {harmoniseClubs.length === 0 && (
-        <div className="px-[18px] py-3 text-[12.5px] text-ink-soft">
-          No other classification columns besides the chips above.
+        <div className="px-6 py-10 text-center text-[13px] text-ink-soft">
+          Nothing left to harmonise — all classification columns are covered above.
         </div>
       )}
 
       {harmoniseClubs.length > 0 && (
-        <div className="grid min-h-[320px] grid-cols-1 md:grid-cols-[minmax(220px,280px)_1fr]">
-          <div className="max-h-[min(520px,60vh)] overflow-y-auto border-b border-line md:border-b-0 md:border-r md:border-line">
+        <div className="grid min-h-[420px] grid-cols-1 md:grid-cols-[minmax(200px,240px)_1fr]">
+          {/* Club list — name + quiet meta; status via dot only */}
+          <nav
+            className="flex max-h-[min(560px,65vh)] flex-col gap-0.5 overflow-y-auto border-b border-line bg-[#FBF9F4] p-3 md:border-b-0 md:border-r md:border-line"
+            aria-label="Column families"
+          >
             {harmoniseClubs.map((club) => {
               const m = clubMeta(club)
               const selected = club.id === openRule
+              const related = relatedLabel(m.relatedCount)
               return (
                 <button
                   key={club.id}
                   type="button"
-                  className={`flex w-full items-center gap-2 border-b border-[#f1ebdf] px-3 py-2.5 text-left transition-all duration-dhara ease-dhara last:border-b-0 ${
-                    selected ? 'bg-sage/60' : 'bg-white hover:bg-[#FBF7EF]'
+                  aria-current={selected ? 'true' : undefined}
+                  className={`flex w-full items-start gap-3 rounded-lg px-3 py-3 text-left transition-colors duration-dhara ease-dhara ${
+                    selected
+                      ? 'bg-sage/70 shadow-[inset_0_0_0_1px_rgba(23,107,107,0.28)]'
+                      : 'hover:bg-sage/50'
                   }`}
                   onClick={() => onSelectEntry(club.id)}
                 >
-                  <span className={`h-1.5 w-1.5 flex-none rounded-full ${m.ready ? 'bg-green' : 'bg-[rgba(242,194,48,0.85)]'}`} />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[12.5px] font-semibold text-ink">{club.name}</div>
-                    <div className="truncate text-[10.5px] text-[#8E9398]">
-                      {m.relatedCount > 0
-                        ? `+${m.relatedCount} to be harmonized`
-                        : `${m.mappedCount}/${m.rows.length} mapped`}
-                    </div>
-                  </div>
                   <span
-                    className={`flex-none rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                      m.ready
-                        ? 'bg-sage text-[#3d7a3d]'
-                        : m.skipped
-                          ? 'bg-cream text-ink-soft'
-                          : 'bg-[rgba(242,194,48,0.22)] text-[#9a7413]'
+                    className={`mt-1.5 h-2 w-2 flex-none rounded-full ${
+                      m.ready ? 'bg-green' : m.skipped ? 'bg-[#cfc6b4]' : 'bg-[rgba(242,194,48,0.9)]'
                     }`}
-                  >
-                    {m.status === 'Needs review' ? 'Review' : m.status}
+                    title={m.status}
+                    aria-hidden
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-semibold capitalize text-ink">
+                      {club.name}
+                    </span>
+                    <span className="mt-0.5 block truncate text-[11.5px] text-[#8E9398]">
+                      {related || `${m.mappedCount} of ${m.rows.length} mapped`}
+                      {m.skipped ? ' · skipped' : m.ready ? ' · ready' : ''}
+                    </span>
                   </span>
                 </button>
               )
             })}
-          </div>
+          </nav>
 
-          <div className="flex min-w-0 flex-col px-[18px] py-3">
+          {/* Active club */}
+          <section className="flex min-w-0 flex-col px-6 py-5">
             {!active || !activeMeta ? (
-              <div className="py-8 text-[12.5px] text-ink-soft">Select a column family to review.</div>
+              <div className="flex flex-1 items-center justify-center py-12 text-[13px] text-ink-soft">
+                Select a column family to review.
+              </div>
             ) : (
-              <div key={active.id} className="dhara-group-panel flex min-w-0 flex-col">
-                <div className="mb-2 flex flex-wrap items-center gap-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13px] font-semibold text-ink">
+              <div key={active.id} className="dhara-group-panel flex min-h-0 flex-1 flex-col gap-4">
+                <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+                  <div className="min-w-0 max-w-xl">
+                    <h3 className="m-0 truncate text-[17px] font-semibold capitalize tracking-tight text-ink">
                       {active.name}
-                      {activeMeta.relatedCount > 0 && (
-                        <span className="ml-1.5 text-[11.5px] font-semibold text-ink-soft">
-                          +{activeMeta.relatedCount} to be harmonized
-                        </span>
-                      )}
-                    </div>
+                    </h3>
+                    <p className="m-0 mt-1.5 text-[12.5px] leading-relaxed text-ink-soft">
+                      {activeMeta.mappedCount} of {activeMeta.rows.length} values mapped
+                      {relatedLabel(activeMeta.relatedCount)
+                        ? ` · verify once for ${relatedLabel(activeMeta.relatedCount)}`
+                        : ''}
+                      {activeMeta.skipped ? ' · skipped' : activeMeta.ready ? ' · verified' : ''}
+                    </p>
                   </div>
-                  <span
-                    className={`flex-none rounded-full px-2 py-0.5 text-[10.5px] font-semibold ${
-                      activeMeta.ready
-                        ? 'bg-sage text-[#3d7a3d]'
-                        : activeMeta.skipped
-                          ? 'bg-cream text-ink-soft'
-                          : 'bg-[rgba(242,194,48,0.22)] text-[#9a7413]'
-                    }`}
-                  >
-                    {activeMeta.status}
-                  </span>
-                  <button
-                    type="button"
-                    className={ghostBtnClass}
-                    onClick={() => onToggleSkip(active.id)}
-                  >
-                    {activeMeta.skipped ? 'Unskip' : 'Skip'}
-                  </button>
-                  <button
-                    type="button"
-                    className={saveBtnClass}
-                    disabled={activeMeta.verified && !harmDirty[active.id] && !activeMeta.rowsDirty}
-                    onClick={() => onVerifyAndSave(active, activeMeta.rows)}
-                  >
-                    {activeMeta.verified && !harmDirty[active.id]
-                      ? 'Verified'
-                      : activeMeta.relatedCount > 1
-                        ? `Verify & save all ${activeMeta.relatedCount}`
-                        : 'Verify & save'}
-                  </button>
-                  {!activeMeta.pendingVerify && activeMeta.rowsDirty && (
+                  <div className="flex flex-none flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      className={ghostBtnClass}
-                      onClick={() => onSaveChanges(active, activeMeta.rows)}
+                      className={ghostBtn}
+                      onClick={() => onToggleSkip(active.id)}
                     >
-                      Save changes
+                      {activeMeta.skipped ? 'Unskip' : 'Skip'}
                     </button>
-                  )}
-                </div>
-                <div className="mb-2 text-[11.5px] text-ink-soft">
-                  {activeMeta.mappedCount}/{activeMeta.rows.length} mapped · value fixed · one verify updates all related tables
+                    {!activeMeta.pendingVerify && activeMeta.rowsDirty && (
+                      <button
+                        type="button"
+                        className={ghostBtn}
+                        onClick={() => onSaveChanges(active, activeMeta.rows)}
+                      >
+                        Save changes
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className={primaryBtn}
+                      disabled={activeMeta.verified && !harmDirty[active.id] && !activeMeta.rowsDirty}
+                      onClick={() => onVerifyAndSave(active, activeMeta.rows)}
+                    >
+                      {activeMeta.verified && !harmDirty[active.id]
+                        ? 'Verified'
+                        : activeMeta.relatedCount > 1
+                          ? `Verify & save (${activeMeta.relatedCount})`
+                          : 'Verify & save'}
+                    </button>
+                  </div>
                 </div>
 
-                <div className="max-h-[min(320px,45vh)] overflow-auto rounded-md border border-[#cfc6b4]">
-                  <table className="w-full min-w-[560px] table-fixed border-collapse text-left">
+                <div className="max-h-[min(420px,52vh)] overflow-auto rounded-lg border border-line">
+                  <table className="w-full min-w-[560px] table-fixed border-separate border-spacing-0 text-left">
                     <thead className="sticky top-0 z-[1]">
-                      <tr className="bg-[#F4EFE3] text-[10.5px] uppercase tracking-wide text-[#8E9398]">
-                        <th className="w-8 border-b border-[#d7cdb9] px-1.5 py-1.5 text-center font-semibold">#</th>
-                        <th className="w-[34%] border-b border-[#d7cdb9] px-2 py-1.5 font-semibold">
+                      <tr className="bg-[#F4EFE3] text-[11px] uppercase tracking-[0.04em] text-[#8E9398]">
+                        <th className="w-11 border-b border-[#d7cdb9] px-3 py-2.5 text-center font-semibold">#</th>
+                        <th
+                          className="w-[34%] border-b border-[#d7cdb9] border-l border-[#e8e0d0] px-3 py-2.5 font-semibold"
+                          title="From the data — not editable"
+                        >
                           Value
-                          <span className="ml-1 font-semibold normal-case tracking-normal text-[#c36637]">fixed</span>
                         </th>
-                        <th className="w-[22%] border-b border-[#d7cdb9] px-2 py-1.5 font-semibold">Code</th>
-                        <th className="w-[34%] border-b border-[#d7cdb9] px-2 py-1.5 font-semibold">Definition</th>
-                        <th className="w-10 border-b border-[#d7cdb9] px-1 py-1.5 text-center font-semibold">Ok</th>
+                        <th className="w-[18%] border-b border-[#d7cdb9] border-l border-[#e8e0d0] px-3 py-2.5 font-semibold">
+                          Code
+                        </th>
+                        <th className="border-b border-[#d7cdb9] border-l border-[#e8e0d0] px-3 py-2.5 font-semibold">
+                          Definition
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -254,24 +264,29 @@ export default function HarmonisePanel({
                         const m = activeMeta.occ
                           ? (ncoMatchesByCol[active.sourceName] || {})[row.value]
                           : null
-                        const filled = rowMapped(row)
                         const rowReview = Boolean(m?.needs_manual_review) && !activeMeta.verified
+                        const cellBorder = 'border-b border-[#ebe4d6]'
                         return (
-                          <tr className="border-b border-[#f1ebdf] bg-white last:border-b-0" key={row.value || i}>
-                            <td className="bg-[#FBF7EF] px-1.5 py-0.5 text-center text-[11px] tabular-nums text-[#a49c8e]">
+                          <tr className="bg-white" key={row.value || i}>
+                            <td className={`${cellBorder} bg-[#FBF7EF] px-3 py-2 text-center text-[12px] tabular-nums text-[#a49c8e]`}>
                               {i + 1}
                             </td>
-                            <td className="bg-[#FBF7EF] px-2 py-0.5 align-middle" title="From the data — not editable">
-                              <div className="truncate text-[12.5px] font-medium text-ink">{row.value}</div>
+                            <td
+                              className={`${cellBorder} border-l border-[#ebe4d6] bg-[#FBF7EF] px-3 py-2 align-middle`}
+                              title={String(row.value || '')}
+                            >
+                              <div className="line-clamp-2 text-[13px] font-medium leading-snug text-ink">
+                                {row.value}
+                              </div>
                               {m && (
-                                <div className="truncate text-[10px] leading-tight text-[#a49c8e]">
+                                <div className="mt-0.5 truncate text-[11px] text-[#a49c8e]">
                                   {m.level}
-                                  {rowReview ? ' · review' : ''}
+                                  {rowReview ? ' · needs review' : ''}
                                   {m.codes?.length > 1 ? ' · both valid' : ''}
                                 </div>
                               )}
                             </td>
-                            <td className="px-1 py-0.5 align-middle">
+                            <td className={`${cellBorder} border-l border-[#ebe4d6] bg-white p-0 align-middle`}>
                               <input
                                 className={fieldClass}
                                 type="text"
@@ -281,7 +296,7 @@ export default function HarmonisePanel({
                                 onChange={(e) => onFieldChange(active, i, 'code', e.target.value)}
                               />
                             </td>
-                            <td className="px-1 py-0.5 align-middle">
+                            <td className={`${cellBorder} border-l border-[#ebe4d6] bg-white p-0 align-middle`}>
                               <input
                                 className={fieldClass}
                                 type="text"
@@ -291,15 +306,6 @@ export default function HarmonisePanel({
                                 onChange={(e) => onFieldChange(active, i, 'definition', e.target.value)}
                               />
                             </td>
-                            <td className={`px-1 py-0.5 text-center ${rowReview ? 'text-[#9a7413]' : ''}`}>
-                              {rowReview ? (
-                                <AlertTriangle className="mx-auto h-3.5 w-3.5 text-[#c45c4a]" strokeWidth={2.25} aria-hidden />
-                              ) : filled ? (
-                                <Check className="mx-auto h-3.5 w-3.5 text-[#3d7a3d]" strokeWidth={2.5} aria-hidden />
-                              ) : (
-                                <Minus className="mx-auto h-3.5 w-3.5 text-ink-soft" strokeWidth={2} aria-hidden />
-                              )}
-                            </td>
                           </tr>
                         )
                       })}
@@ -308,7 +314,7 @@ export default function HarmonisePanel({
                 </div>
               </div>
             )}
-          </div>
+          </section>
         </div>
       )}
     </div>

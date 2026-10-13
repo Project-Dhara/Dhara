@@ -10,4 +10,9 @@ if [[ ! -x "${PYTHON}" ]]; then
   "${VENV_DIR}/bin/pip" install -r requirements.txt
 fi
 
+if [[ "${SKIP_DB_MIGRATIONS:-}" != "1" && "${SKIP_DB_MIGRATIONS:-}" != "true" ]]; then
+  echo "Applying database migrations (alembic upgrade head)..."
+  "${VENV_DIR}/bin/alembic" upgrade head
+fi
+
 exec "${PYTHON}" -m uvicorn main:app --reload --port "${PORT:-8000}"

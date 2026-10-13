@@ -6,7 +6,8 @@ import { Check, ChevronDown } from 'lucide-react'
 
 /**
  * Searchable single-select combobox: text input + filtered popover list.
- * options: [{ value, label }]
+ * options: [{ value, label, badge? }]
+ * Optional badge renders as a quiet status pill (dropdown + closed field).
  */
 export default function Combobox({
   options = [],
@@ -37,7 +38,10 @@ export default function Combobox({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return options
-    return options.filter((o) => String(o.label || '').toLowerCase().includes(q))
+    return options.filter((o) => {
+      const hay = `${o.label || ''} ${o.badge || ''}`.toLowerCase()
+      return hay.includes(q)
+    })
   }, [options, query])
 
   useEffect(() => { setMounted(true) }, [])
@@ -178,8 +182,8 @@ export default function Combobox({
                 role="option"
                 aria-selected={isSelected}
                 data-combo-idx={i}
-                title={opt.label}
-                className={`flex cursor-pointer items-start gap-2.5 px-3.5 py-2 text-[13.5px] leading-snug ${
+                title={opt.badge ? `${opt.label} · ${opt.badge}` : opt.label}
+                className={`flex cursor-pointer items-center gap-2.5 px-3.5 py-2 text-[13.5px] leading-snug ${
                   isActive
                     ? 'bg-sage text-teal-deep'
                     : isSelected
@@ -192,7 +196,7 @@ export default function Combobox({
                   commit(opt)
                 }}
               >
-                <span className="mt-0.5 flex h-4 w-4 flex-none items-center justify-center">
+                <span className="flex h-4 w-4 flex-none items-center justify-center">
                   {isSelected ? (
                     <Check className="h-3.5 w-3.5 text-teal" strokeWidth={2.5} aria-hidden />
                   ) : null}
@@ -200,6 +204,19 @@ export default function Combobox({
                 <span className="min-w-0 flex-1 whitespace-normal break-words [overflow-wrap:anywhere]">
                   {opt.label}
                 </span>
+                {opt.badge ? (
+                  <span
+                    className={`flex-none rounded-full px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide ${
+                      opt.badgeTone === 'warn'
+                        ? 'bg-[rgba(217,91,104,0.12)] text-coral'
+                        : opt.badgeTone === 'ok'
+                          ? 'bg-green/15 text-green'
+                          : 'bg-cream text-ink-soft'
+                    }`}
+                  >
+                    {opt.badge}
+                  </span>
+                ) : null}
               </li>
             )
           })
@@ -247,6 +264,19 @@ export default function Combobox({
           autoComplete="off"
           spellCheck={false}
         />
+        {!open && selected?.badge ? (
+          <span
+            className={`mr-1 flex-none rounded-full px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide ${
+              selected.badgeTone === 'warn'
+                ? 'bg-[rgba(217,91,104,0.12)] text-coral'
+                : selected.badgeTone === 'ok'
+                  ? 'bg-green/15 text-green'
+                  : 'bg-cream text-ink-soft'
+            }`}
+          >
+            {selected.badge}
+          </span>
+        ) : null}
         <button
           type="button"
           tabIndex={-1}

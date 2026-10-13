@@ -53,6 +53,29 @@ export function setDatasetIdConfig(config: unknown) {
   writeJson(DATASET_ID_KEY, config)
 }
 
+/** Short form used in generated table / dataset IDs (Vital Statistics → VS). */
+export function statisticsShortForm(statistics?: string) {
+  const label = String(statistics || DEFAULT_DATASET_ID_CONFIG.statistics).trim()
+  const known: Record<string, string> = {
+    'Vital Statistics': 'VS',
+    'Labour Statistics': 'LS',
+    'Industrial Statistics': 'IS',
+  }
+  if (known[label]) return known[label]
+  const initials = label.match(/[A-Za-z0-9]+/g)?.map((w) => w[0]?.toUpperCase() || '').join('') || 'STAT'
+  return initials.slice(0, 6)
+}
+
+/** Payload for upload APIs so the backend stamps the same ID shape as Settings. */
+export function datasetIdConfigPayload() {
+  const cfg = getDatasetIdConfig()
+  return {
+    prefix: cfg.prefix,
+    separator: cfg.separator,
+    statistics: cfg.statistics,
+  }
+}
+
 export function getMetadataRequiredFields() {
   const stored = readJson<typeof DEFAULT_METADATA_REQUIRED_FIELDS | null>(METADATA_REQUIRED_KEY, null)
   if (!stored) return { ...DEFAULT_METADATA_REQUIRED_FIELDS }

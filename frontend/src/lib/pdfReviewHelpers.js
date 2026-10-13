@@ -38,6 +38,7 @@ export const REASON_LABELS = {
   uncertain_extraction: 'Uncertain extraction',
   ambiguous_column: 'Ambiguous column',
   uncertain_concept: 'Uncertain concept',
+  uncertain_title: 'Uncertain title',
 }
 
 
@@ -45,6 +46,225 @@ export const REASON_LABELS = {
 export const REASON_ALIASES = {
   column_alignment_mismatch: 'uncertain_extraction',
   uncertain_semantic_role: 'ambiguous_column',
+  // Prior frontend-only id; keep filtering old sessions.
+  missing_title: 'uncertain_title',
+}
+
+
+/**
+ * Turn stored extraction-uncertainty notes into steward-facing copy.
+ * Keeps already-plain notes unchanged; rewrites legacy internal codes from
+ * older jobs (column_alignment_mismatch, pymupdf_*, ADDED guard, …).
+ */
+export function formatUncertainCellNote(note) {
+  const raw = String(note ?? '').trim()
+  if (!raw) return raw
+
+  // Compact summaries from the alignment guard — pass through.
+  if (/^Blank value columns?\b/i.test(raw)) return raw
+  if (/^Too (few|many) columns\b/i.test(raw)) return raw
+  if (/^Rebuilt from the PDF ruled grid\b/i.test(raw)) return raw
+  if (/^Column\s+\d+\s+\("/i.test(raw) && /:\s*(blank|expected numbers|up\/down|serial)/i.test(raw)) {
+    return raw
+  }
+
+  const alignmentCol = raw.match(
+    /^column_alignment_mismatch:\s*col\s+(-?\d+)\s+'([^']*)'\s*--\s*(.+)$/i,
+  )
+  if (alignmentCol) {
+    const colIndex = Number(alignmentCol[1])
+    const name = alignmentCol[2]
+    const detail = humanizeAlignmentDetail(alignmentCol[3], colIndex, name)
+    if (colIndex < 0 || name === '(table structure)') return detail
+    return `Column ${colIndex + 1} ("${name}"): ${detail}`
+  }
+
+  // Verbose prior humanized forms — extract the column name for grouping.
+  const blankCol = extractBlankColumnName(raw)
+  if (blankCol) return `Blank value column: ${blankCol}.`
+
+  const priorNonNumericSimple = raw.match(
+    /^Column\s+"([^"]+)":\s+looks like a value column but most cells are not numbers/i,
+  )
+  if (priorNonNumericSimple) {
+    return `Column "${priorNonNumericSimple[1]}": expected numbers.`
+  }
+
+  const addedGuardReplace = raw.match(
+    /^ADDED guard:\s*replaced LLM rows\/columns with\s+(\S+)\s+candidate after alignment mismatch\s*\(candidate numeric fill\s+(\S+)\s+vs\s+LLM\s+(\S+)\)\.?$/i,
+  )
+  if (addedGuardReplace) {
+    return (
+      `Rebuilt from the PDF ruled grid after column layout mismatch `
+      + `(grid fill ${addedGuardReplace[2].trim()}; earlier reconstruction ${addedGuardReplace[3].trim()}). `
+      + 'Verify values sit under the right headers.'
+    )
+  }
+
+  if (/^ADDED guard:\s*reconstructed table failed column-alignment checks/i.test(raw)) {
+    const count = raw.match(/\((\d+)\s*column/i)
+    const n = count ? count[1] : null
+    return n
+      ? `Column layout check found ${n} issue(s).`
+      : 'Column layout check found issues.'
+  }
+
+  if (/^Column headers and values did not line up/i.test(raw)) {
+    return raw.replace(
+      /^Column headers and values did not line up[\s\S]*?\(([^)]+)\)\.?$/i,
+      (_, fill) => `Rebuilt from the PDF ruled grid after column layout mismatch (${fill}). Verify values sit under the right headers.`,
+    )
+  }
+
+  const conflict = raw.match(
+    /^row\s+(\d+),\s*col\s+'([^']+)':\s*(\S+)=(.+?)\s+vs\s+(\S+)=(.+?)(?:,\s*kept\s+(\S+))?$/i,
+  )
+  if (conflict) {
+    const kept = conflict[7]
+      ? ` Kept ${humanizeExtractionMethod(conflict[7])}.`
+      : ''
+    return (
+      `Row ${conflict[1]}, "${conflict[2]}": `
+      + `${humanizeExtractionMethod(conflict[3])}=${conflict[4].trim()} vs `
+      + `${humanizeExtractionMethod(conflict[5])}=${conflict[6].trim()}.`
+      + kept
+    )
+  }
+
+  if (/^ADDED:\s*removed Direction\/Trend column/i.test(raw)) {
+    return 'Removed a Direction/Trend column that was not in the source PDF.'
+  }
+
+  return raw
+}
+
+
+/** Pull the column name out of verbose blank-column uncertainty notes. */
+function extractBlankColumnName(note) {
+  const raw = String(note ?? '').trim()
+  let m = raw.match(/^Column\s+"([^"]+)":\s+every cell in this value column is blank/i)
+  if (m) return m[1]
+  m = raw.match(/^Column\s+"([^"]+)":\s+looks like a value column but is mostly empty/i)
+  if (m) return m[1]
+  m = raw.match(/^Column\s+\d+\s+of\s+\d+\s+\("([^"]+)"\):\s+every cell is blank/i)
+  if (m) return m[1]
+  m = raw.match(/^column_alignment_mismatch:\s*col\s+-?\d+\s+'([^']*)'\s*--\s*measure column mostly empty/i)
+  if (m) return m[1]
+  m = raw.match(/^Blank value column:\s*(.+)\.?$/i)
+  if (m) return m[1].replace(/\.$/, '')
+  return null
+}
+
+
+function looksLikeSexAgeHeader(name) {
+  const n = String(name || '')
+  if (!/\b(male|female)\b/i.test(n)) return false
+  return /(<\s*\d|\d+\s*[-–—]\s*\d|>=?\s*\d|not\s*stated|total|age)/i.test(n)
+}
+
+
+function listColumnNames(names, limit = 6) {
+  const clean = names.map((n) => String(n || '').trim() || 'unnamed')
+  if (clean.length <= limit) return clean.join(', ')
+  return `${clean.slice(0, limit - 1).join(', ')}, +${clean.length - (limit - 1)} more`
+}
+
+
+/**
+ * Collapse repeated blank-column uncertainty notes into one short line.
+ * Keeps unrelated notes intact. Safe for already-stored jobs.
+ */
+export function summarizeUncertainCellNotes(notes) {
+  const list = Array.isArray(notes) ? notes.map((n) => String(n ?? '').trim()).filter(Boolean) : []
+  if (!list.length) return []
+
+  const blankNames = []
+  const rest = []
+  for (const note of list) {
+    const name = extractBlankColumnName(note)
+    if (name) blankNames.push(name)
+    else rest.push(formatUncertainCellNote(note))
+  }
+
+  const out = []
+  if (blankNames.length === 1) {
+    let line = `Blank value column: ${blankNames[0]}.`
+    if (looksLikeSexAgeHeader(blankNames[0])) {
+      line += ' Sex looks mixed into age headers — use M/F as row labels instead.'
+    }
+    out.push(line)
+  } else if (blankNames.length > 1) {
+    let line = `Blank value columns (${blankNames.length}): ${listColumnNames(blankNames)}.`
+    if (blankNames.some(looksLikeSexAgeHeader)) {
+      line += ' Sex looks mixed into age headers — use M/F as row labels instead.'
+    }
+    out.push(line)
+  }
+
+  // Dedupe remaining notes while preserving order.
+  const seen = new Set(out)
+  for (const note of rest) {
+    if (seen.has(note)) continue
+    seen.add(note)
+    out.push(note)
+  }
+  return out
+}
+
+
+function humanizeAlignmentDetail(detail, colIndex, name) {
+  const d = String(detail || '').trim()
+  const empty = d.match(/^measure column mostly empty\s*\(([^)]+)\)/i)
+  if (empty) {
+    return `blank (${empty[1]})`
+  }
+  if (/^measure column values are mostly non-numeric/i.test(d)) {
+    return 'expected numbers'
+  }
+  if (/^measure column contains Direction up\/down tokens/i.test(d)) {
+    return 'up/down markers instead of numbers'
+  }
+  if (/^States\/geo column filled with Direction up\/down values/i.test(d)) {
+    return 'up/down markers instead of place names'
+  }
+  if (/^S\.No\.\/serial values look glued to the next column/i.test(d)) {
+    return 'serial stuck to next field'
+  }
+  if (/^looks like a value column but is mostly empty/i.test(d)) {
+    const blank = d.match(/\(([^)]+)\)/)
+    return `blank${blank ? ` (${blank[1]})` : ''}`
+  }
+
+  const tooMany = d.match(
+    /^reconstructed\s+(\d+)\s+columns\s+vs\s+(\d+)\s+in the ruled-border candidate/i,
+  )
+  if (tooMany || (colIndex < 0 && /title\/caption line misread as headers/i.test(d))) {
+    const a = tooMany?.[1]
+    const b = tooMany?.[2]
+    if (a && b) return `Too many columns (${a} vs ~${b} in the PDF grid).`
+  }
+
+  const tooFew = d.match(
+    /^reconstructed only\s+(\d+)\s+columns\s+vs\s+(\d+)\s+in the ruled-border candidate/i,
+  )
+  if (tooFew || (colIndex < 0 && /multi-level header collapsed/i.test(d))) {
+    const a = tooFew?.[1]
+    const b = tooFew?.[2]
+    if (a && b) return `Too few columns (${a} vs ~${b} in the PDF grid).`
+    return 'Too few columns vs the PDF grid.'
+  }
+
+  return d
+}
+
+
+function humanizeExtractionMethod(method) {
+  const m = String(method || '').toLowerCase()
+  if (m.includes('lines_strict')) return 'ruled-border'
+  if (m.includes('lines')) return 'ruled-border (loose)'
+  if (m.includes('text')) return 'text-alignment'
+  if (m.includes('llm')) return 'AI reconstruction'
+  return method || 'extraction'
 }
 
 
@@ -60,6 +280,42 @@ export const ROLE_OPTIONS = ['identifier', 'dimension', 'measure', 'attribute', 
 /** Top-level filter chips. Reason-specific chips (uncertain extraction, etc.)
  *  stay nested under "Review needed" and only appear once that filter is active. */
 export const PRIMARY_FILTERS = ['needs_review', 'no_review']
+
+export const SOURCE_TYPE_FILTERS = [
+  { id: 'all', label: 'All types' },
+  { id: 'pdf', label: 'PDF' },
+  { id: 'excel', label: 'Excel' },
+  { id: 'csv', label: 'CSV' },
+]
+
+export function tableSourceType(table) {
+  const st = String(table?.source_type || '').toLowerCase()
+  if (st === 'pdf' || st === 'excel' || st === 'csv') return st
+  return null
+}
+
+export function matchesSourceTypeFilter(table, filterId) {
+  if (!filterId || filterId === 'all') return true
+  return tableSourceType(table) === filterId
+}
+
+export function tableSourceSubtitle(table) {
+  const parts = []
+  const file = String(table?.source_filename || table?.source_file || '').trim()
+  if (file) parts.push(file)
+  const loc = String(table?.source_location || '').trim()
+  if (loc) parts.push(loc)
+  else if (table?.page != null && String(table.page).trim() && tableSourceType(table) === 'pdf') {
+    parts.push(`Page ${table.page}`)
+  } else if (table?.sheet) {
+    parts.push(`Sheet ${table.sheet}`)
+  }
+  const st = tableSourceType(table)
+  if (st === 'pdf') parts.push('PDF')
+  else if (st === 'excel') parts.push('Excel')
+  else if (st === 'csv') parts.push('CSV')
+  return parts.filter(Boolean).join(' · ')
+}
 
 export const REASON_FILTER_IDS = Object.keys(REASON_LABELS)
 
@@ -117,6 +373,8 @@ export function collectReviewReasons(table) {
   if ((table.uncertain_cells || []).length > 0 && !reasons.has('conflicting_extraction')) {
     add('uncertain_extraction')
   }
+  // Missing / unusable title — same signal as "No title — review" in the list.
+  if (tableHasMissingTitle(table)) add('uncertain_title')
   return reasons
 }
 
@@ -136,14 +394,128 @@ export function matchesStatusFilter(table, filter, reviewed) {
   if (filter === 'reviewed') return reviewed
   if (filter === 'needs_review') {
     if (reviewed) return false
-    return Boolean(table.human_review_needed) || collectReviewReasons(table).size > 0 || tableHasGarbledCells(table)
+    return (
+      Boolean(table.human_review_needed)
+      || tableHasMissingTitle(table)
+      || collectReviewReasons(table).size > 0
+      || tableHasGarbledCells(table)
+    )
   }
   if (filter === 'no_review') {
+    if (tableHasMissingTitle(table)) return false
     return !table.human_review_needed && !tableHasGarbledCells(table) && collectReviewReasons(table).size === 0
   }
   if (filter === 'dev_ai_classified') return isAiClassified(table)
   if (filter === 'dev_auto_extracted') return !isAiClassified(table)
   return collectReviewReasons(table).has(canonicalizeReviewReason(filter))
+}
+
+
+/** Collapse punctuation/whitespace so "TABLE 10(I)" and "table 10 i" compare equally. */
+function normalizeSearchText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+}
+
+
+function editDistance(a, b) {
+  if (a === b) return 0
+  if (!a) return b.length
+  if (!b) return a.length
+  // Keep DP bounded for title tokens; long tokens fall back to substring checks.
+  if (a.length > 32 || b.length > 32) return Math.max(a.length, b.length)
+  const prev = new Array(b.length + 1)
+  const cur = new Array(b.length + 1)
+  for (let j = 0; j <= b.length; j += 1) prev[j] = j
+  for (let i = 1; i <= a.length; i += 1) {
+    cur[0] = i
+    const ca = a.charCodeAt(i - 1)
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = ca === b.charCodeAt(j - 1) ? 0 : 1
+      cur[j] = Math.min(cur[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost)
+    }
+    for (let j = 0; j <= b.length; j += 1) prev[j] = cur[j]
+  }
+  return prev[b.length]
+}
+
+
+function isCharSubsequence(needle, haystack) {
+  let i = 0
+  for (let j = 0; j < haystack.length && i < needle.length; j += 1) {
+    if (needle[i] === haystack[j]) i += 1
+  }
+  return i === needle.length
+}
+
+
+function fuzzyTokenMatches(token, haystack, words) {
+  if (!token) return true
+  if (haystack.includes(token)) return true
+
+  // Digits are exact only — "15" must not fuzzy-match "10" / "12" / "5".
+  if (/^\d+$/.test(token)) {
+    return words.includes(token)
+  }
+
+  const maxDist = token.length <= 4 ? 1 : token.length <= 8 ? 2 : 3
+  for (const word of words) {
+    if (!word) continue
+    // Require a real prefix/stem — avoid "p15".startsWith("p") via short word flips.
+    if (word.startsWith(token)) return true
+    if (token.startsWith(word) && word.length >= 3) return true
+    if (word.includes(token)) return true
+    // "p15".includes("1") / .includes("5") was matching pages 1 and 5.
+    if (token.length >= 3 && word.length >= 3 && token.includes(word)) return true
+    // Typo / rough match: "relgion" ≈ "religion", "birts" ≈ "births".
+    if (token.length >= 3 && word.length >= 3 && isCharSubsequence(token, word)) return true
+    if (/^\d+$/.test(word)) continue
+    if (Math.abs(word.length - token.length) <= maxDist && editDistance(word, token) <= maxDist) {
+      return true
+    }
+  }
+  return false
+}
+
+
+/**
+ * Fuzzy / rough match against table title and page number.
+ * Empty query matches everything so existing filter behaviour is unchanged.
+ * Page queries ("15", "p15", "page 15") match that page exactly — no fuzzy spillover.
+ */
+export function matchesTableSearch(table, query) {
+  const raw = String(query || '').trim()
+  if (!raw) return true
+
+  const page = String(table?.page ?? '').trim()
+
+  // Page-number queries are exact: "15", "p15", "p.15", "page 15".
+  const pageOnly = raw.match(/^(?:p(?:age)?\.?\s*)?(\d+)$/i)
+  if (pageOnly) {
+    return Boolean(page) && page === pageOnly[1]
+  }
+
+  const title = displayTitle(table) || String(table?.title || '').trim()
+  const banner = String(table?.banner_table_id || '').trim()
+  const tableId = String(table?.table_id ?? '').trim()
+  const sourceFile = String(table?.source_filename || table?.source_file || '').trim()
+  const sheet = String(table?.sheet || '').trim()
+  const haystack = normalizeSearchText([
+    title,
+    banner,
+    page ? `page ${page}` : '',
+    tableId,
+    sourceFile,
+    sheet ? `sheet ${sheet}` : '',
+  ].join(' '))
+  const words = haystack ? haystack.split(' ') : []
+
+  const tokens = normalizeSearchText(raw).split(' ').filter(Boolean)
+  if (tokens.length === 0) return true
+  return tokens.every((token) => fuzzyTokenMatches(token, haystack, words))
 }
 
 
@@ -661,8 +1033,44 @@ export function buildBodyCellSpans(rows, columns) {
 }
 
 
+/** Collapse fake-bold / doubled-glyph PDF titles (Maaiinn → Main). */
+export function collapseDoubledPdfGlyphs(text) {
+  const s = String(text || '')
+  if (s.length < 4) return s
+  const letters = [...s].filter((c) => /[A-Za-z]/.test(c))
+  if (letters.length < 6) return s
+  let inPair = 0
+  for (let i = 0; i < letters.length; ) {
+    if (i + 1 < letters.length && letters[i].toLowerCase() === letters[i + 1].toLowerCase()) {
+      inPair += 2
+      i += 2
+    } else {
+      i += 1
+    }
+  }
+  if (inPair / letters.length < 0.8) return s
+  let out = ''
+  for (let i = 0; i < s.length; ) {
+    const c = s[i]
+    if (
+      /[A-Za-z]/.test(c)
+      && i + 1 < s.length
+      && /[A-Za-z]/.test(s[i + 1])
+      && c.toLowerCase() === s[i + 1].toLowerCase()
+    ) {
+      out += c
+      i += 2
+    } else {
+      out += c
+      i += 1
+    }
+  }
+  return out
+}
+
+
 export function stripCaptionLabelPrefix(title) {
-  const raw = String(title || '').trim().replace(/\s+/g, ' ')
+  const raw = collapseDoubledPdfGlyphs(String(title || '').trim().replace(/\s+/g, ' '))
   if (!raw) return raw
   // "Statement 4.6: Distribution…" / "Table 2.1 — Foo"
   const withSep = raw.replace(
@@ -704,15 +1112,56 @@ export function isUsableTableTitle(title, columns) {
 }
 
 
+function isBareTableIdLabel(value) {
+  const s = String(value || '').trim()
+  if (!s) return false
+  // "TABLE -8", "TABLE: B-15", "TABLE (ii)", "TABLE - (I)" — id only.
+  return /^(?:table|tab\.?)\b\s*[:.\-–—]?\s*(?:[a-z0-9][\w.\-–—/]*(?:\s*\([^)]{0,48}\))?|\([^)]{1,48}\))\s*$/i.test(s)
+}
+
+
 export function displayTitle(table) {
   const t = stripCaptionLabelPrefix((table?.title || '').trim())
-  if (isUsableTableTitle(t, table?.columns)) return t
-  return null
+  const banner = String(table?.banner_table_id || '').trim()
+  // Cleared / missing descriptive title → no display title (never fall back to
+  // banner_table_id alone; that left "TABLE -…" stuck after the user wiped the field).
+  if (!t || isBareTableIdLabel(t) || !isUsableTableTitle(t, table?.columns)) {
+    return null
+  }
+  // When the id lived on its own line (TABLE -8) and the descriptive caption
+  // is the stored title, show both for stewards.
+  if (
+    banner &&
+    !t.toLowerCase().includes(banner.toLowerCase()) &&
+    /^table\b/i.test(banner) &&
+    t.length >= 12
+  ) {
+    return `${banner} — ${t}`
+  }
+  return t
+}
+
+
+/** True when the steward sees "No title — review" (no usable descriptive title). */
+export function tableHasMissingTitle(table) {
+  return !displayTitle(table)
 }
 
 
 export function titleForEdit(table) {
-  return displayTitle(table) || stripCaptionLabelPrefix((table?.title || '').trim()) || ''
+  // Edit the stored descriptive title only — never the composed display string
+  // that prefixes banner_table_id (TABLE -8). Saving that back would bake the
+  // id into table.title on every blur/open.
+  let t = stripCaptionLabelPrefix((table?.title || '').trim())
+  const banner = String(table?.banner_table_id || '').trim()
+  if (banner && t) {
+    // Undo a previously saved "TABLE -8 — descriptive…" composition.
+    const escaped = banner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    t = t.replace(new RegExp(`^${escaped}\\s*[—–\\-]\\s*`, 'i'), '').trim()
+  }
+  if (!t || isBareTableIdLabel(t)) return ''
+  if (isUsableTableTitle(t, table?.columns)) return t
+  return t
 }
 
 

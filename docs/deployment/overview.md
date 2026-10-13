@@ -21,7 +21,7 @@ DHARA runs as:
 ### A. Three containers (dev / on-prem)
 
 ```text
-postgres (:5432) · backend (:8000) · frontend (:3000)
+postgres (:5432) · backend (:8000) · frontend (:80 → 3000)
 ```
 
 `make up` / `docker compose up -d --build`
@@ -29,12 +29,12 @@ postgres (:5432) · backend (:8000) · frontend (:3000)
 ### B. Combined app image (prod-shaped)
 
 ```text
-postgres (:5432) · app (:8080)   # Next + FastAPI via start.sh
+postgres (:5432) · app (:80 → 8080)   # Next + FastAPI via start.sh
 ```
 
 `make prod` / `docker compose --profile prod up -d --build postgres app`
 
-Browser talks only to `:8080`; Next proxies `/api` to internal FastAPI.
+Browser talks only to `:80`; Next proxies `/api` to internal FastAPI.
 
 ### C. Host processes + Docker Postgres
 

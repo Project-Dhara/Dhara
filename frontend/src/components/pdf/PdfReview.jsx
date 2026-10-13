@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, ArrowRight, Check, Download, Loader2 } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, Download, Loader2, Search, Sparkles, X } from 'lucide-react'
 import { withAuthHeaders } from '../../lib/auth'
 import { withLlmKeyHeaders } from '../../lib/llmKey'
 import Badge from '../ui/Badge'
@@ -21,7 +21,12 @@ import {
   displayTitle,
   isAiClassified,
   matchesStatusFilter,
+  matchesSourceTypeFilter,
+  matchesTableSearch,
+  SOURCE_TYPE_FILTERS,
+  tableHasMissingTitle,
   tableHeaderKey,
+  tableSourceSubtitle,
 } from '../../lib/pdfReviewHelpers'
 import { DeleteConfirmDialog, MergeConfirmDialog, ReviewBadge, ScrollToTopButton, TableExpandPanel } from './PdfReviewAtoms'
 import { TableDetail, TableTitleDisplay } from './TableDetail'
@@ -104,6 +109,8 @@ export default function PdfReview({ jobId, filename, onDone }) {
   const [expanded, setExpanded] = useState(null)
   const [reviewedIds, setReviewedIds] = useState(() => new Set())
   const [statusFilter, setStatusFilter] = useState('all')
+  const [sourceTypeFilter, setSourceTypeFilter] = useState('all')
+  const [tableSearch, setTableSearch] = useState('')
   const [tablePage, setTablePage] = useState(0)
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   // null | 'delete' | 'download' | 'merge' — same checkbox UI, different confirm action
@@ -113,6 +120,11 @@ export default function PdfReview({ jobId, filename, onDone }) {
   const [deleting, setDeleting] = useState(false)
   const [merging, setMerging] = useState(false)
   const [continuing, setContinuing] = useState(false)
+  // AI search over the existing list — null match set means regular text search.
+  const [aiSearching, setAiSearching] = useState(false)
+  const [aiMatchIds, setAiMatchIds] = useState(null)
+  const [aiIntent, setAiIntent] = useState(null)
+  const [aiRationale, setAiRationale] = useState('')
   // 'persist' | 'group' — drives the Continue placeholder stepper
   const [continuePhase, setContinuePhase] = useState('persist')
   const [downloadingZip, setDownloadingZip] = useState(false)
@@ -297,9 +309,8 @@ export default function PdfReview({ jobId, filename, onDone }) {
     }
   }, [jobId])
 
-  const saveReview = async (tableId, edits) => {
+  const patchTable = async (tableId, edits) => {
     setTables((prev) => prev.map((t) => (t.table_id === tableId ? { ...t, ...edits } : t)))
-    setReviewedIds((prev) => new Set(prev).add(tableId))
     try {
       await fetch(`/api/pdf/jobs/${jobId}/tables/${tableId}`, withAuthHeaders({
         method: 'PATCH',
@@ -310,6 +321,11 @@ export default function PdfReview({ jobId, filename, onDone }) {
       // Local state already reflects the edit; a failed PATCH just means it
       // won't persist server-side if the page is reloaded -- non-fatal here.
     }
+  }
+
+  const saveReview = async (tableId, edits) => {
+    await patchTable(tableId, edits)
+    setReviewedIds((prev) => new Set(prev).add(tableId))
   }
 
   const confirmDelete = async () => {
@@ -338,6 +354,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
         ids.forEach((id) => next.delete(id))
         return next
       })
+      setAiMatchIds((prev) => (prev ? prev.filter((id) => !idSet.has(id)) : prev))
       if (expanded && idSet.has(expanded)) setExpanded(null)
       setPendingDeleteIds(null)
       setSelectedIds(new Set())
@@ -347,6 +364,73 @@ export default function PdfReview({ jobId, filename, onDone }) {
       setPendingDeleteIds(null)
     } finally {
       setDeleting(false)
+    }
+  }
+
+  const clearAiSearch = ({ keepSelectMode = false } = {}) => {
+    setAiMatchIds(null)
+    setAiIntent(null)
+    setAiRationale('')
+    if (!keepSelectMode && selectMode === 'delete') {
+      // Leaving AI remove selection — drop select mode unless steward is mid-delete.
+      setSelectMode(null)
+      setSelectedIds(new Set())
+    }
+  }
+
+  const runAiSearch = async () => {
+    const prompt = tableSearch.trim()
+    if (!prompt || aiSearching || !tables?.length) return
+    setAiSearching(true)
+    setError('')
+    try {
+      const res = await fetch(
+        `/api/pdf/jobs/${jobId}/tables/ai-search`,
+        withLlmKeyHeaders(withAuthHeaders({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt,
+            tables: tables.map((t) => ({
+              table_id: t.table_id,
+              title: t.title ?? null,
+              banner_table_id: t.banner_table_id ?? null,
+              page: t.page,
+              short_description: t.short_description ?? t.description ?? null,
+            })),
+          }),
+        })),
+      )
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(typeof body.detail === 'string' ? body.detail : 'AI search failed')
+      }
+      const data = await res.json()
+      const alive = new Set((tables || []).map((t) => t.table_id))
+      const ids = (data.table_ids || []).map(String).filter((id) => alive.has(id))
+      const intent = data.intent === 'remove' ? 'remove' : 'find'
+      setAiMatchIds(ids)
+      setAiIntent(intent)
+      setAiRationale(typeof data.rationale === 'string' ? data.rationale : '')
+      setExpanded(null)
+      setTablePage(0)
+
+      if (intent === 'remove' && ids.length) {
+        // Select in the existing delete workflow — never auto-delete.
+        setSelectMode('delete')
+        setSelectedIds(new Set(ids))
+      } else if (selectMode === 'delete' && intent !== 'remove') {
+        setSelectMode(null)
+        setSelectedIds(new Set())
+      }
+
+      if (!ids.length) {
+        setError(data.rationale || 'No tables matched that AI search.')
+      }
+    } catch (e) {
+      setError(e.message || 'AI search failed')
+    } finally {
+      setAiSearching(false)
     }
   }
 
@@ -505,8 +589,8 @@ export default function PdfReview({ jobId, filename, onDone }) {
     // step vs. the deterministic auto-accepted path, for QA'ing AI output.
     // Never shown in a production build.
     ...(process.env.NODE_ENV !== 'production' ? [
-      { id: 'dev_ai_classified', label: 'Dev: AI classified' },
-      { id: 'dev_auto_extracted', label: 'Dev: Auto-extracted' },
+      { id: 'dev_ai_classified', label: 'AI extracted' },
+      { id: 'dev_auto_extracted', label: 'Auto-extracted' },
     ] : []),
   ]
 
@@ -524,9 +608,31 @@ export default function PdfReview({ jobId, filename, onDone }) {
     activeFilter === 'needs_review' || REASON_FILTER_IDS.includes(activeFilter)
   ) && reasonFilterOptions.length > 0
 
+  const sourceTypeCounts = { all: tables.length, pdf: 0, excel: 0, csv: 0 }
+  for (const t of tables) {
+    const st = (t.source_type || '').toLowerCase()
+    if (st === 'pdf') sourceTypeCounts.pdf += 1
+    else if (st === 'excel') sourceTypeCounts.excel += 1
+    else if (st === 'csv') sourceTypeCounts.csv += 1
+  }
+  const sourceFilterOptions = SOURCE_TYPE_FILTERS.filter(
+    (o) => o.id === 'all' || sourceTypeCounts[o.id] > 0,
+  )
+
   let filteredTables = tables.filter((t) =>
     matchesStatusFilter(t, activeFilter, reviewedIds.has(t.table_id))
+      && matchesSourceTypeFilter(t, sourceTypeFilter)
   )
+  // Search is additive: status / reason / merge filters stay unchanged.
+  // AI "find" filters the list; AI "remove" only selects checkboxes so the
+  // full list stays accessible for manual adjustments.
+  const searchQuery = tableSearch.trim()
+  if (aiMatchIds && aiIntent === 'find') {
+    const idSet = new Set(aiMatchIds)
+    filteredTables = filteredTables.filter((t) => idSet.has(t.table_id))
+  } else if (!aiMatchIds && searchQuery) {
+    filteredTables = filteredTables.filter((t) => matchesTableSearch(t, searchQuery))
+  }
   // Merge mode: after the first selection, only show tables with the same headers.
   if (selectMode === 'merge' && selectedIds.size > 0) {
     const anchor = tables.find((t) => selectedIds.has(t.table_id))
@@ -577,7 +683,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="text-[12.5px] text-ink-soft">
         Showing {pageStart + 1}–{pageEnd} of {filteredCount}
-        {activeFilter !== 'all' ? ' (filtered)' : ''}
+        {activeFilter !== 'all' || searchQuery ? ' (filtered)' : ''}
         {' · '}{TABLES_PER_PAGE} per page
       </div>
       <div className="flex items-center gap-2">
@@ -645,7 +751,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
             onClick={onDone}
           >
             <ArrowLeft className="h-4 w-4" strokeWidth={2} aria-hidden />
-            Upload another PDF
+            Upload another file
           </button>
           <div className="font-display text-[26px] font-medium leading-tight text-ink">Review Extracted Tables</div>
           <div className="mt-1.5 text-[13px] font-medium text-ink">
@@ -659,14 +765,6 @@ export default function PdfReview({ jobId, filename, onDone }) {
         </div>
         <div className="flex flex-none flex-wrap items-center justify-end gap-2.5">
           <KydsSummaryCard variant="corner" />
-          <Button variant="primary" disabled={continuing} onClick={continueToGrouping} className="inline-flex items-center gap-1.5">
-            {continuing ? 'Saving…' : (
-              <>
-                Continue
-                <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
-              </>
-            )}
-          </Button>
         </div>
       </div>
 
@@ -675,6 +773,103 @@ export default function PdfReview({ jobId, filename, onDone }) {
       {/* Content box: filters stick at the top of the scrollport while tables scroll underneath. */}
       <div className="rounded-xl border border-line bg-white shadow-sm">
         <div className="sticky top-0 z-20 space-y-2 rounded-t-xl border-b border-line bg-white px-5 py-3 sm:px-6">
+          <div className="space-y-1">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
+              <label
+                className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-2.5 py-2 focus-within:border-teal focus-within:shadow-focus-ring ${
+                  aiMatchIds
+                    ? 'border-teal/50 bg-sage/40'
+                    : 'border-line bg-cream'
+                }`}
+              >
+                {aiMatchIds ? (
+                  <Sparkles className="h-4 w-4 flex-none text-teal" strokeWidth={2} aria-hidden />
+                ) : (
+                  <Search className="h-4 w-4 flex-none text-ink-soft" strokeWidth={2} aria-hidden />
+                )}
+                <input
+                  type="text"
+                  value={tableSearch}
+                  onChange={(e) => {
+                    setTableSearch(e.target.value)
+                    if (aiMatchIds) clearAiSearch({ keepSelectMode: true })
+                    setExpanded(null)
+                    setTablePage(0)
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault()
+                      runAiSearch()
+                    }
+                  }}
+                  placeholder={aiMatchIds ? 'AI search active — edit to return to regular search' : 'Search by table name or page…'}
+                  className="min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 text-[13.5px] text-ink shadow-none outline-none placeholder:text-ink-soft focus:outline-none focus:ring-0"
+                  aria-label="Search tables by name or page number"
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={aiSearching}
+                />
+                {(tableSearch || aiMatchIds) ? (
+                  <button
+                    type="button"
+                    className="flex-none text-ink-soft hover:text-teal"
+                    onClick={() => {
+                      setTableSearch('')
+                      clearAiSearch()
+                      setExpanded(null)
+                      setTablePage(0)
+                    }}
+                    aria-label="Clear search"
+                  >
+                    <X className="h-3.5 w-3.5" strokeWidth={2} />
+                  </button>
+                ) : null}
+              </label>
+              <Button
+                variant="secondary"
+                className="sm:flex-none"
+                disabled={aiSearching || !tableSearch.trim() || !tables?.length}
+                onClick={runAiSearch}
+                title="Interpret this as a natural-language search (⌘/Ctrl+Enter)"
+              >
+                {aiSearching ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} aria-hidden />
+                    Searching…
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Sparkles className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+                    Search with AI
+                  </span>
+                )}
+              </Button>
+            </div>
+            {aiMatchIds ? (
+              <div className="flex flex-wrap items-center gap-2 px-0.5">
+                <span className="inline-flex items-center gap-1 rounded-full border border-teal/30 bg-sage px-2 py-0.5 text-[11.5px] font-semibold text-teal-deep">
+                  <Sparkles className="h-3 w-3" strokeWidth={2} aria-hidden />
+                  AI {aiIntent === 'remove' ? 'remove selection' : 'results'}
+                  <span className="tabular-nums">· {aiMatchIds.length}</span>
+                </span>
+                {aiRationale ? (
+                  <span className="min-w-0 flex-1 truncate text-[11.5px] text-ink-soft">{aiRationale}</span>
+                ) : null}
+                <button
+                  type="button"
+                  className="text-[11.5px] font-semibold text-teal hover:text-teal-dark"
+                  onClick={() => clearAiSearch()}
+                >
+                  Regular search
+                </button>
+              </div>
+            ) : (
+              <p className="m-0 px-0.5 text-[11.5px] leading-snug text-ink-soft">
+                Tip: jump to a page with <span className="font-medium text-ink">15</span>, <span className="font-medium text-ink">p15</span>, or <span className="font-medium text-ink">page 15</span>
+                {' '}· or use <span className="font-medium text-ink">Search with AI</span> for natural language
+              </p>
+            )}
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="flex-none text-[13px] font-bold tracking-wide text-ink">
               Filter by:
@@ -736,6 +931,31 @@ export default function PdfReview({ jobId, filename, onDone }) {
               </div>
             ) : null}
           </div>
+
+          {sourceFilterOptions.length > 2 && (
+            <div className="flex flex-wrap items-center gap-2 border-t border-line/70 pt-2">
+              <span className="flex-none text-[12px] font-semibold tracking-wide text-ink-soft">Source:</span>
+              {sourceFilterOptions.map(({ id, label }) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={chipClass(sourceTypeFilter === id)}
+                  onClick={() => {
+                    setSourceTypeFilter(id)
+                    setExpanded(null)
+                    setTablePage(0)
+                  }}
+                >
+                  {label}
+                  <span className={`rounded-full px-1.5 py-px text-[11px] font-bold ${
+                    sourceTypeFilter === id ? 'bg-cream/20 text-cream' : 'bg-cream text-ink-soft'
+                  }`}>
+                    {sourceTypeCounts[id] ?? 0}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
 
           <TableExpandPanel open={showReasonFilters}>
             <div
@@ -851,7 +1071,9 @@ export default function PdfReview({ jobId, filename, onDone }) {
             <div className="rounded-lg border border-dashed border-line px-2 py-10 text-center text-[13px] text-ink-soft">
               {selectMode === 'merge' && selectedIds.size > 0
                 ? 'No other tables share these column headers.'
-                : 'No tables match this filter.'}
+                : searchQuery
+                  ? `No tables match “${searchQuery}”.`
+                  : 'No tables match this filter.'}
             </div>
           ) : pageTables.map((t) => {
             const isOpen = expanded === t.table_id
@@ -859,11 +1081,11 @@ export default function PdfReview({ jobId, filename, onDone }) {
             const selected = selectedIds.has(t.table_id)
             return (
               <div key={t.table_id} className={`overflow-hidden rounded-lg border bg-surface transition-[border-color] duration-300 ease-out ${isOpen ? 'border-teal' : selectMode && selected ? 'border-teal/50' : 'border-line'}`}>
-                <div className="flex items-center gap-2.5 px-3.5 py-2.5 hover:bg-cream">
+                <div className="flex items-start gap-2.5 px-3.5 py-2.5 hover:bg-cream">
                   {selectMode && (
                     <input
                       type="checkbox"
-                      className="h-3.5 w-3.5 flex-none accent-teal"
+                      className="mt-1 h-3.5 w-3.5 flex-none accent-teal"
                       checked={selected}
                       aria-label={`Select ${displayTitle(t) || `page ${t.page} table`}`}
                       onChange={() => toggleSelected(t.table_id)}
@@ -871,13 +1093,14 @@ export default function PdfReview({ jobId, filename, onDone }) {
                     />
                   )}
                   <div
-                    className="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-3"
+                    className="flex min-w-0 flex-1 cursor-pointer items-start justify-between gap-3"
                     onClick={() => setExpanded(isOpen ? null : t.table_id)}
                   >
                     <div className="min-w-0 flex-1">
                       <TableTitleDisplay table={t} />
                       <div className="mt-0.5 text-[11.5px] leading-snug text-ink-soft">
-                        Page {t.page} · {t.semantic_status === 'classified' ? 'AI-classified' : 'Auto-accepted (no AI review)'}
+                        {tableSourceSubtitle(t) || `Page ${t.page}`}
+                        {' · '}{t.semantic_status === 'classified' ? 'AI-classified' : 'Auto-accepted (no AI review)'}
                       </div>
                     </div>
                     <div className="flex flex-none items-center gap-2">
@@ -908,7 +1131,17 @@ export default function PdfReview({ jobId, filename, onDone }) {
                           </span>
                         </Badge>
                       ) : (
-                        <ReviewBadge needed={t.human_review_needed} reason={t.human_review_reason} />
+                        <ReviewBadge
+                          needed={
+                            Boolean(t.human_review_needed)
+                            || tableHasMissingTitle(t)
+                            || collectReviewReasons(t).size > 0
+                          }
+                          reason={
+                            t.human_review_reason
+                            || (tableHasMissingTitle(t) ? 'uncertain_title' : null)
+                          }
+                        />
                       )}
                     </div>
                   </div>
@@ -923,7 +1156,9 @@ export default function PdfReview({ jobId, filename, onDone }) {
                         row.table_id === t.table_id ? { ...row, title } : row
                       )))
                     }}
-                    onTitleCommit={(title) => saveReview(t.table_id, { title })}
+                    // Title blur persists text only — do not mark reviewed
+                    // (that is reserved for "Save review").
+                    onTitleCommit={(title) => patchTable(t.table_id, { title })}
                   />
                 </TableExpandPanel>
               </div>
@@ -936,6 +1171,17 @@ export default function PdfReview({ jobId, filename, onDone }) {
             </div>
           ) : null}
         </div>
+      </div>
+
+      <div className="flex items-center justify-end gap-4">
+        <Button variant="primary" disabled={continuing} onClick={continueToGrouping} className="inline-flex items-center gap-1.5">
+          {continuing ? 'Saving…' : (
+            <>
+              Continue
+              <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
+            </>
+          )}
+        </Button>
       </div>
     </div>
     </PdfConsoleLayout>

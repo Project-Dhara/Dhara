@@ -32,12 +32,26 @@ export function rowMapped(row) {
   return Boolean(String(row?.code || '').trim()) && Boolean(String(row?.definition || '').trim())
 }
 
+/** Prefer a real code; clear identity placeholders only when still unfilled. */
+function sanitizeCode(code, value, definition = '') {
+  const c = String(code ?? '').trim()
+  const v = String(value ?? '').trim()
+  if (!c) return ''
+  // code === value with no definition yet → leftover auto-fill, not steward work.
+  if (v && c.toLowerCase() === v.toLowerCase() && !String(definition ?? '').trim()) return ''
+  return String(code ?? '')
+}
+
 export function cloneCodeRows(codes) {
-  return (codes || []).map((row) => ({
-    code: row.code ?? '',
-    value: row.value ?? '',
-    definition: row.definition ?? '',
-  }))
+  return (codes || []).map((row) => {
+    const value = row.value ?? ''
+    const definition = row.definition ?? ''
+    return {
+      code: sanitizeCode(row.code, value, definition),
+      value,
+      definition,
+    }
+  })
 }
 
 export function codesFingerprint(codes) {
@@ -47,6 +61,49 @@ export function codesFingerprint(codes) {
       .filter(Boolean)
       .sort()
   )
+}
+
+const NEAR_DUP_JACCARD = 0.85
+const NEAR_DUP_CONTAINMENT = 0.9
+
+/** Serial / TOC / page columns must never appear as Classify chips. */
+const NON_CLASSIFICATION_NAME_RE = /(?:^|_)(?:sl_?no|s\.?no|sr_?no|serial(?:_?no(?:umber)?)?|row_?no|index|#)(?:_|$)|contents?|page(?:_?no(?:umber)?)?|chapter|particulars|remarks?|notes?|^description$|list_of_tables|table_of_contents|^title$/i
+/** PDF placeholder headers (Col_1) and bare numeric / year leaf names. */
+const PLACEHOLDER_OR_NUMERIC_COL_RE = /^(?:col|column)[_\s-]?\d+$|^unnamed(?:[:\s._-]*\d+)?$|^\d+(?:[.,]\d+)?$|^\d{4}\s*[-–/]\s*\d{2,4}$|^\(\d+\)$/i
+
+export function isNonClassificationColumn(name) {
+  const raw = String(name || '').trim()
+  if (!raw) return true
+  if (PLACEHOLDER_OR_NUMERIC_COL_RE.test(raw)) return true
+  const normalized = normalizeColumnName(name)
+  if (!normalized) return true
+  if (NON_CLASSIFICATION_NAME_RE.test(normalized)) return true
+  const compact = normalized.replace(/[_\-./]+/g, '')
+  return ['slno', 'sno', 'srno', 'serialno', 'serialnumber', 'rowno', 'index', 'page', 'pages', 'pageno', 'contents', 'content', 'chapter', 'title'].includes(compact)
+}
+
+function valueSet(codes) {
+  return new Set(
+    (codes || [])
+      .map((r) => String(r?.value ?? r?.code ?? '').trim().toLowerCase())
+      .filter(Boolean),
+  )
+}
+
+function jaccard(a, b) {
+  if (!a?.size || !b?.size) return 0
+  let inter = 0
+  for (const v of a) if (b.has(v)) inter += 1
+  if (inter === 0) return 0
+  return inter / (a.size + b.size - inter)
+}
+
+function valueSetsNearDuplicate(a, b) {
+  if (!a?.size || !b?.size) return false
+  if (jaccard(a, b) >= NEAR_DUP_JACCARD) return true
+  let inter = 0
+  for (const v of a) if (b.has(v)) inter += 1
+  return inter / Math.min(a.size, b.size) >= NEAR_DUP_CONTAINMENT
 }
 
 export function normalizeColumnName(name) {
@@ -70,13 +127,15 @@ export function mergeCodeLists(lists) {
       const prev = byValue.get(key)
       if (!prev) {
         byValue.set(key, {
-          code: row.code ?? '',
+          code: sanitizeCode(row.code, row.value, row.definition),
           value: row.value ?? '',
           definition: row.definition ?? '',
         })
         continue
       }
-      if (!String(prev.code || '').trim() && row.code) prev.code = row.code
+      if (!String(prev.code || '').trim() && row.code) {
+        prev.code = sanitizeCode(row.code, prev.value || row.value, prev.definition || row.definition)
+      }
       if (!String(prev.definition || '').trim() && row.definition) prev.definition = row.definition
     }
   }
@@ -89,13 +148,17 @@ export function aliasKey(a) {
 
 /**
  * Club classification columns for the chip list:
+ *  0) drop serial/TOC/page junk names
  *  1) same value set (even if names differ) → one chip, aliases for harmonise
+ *  1b) near-identical value sets (Jaccard) → one chip
  *  2) same column name across metadata groups → one chip (union values), extras in harmonise
  */
 export function collapseEquivalentColumns(columns) {
+  const cleaned = (columns || []).filter((c) => !isNonClassificationColumn(c?.name))
+
   // Pass 1 — identical value fingerprints
   const byFp = new Map()
-  ;(columns || []).forEach((c) => {
+  cleaned.forEach((c) => {
     const fp = codesFingerprint(c.codes)
     const key = isOccupationColumn(c.name)
       ? `occ:${fp || normalizeColumnName(c.name)}`
@@ -122,9 +185,55 @@ export function collapseEquivalentColumns(columns) {
     }
   })
 
+  // Pass 1b — near-duplicate value sets (redundant chips with slight value drift)
+  const nearMerged = []
+  const used = new Set()
+  for (let i = 0; i < fpCollapsed.length; i += 1) {
+    if (used.has(i)) continue
+    const base = fpCollapsed[i]
+    const setI = valueSet(base.codes)
+    const group = [base]
+    for (let j = i + 1; j < fpCollapsed.length; j += 1) {
+      if (used.has(j)) continue
+      const other = fpCollapsed[j]
+      if (isOccupationColumn(base.name) !== isOccupationColumn(other.name)) continue
+      if (!valueSetsNearDuplicate(setI, valueSet(other.codes))) continue
+      used.add(j)
+      group.push(other)
+    }
+    used.add(i)
+    if (group.length === 1) {
+      nearMerged.push(base)
+      continue
+    }
+    const names = group.map((c) => c.name)
+    const occNames = names.filter(isOccupationColumn)
+    const name = pickCanonicalName(occNames.length ? occNames : names)
+    const primary = group.find((c) => c.name === name) || group[0]
+    const aliases = []
+    const seen = new Set()
+    group.forEach((c) => {
+      const parts = c.aliases?.length
+        ? c.aliases
+        : [{ name: c.name, _metadataId: c._metadataId, _groupIndex: c._groupIndex }]
+      parts.forEach((a) => {
+        const k = aliasKey(a)
+        if (!a?.name || seen.has(k)) return
+        seen.add(k)
+        aliases.push(a)
+      })
+    })
+    nearMerged.push({
+      ...primary,
+      name: primary.name,
+      codes: mergeCodeLists(group.map((c) => c.codes)),
+      aliases,
+    })
+  }
+
   // Pass 2 — same normalized name across groups (even if value sets differ)
   const byName = new Map()
-  fpCollapsed.forEach((c) => {
+  nearMerged.forEach((c) => {
     const key = `${isOccupationColumn(c.name) ? 'occ' : 'col'}:${normalizeColumnName(c.name)}`
     const list = byName.get(key) || []
     list.push(c)

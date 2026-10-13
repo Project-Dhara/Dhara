@@ -7,6 +7,7 @@ import { METADATA_COLUMNS } from './console/MetadataSheetGrid'
 import {
   getDatasetIdConfig,
   setDatasetIdConfig as persistDatasetIdConfig,
+  statisticsShortForm,
   getMetadataRequiredFields,
   setMetadataRequiredFields as persistMetadataRequiredFields,
   getMetadataStandard,
@@ -56,9 +57,20 @@ function defaultNameFromFile(file) {
   return file.name.replace(/\.csv$/i, '').replace(/[_-]+/g, ' ').trim()
 }
 
-// Mock LLM provider/key form + user info form. No persistence backend today
-// — `keySaved` is local state only, matching the mockup.
-export default function Settings({ settings, onSettingsChange, keySaved, onSaveKey, user, onUserChange }) {
+// LLM provider/key + user info. API key is loaded decrypted from Postgres via
+// GET /api/llm-key (AppContext); classification standards also in Postgres.
+const VALID_TABS = new Set(CONFIG_TABS.map((t) => t.key))
+
+export default function Settings({
+  settings,
+  onSettingsChange,
+  keySaved,
+  llmCryptoError = false,
+  onSaveKey,
+  user,
+  onUserChange,
+  initialTab,
+}) {
   const [local, setLocal] = useState(settings)
   const [standards, setStandards] = useState([])
   const [standardsLoading, setStandardsLoading] = useState(false)
@@ -67,7 +79,9 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
   const [addingStandard, setAddingStandard] = useState(false)
   const [pendingFile, setPendingFile] = useState(null)
   const [pendingName, setPendingName] = useState('')
-  const [activeTab, setActiveTab] = useState('dataset')
+  const [activeTab, setActiveTab] = useState(
+    () => (VALID_TABS.has(initialTab) ? initialTab : 'dataset'),
+  )
   const [datasetIdConfig, setDatasetIdConfig] = useState(getDatasetIdConfig)
   const [savedDatasetIdConfig, setSavedDatasetIdConfig] = useState(getDatasetIdConfig)
   const [extraRequiredFields, setExtraRequiredFields] = useState(getMetadataRequiredFields)
@@ -75,6 +89,15 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
   const [metadataStandard, setMetadataStandard] = useState(getMetadataStandard)
   const [savedMetadataStandard, setSavedMetadataStandard] = useState(getMetadataStandard)
   const [pickingFields, setPickingFields] = useState(false)
+
+  // AppContext loads the decrypted key from GET /api/llm-key — keep the form in sync.
+  useEffect(() => {
+    setLocal(settings)
+  }, [settings])
+
+  useEffect(() => {
+    if (VALID_TABS.has(initialTab)) setActiveTab(initialTab)
+  }, [initialTab])
 
   const setDatasetIdField = (key) => (e) => setDatasetIdConfig((prev) => ({ ...prev, [key]: e.target.value }))
 
@@ -85,8 +108,20 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
   }
   const setUserField = (key) => (e) => onUserChange({ ...user, [key]: e.target.value })
 
-  const status = keySaved ? 'Key saved' : local.apiKey ? 'Unsaved changes' : 'No key configured'
-  const statusClass = keySaved ? 'settings-key-status-ok' : local.apiKey ? 'settings-key-status-warn' : 'settings-key-status-none'
+  const status = llmCryptoError
+    ? 'Stored key could not be decrypted — enter a new key'
+    : keySaved
+      ? 'Key saved'
+      : local.apiKey
+        ? 'Unsaved changes'
+        : 'No key configured'
+  const statusClass = llmCryptoError
+    ? 'settings-key-status-warn'
+    : keySaved
+      ? 'settings-key-status-ok'
+      : local.apiKey
+        ? 'settings-key-status-warn'
+        : 'settings-key-status-none'
 
   const datasetIdDirty = JSON.stringify(datasetIdConfig) !== JSON.stringify(savedDatasetIdConfig)
   const requiredFieldsDirty = JSON.stringify(extraRequiredFields) !== JSON.stringify(savedRequiredFields)
@@ -200,7 +235,12 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
       </div>
 
       <div className="flex flex-col gap-[18px] rounded-2xl border border-line/90 bg-surface p-6">
-        <div className="text-[16px] font-semibold tracking-tight text-ink">LLM</div>
+        <div className="flex flex-col gap-1">
+          <div className="text-[16px] font-semibold tracking-tight text-ink">LLM</div>
+          <div className="text-sm text-ink-soft">
+            One API key powers metadata auto-fill, NCO matching suggestions, and other AI assists. Save it here before those steps.
+          </div>
+        </div>
         <div className="grid grid-cols-2 gap-4">
           <div className="flex flex-col gap-1.5">
             <label className={fieldLabelClass}>Provider</label>
@@ -212,11 +252,26 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
           </div>
           <div className="flex flex-col gap-1.5">
             <label className={fieldLabelClass}>API key</label>
-            <input className={inputClass} type="password" value={local.apiKey} onChange={setField('apiKey')} placeholder="API key" />
+            <input
+              className={inputClass}
+              type="password"
+              value={local.apiKey}
+              onChange={setField('apiKey')}
+              placeholder={llmCryptoError ? 'Re-enter API key' : 'API key'}
+              autoComplete="off"
+              spellCheck={false}
+            />
           </div>
         </div>
         <div className="flex items-center gap-3.5">
-          <Button onClick={onSaveKey}>Save key</Button>
+          <Button
+            onClick={() => {
+              // Persist the form's local value (not a click event / stale context).
+              onSaveKey(local)
+            }}
+          >
+            Save key
+          </Button>
           <span className={statusClass === 'settings-key-status-ok' ? statusToneClass.ok : statusClass === 'settings-key-status-warn' ? statusToneClass.warn : statusToneClass.none}>{status}</span>
         </div>
       </div>
@@ -278,6 +333,20 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
                   ))}
                 </select>
               </div>
+            </div>
+            <div className="rounded-lg border border-line bg-[#FFFCF6] px-3 py-2.5 text-[12.5px] text-ink-soft">
+              Example table ID:{' '}
+              <span className="font-mono text-[12px] font-semibold text-ink">
+                {[
+                  datasetIdConfig.prefix,
+                  statisticsShortForm(datasetIdConfig.statistics),
+                  '1',
+                  'P79',
+                ].join(datasetIdConfig.separator || '_')}
+              </span>
+              <span className="mt-1 block text-[11.5px]">
+                Prefix + statistics short form + source stem + page. A <span className="font-mono">T#</span> suffix is added only when several tables share the same file and page.
+              </span>
             </div>
             <div className="flex items-center gap-3.5">
               <Button disabled={!datasetIdDirty} onClick={saveDatasetIdConfig}>Save configuration</Button>
@@ -455,8 +524,8 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
         {activeTab === 'classification' && (
           <>
             <div className="-mt-2.5 text-sm text-ink-soft">
-              Upload a CSV, give it a name, then select which standard Classify should use for occupation suggestions.
-              Columns must match the NCO layout (see <code className="text-[12px]">nco_2015_concordance.csv.example</code>).
+              You can also upload more CSVs — select which standard Classify
+              should use for suggestions.
             </div>
 
             <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-white">
@@ -496,7 +565,9 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
                       <div className="text-[13px] text-ink-soft">
                         {selected ? 'Selected for classification. ' : 'Click the check to use this for classification. '}
                         {(s.row_count ?? 0).toLocaleString()} codes
-                        {s.original_filename ? ` · ${s.original_filename}` : ''}
+                        {s.uploaded_by !== 'system' && s.original_filename
+                          ? ` · ${s.original_filename}`
+                          : ''}
                       </div>
                     </div>
                     <button
@@ -581,7 +652,7 @@ export default function Settings({ settings, onSettingsChange, keySaved, onSaveK
                 </button>
                 {!standardsLoading && standards.length > 0 && (
                   <span className={statusToneClass.ok}>
-                    {standards.some((s) => s.is_selected) ? 'Active standard saved in Postgres' : 'Select a standard to use for Classify'}
+                    {standards.some((s) => s.is_selected) ? 'Active standard saved.' : 'Select a standard to use for Classify'}
                   </span>
                 )}
               </div>

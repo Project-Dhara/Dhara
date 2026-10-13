@@ -1,11 +1,17 @@
 'use client'
 
-import { useState } from 'react'
-import { ArrowRight, AlertTriangle, Check, Sparkles } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ArrowRight, AlertTriangle, Check, ChevronDown, Sparkles } from 'lucide-react'
 import Button from '../ui/Button'
 
 function hasAiFilledFields(t) {
   return Boolean(t?.title_repaired_by_llm || t?.table_id_repaired_by_llm)
+}
+
+function reviewStatus(t, isSavedFn) {
+  if (t.id_title_mismatch && !isSavedFn(t)) return 'fix'
+  if (hasAiFilledFields(t) && !isSavedFn(t)) return 'ai'
+  return 'ok'
 }
 
 // Stage 2.5 — Reconcile Source Table ID / Title mismatches (see backend/dhara_dry_run.ipynb).
@@ -35,7 +41,6 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
   // in view (falls back to all tables when no scope is given) — otherwise
   // it warns about mismatches in a dataset the user isn't even looking at.
   const scopedMismatched = (scopeTables || tables).filter((t) => t.id_title_mismatch)
-  const scopedAiFilled = (scopeTables || tables).filter((t) => hasAiFilledFields(t))
 
   const [drafts, setDrafts] = useState(() =>
     Object.fromEntries(
@@ -68,6 +73,18 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
       })
       .map((t) => t._uid)
   ))
+
+  // Accordion open state for the currently visible table. Flagged / AI-review
+  // tables start open; OK ones start collapsed (user can expand to edit).
+  const [open, setOpen] = useState(true)
+
+  useEffect(() => {
+    const t = tables.find((m) => m._uid === visibleId)
+    if (!t) return
+    const saved = persistedSavedIds?.has(t._uid) || savedIds.has(t._uid)
+    const needsReview = !saved && (t.id_title_mismatch || hasAiFilledFields(t))
+    setOpen(needsReview)
+  }, [visibleId]) // eslint-disable-line react-hooks/exhaustive-deps -- reset open only when table changes
 
   const updateDraft = (uid, field, value) => {
     setDrafts((prev) => ({ ...prev, [uid]: { ...prev[uid], [field]: value } }))
@@ -114,6 +131,7 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
       next.delete(uid)
       return next
     })
+    setOpen(true)
   }
 
   const handleContinue = () => {
@@ -179,154 +197,159 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="mb-0.5 text-lg font-bold text-ink">Confirm Source Table Details</div>
-      {scopedMismatched.length > 0 ? (
-        <div className="text-[13px] leading-relaxed text-ink-soft">
-          {scopedMismatched.length} table{scopedMismatched.length !== 1 ? 's' : ''} had disagreeing code-based and prompt-based
-          validation of the Source Table ID / Table Title fields. Click a flagged table above to confirm or correct it before grouping.
-          Any other table can be edited here too, if needed.
-        </div>
-      ) : (
-        <div className="rounded-[10px] border border-green bg-sage px-4 py-3 text-sm text-ink">
-          <span className="inline-flex items-start gap-1.5">
-            <Check className="mt-0.5 h-4 w-4 flex-none text-green" strokeWidth={2.5} aria-hidden />
-            No Source Table ID / Title mismatches found — all extracted tables look consistent. You can still edit a table&apos;s details below if needed.
-          </span>
-        </div>
-      )}
-      {scopedAiFilled.length > 0 && (
-        <div className="rounded-[10px] border border-[#5B8DEF]/45 bg-[#EEF4FF] px-4 py-3 text-sm text-ink">
-          <span className="inline-flex items-start gap-1.5">
-            <Sparkles className="mt-0.5 h-4 w-4 flex-none text-[#2F6FED]" strokeWidth={2} aria-hidden />
-            <span>
-              <span className="font-semibold text-[#2F6FED]">AI review:</span>{' '}
-              {scopedAiFilled.length} table{scopedAiFilled.length !== 1 ? 's' : ''} had Source Table ID and/or Table Title filled by AI — blue-highlighted fields below are worth a quick check.
-            </span>
-          </span>
-        </div>
-      )}
-
-      <div className="flex flex-wrap items-center gap-3 text-[12px] text-ink-soft">
-        <span className="inline-flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-coral" aria-hidden />
-          Needs fixing
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#2F6FED]" aria-hidden />
-          AI review
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-green" aria-hidden />
-          Reviewed / OK
-        </span>
-      </div>
-      <div className="flex flex-col gap-3.5">
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-2">
         {visible.map((t) => {
           const locked = lockedIds.has(t._uid)
           const showReason = t.id_title_mismatch && !isSaved(t)
+          const status = reviewStatus(t, isSaved)
           const { issues, idFlagged, titleFlagged } = showReason ? mismatchInfo(t) : {}
           const idAi = Boolean(t.table_id_repaired_by_llm) && !isSaved(t)
           const titleAi = Boolean(t.title_repaired_by_llm) && !isSaved(t)
+
+          const shellClass = status === 'fix'
+            ? 'border-coral/50 bg-error-bg/40'
+            : status === 'ai'
+              ? 'border-[#5B8DEF]/45 bg-[#EEF4FF]/60'
+              : 'border-line bg-white'
+
+          const headerClass = status === 'fix'
+            ? 'hover:bg-error-bg'
+            : status === 'ai'
+              ? 'hover:bg-[#EEF4FF]'
+              : 'hover:bg-sage/50'
+
+          const hint = status === 'fix'
+            ? `${scopedMismatched.length} table${scopedMismatched.length !== 1 ? 's' : ''} require Source Table ID / Title verification before grouping.`
+            : status === 'ai'
+              ? 'Source Table ID and/or Title were completed by AI and require confirmation.'
+              : 'Source Table ID and Title match validation. Open this panel to make changes if needed.'
+
           return (
-            <div className="flex flex-col gap-3 rounded-[10px] border border-line bg-white p-4 px-[18px]" key={t._uid}>
-              <div className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-ink">
-                <span>{t.id}</span>
-                {showReason && (
-                  <span className="inline-flex items-center gap-1 rounded-full border border-coral/40 bg-error-bg px-2 py-0.5 text-[11px] font-semibold text-coral">
+            <div className={`overflow-hidden rounded-[10px] border ${shellClass}`} key={t._uid}>
+              <button
+                type="button"
+                className={`flex w-full items-center gap-2.5 px-4 py-3 text-left transition-colors ${headerClass}`}
+                onClick={() => setOpen((v) => !v)}
+                aria-expanded={open}
+              >
+                <ChevronDown
+                  className={`h-4 w-4 flex-none text-ink-soft transition-transform ${open ? 'rotate-0' : '-rotate-90'}`}
+                  strokeWidth={2}
+                  aria-hidden
+                />
+                <span className="min-w-0 flex-1 text-[15px] font-bold text-ink">
+                  Confirm Source Table Details
+                </span>
+                {status === 'fix' && (
+                  <span className="inline-flex flex-none items-center gap-1 rounded-full border border-coral/40 bg-error-bg px-2 py-0.5 text-[11px] font-semibold text-coral">
                     <AlertTriangle className="h-3 w-3" strokeWidth={2} aria-hidden />
                     Needs fixing
                   </span>
                 )}
-                {hasAiFilledFields(t) && !isSaved(t) && !showReason && (
-                  <span className="inline-flex items-center gap-1 rounded-full border border-[#5B8DEF]/45 bg-[#EEF4FF] px-2 py-0.5 text-[11px] font-semibold text-[#2F6FED]">
+                {status === 'ai' && (
+                  <span className="inline-flex flex-none items-center gap-1 rounded-full border border-[#5B8DEF]/45 bg-[#EEF4FF] px-2 py-0.5 text-[11px] font-semibold text-[#2F6FED]">
                     <Sparkles className="h-3 w-3" strokeWidth={2} aria-hidden />
-                    AI review
+                    Reviewed by AI
                   </span>
                 )}
-              </div>
+                {status === 'ok' && (
+                  <span className="inline-flex flex-none items-center gap-1 rounded-full border border-green/35 bg-sage px-2 py-0.5 text-[11px] font-semibold text-green">
+                    <Check className="h-3 w-3" strokeWidth={2.5} aria-hidden />
+                    {isSaved(t) ? 'Saved' : 'Reviewed'}
+                  </span>
+                )}
+              </button>
 
-              {showReason && issues.length > 0 && (
-                <ul className="m-0 ml-[18px] mt-1 list-disc p-0 text-[12.5px] text-ink-soft">
-                  {issues.map((issue, i) => <li key={i}>{issue}</li>)}
-                </ul>
+              {open && (
+                <div className="flex flex-col gap-3 border-t border-line/80 bg-white px-[18px] py-3.5">
+                  <p className="m-0 text-[13px] leading-relaxed text-ink-soft">{hint}</p>
+
+                  <div className="text-[13px] font-semibold text-ink">{t.id}</div>
+
+                  {showReason && issues.length > 0 && (
+                    <ul className="m-0 ml-[18px] list-disc p-0 text-[12.5px] text-ink-soft">
+                      {issues.map((issue, i) => <li key={i}>{issue}</li>)}
+                    </ul>
+                  )}
+
+                  <div className="flex flex-wrap gap-4">
+                    <label className={`flex flex-1 basis-[260px] flex-col gap-1 text-xs ${fieldLabelClass({ needsFix: showReason && idFlagged, aiFilled: idAi })}`}>
+                      <span>
+                        Source Table ID
+                        {showReason && idFlagged ? ' — needs fixing' : ''}
+                        {!showReason && idAi ? ' — filled by AI' : ''}
+                      </span>
+                      <input
+                        className={fieldInputClass({ needsFix: showReason && idFlagged, aiFilled: idAi, locked })}
+                        value={drafts[t._uid]?.table_id ?? ''}
+                        onChange={(e) => updateDraft(t._uid, 'table_id', e.target.value)}
+                        readOnly={locked}
+                        spellCheck={false}
+                      />
+                    </label>
+                    <label className={`flex flex-1 basis-[260px] flex-col gap-1 text-xs ${fieldLabelClass({ needsFix: showReason && titleFlagged, aiFilled: titleAi })}`}>
+                      <span>
+                        Table Title
+                        {showReason && titleFlagged ? ' — needs fixing' : ''}
+                        {!showReason && titleAi ? ' — filled by AI' : ''}
+                      </span>
+                      <input
+                        className={fieldInputClass({ needsFix: showReason && titleFlagged, aiFilled: titleAi, locked })}
+                        value={drafts[t._uid]?.title ?? ''}
+                        onChange={(e) => updateDraft(t._uid, 'title', e.target.value)}
+                        readOnly={locked}
+                        spellCheck={false}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="flex items-center gap-2.5">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => saveDetails(t._uid)}
+                      disabled={locked}
+                    >
+                      Save details
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => editDetails(t._uid)}
+                      disabled={!locked}
+                    >
+                      Edit
+                    </Button>
+                    {isSaved(t) && (
+                      <span className="inline-flex items-center gap-1 text-[12.5px] font-semibold text-green">
+                        <Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />
+                        Saved
+                      </span>
+                    )}
+                  </div>
+                </div>
               )}
-
-              <div className="flex flex-wrap gap-4">
-                <label className={`flex flex-1 basis-[260px] flex-col gap-1 text-xs ${fieldLabelClass({ needsFix: showReason && idFlagged, aiFilled: idAi })}`}>
-                  <span>
-                    Source Table ID
-                    {showReason && idFlagged ? ' — needs fixing' : ''}
-                    {!showReason && idAi ? ' — filled by AI' : ''}
-                  </span>
-                  <input
-                    className={fieldInputClass({ needsFix: showReason && idFlagged, aiFilled: idAi, locked })}
-                    value={drafts[t._uid]?.table_id ?? ''}
-                    onChange={(e) => updateDraft(t._uid, 'table_id', e.target.value)}
-                    readOnly={locked}
-                    spellCheck={false}
-                  />
-                </label>
-                <label className={`flex flex-1 basis-[260px] flex-col gap-1 text-xs ${fieldLabelClass({ needsFix: showReason && titleFlagged, aiFilled: titleAi })}`}>
-                  <span>
-                    Table Title
-                    {showReason && titleFlagged ? ' — needs fixing' : ''}
-                    {!showReason && titleAi ? ' — filled by AI' : ''}
-                  </span>
-                  <input
-                    className={fieldInputClass({ needsFix: showReason && titleFlagged, aiFilled: titleAi, locked })}
-                    value={drafts[t._uid]?.title ?? ''}
-                    onChange={(e) => updateDraft(t._uid, 'title', e.target.value)}
-                    readOnly={locked}
-                    spellCheck={false}
-                  />
-                </label>
-              </div>
-
-              <div className="flex items-center gap-2.5">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => saveDetails(t._uid)}
-                  disabled={locked}
-                >
-                  Save details
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => editDetails(t._uid)}
-                  disabled={!locked}
-                >
-                  Edit
-                </Button>
-                {isSaved(t) && (
-                  <span className="inline-flex items-center gap-1 text-[12.5px] font-semibold text-green">
-                    <Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />
-                    Saved
-                  </span>
-                )}
-              </div>
             </div>
           )
         })}
       </div>
 
-      <div className="flex items-center gap-4">
+      {!allCorrected && (
+        <div className="text-sm text-[#8a4b0f]">
+          Correct and save all {mismatched.length} flagged table{mismatched.length !== 1 ? 's' : ''} above
+          ({mismatched.length - mismatched.filter((t) => isSaved(t)).length} remaining) before continuing.
+        </div>
+      )}
+      <div className="flex items-center justify-end gap-4">
+        {extraAction}
         {allCorrected && (
           <Button onClick={handleContinue} className="inline-flex items-center gap-1.5">
             {mismatched.length > 0 ? 'Apply corrections & continue' : 'Continue'}
             <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
           </Button>
         )}
-        {extraAction}
       </div>
-      {!allCorrected && (
-        <div className="mt-1.5 text-sm text-[#8a4b0f]">
-          Correct and save all {mismatched.length} flagged table{mismatched.length !== 1 ? 's' : ''} above
-          ({mismatched.length - mismatched.filter((t) => isSaved(t)).length} remaining) before continuing.
-        </div>
-      )}
     </div>
   )
 }

@@ -1,9 +1,9 @@
 """Excel title cleanup + unmarked-sheet block detection."""
 from __future__ import annotations
 
-from extraction.extractor import TableExtractor
-from metadata.validation import normalize_table_title
-from pdf.pdf_header_utils import extract_in_grid_caption
+from app.services.ingestion.wizard.extractor import TableExtractor
+from app.services.metadata.validation import normalize_table_title
+from app.services.extraction.pdf.utils.header_utils import extract_in_grid_caption
 
 
 def test_normalize_drops_column_list_suffix():
@@ -23,6 +23,38 @@ def test_normalize_drops_column_list_suffix():
 
 def test_normalize_keeps_short_geo_subtitle():
     assert normalize_table_title("Live births — URBAN", None) == "Live births — URBAN"
+
+
+def test_normalize_keeps_long_vital_statistics_title():
+    # Hard 90-char truncation used to cut mid-phrase after "FOR".
+    title = (
+        "PREGNANCY RELATED DEATHS BY AGE GROUP OF THE DECEASED (MOTHER) "
+        "AND CAUSE OF DEATH FOR MEDICALLY CERTIFIED OR NOT DEATHS (URBAN)"
+    )
+    assert normalize_table_title(title, None) == title
+
+
+def test_caption_joins_wrapped_title_continuation():
+    # Title split across two full-width banner rows (common Excel wrap).
+    full = (
+        "PREGNANCY RELATED DEATHS BY AGE GROUP OF THE DECEASED (MOTHER) "
+        "AND CAUSE OF DEATH FOR MEDICALLY CERTIFIED OR NOT DEATHS (URBAN)"
+    )
+    part1 = "PREGNANCY RELATED DEATHS BY AGE GROUP OF THE DECEASED (MOTHER) AND CAUSE OF DEATH FOR"
+    part2 = "MEDICALLY CERTIFIED OR NOT DEATHS (URBAN)"
+    rows = [
+        ["TABLE: D-18"] + [None] * 7,
+        [part1] + [None] * 7,
+        [part2] + [None] * 7,
+        ["SL. NO.", "CAUSE"] + [f"C{i}" for i in range(6)],
+    ]
+    # Make banners look full-width (same label repeated).
+    rows[0] = ["TABLE: D-18"] * 8
+    rows[1] = [part1] * 8
+    rows[2] = [part2] * 8
+    cap = extract_in_grid_caption(rows)
+    assert cap["title"] == full
+    assert cap["rows_consumed"] == 3
 
 
 def test_caption_does_not_consume_column_list_banner():

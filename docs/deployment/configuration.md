@@ -27,24 +27,27 @@ python -c "import secrets; print(secrets.token_hex(32))"
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `ENABLE_SIGNUP` | `true` | Allow `POST /api/signup`. Set `false` in locked deploys |
+| `MCP_HTTP_AUTH` | `off` | Remote `/mcp` auth: `off` (open published reads), `jwt` (login Bearer), or `token` (`MCP_AUTH_TOKEN` only) |
+| `MCP_AUTH_TOKEN` | _(unset)_ | Optional long-lived Bearer for agents when auth is enabled |
 
 Admin provisioning: `backend/scripts/create_user.py`.
 
 ## LLM & embeddings
 
-Prefer pasting a **MEITY-empanelled LLM** key in **Settings**. Env vars are
-optional for server-side defaults (OpenAI-/Anthropic-compatible endpoints):
+Paste a **MEITY-empanelled LLM** key in **Settings**. All AI paths (Excel
+metadata fill, NCO matching, PDF extraction/grouping/validation) use that
+key via the `X-Llm-Api-Key` header. Server `OPENAI_API_KEY` /
+`ANTHROPIC_API_KEY` are **not** used as fallbacks.
 
 | Variable | Purpose |
 |----------|---------|
-| `ANTHROPIC_API_KEY` | MEITY-empanelled / Anthropic-compatible API key (optional if key in Settings) |
-| `OPENAI_API_KEY` | MEITY-empanelled / OpenAI-compatible API key + embeddings (optional if key in Settings) |
-| `SKIP_LLM` | Legacy flag; Excel path already skips LLM when no Settings/header key is sent. Prefer documenting “no key” over relying on this alone |
 | `EMBEDDING_DIM` | Vector width (default 1536 for common small embedding models) |
 | `EMBEDDING_MODEL` | Override embedding model if supported by code paths |
 
-**PDF without a key:** PyMuPDF extraction still runs; ambiguous pages are
-accepted heuristically and flagged for human review (see [on-prem](./on-prem.md)).
+**Without a Settings key:** Uploads and the pipeline still work using
+heuristics. AI-assisted steps (richer PDF extraction, metadata auto-fill,
+NCO matching, LLM grouping) degrade or are skipped. There is no server
+env-key fallback.
 
 ## Object storage
 
@@ -79,21 +82,26 @@ empty.
 
 ## Classification data
 
-Occupation / standards CSVs are uploaded in the app (**Settings → Classification
-code configuration**). They are stored in Postgres and are not part of env
-config. Optional local test file path:
+Occupation / standards CSVs are managed in the app (**Settings → Classification
+code configuration**) and stored in Postgres. Optional local file:
 
 ```text
 backend/data/nco_2015_concordance.csv
 ```
 
-(ignored by git; see `.example` for headers)
+When present, the backend auto-registers it as **NCO 2015** in the Settings
+list (selected if nothing else is). Stewards can still upload more standards.
+The full CSV is gitignored; see `.example` for headers.
 
 ## Health checks
 
 ```bash
-curl -s "$BASE/api/health"
+curl -s -o /dev/null -w "%{http_code}\n" "$BASE/api/live"    # 200 if process up
+curl -s "$BASE/api/ready"                                    # 200 or 503
+# /api/health is an alias of /api/ready
 ```
 
-Expect Postgres connectivity and pgvector readiness indicators used by the
-health handler.
+`/api/live` has no dependency checks. `/api/ready` runs a read-only
+`SELECT 1` against Postgres and reports whether the `vector` extension is
+present (`pgvector` is informational; missing pgvector does not fail
+readiness). Unreachable Postgres returns **HTTP 503**.
