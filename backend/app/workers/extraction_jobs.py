@@ -128,10 +128,14 @@ def queue_extraction_job(
     user_id: Optional[str] = None,
     persist_file_bytes: bool = False,
     parent_batch_id: Optional[str] = None,
+    dataset_id_config: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Register an in-memory job and persist initial state (caller starts the worker)."""
+    from app.services.ingestion.table_ids import normalize_dataset_id_config
+
+    id_cfg = normalize_dataset_id_config(dataset_id_config)
     with _pdf_jobs_lock:
-        reviews: Dict[str, Any] = {}
+        reviews: Dict[str, Any] = {"__dataset_id_config": id_cfg}
         if persist_file_bytes:
             reviews["__retain_file_bytes"] = True
         _pdf_jobs[job_id] = {
@@ -151,6 +155,7 @@ def queue_extraction_job(
             "reviews": reviews,
             "deleted_table_ids": [],
             "parent_batch_id": parent_batch_id,
+            "dataset_id_config": id_cfg,
         }
         store_bytes = file_bytes if (source_type == "pdf" or persist_file_bytes) else None
         _save_pdf_job(_pdf_jobs[job_id], pdf_bytes=store_bytes)
@@ -215,15 +220,32 @@ def _run_extraction_job(
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             tmp.write(file_bytes)
             tmp_path = pathlib.Path(tmp.name)
+        display_filename = None
+        with _pdf_jobs_lock:
+            live = _pdf_jobs.get(job_id)
+            if live:
+                display_filename = live.get("filename")
         result = run_upload_pipeline(
             tmp_path,
             source_type,
             api_key=resolved_key,
             on_progress=on_progress,
+            display_filename=display_filename,
         )
         with _pdf_jobs_lock:
             job = _pdf_jobs.get(job_id)
             if job is not None:
+                from app.services.ingestion.table_ids import (
+                    assign_table_ids_to_result,
+                    dataset_id_config_from_job,
+                )
+
+                assign_table_ids_to_result(
+                    result,
+                    config=dataset_id_config_from_job(job),
+                    default_filename=job.get("filename"),
+                    default_source_type=source_type,
+                )
                 job.update(
                     status="done",
                     stage="done",
@@ -232,8 +254,19 @@ def _run_extraction_job(
                     result=result,
                 )
                 retain = bool((job.get("reviews") or {}).get("__retain_file_bytes"))
+                # Always keep source PDF bytes so review snapshots can be rendered
+                # and re-opened later (Excel/CSV stay opt-in via __retain_file_bytes).
                 pdf_store_bytes = file_bytes if (source_type == "pdf" or retain) else None
                 _save_pdf_job(job, pdf_bytes=pdf_store_bytes)
+        if source_type == "pdf" and file_bytes and result:
+            try:
+                from app.services.extraction.pdf.snapshots import persist_job_snapshots
+
+                persist_job_snapshots(job_id, file_bytes, result)
+            except Exception as e:
+                logger.warning(
+                    "could not pre-render PDF snapshots for job %s: %s", job_id, e
+                )
     except Exception as e:
         print(f"Extraction job {job_id} ({source_type}) failed: {e}")
         with _pdf_jobs_lock:
@@ -268,6 +301,7 @@ def _pdf_table_header_key(table: Dict[str, Any]) -> str:
 
 
 def _parse_pdf_table_id(table_id: str) -> Tuple[str, int]:
+    """Legacy opaque ids ``{page}-{idx}`` / ``__fN__{page}-{idx}`` only."""
     parts = str(table_id).rsplit("-", 1)
     if len(parts) != 2 or not parts[1].isdigit():
         raise ValueError(f"Invalid table_id: {table_id}")
@@ -275,9 +309,17 @@ def _parse_pdf_table_id(table_id: str) -> Tuple[str, int]:
 
 
 def _pdf_table_sort_key(table_id: str) -> Tuple[Any, int]:
-    page_s, idx = _parse_pdf_table_id(table_id)
-    page_key: Any = int(page_s) if page_s.isdigit() else page_s
-    return page_key, idx
+    tid = str(table_id or "")
+    # New format: …_P48_T1 (separator may vary; match trailing P# / T#).
+    m = re.search(r"P(\d+).T(\d+)\s*$", tid, re.IGNORECASE)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    try:
+        page_s, idx = _parse_pdf_table_id(tid)
+        page_key: Any = int(page_s) if page_s.isdigit() else page_s
+        return page_key, idx
+    except ValueError:
+        return (tid, 0)
 
 
 def _pdf_tables_from_job(job: Dict[str, Any]) -> list:

@@ -442,6 +442,12 @@ export function useConsolePipeline() {
     try {
       const fd = new FormData()
       fd.append('file', file)
+      fd.append(
+        'dataset_id_config',
+        JSON.stringify(
+          (await import('../../lib/settingsConfig')).datasetIdConfigPayload(),
+        ),
+      )
       const res = await fetch('/api/pdf/upload', withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: fd })))
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Upload failed' }))

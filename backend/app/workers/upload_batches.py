@@ -64,8 +64,12 @@ def queue_upload_batch(
     organisation_id: Optional[str],
     user_id: Optional[str],
     files: List[Tuple[str, str, bytes]],
+    dataset_id_config: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Register parent batch job and child file jobs. Caller starts ``run_upload_batch``."""
+    from app.services.ingestion.table_ids import normalize_dataset_id_config
+
+    id_cfg = normalize_dataset_id_config(dataset_id_config)
     batch_files = []
     for filename, source_type, content in files:
         file_job_id = uuid.uuid4().hex
@@ -80,6 +84,7 @@ def queue_upload_batch(
             user_id=user_id,
             persist_file_bytes=True,
             parent_batch_id=batch_id,
+            dataset_id_config=id_cfg,
         )
 
     label = files[0][0] if len(files) == 1 else f"{len(files)} files"
@@ -98,9 +103,10 @@ def queue_upload_batch(
             "created_at": time.time(),
             "result": attach_batch_meta({}, {"batch_files": batch_files}),
             "error": None,
-            "reviews": {},
+            "reviews": {"__dataset_id_config": id_cfg},
             "deleted_table_ids": [],
             "batch_files": batch_files,
+            "dataset_id_config": id_cfg,
         }
         _save_pdf_job(_pdf_jobs[batch_id])
 
@@ -137,6 +143,18 @@ def _refresh_batch_merge(batch_id: str) -> None:
                 source_file_id=f["file_job_id"],
                 source_type=f.get("source_type") or "pdf",
             )
+        from app.services.ingestion.table_ids import (
+            assign_table_ids_to_result,
+            dataset_id_config_from_job,
+        )
+
+        assign_table_ids_to_result(
+            merged,
+            config=dataset_id_config_from_job(batch),
+            default_filename=batch.get("filename"),
+            default_source_type="pdf",
+            batch_files=files,
+        )
         batch["result"] = attach_batch_meta(merged, {"batch_files": files})
         batch["batch_files"] = files
         status, pct, message = _aggregate_batch_status(files)

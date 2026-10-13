@@ -434,6 +434,7 @@ export default function PdfGrouping({ jobId }) {
               toast={toast}
               onDismissToast={() => setToast(null)}
               preferTableId
+              idColumnLabel="Dataset ID"
               titleColumnLabel="Title"
               continueDisabled={saving}
             />

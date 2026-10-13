@@ -8,6 +8,7 @@ import Button from '../ui/Button'
 import LlmKeyRequiredBanner from '../LlmKeyRequiredBanner'
 import { withAuthHeaders } from '../../lib/auth'
 import { withLlmKeyHeaders } from '../../lib/llmKey'
+import { datasetIdConfigPayload } from '../../lib/settingsConfig'
 import { useApp } from '../../context/AppContext'
 
 // Upload only. Processing progress and review now live on their own routed
@@ -26,6 +27,7 @@ export default function PdfUpload({ onGoSettings }) {
     try {
       const fd = new FormData()
       fd.append('file', file)
+      fd.append('dataset_id_config', JSON.stringify(datasetIdConfigPayload()))
       const res = await fetch('/api/pdf/upload', withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: fd })))
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Upload failed' }))

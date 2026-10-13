@@ -7,6 +7,7 @@ import { METADATA_COLUMNS } from './console/MetadataSheetGrid'
 import {
   getDatasetIdConfig,
   setDatasetIdConfig as persistDatasetIdConfig,
+  statisticsShortForm,
   getMetadataRequiredFields,
   setMetadataRequiredFields as persistMetadataRequiredFields,
   getMetadataStandard,
@@ -253,7 +254,7 @@ export default function Settings({
             <label className={fieldLabelClass}>API key</label>
             <input
               className={inputClass}
-              type="text"
+              type="password"
               value={local.apiKey}
               onChange={setField('apiKey')}
               placeholder={llmCryptoError ? 'Re-enter API key' : 'API key'}
@@ -332,6 +333,20 @@ export default function Settings({
                   ))}
                 </select>
               </div>
+            </div>
+            <div className="rounded-lg border border-line bg-[#FFFCF6] px-3 py-2.5 text-[12.5px] text-ink-soft">
+              Example table ID:{' '}
+              <span className="font-mono text-[12px] font-semibold text-ink">
+                {[
+                  datasetIdConfig.prefix,
+                  statisticsShortForm(datasetIdConfig.statistics),
+                  '1',
+                  'P79',
+                ].join(datasetIdConfig.separator || '_')}
+              </span>
+              <span className="mt-1 block text-[11.5px]">
+                Prefix + statistics short form + source stem + page. A <span className="font-mono">T#</span> suffix is added only when several tables share the same file and page.
+              </span>
             </div>
             <div className="flex items-center gap-3.5">
               <Button disabled={!datasetIdDirty} onClick={saveDatasetIdConfig}>Save configuration</Button>

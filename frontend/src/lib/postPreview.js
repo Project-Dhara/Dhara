@@ -76,8 +76,11 @@ export function pdfGroupingToMatchResult(grouping, sourceFile = 'pdf', pdfJobId 
     matched_tables: (g.tables || []).map((t) => ({
       table: {
         ...t,
+        // Keep UUID pk for grouping membership; expose human id as dataset_id.
         _uid: t.id || t._uid || t.table_id,
         id: t.id || t._uid || t.table_id,
+        dataset_id: t.dataset_id || t.table_id || t.id,
+        table_id: t.table_id || t.dataset_id || t.id,
         source_file: sourceFile || t.source_file || 'pdf',
         source_type: t.source_type || 'pdf',
         sheet: t.sheet || t.title || t.table_id || 'data',
@@ -91,6 +94,8 @@ export function pdfGroupingToMatchResult(grouping, sourceFile = 'pdf', pdfJobId 
       ...t,
       _uid: t.id || t._uid || t.table_id,
       id: t.id || t._uid || t.table_id,
+      dataset_id: t.dataset_id || t.table_id || t.id,
+      table_id: t.table_id || t.dataset_id || t.id,
       source_file: sourceFile || t.source_file || 'pdf',
       source_type: t.source_type || 'pdf',
       sheet: t.sheet || t.title || t.table_id || 'data',

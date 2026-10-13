@@ -275,23 +275,37 @@ function TableExpandModal({ table, onClose }) {
   )
 }
 
-function escape(v) {
-  const s = v == null ? '' : String(v)
-  return s.includes(',') || s.includes('"') || s.includes('\n')
-    ? `"${s.replace(/"/g, '""')}"`
-    : s
-}
+/** Download table as .xlsx with the same multi-level headers as Preview. */
+function downloadTableExcel(table) {
+  const cols = table.columns || []
+  const headerCols = headerColumnsFromRawRows(table.raw_header_rows, cols)
+  const { depth, rows: headerRows } = buildMultiLevelHeaderRows(headerCols)
+  const nCols = cols.length
+  const aoa = Array.from({ length: depth }, () => Array(nCols).fill(''))
+  const merges = []
 
-function downloadCSV(table) {
-  const header = table.columns.map(escape).join(',')
-  const body = table.rows.map((row) => table.columns.map((c) => escape(row[c])).join(','))
-  const blob = new Blob(['﻿' + [header, ...body].join('\r\n')], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${table.title.replace(/[/\\?%*:|"<>]/g, '_')}.csv`
-  a.click()
-  URL.revokeObjectURL(url)
+  headerRows.forEach((segs, r) => {
+    segs.forEach((seg) => {
+      aoa[r][seg.start] = seg.label
+      const endR = r + seg.rowSpan - 1
+      const endC = seg.start + seg.colSpan - 1
+      if (endR > r || endC > seg.start) {
+        merges.push({ s: { r, c: seg.start }, e: { r: endR, c: endC } })
+      }
+    })
+  })
+
+  ;(table.rows || []).forEach((row) => {
+    aoa.push(cols.map((c) => (row && row[c] != null ? row[c] : '')))
+  })
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa)
+  if (merges.length) ws['!merges'] = merges
+  const wb = XLSX.utils.book_new()
+  const sheetName = safeSheetName(table.sheet || table.title || 'Table', new Set())
+  XLSX.utils.book_append_sheet(wb, ws, sheetName)
+  const stem = String(table.title || table.id || 'table').replace(/[/\\?%*:|"<>]/g, '_').slice(0, 80)
+  XLSX.writeFile(wb, `${stem}.xlsx`)
 }
 
 function safeSheetName(name, usedNames) {
@@ -521,9 +535,9 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
             <span className="rounded-full border border-line bg-[#FFFCF6] px-2.5 py-[3px] text-[11.5px] text-ink-soft">Sheet: {table.sheet}</span>
             <span className="rounded-full border border-line bg-[#FFFCF6] px-2.5 py-[3px] text-[11.5px] text-ink-soft">{Number(totalRows).toLocaleString()} rows</span>
             <span className="rounded-full border border-line bg-[#FFFCF6] px-2.5 py-[3px] text-[11.5px] text-ink-soft">{table.columns.length} columns</span>
-            <button className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-teal px-3.5 py-1.5 text-[12.5px] font-semibold text-white transition-colors hover:bg-teal-dark" onClick={() => downloadCSV(table)}>
+            <button className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-teal px-3.5 py-1.5 text-[12.5px] font-semibold text-white transition-colors hover:bg-teal-dark" onClick={() => downloadTableExcel(table)}>
               <Download className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
-              Download CSV
+              Download Excel
             </button>
             <button
               className="ml-2 inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-teal px-3.5 py-1.5 text-[12.5px] font-semibold text-white transition-colors hover:bg-teal-dark disabled:cursor-default disabled:opacity-60"
@@ -590,7 +604,7 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
 
       {!compact && hasMore && (
         <div className="flex-shrink-0 rounded-lg border border-[#f5d9a8] bg-[#fef9f0] px-4 py-2 text-center text-xs text-ink-soft">
-          Showing first {MAX_DISPLAY.toLocaleString()} of {Number(totalRows).toLocaleString()} rows — download CSV for full data.
+          Showing first {MAX_DISPLAY.toLocaleString()} of {Number(totalRows).toLocaleString()} rows — download Excel for full data.
         </div>
       )}
 
@@ -609,9 +623,9 @@ export default function TableViewer({ table, onUpdateId, compact = false }) {
             </>
           )}
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <button className="inline-flex items-center gap-1.5 rounded-md border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold text-ink transition-colors hover:bg-sage" onClick={() => downloadCSV(table)}>
+            <button className="inline-flex items-center gap-1.5 rounded-md border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold text-ink transition-colors hover:bg-sage" onClick={() => downloadTableExcel(table)}>
               <Download className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
-              Download CSV
+              Download Excel
             </button>
             <button
               className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-teal px-3 py-1.5 text-[12.5px] font-semibold text-white transition-colors hover:bg-teal-dark disabled:cursor-default disabled:opacity-60"

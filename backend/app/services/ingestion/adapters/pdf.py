@@ -12,9 +12,13 @@ def run_pdf_upload(
     *,
     api_key: Optional[str] = None,
     on_progress: _PROGRESS = None,
+    display_filename: Optional[str] = None,
 ) -> Dict[int, Dict]:
     from app.services.extraction.pdf.pipeline import run_pdf_upload_pipeline
 
     return run_pdf_upload_pipeline(
-        file_path, api_key=api_key, on_progress=on_progress
+        file_path,
+        api_key=api_key,
+        on_progress=on_progress,
+        display_filename=display_filename,
     )

@@ -1,5 +1,6 @@
 import { withAuthHeaders } from './auth'
 import { withLlmKeyHeaders } from './llmKey'
+import { datasetIdConfigPayload } from './settingsConfig'
 
 const DATASET_EXT = /\.(pdf|xlsx|xls|csv)$/i
 
@@ -20,9 +21,14 @@ export function useSinglePdfUpload(files) {
   return files?.length === 1 && /\.pdf$/i.test(files[0]?.name || '')
 }
 
+function appendDatasetIdConfig(fd) {
+  fd.append('dataset_id_config', JSON.stringify(datasetIdConfigPayload()))
+}
+
 export async function uploadDatasetBatch(files) {
   const fd = new FormData()
   files.forEach((f) => fd.append('files', f))
+  appendDatasetIdConfig(fd)
   const res = await fetch(
     '/api/upload/batch',
     withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: fd })),

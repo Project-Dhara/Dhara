@@ -8,7 +8,9 @@ import uuid
 import zipfile
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+import json
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 
 from sqlalchemy.orm import Session
@@ -22,10 +24,8 @@ from app.api.dependencies import (
 )
 from app.db.session import session_scope
 from app.workers.extraction_jobs import (
-    _get_pdf_bytes,
     _get_pdf_job,
     _hydrate_user_pdf_jobs,
-    _parse_pdf_table_id,
     _pdf_job_public,
     _pdf_jobs,
     _pdf_jobs_lock,
@@ -53,10 +53,21 @@ def _job_visible_to(job: Optional[dict], user: CurrentUser) -> bool:
     return True
 
 
+def _parse_dataset_id_config_form(raw: Optional[str]) -> Optional[dict]:
+    if not raw or not str(raw).strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise HTTPException(400, f"Invalid dataset_id_config JSON: {e}") from e
+    return parsed if isinstance(parsed, dict) else None
+
+
 @router.post("/api/pdf/upload")
 async def pdf_upload(
     request: Request,
     file: UploadFile = File(...),
+    dataset_id_config: Optional[str] = Form(None),
     user: CurrentUser = Depends(require_user),
 ):
     """Accepts one PDF, stores working state in Postgres, and starts background
@@ -70,6 +81,7 @@ async def pdf_upload(
         raise HTTPException(400, "Uploaded file is empty")
 
     job_id = uuid.uuid4().hex
+    id_cfg = _parse_dataset_id_config_form(dataset_id_config)
 
     # Worker decrypts the caller's stored llm_api_keys row at run time.
     # Optional — without a key, PDF extraction falls back to heuristics.
@@ -81,6 +93,7 @@ async def pdf_upload(
         file_bytes=content,
         organisation_id=str(user.organisation_id),
         user_id=str(user.id),
+        dataset_id_config=id_cfg,
     )
 
     asyncio.create_task(asyncio.to_thread(_run_extraction_job, job_id, content, "pdf"))
@@ -150,9 +163,11 @@ async def pdf_table_snapshot(job_id: str, table_id: str, user_email: str = Depen
     """PNG crop of the source PDF region for this table (or the full page).
 
     Used in review so humans can compare the extracted grid against the page.
-    Source PDF bytes are loaded from Postgres (not local disk).
+    Prefers a previously saved snapshot in Postgres; otherwise renders from
+    stored PDF bytes and persists the PNG for later reference.
     """
-    import pymupdf
+    from app.services.extraction.pdf.snapshots import get_or_create_table_snapshot
+    from app.services.ingestion.table_ids import find_table_in_job_result, physical_page_value
 
     with _pdf_jobs_lock:
         job = _get_pdf_job(job_id)
@@ -162,67 +177,43 @@ async def pdf_table_snapshot(job_id: str, table_id: str, user_email: str = Depen
             raise HTTPException(409, f"Job not finished yet (status={job.get('status')})")
         reviews = dict(job.get("reviews") or {})
         deleted = set(job.get("deleted_table_ids") or [])
-        from app.services.ingestion.review_tables import result_pages_only
-
-        result = result_pages_only(job.get("result"))
+        job_snapshot = dict(job)
 
     if table_id in deleted:
         raise HTTPException(404, "Table was deleted")
 
-    try:
-        page_s, idx = _parse_pdf_table_id(table_id)
-    except ValueError as e:
-        raise HTTPException(400, str(e)) from e
-
-    page_key = page_s if page_s in result else (int(page_s) if page_s.isdigit() and int(page_s) in result else None)
-    if page_key is None and page_s.isdigit():
-        # result keys may be ints or strings
-        for k in result:
-            if str(k) == page_s:
-                page_key = k
-                break
-    if page_key is None:
-        raise HTTPException(404, "Page not found in job result")
-
-    page_tables = (result.get(page_key) or {}).get("tables") or []
-    if idx < 0 or idx >= len(page_tables):
+    located = find_table_in_job_result(job_snapshot, table_id)
+    if not located:
         raise HTTPException(404, "Table not found")
-    table = {**page_tables[idx], **reviews.get(table_id, {})}
+    page_key, _idx, raw_table = located
+    table = {**raw_table, **reviews.get(table_id, {})}
 
-    pdf_bytes = await asyncio.to_thread(_get_pdf_bytes, job_id)
-    if not pdf_bytes:
-        raise HTTPException(
-            404,
-            "Source PDF is no longer available for snapshots (re-upload the file to enable comparison).",
-        )
-
-    page_num = int(table.get("page") or page_s)
-    bbox = table.get("bbox")
     try:
-        doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
-        try:
-            if page_num < 1 or page_num > doc.page_count:
-                raise HTTPException(404, f"Page {page_num} out of range")
-            page = doc[page_num - 1]
-            clip = None
-            if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
-                x0, y0, x1, y1 = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
-                # Pad slightly so captions above the ruled grid stay visible.
-                pad = 8.0
-                clip = pymupdf.Rect(
-                    max(0, x0 - pad),
-                    max(0, y0 - pad),
-                    min(page.rect.x1, x1 + pad),
-                    min(page.rect.y1, y1 + pad),
-                )
-            pix = page.get_pixmap(clip=clip, dpi=144, alpha=False)
-            png = pix.tobytes("png")
-        finally:
-            doc.close()
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, f"Could not render snapshot: {e}") from e
+        page_num = physical_page_value(table, page_key)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(400, f"Invalid page for snapshot: {e}") from e
+    bbox = table.get("bbox")
+
+    # Batch children keep PDF bytes + pre-rendered PNGs; prefer that job when known.
+    storage_job_id = str(table.get("source_file_id") or job_id)
+    storage_table_id = str(
+        table.get("source_table_id") or table.get("table_id") or table_id
+    )
+    also_save = None
+    if storage_job_id != job_id:
+        also_save = (job_id, table_id)
+
+    png, err = await asyncio.to_thread(
+        get_or_create_table_snapshot,
+        storage_job_id,
+        storage_table_id,
+        page_num=page_num,
+        bbox=bbox,
+        also_save_as=also_save,
+    )
+    if not png:
+        status = 404 if err and "no longer available" in err else 500
+        raise HTTPException(status, err or "Snapshot unavailable")
 
     return Response(
         content=png,
@@ -382,15 +373,14 @@ async def pdf_merge_tables(job_id: str, request: Request, user_email: str = Depe
             if isinstance(rows, list):
                 merged_rows.extend(rows)
 
-        try:
-            page_s, idx = _parse_pdf_table_id(survivors_id)
-        except ValueError as e:
-            raise HTTPException(400, str(e)) from e
+        from app.services.ingestion.table_ids import find_table_in_job_result
 
+        located = find_table_in_job_result(job, survivors_id)
+        if not located:
+            raise HTTPException(404, f"Survivor table {survivors_id} missing from job result")
+        page_s, idx, _found = located
         result = job.setdefault("result", {})
         page_entry = result.get(page_s)
-        if page_entry is None and page_s.isdigit():
-            page_entry = result.get(int(page_s))
         if page_entry is None:
             raise HTTPException(404, f"Survivor page {page_s} missing from job result")
 

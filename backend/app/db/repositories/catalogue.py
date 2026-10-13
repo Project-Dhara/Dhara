@@ -295,6 +295,7 @@ def _tables_for_group(session: Session, metadata_id: str) -> list:
                 """
                 SELECT
                   d.dataset_id,
+                  d.unique_dataset_id,
                   d.title,
                   d.table_id,
                   (SELECT COUNT(*)::int FROM dataset_rows r
@@ -307,16 +308,32 @@ def _tables_for_group(session: Session, metadata_id: str) -> list:
             {"mid": metadata_id},
         )
     )
-    return [
-        {
-            "id": r["dataset_id"],
-            "dataset_id": r["dataset_id"],
-            "title": r.get("title") or r["dataset_id"],
-            "table_id": r.get("table_id") or r["dataset_id"],
-            "row_count": int(r.get("row_count") or 0),
-        }
-        for r in rows
-    ]
+    out = []
+    for r in rows:
+        raw_ds = str(r.get("dataset_id") or "").strip()
+        # Prefer human-readable ids when older PDF publishes stored a UUID PK.
+        display_id = raw_ds
+        for cand in (r.get("unique_dataset_id"), r.get("table_id"), r.get("dataset_id")):
+            s = str(cand or "").strip()
+            if not s:
+                continue
+            if re.fullmatch(
+                r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+                s,
+            ):
+                continue
+            display_id = s
+            break
+        out.append(
+            {
+                "id": display_id or raw_ds,
+                "dataset_id": display_id or raw_ds,
+                "title": r.get("title") or display_id or raw_ds,
+                "table_id": str(r.get("table_id") or display_id or raw_ds),
+                "row_count": int(r.get("row_count") or 0),
+            }
+        )
+    return out
 
 
 def list_catalogue_groups(
@@ -346,10 +363,12 @@ def list_catalogue_groups(
                 )
             )
         )
-    return [
+    shaped = [
         _shape_group_row(g, _tables_for_group(session, g["metadata_id"]))
         for g in groups
     ]
+    # Hide orphan releases left behind after republish / unlink (0 datasets).
+    return [g for g in shaped if int(g.get("table_count") or 0) > 0]
 
 
 def get_catalogue_group(

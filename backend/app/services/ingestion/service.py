@@ -18,6 +18,7 @@ def run_upload_pipeline(
     *,
     api_key: Optional[str] = None,
     on_progress: _PROGRESS = None,
+    display_filename: Optional[str] = None,
 ) -> Dict[int, Dict]:
     """Full upload job by ``source_type`` (step 1 only)."""
     file_path = Path(file_path)
@@ -25,7 +26,12 @@ def run_upload_pipeline(
     if source_type == "pdf":
         from app.services.ingestion.adapters.pdf import run_pdf_upload
 
-        return run_pdf_upload(file_path, api_key=api_key, on_progress=on_progress)
+        return run_pdf_upload(
+            file_path,
+            api_key=api_key,
+            on_progress=on_progress,
+            display_filename=display_filename,
+        )
 
     if source_type in ("excel", "csv"):
         from app.services.ingestion.adapters.excel import run_spreadsheet_upload

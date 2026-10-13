@@ -1,7 +1,13 @@
 """ORM model package — import all models for Alembic metadata."""
 from app.db.models.catalogue import Dataset, DatasetRow, KydsEntry, LlmApiKey, MetadataGroup
 from app.db.models.organisation import Organisation, OrganisationMembership
-from app.db.models.pdf import PdfJob, PdfTable, PdfTableGroup, PdfTableGroupMember
+from app.db.models.pdf import (
+    PdfJob,
+    PdfTable,
+    PdfTableGroup,
+    PdfTableGroupMember,
+    PdfTableSnapshot,
+)
 from app.db.models.staging import ExtractStaging, SemanticEmbedding
 from app.db.models.standards import (
     ClassificationStandard,
@@ -28,6 +34,7 @@ __all__ = [
     "PdfTable",
     "PdfTableGroup",
     "PdfTableGroupMember",
+    "PdfTableSnapshot",
     "ExtractStaging",
     "SemanticEmbedding",
 ]

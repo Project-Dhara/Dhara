@@ -2,6 +2,254 @@
 import json
 import re
 
+# Serial / row-index columns are identifiers, not codebook dimensions.
+_SERIAL_NAME_HINTS = (
+    "sl no", "sl.no", "sl_no", "s.no", "s_no", "serial", "sr no", "sr.no",
+    "sr_no", "row no", "row_no", "row#", "#",
+)
+# TOC / index / free-text columns that should never become Classify chips.
+_NON_CLASSIFICATION_NAME_HINTS = (
+    "contents", "content", "page no", "page_no", "page no.", "pageno",
+    "page number", "chapter", "particulars", "remarks", "remark", "notes",
+    "note", "description", "list of tables", "table of contents",
+)
+# Whole-title match for Contents / Index pages — avoid "Price Index" false hits.
+_TOC_TITLE_RE = re.compile(
+    r"^\s*(?:table\s+of\s+contents|list\s+of\s+tables|contents|index(?:\s+of\s+tables)?)\s*$"
+    r"|\b(?:table\s+of\s+contents|list\s+of\s+tables)\b",
+    re.I,
+)
+_PAGE_VALUE_RE = re.compile(
+    r"^(?:p\.?\s*)?(?:\d{1,4}|[ivxlcdm]{1,8})(?:\s*[-–—]\s*(?:\d{1,4}|[ivxlcdm]{1,8}))?$",
+    re.I,
+)
+_NEAR_DUP_JACCARD = 0.85
+_NEAR_DUP_CONTAINMENT = 0.9
+# PDF/Excel placeholder headers (failed header detect) and bare numeric leaf names.
+_PLACEHOLDER_COL_RE = re.compile(
+    r"^(?:col|column)[_\s-]?\d+$|^unnamed(?:[:\s._-]*\d+)?$",
+    re.I,
+)
+_NUMERIC_COL_RE = re.compile(
+    r"^\d+(?:[.,]\d+)?$"  # 15, 1, 2023, 15.0
+    r"|^\d{4}\s*[-–/]\s*\d{2,4}$"  # 2023-24 measure year headers
+    r"|^\(\d+\)$"  # (1)(2) column-index strip labels
+)
+
+
+def _normalize_col_key(name: str) -> str:
+    return re.sub(r"[\s_\-./]+", "", str(name or "").lower())
+
+
+def _value_sets_near_duplicate(a: set, b: set) -> bool:
+    if not a or not b:
+        return False
+    if _jaccard(a, b) >= _NEAR_DUP_JACCARD:
+        return True
+    # One list is almost a subset of the other (common when tables add a few labels).
+    inter = len(a & b)
+    return inter / min(len(a), len(b)) >= _NEAR_DUP_CONTAINMENT
+
+
+def _looks_like_serial_column_name(name: str) -> bool:
+    lowered = re.sub(r"[\s_\-./]+", " ", str(name or "").lower()).strip()
+    compact = _normalize_col_key(name)
+    if compact in {"slno", "sno", "srno", "serialno", "serialnumber", "rowno", "index"}:
+        return True
+    return any(hint in lowered for hint in _SERIAL_NAME_HINTS)
+
+
+def _looks_like_placeholder_or_numeric_column_name(name: str) -> bool:
+    """True for Col_1 / Unnamed / bare numbers — not real classification dims."""
+    s = str(name or "").strip()
+    if not s:
+        return True
+    if _PLACEHOLDER_COL_RE.match(s):
+        return True
+    if _NUMERIC_COL_RE.match(s):
+        return True
+    return False
+
+
+def _looks_like_non_classification_column_name(name: str) -> bool:
+    if _looks_like_placeholder_or_numeric_column_name(name):
+        return True
+    if _looks_like_serial_column_name(name):
+        return True
+    lowered = re.sub(r"[\s_\-./]+", " ", str(name or "").lower()).strip()
+    compact = _normalize_col_key(name)
+    if compact in {"page", "pages", "pageno", "pagenumber", "contents", "content", "chapter"}:
+        return True
+    if lowered in {"page", "pages", "title"}:
+        return True
+    return any(hint in lowered for hint in _NON_CLASSIFICATION_NAME_HINTS)
+
+
+def _column_names_from_table(table) -> list:
+    raw_columns = (table or {}).get("columns") or []
+    columns = []
+    for i, col in enumerate(raw_columns):
+        if isinstance(col, str):
+            columns.append(col)
+        elif isinstance(col, dict):
+            columns.append(str(col.get("name") or f"column_{i + 1}"))
+        else:
+            columns.append(f"column_{i + 1}")
+    return columns
+
+
+def _looks_like_index_or_toc_table(table) -> bool:
+    """True for Contents / List-of-tables / serial+page index grids."""
+    title = " ".join(
+        str((table or {}).get(k) or "")
+        for k in ("title", "description", "caption", "table_id")
+    )
+    if _TOC_TITLE_RE.search(title):
+        return True
+
+    columns = _column_names_from_table(table)
+    if not columns:
+        return False
+    lowered = [re.sub(r"[\s_\-./]+", " ", c.lower()).strip() for c in columns]
+    has_serial = any(_looks_like_serial_column_name(c) for c in columns)
+    has_contents = any(
+        any(h in c for h in ("content", "particular", "chapter", "title", "subject"))
+        for c in lowered
+    )
+    has_page = any(
+        c == "page" or c.startswith("page ") or "page no" in c or c.endswith(" page")
+        for c in lowered
+    )
+    # Classic TOC shape: Sl.No + Contents (+ Page), or Contents + Page.
+    if has_serial and (has_contents or has_page) and len(columns) <= 5:
+        return True
+    if has_contents and has_page and len(columns) <= 4:
+        return True
+    return False
+
+
+def _value_set(entries) -> set:
+    out = set()
+    for e in entries or []:
+        if isinstance(e, dict):
+            v = str(e.get("value") or e.get("code") or "").strip().lower()
+        else:
+            v = str(e).strip().lower()
+        if v:
+            out.add(v)
+    return out
+
+
+def _jaccard(a: set, b: set) -> float:
+    if not a or not b:
+        return 0.0
+    inter = len(a & b)
+    if inter == 0:
+        return 0.0
+    return inter / len(a | b)
+
+
+def _values_look_like_free_text(values: list, n_non_empty: int) -> bool:
+    """Near-unique long labels (chapter titles, TOC lines) are not code lists."""
+    if not values or n_non_empty <= 0:
+        return False
+    n_unique = len(values)
+    # Almost every row is a distinct string → inventory/TOC text, not a dimension.
+    if n_unique >= 8 and n_unique / max(n_non_empty, 1) >= 0.85:
+        avg_len = sum(len(str(e.get("value") or "")) for e in values) / n_unique
+        if avg_len >= 24:
+            return True
+    # Mostly page-like tokens.
+    pageish = sum(
+        1 for e in values
+        if _PAGE_VALUE_RE.match(str(e.get("value") or "").strip())
+    )
+    if pageish >= max(2, int(0.8 * n_unique)):
+        return True
+    return False
+
+
+def _should_keep_classification_column(name: str, values: list, n_non_empty: int) -> bool:
+    if not values or len(values) < 2:
+        return False
+    if _looks_like_non_classification_column_name(name):
+        return False
+    if len(values) > 80:
+        return False
+    if _values_look_like_free_text(values, n_non_empty):
+        return False
+    return True
+
+
+def _filter_classification_dict(classifications: dict) -> dict:
+    """Drop serial/TOC/page dimensions from a stored or rebuilt map.
+
+    Does not apply row-level free-text uniqueness heuristics — stored code
+    lists are already unique values, and legitimate dimensions (e.g. cause of
+    death) can be long and numerous.
+    """
+    out = {}
+    for name, codes in (classifications or {}).items():
+        if _looks_like_non_classification_column_name(name):
+            continue
+        norm = _normalize_classification_values(codes)
+        if len(norm) < 2:
+            continue
+        pageish = sum(
+            1 for e in norm
+            if _PAGE_VALUE_RE.match(str(e.get("value") or "").strip())
+        )
+        if pageish >= max(2, int(0.8 * len(norm))):
+            continue
+        out[str(name)] = norm
+    return _collapse_near_duplicate_dimensions(out)
+
+
+def _pick_canonical_dim_name(names: list) -> str:
+    return sorted(names, key=lambda n: (len(str(n)), str(n).lower()))[0]
+
+
+def _collapse_near_duplicate_dimensions(classifications: dict) -> dict:
+    """Merge dimensions with nearly identical value sets (redundant chips)."""
+    items = [
+        (str(name), _normalize_classification_values(codes))
+        for name, codes in (classifications or {}).items()
+    ]
+    items = [(n, c) for n, c in items if c]
+    if len(items) <= 1:
+        return {n: c for n, c in items}
+
+    used = set()
+    merged = {}
+    for i, (name_i, codes_i) in enumerate(items):
+        if i in used:
+            continue
+        group_names = [name_i]
+        group_codes = list(codes_i)
+        set_i = _value_set(codes_i)
+        for j in range(i + 1, len(items)):
+            if j in used:
+                continue
+            name_j, codes_j = items[j]
+            # Same normalized name, or highly overlapping value sets.
+            same_name = _normalize_col_key(name_i) == _normalize_col_key(name_j)
+            overlap = _value_sets_near_duplicate(set_i, _value_set(codes_j))
+            if not (same_name or overlap):
+                continue
+            used.add(j)
+            group_names.append(name_j)
+            existing = {(e.get("value") or "").lower() for e in group_codes}
+            for e in codes_j:
+                key = (e.get("value") or "").lower()
+                if key and key not in existing:
+                    group_codes.append(e)
+                    existing.add(key)
+            set_i = _value_set(group_codes)
+        used.add(i)
+        canon = _pick_canonical_dim_name(group_names)
+        merged[canon] = group_codes
+    return merged
+
 
 def _normalize_code_entry(entry):
     """A classification entry is normally {code, value, definition} (from the
@@ -79,6 +327,8 @@ def get_metadata_group_classifications(conn, metadata_id):
             print(f"[catalogue] rebuild classifications failed for {metadata_id}: {exc}")
             classifications = {}
 
+    classifications = _filter_classification_dict(classifications)
+
     columns = []
     for name, codes in classifications.items():
         norm = _normalize_classification_values(codes)
@@ -93,7 +343,9 @@ def get_metadata_group_classifications(conn, metadata_id):
     if not columns:
         # Last resort: rebuild from linked dataset rows (SQL / no workbook).
         try:
-            rebuilt = _classifications_from_linked_datasets(conn, metadata_id) or {}
+            rebuilt = _filter_classification_dict(
+                _classifications_from_linked_datasets(conn, metadata_id) or {}
+            )
         except Exception as exc:
             try:
                 conn.rollback()
@@ -240,21 +492,22 @@ def _classifications_from_table_data(tables):
     """Treat low-cardinality non-numeric columns as classification dimensions.
 
     Used for Excel without a classifications workbook and for SQL extracts,
-    where there is no metadata-excel code list."""
+    where there is no metadata-excel code list.
+
+    Skips TOC/index tables and serial/contents/page/free-text columns so the
+    Classify UI does not fill with redundant junk chips.
+    """
     merged = {}
     for table in tables or []:
-        raw_columns = table.get("columns") or []
-        columns = []
-        for i, col in enumerate(raw_columns):
-            if isinstance(col, str):
-                columns.append(col)
-            elif isinstance(col, dict):
-                columns.append(str(col.get("name") or f"column_{i + 1}"))
-            else:
-                columns.append(f"column_{i + 1}")
+        if _looks_like_index_or_toc_table(table):
+            continue
+        columns = _column_names_from_table(table)
         rows = table.get("rows") or []
         for col in columns:
+            if _looks_like_non_classification_column_name(col):
+                continue
             values, seen = [], set()
+            n_non_empty = 0
             for row in rows:
                 if isinstance(row, dict):
                     raw = row.get(col)
@@ -271,6 +524,7 @@ def _classifications_from_table_data(tables):
                     s = str(raw).strip()
                 if not s:
                     continue
+                n_non_empty += 1
                 # Skip pure numerics (measures), keep codes like "01" that are
                 # categorical when mixed with non-numeric — only skip if the
                 # whole string parses as a number AND has no alpha.
@@ -283,17 +537,18 @@ def _classifications_from_table_data(tables):
                 values.append({"code": "", "value": s, "definition": None})
                 if len(values) > 80:
                     break
-            if 2 <= len(values) <= 80:
-                name = re.sub(r"\s+", "_", str(col).strip()) or str(col)
-                if name not in merged:
-                    merged[name] = values
-                else:
-                    existing = {(e.get("value") or "").lower() for e in merged[name]}
-                    for e in values:
-                        if (e["value"] or "").lower() not in existing:
-                            merged[name].append(e)
-                            existing.add((e["value"] or "").lower())
-    return merged
+            if not _should_keep_classification_column(col, values, n_non_empty):
+                continue
+            name = re.sub(r"\s+", "_", str(col).strip()) or str(col)
+            if name not in merged:
+                merged[name] = values
+            else:
+                existing = {(e.get("value") or "").lower() for e in merged[name]}
+                for e in values:
+                    if (e["value"] or "").lower() not in existing:
+                        merged[name].append(e)
+                        existing.add((e["value"] or "").lower())
+    return _collapse_near_duplicate_dimensions(merged)
 
 
 def _merge_real_classifications(llm_merged, real):
@@ -308,7 +563,7 @@ def _merge_real_classifications(llm_merged, real):
         norm = _normalize_classification_values(v)
         if norm:
             merged[str(k)] = norm
-    return merged
+    return _filter_classification_dict(merged)
 
 
 def _classification_value_key(entries):
@@ -403,7 +658,7 @@ def _merge_classifications(enriched_data: list) -> dict:
                 if key and key not in existing:
                     merged[dim].append(entry)
                     existing.add(key)
-    return merged
+    return _filter_classification_dict(merged)
 
 
 def _classification_fill_ratio(classifications) -> float:

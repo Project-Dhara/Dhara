@@ -1,7 +1,8 @@
 """Unified file upload → data ingestion → extraction job (PDF, Excel, CSV)."""
 import asyncio
+import json
 import uuid
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
@@ -17,6 +18,16 @@ from app.workers.extraction_jobs import (
 )
 from app.workers.upload_batches import queue_upload_batch, retry_batch_file, run_upload_batch
 
+
+def _parse_dataset_id_config_form(raw: Optional[str]) -> Optional[dict]:
+    if not raw or not str(raw).strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise HTTPException(400, f"Invalid dataset_id_config JSON: {e}") from e
+    return parsed if isinstance(parsed, dict) else None
+
 router = APIRouter(tags=["Upload"])
 
 MAX_BATCH_FILES = 20
@@ -28,6 +39,7 @@ async def unified_upload(
     request: Request,
     file: UploadFile = File(...),
     type: str = Form(..., description="pdf, excel, or csv"),
+    dataset_id_config: Optional[str] = Form(None),
     user: CurrentUser = Depends(require_roles(*MUTATING_ROLES)),
 ):
     """
@@ -51,6 +63,7 @@ async def unified_upload(
         )
 
     job_id = uuid.uuid4().hex
+    id_cfg = _parse_dataset_id_config_form(dataset_id_config)
 
     # Worker decrypts the caller's stored llm_api_keys row at run time.
     queue_extraction_job(
@@ -61,6 +74,7 @@ async def unified_upload(
         file_bytes=content,
         organisation_id=str(user.organisation_id),
         user_id=str(user.id),
+        dataset_id_config=id_cfg,
     )
 
     asyncio.create_task(
@@ -81,6 +95,7 @@ def _job_visible_to(job, user: CurrentUser) -> bool:
 @router.post("/api/upload/batch")
 async def upload_batch(
     files: List[UploadFile] = File(...),
+    dataset_id_config: Optional[str] = Form(None),
     user: CurrentUser = Depends(require_roles(*MUTATING_ROLES)),
 ):
     """Upload multiple PDF / XLSX / CSV files; poll batch status via GET /api/upload/batches/{batch_id}."""
@@ -108,12 +123,14 @@ async def upload_batch(
         prepared.append((filename, source_type, content))
 
     batch_id = uuid.uuid4().hex
+    id_cfg = _parse_dataset_id_config_form(dataset_id_config)
     queue_upload_batch(
         batch_id=batch_id,
         user_email=user.email,
         organisation_id=str(user.organisation_id),
         user_id=str(user.id),
         files=prepared,
+        dataset_id_config=id_cfg,
     )
     asyncio.create_task(asyncio.to_thread(run_upload_batch, batch_id))
     return {"batch_id": batch_id, "job_id": batch_id, "file_count": len(prepared)}

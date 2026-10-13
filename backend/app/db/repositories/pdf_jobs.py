@@ -10,7 +10,13 @@ from typing import Any, Optional
 from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.orm import Session
 
-from app.db.models.pdf import PdfJob, PdfTable, PdfTableGroup, PdfTableGroupMember
+from app.db.models.pdf import (
+    PdfJob,
+    PdfTable,
+    PdfTableGroup,
+    PdfTableGroupMember,
+    PdfTableSnapshot,
+)
 
 CLASSIFICATION_FIELDS = (
     "domain",
@@ -270,6 +276,51 @@ def get_pdf_bytes(session: Session, job_id: str) -> Optional[bytes]:
     if not job or job.pdf_bytes is None:
         return None
     return bytes(job.pdf_bytes)
+
+
+def get_table_snapshot(
+    session: Session, job_id: str, table_id: str
+) -> Optional[bytes]:
+    row = session.get(PdfTableSnapshot, (job_id, table_id))
+    if not row or row.png_bytes is None:
+        return None
+    return bytes(row.png_bytes)
+
+
+def upsert_table_snapshot(
+    session: Session, job_id: str, table_id: str, png_bytes: bytes
+) -> None:
+    if not png_bytes:
+        return
+    existing = session.get(PdfTableSnapshot, (job_id, table_id))
+    now = datetime.now(timezone.utc)
+    if existing is None:
+        session.add(
+            PdfTableSnapshot(
+                job_id=job_id,
+                table_id=table_id,
+                png_bytes=png_bytes,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    else:
+        existing.png_bytes = png_bytes
+        existing.updated_at = now
+    session.flush()
+
+
+def upsert_table_snapshots(
+    session: Session, job_id: str, snapshots: dict[str, bytes]
+) -> int:
+    """Persist many table PNG crops; returns how many were written."""
+    written = 0
+    for table_id, png in (snapshots or {}).items():
+        if not table_id or not png:
+            continue
+        upsert_table_snapshot(session, job_id, str(table_id), png)
+        written += 1
+    return written
 
 
 def set_pipeline_step(session: Session, job_id: str, step: int) -> None:

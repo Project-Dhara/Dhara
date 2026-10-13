@@ -49,6 +49,8 @@ def enrich_table_for_review(
     out = {
         **table,
         "table_id": table_id,
+        # Alias used at publish / catalogue — same human-readable id.
+        "dataset_id": table.get("dataset_id") or table_id,
         "page": table.get("page", page_key),
     }
     if source_filename and not out.get("source_filename"):
@@ -69,22 +71,53 @@ def flatten_job_result_to_review_tables(
     default_filename: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Flatten page-keyed extraction result into review tables (with reviews merged)."""
+    from app.services.ingestion.table_ids import (
+        build_review_table_id,
+        dataset_id_config_from_job,
+        parse_batch_page_key,
+        physical_page_value,
+    )
+
     reviews = dict(job.get("reviews") or {})
     deleted = set(job.get("deleted_table_ids") or [])
     result = result_pages_only(job.get("result"))
     batch_id = job.get("job_id")
     filename = default_filename or job.get("filename")
+    cfg = dataset_id_config_from_job(job)
+    meta = batch_meta_from_result(job.get("result"))
+    batch_files = list(meta.get("batch_files") or job.get("batch_files") or [])
     tables: List[Dict[str, Any]] = []
     for page_num in sorted(result.keys(), key=lambda k: int(k) if str(k).isdigit() else str(k)):
-        for idx, t in enumerate((result.get(page_num) or {}).get("tables") or []):
-            table_id = f"{page_num}-{idx}"
+        page_tables = (result.get(page_num) or {}).get("tables") or []
+        tables_on_page = len(page_tables)
+        for idx, t in enumerate(page_tables):
+            file_index, _phys = parse_batch_page_key(page_num)
+            src_name = t.get("source_filename") or t.get("source_file") or filename
+            src_type = t.get("source_type") or job.get("source_type") or "pdf"
+            if file_index is not None and 0 <= file_index < len(batch_files):
+                entry = batch_files[file_index] or {}
+                src_name = entry.get("filename") or src_name
+                src_type = entry.get("source_type") or src_type
+            table_id = str(t.get("table_id") or "").strip() or build_review_table_id(
+                config=cfg,
+                source_filename=src_name,
+                source_type=str(src_type or "pdf"),
+                page=physical_page_value(t, page_num),
+                index=idx,
+                tables_on_page=tables_on_page,
+                file_index=file_index,
+            )
             if table_id in deleted:
                 continue
+            # Also honor legacy deletes keyed by opaque page-index ids.
+            legacy_id = f"{page_num}-{idx}"
+            if legacy_id in deleted:
+                continue
             merged = enrich_table_for_review(
-                {**t, **reviews.get(table_id, {})},
+                {**t, **reviews.get(table_id, {}), **reviews.get(legacy_id, {})},
                 table_id=table_id,
                 page_key=page_num,
-                source_filename=t.get("source_filename") or t.get("source_file") or filename,
+                source_filename=src_name,
                 source_file_id=t.get("source_file_id"),
                 batch_id=t.get("batch_id") or batch_id,
             )

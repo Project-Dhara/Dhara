@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.db.repositories.catalogue import tag_publish_organisation
 from app.services.classification.classifications import (
     _classifications_from_table_data,
+    _looks_like_index_or_toc_table,
     _merge_classifications,
     _merge_real_classifications,
 )
@@ -32,9 +33,44 @@ STANDARD_CONCEPTS = [
 ]
 
 
+_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
 def _make_dataset_id(table: dict, index: int) -> str:
     suffix = uuid.uuid4().hex[:6]
     return f"DS-{index+1:03d}-{suffix}"
+
+
+def _looks_like_uuid(value: str) -> bool:
+    return bool(_UUID_RE.fullmatch(str(value or "").strip()))
+
+
+def resolve_catalogue_dataset_id(table: dict, index: int) -> str:
+    """Pick the published dataset_id.
+
+    Prefer explicit dataset ids, then a human-readable ``table_id`` when ``id``
+    is a PDF row UUID, then a non-UUID ``id`` (Excel DDI ids). Fall back to a
+    generated ``DS-…`` token.
+    """
+    explicit = str(
+        table.get("dataset_id") or table.get("unique_dataset_id") or ""
+    ).strip()
+    if explicit and not _looks_like_uuid(explicit):
+        return explicit
+
+    row_id = str(table.get("id") or "").strip()
+    table_id = str(table.get("table_id") or "").strip()
+
+    # PDF: pk UUID in ``id``, human-readable review id in ``table_id``.
+    if row_id and _looks_like_uuid(row_id) and table_id and not _looks_like_uuid(table_id):
+        return table_id
+    if row_id and not _looks_like_uuid(row_id):
+        return row_id
+    if table_id and not _looks_like_uuid(table_id):
+        return table_id
+    return _make_dataset_id(table, index)
 
 
 def _extract_sl_no(row, row_index: int) -> str:
@@ -83,9 +119,27 @@ def push_to_catalogue(
     table_id_codes: list[str] = []
     org = str(organisation_id) if organisation_id else None
 
+    # Drop Contents / index grids so they never become catalogue datasets or
+    # feed redundant Classify dimensions (Sl.No, Contents, Page, …).
+    paired = []
+    for i, table in enumerate(tables or []):
+        if _looks_like_index_or_toc_table(table):
+            continue
+        enriched = enriched_data[i] if i < len(enriched_data or []) else {}
+        paired.append((table, enriched))
+    tables = [t for t, _ in paired]
+    enriched_data = [e for _, e in paired]
+    if not tables:
+        return {
+            "metadata_id": None if metadata_mode == "new" else metadata_id,
+            "dataset_ids": [],
+            "tables_pushed": 0,
+            "skipped_index_tables": True,
+        }
+
     for i, table in enumerate(tables):
         enriched = enriched_data[i] if i < len(enriched_data) else {}
-        ds_id = table.get("id") or _make_dataset_id(table, i)
+        ds_id = resolve_catalogue_dataset_id(table, i)
         table_code = ds_id
         unique_ds_id = ds_id
         dataset_ids.append(ds_id)

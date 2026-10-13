@@ -27,6 +27,7 @@ from app.services.catalogue.query import (
     list_catalogue_groups as query_catalogue_groups,
 )
 from app.services.classification.classifications import (
+    _looks_like_index_or_toc_table,
     get_definition_facts,
     get_metadata_group_classifications,
     get_recent_classification_columns,
@@ -136,8 +137,8 @@ async def batch_push(
     staged_by_uid, pdf_by_id = await asyncio.to_thread(_load_sources)
 
     _OVERLAY_KEYS = (
-        "_uid", "id", "table_id", "title", "sheet", "source_file", "source_type",
-        "original_excel_url", "source_excel_url",
+        "_uid", "id", "table_id", "dataset_id", "title", "sheet", "source_file",
+        "source_type", "original_excel_url", "source_excel_url",
     )
 
     def _hydrate_table(raw: dict) -> dict:
@@ -193,6 +194,9 @@ async def batch_push(
             raw = mt.get("table") or {}
             t = _hydrate_table(raw)
             t["title"] = _catalogue_table_title(t, mt.get("inventory_item"))
+            # Skip TOC / list-of-tables index grids — not statistical datasets.
+            if _looks_like_index_or_toc_table(t):
+                continue
             tables.append(t)
         if not tables:
             return None

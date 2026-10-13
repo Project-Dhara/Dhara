@@ -23,13 +23,16 @@ function isEmptyMeta(v) {
   return v == null || String(v).trim() === '' || String(v).trim() === '—'
 }
 
-/** PDF-published tables use uuid PKs as dataset_id — hide those in the UI. */
-function isPdfDatasetId(id) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id || ''))
+function tableDatasetId(t) {
+  return String(t?.dataset_id || t?.table_id || t?.id || '').trim()
 }
 
-function tableDatasetId(t) {
-  return String(t?.dataset_id || t?.id || '').trim()
+/** Prefer a human-readable dataset id when listing tables in a release. */
+function groupDatasetIdSummary(r) {
+  const ids = (r.tables || []).map(tableDatasetId).filter(Boolean)
+  if (!ids.length) return ''
+  if (ids.length === 1) return ids[0]
+  return `${ids[0]} +${ids.length - 1} more`
 }
 
 function groupSearchText(r) {
@@ -255,7 +258,14 @@ export default function Catalogue({ hasKey, onGoSettings }) {
               >
                 <div className="flex items-center gap-2">
                   <span className="h-1.5 w-1.5 rounded-full bg-green" />
-                  <div className="text-[13.5px] font-semibold leading-snug text-ink">{d.title}</div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13.5px] font-semibold leading-snug text-ink">{d.title}</div>
+                    {groupDatasetIdSummary(d) && (
+                      <div className="mt-0.5 truncate font-mono text-[10.5px] text-[#8E9398]" title={groupDatasetIdSummary(d)}>
+                        {groupDatasetIdSummary(d)}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="text-[11.5px] text-[#8E9398]">
                   {[
@@ -357,17 +367,18 @@ export default function Catalogue({ hasKey, onGoSettings }) {
                 <div className="flex flex-col gap-3">
                   {(sel.tables || []).length > 0 && (
                     <div className="flex flex-col gap-2 rounded-lg border border-line bg-white px-3.5 py-3">
-                      <div className={metaCardLabelClass}>Tables in this release</div>
+                      <div className={metaCardLabelClass}>Datasets in this release</div>
                       <ul className="m-0 list-none space-y-1.5 p-0">
                         {(sel.tables || []).map((t) => {
                           const dsId = tableDatasetId(t)
-                          const showDatasetId = dsId && !isPdfDatasetId(dsId)
                           return (
                             <li key={dsId || t.title} className="flex items-baseline justify-between gap-3 text-[13px]">
                               <div className="min-w-0 flex-1">
                                 <div className="truncate font-medium text-ink">{t.title}</div>
-                                {showDatasetId && (
-                                  <div className="truncate font-mono text-[11px] text-[#8E9398]">{dsId}</div>
+                                {dsId && (
+                                  <div className="truncate font-mono text-[11px] text-[#8E9398]" title={dsId}>
+                                    Dataset ID · {dsId}
+                                  </div>
                                 )}
                               </div>
                               <span className="flex-none tabular-nums text-[11.5px] text-[#8E9398]">
@@ -507,12 +518,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
                       <span className={tagChipClass}>metadata_id</span>
                     </div>
                     <div className="selection-invert flex flex-col gap-2 rounded-lg bg-gradient-to-br from-teal-deep to-[#0c2f2d] px-4 py-3.5 ring-1 ring-inset ring-white/[.06]">
-                      <div className="flex items-center gap-1.5">
-                        <span className="h-2 w-2 rounded-full bg-[#e4c331]/70" />
-                        <span className="h-2 w-2 rounded-full bg-[#c97e93]/70" />
-                        <span className="h-2 w-2 rounded-full bg-[#8fae4c]/70" />
-                        <div className="ml-1.5 text-[11px] uppercase tracking-wide text-[#7d9891]">Example</div>
-                      </div>
+                      <div className="text-[11px] uppercase tracking-wide text-[#7d9891]">Example</div>
                       <div className="break-all font-mono text-[12.5px] leading-relaxed text-[#e8f0e8]">
                         <span className="text-[#8fbcae]">curl -H</span>{' '}
                         <span className="text-[#e8f0e8]">"Authorization: Bearer $TOKEN"</span>{' '}

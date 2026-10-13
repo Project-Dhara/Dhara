@@ -428,7 +428,7 @@ export default function GroupingWorkspace({
   const unmatched = matchResult?.unmatched_tables || []
   const groupingMode = manualGrouping ? 'manual' : 'automatic'
   const editEnabled = manualGrouping || editingGroups
-  const resolvedIdLabel = idColumnLabel || (preferTableId ? 'Table ID' : 'Dataset ID')
+  const resolvedIdLabel = idColumnLabel || 'Dataset ID'
   const allTables = allTablesFromMatchResult(matchResult)
   const showUnmatched = editEnabled || unmatched.length > 0
 
