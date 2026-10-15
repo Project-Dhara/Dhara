@@ -6,7 +6,11 @@ import { withLlmKeyHeaders } from '../../lib/llmKey'
 import { withAuthHeaders } from '../../lib/auth'
 import { CLICK_THROUGH_ENABLED } from '../../lib/clickThrough'
 import { getConceptStandardConfig } from '../../lib/metadataConcepts'
-import { getMetadataRequiredFields, getMetadataStandard } from '../../lib/settingsConfig'
+import {
+  datasetIdConfigPayload,
+  getMetadataRequiredFields,
+  getMetadataStandard,
+} from '../../lib/settingsConfig'
 import { fillGroupMetadataForMatchResult } from '../../lib/postPreview'
 import { onKydsChanged } from '../../lib/kydsEvents'
 import { useApp } from '../../context/AppContext'
@@ -60,7 +64,7 @@ function slimTableForPush(table) {
   if (!table || typeof table !== 'object') return table
   const out = {}
   ;[
-    '_uid', 'id', 'table_id', 'title', 'sheet',
+    '_uid', 'id', 'table_id', 'dataset_id', 'unique_dataset_id', 'title', 'sheet',
     'source_file', 'source_type', 'original_excel_url', 'source_excel_url',
   ].forEach((key) => {
     if (table[key] != null && table[key] !== '') out[key] = table[key]
@@ -639,6 +643,7 @@ export default function BatchReview({
 
       const fd = new FormData()
       fd.append('groups_json', JSON.stringify(finalGroups))
+      fd.append('dataset_id_config', JSON.stringify(datasetIdConfigPayload()))
       if (batchId) fd.append('batch_id', batchId)
       if (jobId) fd.append('pdf_job_id', jobId)
       if (!batchId && !jobId) {

@@ -1,5 +1,12 @@
 """ORM model package — import all models for Alembic metadata."""
-from app.db.models.catalogue import Dataset, DatasetRow, KydsEntry, LlmApiKey, MetadataGroup
+from app.db.models.catalogue import (
+    Dataset,
+    DatasetIdCounter,
+    DatasetRow,
+    KydsEntry,
+    LlmApiKey,
+    MetadataGroup,
+)
 from app.db.models.organisation import Organisation, OrganisationMembership
 from app.db.models.pdf import (
     PdfJob,
@@ -23,6 +30,7 @@ __all__ = [
     "OrganisationMembership",
     "MetadataGroup",
     "Dataset",
+    "DatasetIdCounter",
     "DatasetRow",
     "KydsEntry",
     "LlmApiKey",

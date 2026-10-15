@@ -54,12 +54,14 @@ def _clear_settings():
     clear_settings_cache()
 
 
-def test_mcp_requires_auth_by_default(client, monkeypatch):
+def test_mcp_open_by_default(client, monkeypatch):
+    """Open /mcp so Claude custom connectors can attach without OAuth."""
     monkeypatch.delenv("MCP_HTTP_AUTH", raising=False)
     clear_settings_cache()
     r = client.post("/mcp", json=INIT_BODY, headers=MCP_HEADERS)
-    assert r.status_code == 401
-    assert r.json()["error"] == "unauthorized"
+    assert r.status_code == 200
+    body = _parse_payload(r)
+    assert body["result"]["serverInfo"]["name"] == "DHARA Catalogue"
 
 
 def test_mcp_open_when_auth_off(client, monkeypatch):
@@ -69,6 +71,14 @@ def test_mcp_open_when_auth_off(client, monkeypatch):
     assert r.status_code == 200
     body = _parse_payload(r)
     assert body["result"]["serverInfo"]["name"] == "DHARA Catalogue"
+
+
+def test_well_known_not_spa_html(client):
+    """OAuth discovery probes must get JSON 404, not the SPA shell."""
+    r = client.get("/.well-known/oauth-authorization-server")
+    assert r.status_code == 404
+    assert "application/json" in (r.headers.get("content-type") or "")
+    assert r.json()["error"] == "not_found"
 
 
 def test_mcp_requires_bearer_when_jwt_mode(client, monkeypatch):

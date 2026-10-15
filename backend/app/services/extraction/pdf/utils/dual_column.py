@@ -325,7 +325,8 @@ def _extract_clipped(
             page_text = page.get_text("text") or ""
         except Exception:
             page_text = ""
-        for strategy in ("lines_strict", "lines", "text"):
+        # Ruled only — text strategy is unused for dual-column merge picks.
+        for strategy in ("lines_strict", "lines"):
             try:
                 found = page.find_tables(strategy=strategy, clip=clip)
             except Exception:

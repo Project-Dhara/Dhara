@@ -34,7 +34,7 @@ Standards · provenance · quality · access info
 | Module | Role |
 |--------|------|
 | **Metadata configuration** | Selects **NMDS** vs **SDG** field set; which fields are required before submit |
-| **Dataset ID configuration** | Identity conventions carried into catalogue records |
+| **Dataset ID configuration** | Prefix / stats domain for sequential ids (`{prefix}_{stats}_{NNNNN}`); stamped at extract, kept at publish; never reused |
 | **MEITY-empanelled LLM** | Optional autofill of group metadata when a key is set |
 
 Configure these under **Settings** before publish. See

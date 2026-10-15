@@ -48,6 +48,13 @@ _TABLE_BANNER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Bare CRS / vital-stats codes used as full-width id banners (D-14, B-6).
+_SHORT_TABLE_CODE_RE = re.compile(
+    r"^(?:TABLE\s*[:.\-–—]?\s*)?"
+    r"(?P<code>[A-Z]{1,3})\s*[-–—]?\s*(?P<num>\d+(?:\.\d+)?)\s*$",
+    re.IGNORECASE,
+)
+
 _DOC_KIND_RE = (
     r"(?:TABLE|TAB\.?|STATEMENT|ANNEX(?:URE)?|SCHEDULE|EXHIBIT|APPENDIX)"
 )
@@ -59,7 +66,8 @@ _TABLE_ID_CORE_RE = (
 )
 
 _TABLE_ID_ONLY_RE = re.compile(
-    rf"^{_DOC_KIND_RE}\s*[:.\-–—]?\s*{_TABLE_ID_CORE_RE}\s*$",
+    rf"^(?:{_DOC_KIND_RE}\s*[:.\-–—]?\s*{_TABLE_ID_CORE_RE}"
+    rf"|[A-Z]{{1,3}}\s*[-–—]?\s*\d+(?:\.\d+)?)\s*$",
     re.IGNORECASE,
 )
 
@@ -76,8 +84,17 @@ _MEASUREMENT_ABS_MIN = 100
 def _cell_str(v: Any) -> str:
     if v is None:
         return ""
-    if isinstance(v, float) and math.isnan(v):
-        return ""
+    # Excel/openpyxl stores whole numbers as floats; avoid "12.0" in cells.
+    if isinstance(v, bool):
+        return str(v)
+    if isinstance(v, float):
+        if math.isnan(v):
+            return ""
+        if math.isfinite(v) and v.is_integer():
+            return str(int(v))
+        return str(v)
+    if isinstance(v, int):
+        return str(v)
     s = str(v).replace("\n", " ").strip()
     s = re.sub(r"\s+", " ", s)
     if s.lower() in {"nan", "none", "<na>"}:
@@ -89,6 +106,8 @@ def _normalize_numeric_token(v: Any) -> str:
     if isinstance(v, (int, float)) and not isinstance(v, bool):
         if isinstance(v, float) and math.isnan(v):
             return ""
+        if isinstance(v, float) and math.isfinite(v) and v.is_integer():
+            return str(int(v))
         return str(v)
     s = _cell_str(v).replace(",", "").replace("%", "").replace("*", "").strip()
     # Parenthetical percentages / shares in statistical PDFs.
@@ -212,9 +231,17 @@ def _row_is_full_width_banner(row: Sequence[Any]) -> bool:
     if len(non_empty) == 1:
         return True
     # Already-filled banner: every (or most) cells repeat the same caption.
+    # Include short table codes (D-14) — Excel merge-fill expands them across
+    # columns, and they must still count as in-grid id banners.
     if len(non_empty) >= max(2, int(len(cells) * 0.6)):
-        return bool(_TABLE_BANNER_RE.match(label)) or len(label) >= 28
-    return bool(_TABLE_BANNER_RE.match(label)) and len(non_empty) >= len(cells) * 0.5
+        return (
+            bool(_TABLE_BANNER_RE.match(label))
+            or bool(_SHORT_TABLE_CODE_RE.match(label))
+            or len(label) >= 28
+        )
+    return (
+        bool(_TABLE_BANNER_RE.match(label)) or bool(_SHORT_TABLE_CODE_RE.match(label))
+    ) and len(non_empty) >= len(cells) * 0.5
 
 def _row_banner_label(row: Sequence[Any]) -> Optional[str]:
     """Text of a full-width in-grid banner, or None if the row is not one."""
@@ -224,9 +251,13 @@ def _row_banner_label(row: Sequence[Any]) -> Optional[str]:
     return non_empty[0] if non_empty else None
 
 def _is_table_id_only(label: str) -> bool:
-    """True for short document-id banners like ``TABLE: B-6`` / ``TABLE- B-1``."""
+    """True for short document-id banners like ``TABLE: B-6`` / ``D-14``."""
     s = _cell_str(label)
-    return bool(s) and bool(_TABLE_ID_ONLY_RE.match(s))
+    if not s:
+        return False
+    if _TABLE_ID_ONLY_RE.match(s):
+        return True
+    return bool(len(s) <= 40 and _SHORT_TABLE_CODE_RE.match(s))
 
 def _is_descriptive_in_grid_title(label: str) -> bool:
     """

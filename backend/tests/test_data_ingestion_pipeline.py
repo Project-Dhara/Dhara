@@ -56,6 +56,20 @@ def _multi_table_sheet_bytes() -> bytes:
     return buf.getvalue()
 
 
+def _titled_sheet_bytes() -> bytes:
+    """Merged/fill-expanded title banner — must not become the sheet name."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "MySheetName"
+    ws.append(["Scheme Summary (Basic Statistics)"] * 4)
+    ws.append(["Name", "Beneficiaries", "Budget", "Year"])
+    ws.append(["S1", 10, 100, 2020])
+    ws.append(["S2", 20, 200, 2021])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def _sample_csv_bytes() -> bytes:
     return (
         "Year,Population,Birth Rate\n"
@@ -111,6 +125,47 @@ def test_excel_multi_table_pre_validation_input():
     assert len(pre["pages_grouped"]) >= 2
 
 
+def test_excel_preserves_in_grid_title_not_sheet_name():
+    """Merge-filled title banners are stripped for headers but kept as caption."""
+    pre = ingest_excel.ingest_bytes(_titled_sheet_bytes(), "demo.xlsx")
+    _assert_pre_validation_shape(pre)
+    cand = pre["pages_grouped"][1][0]
+    assert cand["sheet"] == "MySheetName"
+    caption = (getattr(cand["df"], "attrs", {}) or {}).get("dhara_table_caption") or ""
+    assert caption == "Scheme Summary (Basic Statistics)"
+    assert "MySheetName" not in caption
+    # Context lists the real title before sheet metadata.
+    ctx = pre["unit_context"][1]
+    assert "Scheme Summary (Basic Statistics)" in ctx.splitlines()[0]
+    assert ctx.strip().endswith("Sheet: MySheetName")
+
+
+def test_excel_upload_title_is_not_sheet_name(tmp_path):
+    path = tmp_path / "titled.xlsx"
+    path.write_bytes(_titled_sheet_bytes())
+    result = run_upload_pipeline(path, "excel", api_key=None)
+    _assert_validated_table_shape(result)
+    titles = [t.get("title") for page in result.values() for t in page["tables"]]
+    assert titles
+    assert titles[0] == "Scheme Summary (Basic Statistics)"
+    assert all(t != "MySheetName" for t in titles)
+    assert all(not str(t or "").startswith("Sheet:") for t in titles)
+    assert all(not str(t or "").startswith("Source file:") for t in titles)
+
+
+def test_excel_upload_short_code_banner_keeps_descriptive_title(tmp_path):
+    """Fill-expanded ``D-14`` + title banners must not yield the sheet name."""
+    path = tmp_path / "multi.xlsx"
+    path.write_bytes(_multi_table_sheet_bytes())
+    result = run_upload_pipeline(path, "excel", api_key=None)
+    _assert_validated_table_shape(result)
+    titles = [t.get("title") for page in result.values() for t in page["tables"]]
+    assert titles
+    assert any("INFANT DEATHS" in str(t or "").upper() for t in titles)
+    assert all(t != "Combined Tables" for t in titles)
+    assert all(str(t or "").upper() != "D-14" for t in titles)
+
+
 def test_csv_pre_validation_input():
     pre = ingest_csv.ingest_bytes(_sample_csv_bytes(), "sample.csv")
     _assert_pre_validation_shape(pre)
@@ -135,6 +190,18 @@ def test_run_upload_pipeline_excel_no_llm_key(tmp_path):
     for page in result.values():
         for t in page["tables"]:
             assert t.get("source_type") == "excel"
+            assert str(t.get("sheet") or "").strip(), "sheet must survive validation for Preview subtitle"
+
+
+def test_stamp_bbox_copies_sheet_from_excel_candidate():
+    """LLM-validated tables must keep sheet so ambiguous-column cards show it."""
+    from app.services.extraction.pdf.confidence_validation.alignment import (
+        _stamp_bbox_from_candidate,
+    )
+    table: dict = {"title": "Demo"}
+    _stamp_bbox_from_candidate(table, {"sheet": "Vital Stats", "source_file": "a.xlsx"})
+    assert table["sheet"] == "Vital Stats"
+    assert table["source_file"] == "a.xlsx"
 
 
 def test_run_upload_pipeline_csv_no_llm_key(tmp_path):

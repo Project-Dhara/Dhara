@@ -4,23 +4,76 @@ Central configuration: pipeline workers, LLM API limits, and prompt templates.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from typing import Optional
+
+# ── Host sizing (override via env on constrained or large boxes) ─────────────
+_HOST_CPUS = max(1, os.cpu_count() or 1)
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default
+
+
+def _available_ram_mb() -> Optional[int]:
+    """Best-effort MemAvailable (Linux); None when unknown."""
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) // 1024
+    except Exception:
+        pass
+    return None
+
+
+def _default_cpu_workers() -> int:
+    """Process-pool size for PyMuPDF.
+
+    Each worker re-opens the full PDF and holds page DataFrames. On small hosts
+    (e.g. 2 vCPU / 4GB) defaulting to cpu_count() OOMs mid-extract, which
+    triggers BrokenProcessPool retries and looks like a hang on
+    \"Extracting tables from the document\". Cap by ~1GB available RAM per worker.
+    """
+    cpus = _HOST_CPUS
+    avail = _available_ram_mb()
+    if avail is not None:
+        mem_cap = max(1, avail // 1024)
+        return max(1, min(cpus, mem_cap, 8))
+    return max(1, min(cpus, 4))
+
 
 # ── PyMuPDF extraction ───────────────────────────────────────────────────────
 TEXT_MIN_CHARS = 20
-CPU_WORKERS = 3  # capped for ~8GB RAM hosts (was min(cpu_count(), 8))
+# Was hard-coded to 3 for local ~8GB RAM laptops; scale with cores, capped by RAM.
+CPU_WORKERS = _env_int("PDF_CPU_WORKERS", _default_cpu_workers())
+# Pages per process-pool task. Smaller chunks → more frequent progress updates
+# and less work lost when a worker is OOM-killed.
+EXTRACT_CHUNK_PAGES = _env_int("PDF_EXTRACT_CHUNK_PAGES", 8)
 
 # ── LLM API (PDF validation + catalogue extractor) ───────────────────────────
 OPENAI_MODEL = "gpt-4o-mini"
 ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
-OPENAI_WORKERS = 6
-BATCH_SIZE = 5
-MAX_TOKENS_PER_PAGE = 5000
+# I/O-bound OpenAI calls — concurrency is not CPU-bound. Default high enough
+# that ~100+ uncertain pages finish in a few waves rather than a long queue.
+OPENAI_WORKERS = _env_int("PDF_OPENAI_WORKERS", 12)
+BATCH_SIZE = _env_int("PDF_LLM_BATCH_SIZE", 6)
+MAX_TOKENS_PER_PAGE = 4500
 SINGLE_PAGE_MAX_TOKENS = 7000
-RAW_TEXT_CHARS_PER_PAGE_BATCHED = 1500
-PDF_VALIDATION_RAW_TEXT_CHARS = 3000
+RAW_TEXT_CHARS_PER_PAGE_BATCHED = 1200
+PDF_VALIDATION_RAW_TEXT_CHARS = 2500
 LLM_VALIDATION_TEMPERATURE = 0
-BATCH_VALIDATION_MAX_TOKENS_CAP = 16000
+BATCH_VALIDATION_MAX_TOKENS_CAP = 18000
+# Rows of each candidate grid included in the LLM prompt (reconstruction still
+# uses full candidate grids in post-stamp alignment — this only shrinks prompt).
+LLM_PROMPT_MAX_ROWS = _env_int("PDF_LLM_PROMPT_MAX_ROWS", 25)
 
 # ── CLI sample paths (``python -m app.services.extraction.pdf``) ─────────────────
 _BACKEND_DIR = Path(__file__).resolve().parents[2]

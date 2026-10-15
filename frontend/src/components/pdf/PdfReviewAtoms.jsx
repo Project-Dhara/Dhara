@@ -90,16 +90,26 @@ export function ScrollToTopButton({ scrollRootRef }) {
 export function TableExpandPanel({ open, children }) {
   const [rendered, setRendered] = useState(open)
   const [expanded, setExpanded] = useState(open)
+  // Clip only while the row is collapsing/expanding. Keeping overflow-hidden
+  // after open finishes can permanently crop the table mid-row and hide the
+  // "+N more" control below it.
+  const [clipContent, setClipContent] = useState(!open)
 
   useEffect(() => {
     if (open) {
       setRendered(true)
+      setClipContent(true)
       const id = window.requestAnimationFrame(() => {
         window.requestAnimationFrame(() => setExpanded(true))
       })
-      return () => window.cancelAnimationFrame(id)
+      const release = window.setTimeout(() => setClipContent(false), 420)
+      return () => {
+        window.cancelAnimationFrame(id)
+        window.clearTimeout(release)
+      }
     }
     setExpanded(false)
+    setClipContent(true)
     const t = window.setTimeout(() => setRendered(false), 420)
     return () => window.clearTimeout(t)
   }, [open])
@@ -112,7 +122,7 @@ export function TableExpandPanel({ open, children }) {
         expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
       }`}
     >
-      <div className="min-h-0 overflow-hidden">
+      <div className={`min-h-0 ${clipContent ? 'overflow-hidden' : 'overflow-visible'}`}>
         <div
           className={`origin-top transition-[opacity,transform] duration-[380ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${
             expanded ? 'translate-y-0 opacity-100' : '-translate-y-1 opacity-0'
@@ -169,6 +179,49 @@ export function DeleteConfirmDialog({ count, onCancel, onConfirm, deleting }) {
             onClick={onConfirm}
           >
             Delete
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+
+export function LeaveProgressConfirmDialog({ onCancel, onConfirm }) {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+
+  if (!mounted) return null
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[1100] flex items-center justify-center bg-[rgba(16,64,63,0.52)] p-5"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="leave-preview-title"
+      aria-describedby="leave-preview-body"
+      onClick={onCancel}
+    >
+      <div
+        className="flex w-full max-w-[440px] flex-col gap-3.5 rounded-xl border border-line bg-white p-5 shadow-[0_16px_40px_rgba(16,64,63,0.18)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div id="leave-preview-title" className="text-[16px] font-bold text-ink">
+          Leave preview?
+        </div>
+        <p id="leave-preview-body" className="text-[13px] leading-snug text-ink-soft">
+          Your current progress will not be saved. Reviews, edits, and filters on this
+          preview will be lost if you continue to Files or upload another file.
+        </p>
+        <div className="flex items-center justify-end gap-2.5">
+          <Button variant="secondary" size="sm" onClick={onCancel}>Stay on preview</Button>
+          <Button
+            variant="primary"
+            size="sm"
+            className="!bg-[#c45c4a] hover:!bg-[#a84a3b]"
+            onClick={onConfirm}
+          >
+            Leave anyway
           </Button>
         </div>
       </div>

@@ -46,7 +46,7 @@ export default function NcoSuggestPanel({
             </h2>
             <p className="m-0 mt-1 max-w-[36rem] text-[13px] leading-snug text-ink-soft">
               {needsStandard
-                ? 'Occupation matching needs a classification file uploaded and selected in Settings. Or fill definitions with AI without NCO codes.'
+                ? 'Occupation matching needs a classification standard selected in Settings. Or fill definitions with AI without NCO codes.'
                 : 'Fills Code and Definition from the suggested NCO code and title.'}
             </p>
           </div>

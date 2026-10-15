@@ -1,11 +1,11 @@
-"""User-uploaded classification concordance CSVs stored in Postgres.
+"""Classification standards stored in Postgres (uploads + bundled NCO 2015).
 
 Matching still reads the active working set from ``nco_2015_codes`` (unchanged
 suggestion logic). Selecting a standard replaces that table from the stored
-upload so Classify uses the steward's chosen file.
+rows so Classify uses the steward's chosen standard.
 
-When ``backend/data/nco_2015_concordance.csv`` is present, it is auto-registered
-as an ``NCO 2015`` standard so it appears in Settings without a manual upload.
+Bundled ``NCO 2015`` is auto-registered from backend data when present, so it
+appears in Settings already configured without a manual upload.
 """
 from __future__ import annotations
 
@@ -16,8 +16,7 @@ import re
 
 import psycopg2.extras
 
-# Same columns as the NCO 2015 concordance template (see
-# backend/data/nco_2015_concordance.csv.example).
+# Same columns as the NCO 2015 template (see backend/data/*.example).
 REQUIRED_COLUMNS = ("NCO_2015_Code", "Occupation_Title")
 OPTIONAL_COLUMNS = (
     "Division_Code",
@@ -53,7 +52,7 @@ def _clear_matching_cache():
 
 
 def parse_concordance_csv(content: bytes | str) -> list[tuple]:
-    """Parse a concordance CSV into insert tuples for nco_2015_codes shape.
+    """Parse a classification CSV into insert tuples for nco_2015_codes shape.
 
     Raises ValueError with a steward-facing message on bad input.
     """
@@ -70,7 +69,7 @@ def parse_concordance_csv(content: bytes | str) -> list[tuple]:
         raise ValueError(
             "CSV is missing required columns: "
             + ", ".join(missing)
-            + ". Expected the NCO concordance layout "
+            + ". Expected the NCO layout "
             "(NCO_2015_Code, Occupation_Title, Division_*, SubDivision_*, …)."
         )
     rows = []
@@ -299,7 +298,7 @@ def ensure_selected_loaded(conn) -> int:
 
 
 def resolve_concordance_csv_path(csv_path: str | None = None) -> str | None:
-    """Return the first existing concordance CSV path, or None."""
+    """Return the first existing bundled NCO data path, or None."""
     candidates = []
     if csv_path:
         candidates.append(csv_path)
@@ -316,10 +315,11 @@ def ensure_bundled_nco_standard(
     csv_path: str | None = None,
     name: str = BUNDLED_NCO_STANDARD_NAME,
 ) -> dict | None:
-    """Auto-register a local concordance CSV as a classification standard.
+    """Auto-register bundled NCO 2015 as a classification standard.
 
-    No-op when the file is missing or a standard with ``name`` already exists.
-    Selects the new standard only when nothing else is already selected.
+    No-op when the backend data file is missing or a standard with ``name``
+    already exists. Selects the new standard only when nothing else is already
+    selected.
     """
     path = resolve_concordance_csv_path(csv_path)
     if not path:
@@ -348,7 +348,7 @@ def ensure_bundled_nco_standard(
         name=display_name,
         csv_bytes=raw,
         original_filename=None,
-        description="Auto-loaded from backend concordance CSV",
+        description="Pre-configured from backend",
         uploaded_by="system",
         select=not has_selected,
     )

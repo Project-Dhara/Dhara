@@ -1,8 +1,9 @@
 """Streamable HTTP ASGI surface for the catalogue MCP tools.
 
 Mounted on the FastAPI app at ``/mcp`` and ``/mcp/`` (same ports as today).
-Auth mirrors ``/api/v1`` by default (Bearer JWT). Optional long-lived
-``MCP_AUTH_TOKEN``, or ``MCP_HTTP_AUTH=off`` for open read-only demos.
+Published catalogue reads are open by default (``MCP_HTTP_AUTH=off``) so
+Claude / Cursor connectors can attach by URL. Set ``jwt`` for Bearer JWT,
+``token`` for ``MCP_AUTH_TOKEN``, or keep ``off`` for open demos.
 """
 from __future__ import annotations
 
@@ -21,17 +22,19 @@ from . import mcp
 
 
 def _auth_mode() -> str:
-    """``jwt`` (default), ``token`` (MCP_AUTH_TOKEN only), or ``off``.
+    """``off`` (default), ``jwt``, or ``token`` (MCP_AUTH_TOKEN only).
 
-    Default matches Settings / OpenAPI: Bearer JWT required. Use
-    ``MCP_HTTP_AUTH=off`` only for trusted demos.
+    Open by default so remote MCP clients (Claude custom connector, Cursor)
+    can connect without OAuth. Dhara does not yet expose an OAuth AS / DCR
+    endpoint; a 401 from ``jwt`` mode makes Claude try client registration
+    and fail with "Couldn't register with Dhara's sign-in service".
     """
     from app.core.config import get_settings
 
     env = (os.environ.get("MCP_HTTP_AUTH") or "").strip().lower()
     if env:
         return env
-    return (get_settings().mcp_http_auth or "jwt").strip().lower()
+    return (get_settings().mcp_http_auth or "off").strip().lower()
 
 
 def _static_token() -> str:

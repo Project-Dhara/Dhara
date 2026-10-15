@@ -11,6 +11,8 @@ import PdfConsoleLayout from './PdfConsoleLayout'
 import GroupingWorkspace from '../console/GroupingWorkspace'
 import PostPreviewLaterSteps from '../console/PostPreviewLaterSteps'
 import ConsoleStatusPlaceholder from '../console/ConsoleStatusPlaceholder'
+import StageSubstepBreadcrumb from '../console/StageSubstepBreadcrumb'
+import { METADATA_CRUMBS } from '../console/ConsoleStages'
 import ErrorBanner from '../ui/ErrorBanner'
 import { STATUS_TRANSITIONS } from '../../lib/consoleStatusTransitions'
 import {
@@ -405,7 +407,16 @@ export default function PdfGrouping({ jobId }) {
       {pipelineStep === 3 && (
         <div className="flex flex-col gap-[18px]">
           <div className="min-w-0">
-            <div className="font-display text-[26px] font-medium leading-tight text-ink">Group tables</div>
+            <StageSubstepBreadcrumb
+              crumbs={METADATA_CRUMBS}
+              activeId="grouping"
+              onNavigate={(next) => {
+                if (next === 'metadata') goToPipelineStep(4)
+              }}
+              isReachable={(crumb) => crumb.id === 'grouping' || maxStepReached >= 4}
+              ariaLabel="Metadata workspace"
+              size="page"
+            />
             <div className="mt-1.5 text-[13px] font-medium text-ink">
               {filename || 'PDF report'}
               <span className="font-normal text-ink-soft">

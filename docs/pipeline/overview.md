@@ -59,9 +59,9 @@ modules are product configuration (not deploy env vars).
 
 | Module | Settings tab / card | Effect on the pipeline |
 |--------|---------------------|------------------------|
-| **Dataset ID configuration** | Dataset ID configuration | Prefix, separator, and statistics domain used when minting / displaying dataset IDs in Preview and publish |
+| **Dataset ID configuration** | Dataset ID configuration | Prefix, separator, and statistics domain for sequential dataset IDs (`{prefix}_{stats}_{NNNNN}`) stamped at extract and kept at publish |
 | **Metadata configuration** | Metadata configuration | Chooses **NMDS** vs **SDG** schema; marks which catalogue fields are required before submit |
-| **Classification code configuration** | Classification code configuration | Uploads concordance / code-list CSVs into Postgres for stage 7 harmonisation |
+| **Classification code configuration** | Classification code configuration | Bundled NCO 2015 plus uploaded code-list CSVs in Postgres for stage 7 harmonisation |
 | **MEITY-empanelled LLM** | LLM card | Enables reconstruction, metadata autofill, matching, and related AI proposals when a key is set |
 
 | Module | Primary stages |

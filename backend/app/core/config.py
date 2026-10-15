@@ -127,7 +127,9 @@ def get_settings() -> Settings:
         storage_backend=storage_backend,
         embedding_dim=_env_int("EMBEDDING_DIM", 1536),
         llm_credentials_key=(os.environ.get("LLM_CREDENTIALS_KEY") or "").strip(),
-        mcp_http_auth=(os.environ.get("MCP_HTTP_AUTH") or "jwt").strip().lower(),
+        # Default off so Claude/Cursor connectors can attach by URL without OAuth.
+        # Set MCP_HTTP_AUTH=jwt (or token) to lock the endpoint.
+        mcp_http_auth=(os.environ.get("MCP_HTTP_AUTH") or "off").strip().lower(),
         mcp_auth_token=(os.environ.get("MCP_AUTH_TOKEN") or "").strip(),
         dhara_llm_provider=(
             (os.environ.get("DHARA_LLM_PROVIDER") or "").strip().lower() or None

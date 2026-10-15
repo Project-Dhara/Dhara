@@ -69,36 +69,38 @@ export default function CodeListEditor({
             {highlightIncomplete ? ' · empty fields highlighted' : ''}
           </div>
         </div>
-        {!occupation ? (
+        <div className="flex flex-none flex-wrap items-center justify-end gap-2">
           <button
             type="button"
-            className="h-8 flex-none rounded-md border-0 bg-teal px-3 text-[12.5px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]"
+            className="h-8 rounded-md border-0 bg-teal px-3 text-[12.5px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]"
             disabled={fillAiLoading || !codes.length}
             onClick={onFillAi}
+            title="Fill codes and definitions for this column"
           >
             {fillAiLoading ? 'Filling…' : 'Fill with AI'}
           </button>
-        ) : (
-          <div className="flex flex-none items-center gap-2">
-            <button
-              type="button"
-              className="h-8 rounded-md border-0 bg-teal px-3 text-[12.5px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]"
-              disabled={ncoLoading || codes.length === 0}
-              onClick={onSuggestNco}
-            >
-              {ncoLoading ? 'Matching…' : 'Suggest NCO codes'}
-            </button>
-            <button
-              type="button"
-              className="h-8 rounded-md border border-line bg-white px-2.5 text-[12px] font-semibold text-ink-soft transition-colors hover:border-teal/40 hover:text-teal-deep disabled:cursor-default disabled:opacity-45"
-              disabled={!canPreview}
-              title={canPreview ? 'Show suggestion results' : 'Run Suggest NCO codes first'}
-              onClick={() => setPreviewOpen(true)}
-            >
-              Show results
-            </button>
-          </div>
-        )}
+          {occupation && (
+            <>
+              <button
+                type="button"
+                className="h-8 rounded-md border-0 bg-teal px-3 text-[12.5px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]"
+                disabled={ncoLoading || codes.length === 0}
+                onClick={onSuggestNco}
+              >
+                {ncoLoading ? 'Matching…' : 'Suggest NCO codes'}
+              </button>
+              <button
+                type="button"
+                className="h-8 rounded-md border border-line bg-white px-2.5 text-[12px] font-semibold text-ink-soft transition-colors hover:border-teal/40 hover:text-teal-deep disabled:cursor-default disabled:opacity-45"
+                disabled={!canPreview}
+                title={canPreview ? 'Show suggestion results' : 'Run Suggest NCO codes first'}
+                onClick={() => setPreviewOpen(true)}
+              >
+                Show results
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="mx-[18px] mb-3 max-h-[min(360px,50vh)] overflow-auto rounded-md border border-[#cfc6b4]">

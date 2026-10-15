@@ -16,7 +16,7 @@ Catalogue → API → MCP (agents)
 |---------|-----------|
 | **Catalogue UI** | Browse **published groups (releases)**; download ZIP of all tables + classifications |
 | **REST API (v1)** | JWT-protected query routes under `/api/v1` (tables still addressable by dataset id) |
-| **MCP (HTTP)** | Streamable HTTP at **`/mcp`** on the same deploy (Bearer JWT by default) |
+| **MCP (HTTP)** | Streamable HTTP at **`/mcp`** on the same deploy (open published reads by default) |
 | **MCP (stdio)** | `python -m app.mcp` from `backend/` |
 | **des-website** | External consumer of the same catalogue DB |
 

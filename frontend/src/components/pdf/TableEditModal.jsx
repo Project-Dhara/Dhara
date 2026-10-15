@@ -17,6 +17,7 @@ import {
   listExistingHeaderGroups,
   resolveEditorBodySpans,
   selectionRect,
+  tableSupportsPdfReference,
 } from '../../lib/pdfReviewHelpers'
 import { AutoGrowTextarea, EditorToolBtn, ExtractedDataCell } from './ExtractedTableGrid'
 import { EditorZoomControls, PdfTableSnapshot } from './PdfReferenceViewer'
@@ -75,8 +76,9 @@ export function TableEditModal({
   const [sel, setSel] = useState(null)
   const [hdrSel, setHdrSel] = useState(null) // { start, end, levelIdx }
   const [dropHint, setDropHint] = useState(null) // { index, mode }
+  const canComparePdf = Boolean(jobId) && tableSupportsPdfReference(table)
   const [comparePdf, setComparePdf] = useState(false)
-  const [showCompareTip, setShowCompareTip] = useState(variant === 'page' && Boolean(jobId))
+  const [showCompareTip, setShowCompareTip] = useState(variant === 'page' && canComparePdf)
   const [interactionMode, setInteractionMode] = useState('edit') // 'edit' | 'view'
   const canEdit = interactionMode === 'edit'
   const [splitPct, setSplitPct] = useState(42)
@@ -496,7 +498,7 @@ export function TableEditModal({
             </div>
           </div>
           <div className="flex items-center gap-1.5">
-            {jobId ? (
+            {canComparePdf ? (
             <div className="relative">
           <button
             type="button"
@@ -663,7 +665,7 @@ export function TableEditModal({
             </>
           ) : null}
           <span className="ml-auto hidden max-w-[280px] truncate text-[11px] text-ink-soft sm:inline" title={selectionLabel}>
-            {!canEdit ? 'View mode · Compare and zoom still work' : selectionLabel}
+            {!canEdit ? (canComparePdf ? 'View mode · Compare and zoom still work' : 'View mode · Zoom still works') : selectionLabel}
           </span>
         </div>
 
@@ -672,7 +674,7 @@ export function TableEditModal({
           ref={workspaceRef}
           className={`flex min-h-0 flex-1 ${comparePdf ? 'flex-col lg:flex-row' : 'flex-col'}`}
         >
-          {comparePdf ? (
+          {canComparePdf && comparePdf ? (
             <>
               <div
                 className="flex min-h-0 min-w-0 flex-col border-line bg-[#FFFCF6] max-lg:border-b"
@@ -735,7 +737,7 @@ export function TableEditModal({
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-line bg-white px-3 py-1.5">
               <div className="text-[11px] font-bold uppercase tracking-wide text-ink-soft">
-                {comparePdf ? 'Extracted table (editable)' : 'Worksheet'}
+                {canComparePdf && comparePdf ? 'Extracted table (editable)' : 'Worksheet'}
               </div>
               <div className="flex items-center gap-2">
                 <EditorZoomControls zoom={tableZoom} onChange={setTableZoom} label="Table zoom" />

@@ -335,17 +335,16 @@ export default function Settings({
               </div>
             </div>
             <div className="rounded-lg border border-line bg-[#FFFCF6] px-3 py-2.5 text-[12.5px] text-ink-soft">
-              Example table ID:{' '}
+              Example catalogue ID:{' '}
               <span className="font-mono text-[12px] font-semibold text-ink">
                 {[
                   datasetIdConfig.prefix,
                   statisticsShortForm(datasetIdConfig.statistics),
-                  '1',
-                  'P79',
+                  '00042',
                 ].join(datasetIdConfig.separator || '_')}
               </span>
               <span className="mt-1 block text-[11.5px]">
-                Prefix + statistics short form + source stem + page. A <span className="font-mono">T#</span> suffix is added only when several tables share the same file and page.
+                Prefix + statistics short form + a zero-padded sequence (e.g. 00042). Assigned when tables are extracted, shown in Preview, and kept at publish. Numbers are never reused.
               </span>
             </div>
             <div className="flex items-center gap-3.5">
@@ -524,8 +523,8 @@ export default function Settings({
         {activeTab === 'classification' && (
           <>
             <div className="-mt-2.5 text-sm text-ink-soft">
-              You can also upload more CSVs — select which standard Classify
-              should use for suggestions.
+              NCO 2015 is pre-configured from the backend. You can upload more
+              CSVs and select which standard Classify should use for suggestions.
             </div>
 
             <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-white">

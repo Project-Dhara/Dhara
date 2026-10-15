@@ -66,6 +66,65 @@ _CAPTION_LABEL_PREFIX_SPACE_RE = re.compile(
 
 _BBOX_TITLE_MAX_GAP_PT = 140.0
 
+# Spreadsheet unit_context appends these; they must never become display titles.
+_CONTEXT_META_LINE_RE = re.compile(
+    r"^(?:source\s+file|sheet)\s*:",
+    re.I,
+)
+
+def _is_context_meta_line(line: str) -> bool:
+    s = _normalize_title_line(line)
+    return bool(s) and bool(_CONTEXT_META_LINE_RE.match(s))
+
+def _line_mentions_column(line: str, col_name: str) -> bool:
+    """True when ``col_name`` appears as a whole token/phrase in ``line``.
+
+    Substring checks falsely treat ``Sheet: MySheetName`` as the header row
+    when a column is named ``Name``.
+    """
+    low = (line or "").lower()
+    cue = _normalize_title_line(col_name).lower()
+    if not low or not cue or len(cue) < 2:
+        return False
+    return bool(re.search(rf"(?<![a-z0-9]){re.escape(cue)}(?![a-z0-9])", low))
+
+def title_looks_like_gibberish(title: Optional[str]) -> bool:
+    """True for corrupted / nonsense titles that must never be shown as captions.
+
+    Covers private-use glyphs, mojibake, sheet/source meta leftovers, extreme
+    symbol density, and repeated-token spam from bad merge-fill context.
+    """
+    s = _normalize_title_line(title or "")
+    if not s:
+        return False
+    if _is_context_meta_line(s):
+        return True
+    # Private-use / replacement / common mojibake pairs.
+    if re.search(r"[\ue000-\uf8ff\ufffd]", s):
+        return True
+    if re.search(r"[\u00c0-\u00ff]{2,}", s) and not re.search(r"[A-Za-z]{3,}", s):
+        return True
+    letters = [c for c in s if c.isalpha()]
+    if letters:
+        # Mostly non-letter noise (symbols / digits / punctuation).
+        if len(letters) / max(len(s), 1) < 0.35 and len(s) >= 8:
+            return True
+        # Random consonant soup with almost no vowels (latin scripts).
+        vowels = sum(1 for c in letters if c.lower() in "aeiou")
+        if len(letters) >= 10 and vowels / len(letters) < 0.12:
+            return True
+    words = s.split()
+    if len(words) >= 4:
+        uniq = {w.lower() for w in words}
+        # Same token repeated across the line (merge-fill / OCR stutter).
+        if len(uniq) <= max(1, len(words) // 3):
+            return True
+    # Truncated wrap crumbs / lone punctuation shells.
+    if re.fullmatch(r"[\W\d_\-–—·|./]+", s):
+        return True
+    return False
+
+
 def title_needs_review(
     title: Optional[str],
     columns: Optional[List[Any]] = None,
@@ -87,6 +146,8 @@ def title_needs_review(
     t = strip_caption_label_prefix(title) or ""
     t = _normalize_title_line(t)
     if not t:
+        return True
+    if title_looks_like_gibberish(t):
         return True
     if _is_caption_id_only(t) or _is_column_group_banner(t):
         return True
@@ -637,6 +698,8 @@ def _title_from_page_lines(
     Returns (title, source, banner_table_id).
     """
     for i, ln in enumerate(lines):
+        if _is_context_meta_line(ln):
+            continue
         if not _matches_extended_caption(ln):
             continue
         if _is_caption_id_only(ln):
@@ -660,16 +723,19 @@ def _title_from_page_lines(
             return ln, "heuristic_table_caption", None
 
     header_idx = None
-    col_lower = {c.lower() for c in col_names[:3] if c}
+    col_cues = [c for c in col_names[:3] if c]
+    col_lower = {c.lower() for c in col_cues}
     for i, ln in enumerate(lines):
-        low = ln.lower()
-        if col_lower and any(c in low for c in col_lower):
-            if sum(1 for c in col_lower if c in low) >= 1:
-                header_idx = i
-                break
+        if _is_context_meta_line(ln):
+            continue
+        if col_cues and any(_line_mentions_column(ln, c) for c in col_cues):
+            header_idx = i
+            break
     if header_idx is not None and header_idx > 0:
         for j in range(header_idx - 1, max(-1, header_idx - 8), -1):
             candidate = lines[j]
+            if _is_context_meta_line(candidate):
+                continue
             if candidate.lower() in col_lower:
                 continue
             if _is_weak_inferred_title(candidate, col_names):
@@ -688,7 +754,7 @@ def _title_from_page_lines(
 def _looks_like_heading(line: str) -> bool:
     """Heuristic: short Title Case / ALL CAPS / few words, not a sentence."""
     s = _normalize_title_line(line)
-    if _is_chrome_title_line(s):
+    if _is_context_meta_line(s) or _is_chrome_title_line(s):
         return False
     # Truncated wrap from a column header (e.g. "Direc-") is not a heading.
     if re.search(r"[–—\-]$", s):
@@ -791,5 +857,6 @@ __all__ = [
     "infer_title_from_page_text",
     "infer_title_meta_from_page_text",
     "strip_caption_label_prefix",
+    "title_looks_like_gibberish",
     "title_needs_review",
 ]

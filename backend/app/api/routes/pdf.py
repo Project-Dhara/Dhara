@@ -127,9 +127,9 @@ async def pdf_job_status(job_id: str, user: CurrentUser = Depends(require_user))
 @router.get("/api/pdf/jobs/{job_id}/result")
 async def pdf_job_result(job_id: str, user: CurrentUser = Depends(require_user)):
     """Flattens the pipeline's page-keyed output into one list of tables for
-    the review screen, each tagged with a stable table_id ("{page}-{index}")
-    and merged with any reviewer edits already saved via the PATCH endpoint
-    below. Table data (rows) is never modified by review -- only
+    the review screen. Each table has a sequential dataset id
+    (``{prefix}_{stats}_{NNNNN}``) stamped at extract (or upgraded on load).
+    Table data (rows) is never modified by review -- only
     classification/human_review_* fields are ever patched."""
     with _pdf_jobs_lock:
         job = _get_pdf_job(job_id)
@@ -138,6 +138,7 @@ async def pdf_job_result(job_id: str, user: CurrentUser = Depends(require_user))
         if job["status"] not in ("done", "completed_with_errors"):
             raise HTTPException(409, f"Job not finished yet (status={job['status']})")
         filename = job["filename"]
+        # Ensures sequential ``{prefix}_{stats}_{NNNNN}`` ids (upgrades legacy).
         tables = _pdf_tables_from_job(job)
     return {"job_id": job_id, "filename": filename, "tables": tables, "is_batch": job.get("source_type") == "batch"}
 

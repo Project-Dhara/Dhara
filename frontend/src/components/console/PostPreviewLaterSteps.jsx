@@ -1,11 +1,12 @@
 'use client'
 
 import { useRef } from 'react'
-import { ArrowLeft } from 'lucide-react'
 import BatchReview from './BatchReview'
 import Classify from './Classify'
 import Publish from './Publish'
 import ClassifyBreadcrumb from './classify/ClassifyBreadcrumb'
+import StageSubstepBreadcrumb from './StageSubstepBreadcrumb'
+import { METADATA_CRUMBS } from './ConsoleStages'
 
 /**
  * Shared metadata → classify → harmonise → publish steps (Excel reference flow).
@@ -56,15 +57,16 @@ export default function PostPreviewLaterSteps({
         <div style={{ display: step === 4 ? (showMetadataHeading ? 'flex' : 'contents') : 'none' }} className={showMetadataHeading ? 'flex-col gap-[18px]' : undefined}>
           {showMetadataHeading && step === 4 && (
             <div className="min-w-0">
-              <button
-                type="button"
-                className="mb-3.5 inline-flex items-center gap-1.5 text-[15px] font-semibold text-teal hover:text-teal-dark"
-                onClick={onBackToGrouping}
-              >
-                <ArrowLeft className="h-4 w-4" strokeWidth={2} aria-hidden />
-                Back to grouping
-              </button>
-              <div className="font-display text-[26px] font-medium leading-tight text-ink">Metadata</div>
+              <StageSubstepBreadcrumb
+                crumbs={METADATA_CRUMBS}
+                activeId="metadata"
+                onNavigate={(next) => {
+                  if (next === 'grouping') onBackToGrouping?.()
+                }}
+                isReachable={(crumb) => crumb.id === 'grouping' || crumb.id === 'metadata'}
+                ariaLabel="Metadata workspace"
+                size="page"
+              />
             </div>
           )}
           <BatchReview
@@ -81,16 +83,6 @@ export default function PostPreviewLaterSteps({
 
       {onClassifySteps && showClassifyHeading && (
         <div className="min-w-0">
-          {step === 6 && (
-            <button
-              type="button"
-              className="mb-3.5 inline-flex items-center gap-1.5 text-[15px] font-semibold text-teal hover:text-teal-dark"
-              onClick={() => onClassifyPhaseChange?.('classification')}
-            >
-              <ArrowLeft className="h-4 w-4" strokeWidth={2} aria-hidden />
-              Back to classification
-            </button>
-          )}
           <ClassifyBreadcrumb
             phase={phase}
             canOpenHarmonisation={classificationComplete}

@@ -40,9 +40,10 @@ Grouping (which persists approved tables).
 Console Preview + ID/title reconciliation (`ReconcileIds`) before grouping.
 Staging may use `extract_staging` between extract and catalogue push.
 
-Dataset IDs shown / edited in Preview follow **Settings → Dataset ID
-configuration** (prefix, separator, statistics). Full table structure edits use
-the shared View/Edit table editor.
+Dataset IDs follow **Settings → Dataset ID configuration** as
+`{prefix}_{stats}_{NNNNN}` (e.g. `DDI_DES_DEL_VS_00042`). They are allocated
+when tables are extracted, shown in Preview, stored on publish, and never
+reused. Full table structure edits use the shared View/Edit table editor.
 
 ## Configuration modules
 

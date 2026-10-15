@@ -29,12 +29,18 @@ from app.services.extraction.pdf.confidence_validation.table_confidence import t
 
 
 def _stamp_bbox_from_candidate(table: Dict[str, Any], cand: Optional[Dict[str, Any]]) -> None:
-    """Copy bbox from a ruled candidate onto a validated table dict."""
+    """Copy bbox / spreadsheet provenance from a ruled candidate onto a table."""
     if not cand:
         return
     bb = cand.get("bbox")
     if bb and len(bb) >= 4 and not table.get("bbox"):
         table["bbox"] = [float(x) for x in bb[:4]]
+    # Excel/CSV LLM validation used to drop these — Preview then hid "Sheet …"
+    # under the title for ambiguous-column (LLM-reviewed) tables.
+    if cand.get("sheet") and not table.get("sheet"):
+        table["sheet"] = cand.get("sheet")
+    if cand.get("source_file") and not table.get("source_file"):
+        table["source_file"] = cand.get("source_file")
 
 
 _COL_INDEX_STRIP_RE = re.compile(r"^\(\d+\)$")
@@ -384,13 +390,18 @@ def _measure_numeric_fill_ratio(columns: List[Dict[str, Any]], rows: List[List[A
 
 
 def _dataframe_numeric_fill_ratio(df: pd.DataFrame) -> float:
-    """ADDED: rough numeric density for a pymupdf candidate DataFrame."""
+    """ADDED: rough numeric density for a pymupdf candidate DataFrame.
+
+    Iterate by column *position* — ``df[col]`` returns a DataFrame (no
+    ``.tolist()``) when headers are duplicated, which previously crashed
+    LLM stamp and forced slow per-page fallback for whole batches.
+    """
     if df is None or df.empty:
         return 0.0
     total = 0
     ok = 0
-    for col in df.columns:
-        for v in df[col].tolist():
+    for i in range(int(df.shape[1])):
+        for v in df.iloc[:, i].tolist():
             flag = _cell_is_numeric(v)
             if flag is None:
                 continue

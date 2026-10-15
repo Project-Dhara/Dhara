@@ -98,9 +98,9 @@ def create_app() -> FastAPI:
             "## MCP\n\n"
             "Remote Streamable HTTP: **`/mcp`** "
             "(tools: search_datasets, get_metadata, get_table). "
-            "Requires Bearer JWT by default "
-            "(`MCP_HTTP_AUTH=jwt`; use `token` with `MCP_AUTH_TOKEN`, "
-            "or `off` only for trusted demos). "
+            "Open for published reads by default "
+            "(`MCP_HTTP_AUTH=off`; set `jwt` for Bearer JWT, or `token` "
+            "with `MCP_AUTH_TOKEN`). "
             "Local stdio: `python -m app.mcp` from `backend/`."
         ),
         openapi_tags=OPENAPI_TAGS,
@@ -137,6 +137,20 @@ def create_app() -> FastAPI:
 
     @application.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str):
+        # Never serve the SPA for OAuth / OIDC discovery probes. Claude and
+        # other MCP brokers fetch /.well-known/*; HTML here looks like a
+        # broken authorization server and fails client registration.
+        if full_path == ".well-known" or full_path.startswith(".well-known/"):
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": "not_found",
+                    "message": (
+                        "No OAuth discovery document at this path. "
+                        "HTTP MCP is open by default (MCP_HTTP_AUTH=off)."
+                    ),
+                },
+            )
         if _INDEX_HTML.exists():
             return FileResponse(str(_INDEX_HTML))
         raise HTTPException(

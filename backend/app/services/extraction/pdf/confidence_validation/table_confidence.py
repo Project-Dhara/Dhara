@@ -137,6 +137,11 @@ def looks_like_chart_candidate(
     Guard-only: real ruled statistical tables (sex-by-age, year×rate, …) should
     return False. Charts typically yield very wide sparse numeric grids and/or
     sit under Graph/Chart captions with filled bar rectangles.
+
+    Cheap structural checks run first. ``page.get_drawings()`` (via fat-rect
+    counting) is deferred until structure alone cannot decide — that call is
+    pathological on graphics-heavy survey pages and was the main extract-stage
+    stall for multi-MB PDFs.
     """
     if df is None or getattr(df, "empty", True):
         return False, ""
@@ -145,8 +150,6 @@ def looks_like_chart_candidate(
     except Exception:
         cleaned = df
     n_rows, n_cols = cleaned.shape
-    fat = _count_fat_rects_in_bbox(page, bbox)
-    caption_local = _local_chart_caption(page, bbox)
 
     cols = [_cell_str(c) for c in cleaned.columns]
     numeric_hdr = sum(1 for c in cols if _header_looks_numeric_fragment(c))
@@ -160,12 +163,14 @@ def looks_like_chart_candidate(
         # Compact grids are almost never chart false-positives. Highlighted
         # cells / decorative fills inside real statement tables (Cause of
         # Death, Sl. No., Male/Female, …) create many "fat" rects — keep those
-        # when ≥2 text headers are present.
+        # when ≥2 text headers are present. Skip drawings entirely in that case.
         if text_hdr >= 2:
             return False, ""
+        fat = _count_fat_rects_in_bbox(page, bbox)
         if fat >= 8:
             return True, f"dense filled rectangles in region ({fat})"
         return False, ""
+
     wide_sparse = (
         (n_cols >= 20 and n_rows <= 10)
         or (n_cols >= 12 and n_cols >= max(12, int(n_rows * 5)))
@@ -177,13 +182,20 @@ def looks_like_chart_candidate(
             f"chart-like grid {n_rows}x{n_cols} "
             f"(numeric headers {numeric_hdr}/{n_cols}, text headers {text_hdr})"
         )
+    # Real wide statistical tables (many named columns) never need drawing scans.
+    if text_hdr >= 2 and not wide_sparse:
+        return False, ""
+    if not (wide_sparse or header_smoke or (n_cols >= 10 and text_hdr <= 1)):
+        return False, ""
+
+    fat = _count_fat_rects_in_bbox(page, bbox)
+    caption_local = _local_chart_caption(page, bbox)
     if fat >= 6 and (wide_sparse or header_smoke or caption_local):
         return True, f"chart bars in region (fat_rects={fat})"
     if caption_local and (wide_sparse or header_smoke or fat >= 3):
         return True, "Graph/Chart caption over non-tabular region"
     if caption_local and n_cols >= 10 and text_hdr <= 1:
         return True, "Graph/Chart caption with label-less wide grid"
-    # Page mentions Graph/Chart and this candidate is a wide numeric crumb grid.
     if page_text and _CHART_CAPTION_RE.search(page_text) and wide_sparse and header_smoke:
         return True, "page Graph/Chart caption with chart-like grid"
     return False, ""

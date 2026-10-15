@@ -60,6 +60,10 @@ def _coerce_reason(raw: Any) -> Optional[str]:
         return "uncertain_extraction"
     if "ambig" in s:
         return "ambiguous_column"
+    if "filled" in s and ("ai" in s or "llm" in s):
+        return "title_filled_by_ai"
+    if "title" in s and ("ai" in s or "llm" in s or "filled" in s):
+        return "title_filled_by_ai"
     if "title" in s:
         return "uncertain_title"
     return None
@@ -332,11 +336,16 @@ def derive_human_review_needed(table: Dict[str, Any]) -> tuple[bool, Optional[st
     grouping."""
     reasons_present: set = set()
 
-    if title_needs_review(table.get("title"), table.get("columns") or []):
+    if table.get("title_filled_by_ai"):
+        # AI proposed a crisp title from content — steward should confirm.
+        reasons_present.add("title_filled_by_ai")
+    elif title_needs_review(table.get("title"), table.get("columns") or []):
         reasons_present.add("uncertain_title")
 
     if table.get("semantic_status") != "classified":
-        # Auto-accepted path: only surface missing-title review.
+        # Auto-accepted path: only surface title-related review.
+        if "title_filled_by_ai" in reasons_present:
+            return True, "title_filled_by_ai"
         if "uncertain_title" in reasons_present:
             return True, "uncertain_title"
         return False, None

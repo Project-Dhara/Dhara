@@ -20,6 +20,11 @@ export default function ColumnChipGrid({
   saving,
   incompleteNames,
   highlightIncomplete = false,
+  fillAllAiLoading = false,
+  fillAiBusy = false,
+  fillAllAiError = '',
+  canFillAll = false,
+  onFillAllAi,
 }) {
   const unmapped = incompleteNames instanceof Set ? incompleteNames : new Set(incompleteNames || [])
   const [expanded, setExpanded] = useState(false)
@@ -72,13 +77,27 @@ export default function ColumnChipGrid({
 
   return (
     <>
-      <div className={cardHeadClass}>
-        <span>Classified columns</span>
-        <span className={cardNoteClass}>
-          {mappedCount}/{columns.length} mapped
-          {unmapped.size > 0 ? ` · ${unmapped.size} unmapped` : ''}
-          {saving ? ' · saving…' : ''}
-        </span>
+      <div className={`${cardHeadClass} justify-between`}>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span>Classified columns</span>
+          <span className={cardNoteClass}>
+            {mappedCount}/{columns.length} mapped
+            {unmapped.size > 0 ? ` · ${unmapped.size} unmapped` : ''}
+            {saving ? ' · saving…' : ''}
+            {fillAllAiError ? ` · ${fillAllAiError}` : ''}
+          </span>
+        </div>
+        {onFillAllAi && (
+          <button
+            type="button"
+            className="h-8 flex-none rounded-md border-0 bg-teal px-3 text-[12.5px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]"
+            disabled={fillAiBusy || !canFillAll}
+            onClick={onFillAllAi}
+            title="Fill codes and definitions for every classified column"
+          >
+            {fillAllAiLoading ? 'Filling all…' : 'Fill all with AI'}
+          </button>
+        )}
       </div>
 
       <div className="flex flex-col gap-2.5 border-b border-line px-[18px] py-3.5">

@@ -23,6 +23,27 @@ export function isDocumentScroller(el) {
 }
 
 
+/** Scroll ``el`` so it sits just below a sticky header inside its scrollport. */
+export function scrollElementIntoViewBelowSticky(
+  el,
+  stickyEl,
+  { behavior = 'smooth', gap = 12 } = {},
+) {
+  if (!el || typeof window === 'undefined') return
+  const scroller = getScrollParent(el)
+  const stickyH = stickyEl?.getBoundingClientRect?.().height ?? 0
+  const elRect = el.getBoundingClientRect()
+  if (isDocumentScroller(scroller)) {
+    const top = window.scrollY + elRect.top - stickyH - gap
+    window.scrollTo({ top: Math.max(0, top), behavior })
+    return
+  }
+  const scrollerRect = scroller.getBoundingClientRect()
+  const top = scroller.scrollTop + (elRect.top - scrollerRect.top) - stickyH - gap
+  scroller.scrollTo({ top: Math.max(0, top), behavior })
+}
+
+
 export const CLASSIFICATION_LABELS = {
   domain: 'Domain', subject: 'Subject', entity: 'Entity', table_type: 'Table type',
   geography: 'Geography', time_period: 'Time period', frequency: 'Frequency', unit: 'Unit',
@@ -38,6 +59,7 @@ export const REASON_LABELS = {
   uncertain_extraction: 'Uncertain extraction',
   ambiguous_column: 'Ambiguous column',
   uncertain_concept: 'Uncertain concept',
+  title_filled_by_ai: 'Title filled by AI',
   uncertain_title: 'Uncertain title',
 }
 
@@ -291,7 +313,23 @@ export const SOURCE_TYPE_FILTERS = [
 export function tableSourceType(table) {
   const st = String(table?.source_type || '').toLowerCase()
   if (st === 'pdf' || st === 'excel' || st === 'csv') return st
+  // Fall back to extraction method when source_type was not tagged.
+  const method = String(table?.extraction?.method || table?.method || '').toLowerCase()
+  if (method.includes('excel')) return 'excel'
+  if (method.includes('csv')) return 'csv'
+  if (method.includes('pymupdf') || method.includes('pdf')) return 'pdf'
   return null
+}
+
+/** PDF snapshot / original-extraction compare is only meaningful for PDF tables. */
+export function tableSupportsPdfReference(table) {
+  const st = tableSourceType(table)
+  return st !== 'excel' && st !== 'csv'
+}
+
+/** Full View/Edit structure editor is PDF-oriented; hide for Excel/CSV previews. */
+export function tableSupportsStructureEditor(table) {
+  return tableSupportsPdfReference(table)
 }
 
 export function matchesSourceTypeFilter(table, filterId) {
@@ -300,21 +338,23 @@ export function matchesSourceTypeFilter(table, filterId) {
 }
 
 export function tableSourceSubtitle(table) {
-  const parts = []
-  const file = String(table?.source_filename || table?.source_file || '').trim()
-  if (file) parts.push(file)
+  // Keep only the in-file location under the title (sheet / page). Filename,
+  // source-type tags, and acceptance status made the card feel cluttered.
   const loc = String(table?.source_location || '').trim()
-  if (loc) parts.push(loc)
-  else if (table?.page != null && String(table.page).trim() && tableSourceType(table) === 'pdf') {
-    parts.push(`Page ${table.page}`)
-  } else if (table?.sheet) {
-    parts.push(`Sheet ${table.sheet}`)
-  }
+  if (loc) return loc
+  // Sheet wins even when source_type is missing (LLM-validated Excel tables
+  // with ambiguous columns used to drop the subtitle for that reason).
+  const sheet = String(table?.sheet || '').trim()
+  if (sheet) return `Sheet ${sheet}`
   const st = tableSourceType(table)
-  if (st === 'pdf') parts.push('PDF')
-  else if (st === 'excel') parts.push('Excel')
-  else if (st === 'csv') parts.push('CSV')
-  return parts.filter(Boolean).join(' · ')
+  if (st === 'csv') return 'CSV'
+  if (st === 'pdf' && table?.page != null && String(table.page).trim()) {
+    return `Page ${table.page}`
+  }
+  if (table?.page != null && String(table.page).trim() && st !== 'excel') {
+    return `Page ${table.page}`
+  }
+  return ''
 }
 
 export const REASON_FILTER_IDS = Object.keys(REASON_LABELS)
@@ -351,6 +391,78 @@ export function isNumericColumn(col, colIndex, rows) {
 }
 
 
+/**
+ * Column layout for ``table-layout: fixed`` previews that must fit the
+ * container width (no horizontal scroll / clip). Returns ``{ pct, minCh }``;
+ * callers that fit-to-width should apply ``pct`` only (ignore ``minCh``).
+ */
+export function computeFittedColumnLayout(columns, rows, { sampleRows = 48 } = {}) {
+  const cols = columns || []
+  const ncols = cols.length
+  if (ncols === 0) return []
+
+  const sample = (rows || []).slice(0, sampleRows)
+  const specs = cols.map((col, i) => {
+    // Use display leaf (e.g. MALE not "MALE (DOMICILIARY)") for sizing.
+    const displayPath = columnHeaderPathForDisplay(col)
+    const leaf = String(displayPath[displayPath.length - 1] || col?.name || '').trim()
+    const headerLen = Math.max(leaf.length, 1)
+    const words = leaf.split(/\s+/).filter(Boolean)
+    const longestHeaderWord = Math.max(1, ...words.map((w) => w.length))
+    let maxCell = 0
+    for (const row of sample) {
+      const s = String(row?.[i] ?? '').replace(/\s+/g, ' ').trim()
+      if (s.length > maxCell) maxCell = s.length
+    }
+    const nameLower = leaf.toLowerCase()
+    const isSerial = /^(sl\.?\s*no\.?|s\.?\s*no\.?|sno|#|no\.?)$/i.test(nameLower)
+    const numeric = !isSerial && isNumericColumn(col, i, rows)
+
+    // Hard floor: never narrower than the longest header word (no mid-word crush).
+    const minCh = Math.max(
+      longestHeaderWord + 1,
+      isSerial ? 4 : 4.5,
+      numeric ? Math.max(maxCell + 1.5, 4.5) : 0,
+    )
+
+    let weight
+    if (numeric || isSerial) {
+      const fromDigits = Math.max(maxCell, isSerial ? 2 : 1) * 1.1
+      const fromHeader = headerLen * 0.85
+      weight = Math.max(minCh, fromDigits, fromHeader)
+    } else {
+      const labelish = isBodyLabelColumn(i, cols, rows)
+      const headerFloor = Math.max(headerLen * 0.9, longestHeaderWord * 1.1, 5)
+      const content = Math.max(maxCell * 0.55, headerFloor)
+      const boost = labelish ? 1.4 : 1
+      weight = Math.max(minCh, Math.min(48, content * boost))
+    }
+    return { weight, minCh }
+  })
+
+  const sum = specs.reduce((a, s) => a + s.weight, 0) || 1
+  const raw = specs.map((s) => (s.weight / sum) * 100)
+  const rounded = raw.map((p) => Math.round(p * 10) / 10)
+  const drift = Math.round((100 - rounded.reduce((a, b) => a + b, 0)) * 10) / 10
+  if (rounded.length) {
+    let widest = 0
+    for (let i = 1; i < rounded.length; i += 1) {
+      if (rounded[i] > rounded[widest]) widest = i
+    }
+    rounded[widest] = Math.round((rounded[widest] + drift) * 10) / 10
+  }
+  return specs.map((s, i) => ({
+    pct: rounded[i],
+    minCh: Math.round(s.minCh * 10) / 10,
+  }))
+}
+
+/** Percentage-only helper (same weights as computeFittedColumnLayout). */
+export function computeFittedColumnPercents(columns, rows, opts) {
+  return computeFittedColumnLayout(columns, rows, opts).map((c) => c.pct)
+}
+
+
 export function tableHasGarbledCells(table) {
   return (table.rows || []).some((row) => (row || []).some((v) => isGarbled(v)))
 }
@@ -373,8 +485,10 @@ export function collectReviewReasons(table) {
   if ((table.uncertain_cells || []).length > 0 && !reasons.has('conflicting_extraction')) {
     add('uncertain_extraction')
   }
+  // AI-proposed title from content — steward should confirm.
+  if (table.title_filled_by_ai) add('title_filled_by_ai')
   // Missing / unusable title — same signal as "No title — review" in the list.
-  if (tableHasMissingTitle(table)) add('uncertain_title')
+  else if (tableHasMissingTitle(table)) add('uncertain_title')
   return reasons
 }
 
@@ -645,6 +759,40 @@ export function columnHeaderPath(col) {
 
 
 /**
+ * Preview/review header path: split ``MALE (DOMICILIARY)`` into group+leaf and
+ * drop redundant ``(GROUP)`` on leaves so headers stay short and readable.
+ */
+export function columnHeaderPathForDisplay(col) {
+  let path = columnHeaderPath(col).map((p) => String(p || '').trim()).filter(Boolean)
+  if (!path.length) return ['']
+
+  if (path.length === 1) {
+    const m = path[0].match(/^(.+?)\s*\(([^)]+)\)\s*$/)
+    if (m) {
+      const leaf = m[1].trim()
+      const group = m[2].trim()
+      if (leaf && group) path = [group, leaf]
+    }
+  } else {
+    const leaf = path[path.length - 1]
+    const ancestors = path.slice(0, -1)
+    const m = leaf.match(/^(.+?)\s*\(([^)]+)\)\s*$/)
+    if (m) {
+      const base = m[1].trim()
+      const paren = m[2].trim()
+      if (
+        base
+        && ancestors.some((a) => a.toLowerCase() === paren.toLowerCase())
+      ) {
+        path = [...ancestors, base]
+      }
+    }
+  }
+  return path.length ? path : ['']
+}
+
+
+/**
  * Place a column path into a depth-tall grid.
  * Shorter paths get extra rowspan on the top label (stub columns span all levels).
  */
@@ -670,7 +818,7 @@ export function placeHeaderPath(path, depth) {
  */
 export function buildMultiLevelHeaderRows(columns) {
   const cols = columns || []
-  const paths = cols.map((c) => columnHeaderPath(c))
+  const paths = cols.map((c) => columnHeaderPathForDisplay(c))
   const depth = Math.max(1, ...paths.map((p) => p.length))
   const grid = paths.map((p) => placeHeaderPath(p, depth))
 
@@ -1116,49 +1264,73 @@ function isBareTableIdLabel(value) {
   const s = String(value || '').trim()
   if (!s) return false
   // "TABLE -8", "TABLE: B-15", "TABLE (ii)", "TABLE - (I)" — id only.
-  return /^(?:table|tab\.?)\b\s*[:.\-–—]?\s*(?:[a-z0-9][\w.\-–—/]*(?:\s*\([^)]{0,48}\))?|\([^)]{1,48}\))\s*$/i.test(s)
+  if (/^(?:table|tab\.?)\b\s*[:.\-–—]?\s*(?:[a-z0-9][\w.\-–—/]*(?:\s*\([^)]{0,48}\))?|\([^)]{1,48}\))\s*$/i.test(s)) {
+    return true
+  }
+  // Bare CRS / vital-stats codes (D-14, B-6) with no descriptive text.
+  return /^[A-Z]{1,3}\s*[-–—]?\s*\d+(?:\.\d+)?\s*$/i.test(s)
 }
 
 
-export function displayTitle(table) {
-  const t = stripCaptionLabelPrefix((table?.title || '').trim())
-  const banner = String(table?.banner_table_id || '').trim()
-  // Cleared / missing descriptive title → no display title (never fall back to
-  // banner_table_id alone; that left "TABLE -…" stuck after the user wiped the field).
+/** Strip a leading ``TABLE: D-14 —`` / ``D-14 —`` id composition from a title. */
+function stripLeadingTableIdComposition(title, banner) {
+  let t = String(title || '').trim()
+  if (!t) return t
+  const bannerText = String(banner || '').trim()
+  if (bannerText) {
+    const escaped = bannerText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    t = t.replace(new RegExp(`^${escaped}\\s*[—–\\-]\\s*`, 'i'), '').trim()
+  }
+  // Also undo compositions baked into title without a separate banner field.
+  t = t.replace(
+    /^(?:TABLE|TAB\.?)\s*[:.\-–—]?\s*[A-Z0-9][\w.\-–—/]*(?:\s*\([^)]{0,48}\))?\s*[—–\-]\s*/i,
+    '',
+  ).trim()
+  t = t.replace(
+    /^[A-Z]{1,3}\s*[-–—]?\s*\d+(?:\.\d+)?\s*[—–\-]\s+/i,
+    '',
+  ).trim()
+  return t
+}
+
+
+/** Descriptive caption only — ignores bare TABLE / D-14 id labels. */
+export function descriptiveTableTitle(table) {
+  let t = stripCaptionLabelPrefix((table?.title || '').trim())
+  t = stripLeadingTableIdComposition(t, table?.banner_table_id)
   if (!t || isBareTableIdLabel(t) || !isUsableTableTitle(t, table?.columns)) {
     return null
-  }
-  // When the id lived on its own line (TABLE -8) and the descriptive caption
-  // is the stored title, show both for stewards.
-  if (
-    banner &&
-    !t.toLowerCase().includes(banner.toLowerCase()) &&
-    /^table\b/i.test(banner) &&
-    t.length >= 12
-  ) {
-    return `${banner} — ${t}`
   }
   return t
 }
 
 
-/** True when the steward sees "No title — review" (no usable descriptive title). */
+export function displayTitle(table) {
+  // Prefer the descriptive caption alone. Do not prefix ``TABLE: D-14 —``.
+  const descriptive = descriptiveTableTitle(table)
+  if (descriptive) return descriptive
+  // No real title in the sheet → fall back to the table-id banner only.
+  const banner = String(table?.banner_table_id || '').trim()
+  if (banner) return banner
+  const raw = stripCaptionLabelPrefix((table?.title || '').trim())
+  if (raw && isBareTableIdLabel(raw)) return raw
+  return null
+}
+
+
+/** True when the steward sees no usable descriptive title (id-only does not count). */
 export function tableHasMissingTitle(table) {
-  return !displayTitle(table)
+  return !descriptiveTableTitle(table)
 }
 
 
 export function titleForEdit(table) {
-  // Edit the stored descriptive title only — never the composed display string
-  // that prefixes banner_table_id (TABLE -8). Saving that back would bake the
-  // id into table.title on every blur/open.
+  // Edit the stored descriptive title only — never a composed
+  // ``TABLE -8 — descriptive…`` display string.
   let t = stripCaptionLabelPrefix((table?.title || '').trim())
-  const banner = String(table?.banner_table_id || '').trim()
-  if (banner && t) {
-    // Undo a previously saved "TABLE -8 — descriptive…" composition.
-    const escaped = banner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    t = t.replace(new RegExp(`^${escaped}\\s*[—–\\-]\\s*`, 'i'), '').trim()
-  }
+  t = stripLeadingTableIdComposition(t, table?.banner_table_id)
+  // Titles are a single logical line; soft-wrap in the UI, never hard breaks.
+  t = t.replace(/[\r\n]+/g, ' ').replace(/[ \t]{2,}/g, ' ').trim()
   if (!t || isBareTableIdLabel(t)) return ''
   if (isUsableTableTitle(t, table?.columns)) return t
   return t

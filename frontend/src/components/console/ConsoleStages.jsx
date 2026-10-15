@@ -35,6 +35,18 @@ export const STAGE_DEFS = [
   },
 ]
 
+/** Page-title crumbs for Dataset Inventory (steps 1–2). */
+export const INVENTORY_CRUMBS = [
+  { id: 'files', label: 'Files', step: 1 },
+  { id: 'preview', label: 'Preview', step: 2 },
+]
+
+/** Page-title crumbs for Metadata Workspace (steps 3–4). */
+export const METADATA_CRUMBS = [
+  { id: 'grouping', label: 'Grouping', step: 3 },
+  { id: 'metadata', label: 'Metadata', step: 4 },
+]
+
 export function stageIndexForStep(step) {
   if (step <= 2) return 0
   if (step <= 4) return 1

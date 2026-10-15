@@ -52,5 +52,6 @@ Key module: `backend/app/services/ingestion/wizard/sql_extract.py`. API:
 
 **Files** step: upload Excel / connect SQL / upload PDF → processing UI for PDF.
 
-Dataset ID display / minting rules come from **Settings → Dataset ID
-configuration** (see [Configuration modules](./overview.md#configuration-modules)).
+Dataset ID rules come from **Settings → Dataset ID configuration** (Preview
+page locators; sequential catalogue ids at publish — see
+[Configuration modules](./overview.md#configuration-modules)).

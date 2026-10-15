@@ -117,3 +117,15 @@ class LlmApiKey(Base):
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class DatasetIdCounter(Base):
+    """Monotonic sequence per catalogue id stem (``DDI_DES_DEL_VS`` → 00042)."""
+
+    __tablename__ = "dataset_id_counters"
+
+    stem: Mapped[str] = mapped_column(Text, primary_key=True)
+    last_value: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

@@ -1,9 +1,13 @@
 """Excel title cleanup + unmarked-sheet block detection."""
 from __future__ import annotations
 
+from app.services.ingestion.utils.grid import cell_str
 from app.services.ingestion.wizard.extractor import TableExtractor
 from app.services.metadata.validation import normalize_table_title
-from app.services.extraction.pdf.utils.header_utils import extract_in_grid_caption
+from app.services.extraction.pdf.utils.header_utils import (
+    dataframe_from_extracted_rows,
+    extract_in_grid_caption,
+)
 
 
 def test_normalize_drops_column_list_suffix():
@@ -84,3 +88,37 @@ def test_unmarked_sheet_is_single_block():
     blocks = TableExtractor(skip_llm=True)._find_blocks(grid)
     assert len(blocks) == 1
     assert blocks[0] == (0, len(grid) - 1)
+
+
+def test_single_leading_banner_is_title_not_sheet_name():
+    # Short single-cell banner: caption extractor skips it (not descriptive
+    # enough), so the legacy strip path must still place it in ``title`` —
+    # not leave title empty (which used to fall back to the sheet name).
+    grid = [
+        ["KPI Framework", None, None, None],
+        ["Name", "Beneficiaries", "Budget", "Year"],
+        ["S1", 10, 100, 2020],
+    ]
+    ext = TableExtractor(skip_llm=True)
+    table_id, title, body_start = ext._strip_title_desc(grid)
+    assert title == "KPI Framework"
+    assert table_id == ""
+    assert body_start == 1
+    tbl = ext._extract_table(grid, 0, len(grid) - 1, "Sheet1", "demo.xlsx", 0)
+    assert tbl["title"] == "KPI Framework"
+    assert tbl["title"] != "Sheet1"
+
+
+def test_whole_number_floats_stringify_without_trailing_zero():
+    # openpyxl returns Excel integers as floats; display must stay "12" not "12.0".
+    assert cell_str(12.0) == "12"
+    assert cell_str(12.5) == "12.5"
+    assert cell_str(0.0) == "0"
+    rows = [
+        ["SL. NO.", "COUNT", "RATE"],
+        [1.0, 12.0, 12.5],
+        [2.0, 0.0, 3.25],
+    ]
+    df = dataframe_from_extracted_rows(rows)
+    assert list(df.iloc[0]) == ["1", "12", "12.5"]
+    assert list(df.iloc[1]) == ["2", "0", "3.25"]

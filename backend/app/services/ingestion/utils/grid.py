@@ -2,12 +2,24 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, List
 
 
 def cell_str(v: Any) -> str:
     if v is None:
         return ""
+    # Excel/openpyxl yields floats for numeric cells; keep whole numbers as ints.
+    if isinstance(v, bool):
+        return str(v)
+    if isinstance(v, float):
+        if math.isnan(v):
+            return ""
+        if math.isfinite(v) and v.is_integer():
+            return str(int(v))
+        return str(v)
+    if isinstance(v, int):
+        return str(v)
     return str(v).strip()
 
 
@@ -42,14 +54,25 @@ def context_text_from_grid(
     filename: str = "",
     max_rows: int = 12,
 ) -> str:
-    """Plain-text context for LLM grounding (caption rows, sheet name, etc.)."""
+    """Plain-text context for LLM grounding (caption rows, sheet name, etc.).
+
+    Grid lines come first so title heuristics prefer real captions over the
+    ``Source file:`` / ``Sheet:`` metadata trailer. Repeated merge-fill cells
+    on a banner row are de-duplicated.
+    """
     lines: List[str] = []
+    for row in rows[:max_rows]:
+        seen: set = set()
+        parts: List[str] = []
+        for c in row:
+            s = cell_str(c)
+            if s and s not in seen:
+                seen.add(s)
+                parts.append(s)
+        if parts:
+            lines.append(" ".join(parts))
     if filename:
         lines.append(f"Source file: {filename}")
     if sheet_name:
         lines.append(f"Sheet: {sheet_name}")
-    for row in rows[:max_rows]:
-        parts = [cell_str(c) for c in row if cell_str(c)]
-        if parts:
-            lines.append(" ".join(parts))
     return "\n".join(lines)[:3000]

@@ -1,7 +1,6 @@
 'use client'
 
 import { useCallback, useRef, useState } from 'react'
-import { ArrowLeft } from 'lucide-react'
 import KydsSummaryCard from '../KydsSummaryCard'
 import TableViewer from '../TableViewer'
 import SqlUpload from './SqlUpload'
@@ -9,11 +8,12 @@ import ReconcileIds from './ReconcileIds'
 import GroupingWorkspace from './GroupingWorkspace'
 import PostPreviewLaterSteps from './PostPreviewLaterSteps'
 import ConsoleStatusPlaceholder from './ConsoleStatusPlaceholder'
-import { StageSidebar, withinStageBack } from './ConsoleStages'
+import { INVENTORY_CRUMBS, METADATA_CRUMBS, StageSidebar } from './ConsoleStages'
 import { tableCode, tablePickerLabel } from '../../lib/postPreview'
 import { UploadChoice } from './ConsoleUploadChoice'
 import { useConsolePipeline } from './useConsolePipeline'
 import ClassifyBreadcrumb from './classify/ClassifyBreadcrumb'
+import StageSubstepBreadcrumb from './StageSubstepBreadcrumb'
 import LlmKeyRequiredBanner from '../LlmKeyRequiredBanner'
 import { useApp } from '../../context/AppContext'
 
@@ -92,7 +92,6 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
 
   const [classificationComplete, setClassificationComplete] = useState(false)
   const goToHarmRef = useRef(null)
-  const stageBack = withinStageBack(step)
   const step1Processing = pdfUploading
 
   const handleStartStep1Processing = useCallback(() => {
@@ -132,15 +131,6 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
         {/* Page header — title / purpose stay above the content panel */}
         {!statusPage && (
         <div className="flex flex-col">
-          {stageBack && (
-            <div
-              className="mb-3.5 inline-flex cursor-pointer items-center gap-1.5 text-[14px] font-medium text-teal transition-colors duration-dhara ease-dhara hover:text-teal-dark"
-              onClick={() => setStep(stageBack.step)}
-            >
-              <ArrowLeft className="h-4 w-4" strokeWidth={1.75} aria-hidden />
-              {stageBack.label}
-            </div>
-          )}
           <div className="flex items-center justify-between gap-6">
             <div>
               {(step === 5 || step === 6) ? (
@@ -151,6 +141,30 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                     if (next === 'harmonisation') requestHarmonisation()
                     else setStep(5)
                   }}
+                  size="page"
+                />
+              ) : (step === 1 || step === 2) ? (
+                <StageSubstepBreadcrumb
+                  crumbs={INVENTORY_CRUMBS}
+                  activeId={step === 2 ? 'preview' : 'files'}
+                  onNavigate={(next) => {
+                    if (next === 'preview') goToStepGuarded(2)
+                    else setStep(1)
+                  }}
+                  isReachable={(crumb) => crumb.id === 'files' || maxStepReached >= 2}
+                  ariaLabel="Dataset inventory"
+                  size="page"
+                />
+              ) : (step === 3 || step === 4) ? (
+                <StageSubstepBreadcrumb
+                  crumbs={METADATA_CRUMBS}
+                  activeId={step === 4 ? 'metadata' : 'grouping'}
+                  onNavigate={(next) => {
+                    if (next === 'metadata') goToStepGuarded(4)
+                    else setStep(3)
+                  }}
+                  isReachable={(crumb) => crumb.id === 'grouping' || maxStepReached >= 4}
+                  ariaLabel="Metadata workspace"
                   size="page"
                 />
               ) : (

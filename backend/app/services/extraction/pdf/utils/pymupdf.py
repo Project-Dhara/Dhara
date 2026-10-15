@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import pandas as pd
 import pymupdf
 
-from app.services.llm_prompts import CPU_WORKERS, TEXT_MIN_CHARS
+from app.services.llm_prompts import CPU_WORKERS, EXTRACT_CHUNK_PAGES, TEXT_MIN_CHARS
 from app.services.extraction.pdf.utils.workers import extract_pymupdf_chunk
 
 
@@ -44,8 +44,14 @@ def classify_pages(pdf_path: Path, min_chars: int = TEXT_MIN_CHARS) -> tuple[Lis
 
 # ── Stage 2: extract tables ──────────────────────────────────────────────
 
-def chunk_list(lst: List[int], n_chunks: int, seed: int = 0) -> List[List[int]]:
-    """Shuffle (deterministically) then split into n_chunks contiguous pieces.
+def chunk_list(
+    lst: List[int],
+    n_chunks: int,
+    seed: int = 0,
+    *,
+    max_chunk_size: Optional[int] = None,
+) -> List[List[int]]:
+    """Shuffle (deterministically) then split into chunks.
 
     This PDF's expensive-to-parse pages recur at a near-constant spacing
     (~16 pages apart -- one per state/section, presumably). Plain round-robin
@@ -54,15 +60,23 @@ def chunk_list(lst: List[int], n_chunks: int, seed: int = 0) -> List[List[int]]:
     the same worker because their positions in the page list all happened to
     share the same remainder mod 8. Shuffling first breaks any alignment
     between a periodic cost pattern and the chunk boundaries, however many
-    workers are used."""
+    workers are used.
+
+    ``max_chunk_size`` caps pages per task so progress updates more often and
+    less work is lost when a worker is OOM-killed.
+    """
     import random
 
-    n_chunks = max(1, min(n_chunks, len(lst)))
     if not lst:
         return []
     shuffled = lst[:]
     random.Random(seed).shuffle(shuffled)
-    size = (len(shuffled) + n_chunks - 1) // n_chunks
+
+    if max_chunk_size and max_chunk_size > 0:
+        size = max_chunk_size
+    else:
+        n_chunks = max(1, min(n_chunks, len(shuffled)))
+        size = (len(shuffled) + n_chunks - 1) // n_chunks
     return [shuffled[i:i + size] for i in range(0, len(shuffled), size)]
 
 
@@ -82,15 +96,16 @@ def extract_all_tables(pdf_path: Path, pages: List[int], n_workers: int = CPU_WO
     workers = max(1, n_workers)
     attempt = 0
     max_attempts = 4
+    chunk_pages = max(1, EXTRACT_CHUNK_PAGES)
 
     while remaining and attempt < max_attempts:
         attempt += 1
-        chunks = chunk_list(remaining, workers)
+        chunks = chunk_list(remaining, workers, max_chunk_size=chunk_pages)
         if not chunks:
             break
 
         pool_broke = False
-        with ProcessPoolExecutor(max_workers=len(chunks)) as pool:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(extract_pymupdf_chunk, str(pdf_path), chunk): chunk for chunk in chunks}
             for future in as_completed(futures):
                 chunk = futures[future]
@@ -117,6 +132,8 @@ def extract_all_tables(pdf_path: Path, pages: List[int], n_workers: int = CPU_WO
                 f"{len(remaining)} remaining page(s)")
             break
         workers = max(1, workers // 2)
+        # Smaller chunks on retry so less work is discarded if it crashes again.
+        chunk_pages = max(1, chunk_pages // 2)
         log(f"[extract] retrying {len(remaining)} remaining page(s) with {workers} worker(s)")
 
     return all_tables
@@ -315,8 +332,9 @@ def _dataframe_numeric_fill_ratio(df: pd.DataFrame) -> float:
         return 0.0
     cells = 0
     numeric = 0
-    for col in df.columns:
-        for v in df[col].tolist():
+    # Position-based: df[col] is a DataFrame (no .tolist) when headers duplicate.
+    for i in range(int(df.shape[1])):
+        for v in df.iloc[:, i].tolist():
             cells += 1
             s = str(v).strip() if v is not None else ""
             if not s or s.lower() in {"none", "nan", "null"}:
@@ -570,12 +588,14 @@ def run_pdf_extraction(
             "extract", 10 + int(35 * done / total), f"Extracted {done}/{total} page(s)"
         ),
     )
-    progress("extract", 45, f"{len(all_tables)} table candidate(s) found")
+    progress("extract", 42, f"{len(all_tables)} table candidate(s) found — filtering & merging")
 
     pages_grouped = filter_candidate_pages(group_by_page(all_tables))
     pages_grouped = resolve_dual_column_pages(pdf_path, pages_grouped, page_text)
     from app.services.extraction.pdf.confidence_validation.table_confidence import (
         build_pdf_outline_index,
     )
+    progress("extract", 44, "Building document outline index")
     outline_index = build_pdf_outline_index(pdf_path)
+    progress("extract", 45, f"{len(pages_grouped)} page(s) with ruled table candidates")
     return pages_grouped, page_text, outline_index

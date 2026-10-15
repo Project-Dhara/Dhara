@@ -697,8 +697,14 @@ class TableExtractor:
             table_id, title = first, second
         elif second and len(non_blank) > 1 and self._has_table_marker(non_blank[1][1]):
             table_id, title = second, first
-        else:
+        elif second:
+            # Two leading banners without a TABLE marker: treat first as id-ish
+            # label and second as the descriptive title.
             table_id, title = first, second
+        else:
+            # Single leading banner/row → descriptive title (not sheet name).
+            # Leaving title empty would fall back to the worksheet name.
+            table_id, title = "", first
 
         while body_start < len(block) and self._blank(block[body_start]):
             body_start += 1

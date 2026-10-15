@@ -18,6 +18,9 @@ from app.services.extraction.pdf.confidence_validation.confidence_split import (
 )
 from app.services.extraction.pdf.confidence_validation.heuristic import heuristic_accept_pages
 from app.services.extraction.pdf.confidence_validation.llm import validate_all_pages_batched
+from app.services.extraction.pdf.confidence_validation.title_fill import (
+    ensure_usable_titles_on_pages,
+)
 from app.services.extraction.pdf.utils.pymupdf import log, run_pdf_extraction
 
 def run_post_extraction_validation(
@@ -37,11 +40,22 @@ def run_post_extraction_validation(
             on_progress(stage, percent, message)
 
     outline_index = outline_index or {}
+    n_units = len(pages_grouped)
+    progress(
+        "classify_confidence",
+        46,
+        f"Scoring confidence for {n_units} unit(s)",
+    )
     high_results, llm_pages, reason_counts = split_by_confidence(
         pages_grouped,
         page_text,
         pdf_path=pdf_path,
         outline_index=outline_index,
+        progress_cb=lambda done, total: progress(
+            "classify_confidence",
+            46 + int(9 * done / max(total, 1)),
+            f"Scored {done}/{total} unit(s)",
+        ),
     )
     progress(
         "classify_confidence",
@@ -53,6 +67,11 @@ def run_post_extraction_validation(
     if llm_pages:
         key = (api_key or "").strip() or None
         if key:
+            progress(
+                "validate",
+                56,
+                f"Sending {len(llm_pages)} uncertain unit(s) to AI",
+            )
             llm_results = validate_all_pages_batched(
                 llm_pages,
                 page_text,
@@ -95,6 +114,10 @@ def run_post_extraction_validation(
             validated_by_page.update(heuristic)
             progress("validate", 95, f"Heuristic-accepted {len(heuristic)} unit(s)")
 
+    # Shared PDF + Excel/CSV pass: drop gibberish titles; AI-fill when possible
+    # and flag Review needed as "title filled by AI".
+    progress("validate", 96, "Checking table titles")
+    ensure_usable_titles_on_pages(validated_by_page, api_key=api_key)
     progress("done", 100, f"Pipeline complete -- {len(validated_by_page)} unit(s) with tables")
     return dict(sorted(validated_by_page.items()))
 

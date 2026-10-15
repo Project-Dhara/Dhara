@@ -55,10 +55,11 @@ export function ExtractedTableHead({ columns, lockedCols = [], sticky = false, s
 
   const thFor = (seg, isIndex = false) => {
     const isGroup = !isIndex && depth > 1 && !seg.isLeaf
+    // Avoid max-w-0 on headers — it crumples leaf labels in the initial preview.
     if (stickyOn) {
       return [
         // One teal for every header level — groups used to be teal-deep.
-        'sticky max-w-0 px-1 pt-0.5 pb-1 align-top font-sans text-[10px] font-medium leading-snug tracking-wide text-cream bg-teal',
+        'sticky px-1.5 pt-0.5 pb-1 align-bottom font-sans text-[10px] font-medium leading-snug tracking-wide text-cream bg-teal',
         // Same teal rule between levels as between columns.
         'border-x border-b border-teal-deep/40',
         isGroup ? 'text-center font-semibold' : 'text-left',
@@ -68,14 +69,14 @@ export function ExtractedTableHead({ columns, lockedCols = [], sticky = false, s
     if (sticky) {
       // Pre-measure: same chrome, not sticky yet (avoids body overlap).
       return [
-        'max-w-0 px-1 pt-0.5 pb-1 align-top font-sans text-[10px] font-medium leading-snug tracking-wide text-cream bg-teal',
+        'px-1.5 pt-0.5 pb-1 align-bottom font-sans text-[10px] font-medium leading-snug tracking-wide text-cream bg-teal',
         'border-x border-b border-teal-deep/40',
         isGroup ? 'text-center font-semibold' : 'text-left',
         isIndex ? 'text-center' : '',
       ].filter(Boolean).join(' ')
     }
     return [
-      'max-w-0 px-2.5 py-1.5 align-top font-sans text-[11.5px] uppercase tracking-wide text-cream bg-teal',
+      'px-2.5 py-1.5 align-bottom font-sans text-[11.5px] uppercase tracking-wide text-cream bg-teal',
       'border-x border-b border-teal-deep/35',
       isGroup ? 'text-center font-semibold' : 'text-left font-medium',
       isIndex || seg.colSpan > 1 || seg.rowSpan > 1 ? 'text-center' : '',
@@ -99,28 +100,20 @@ export function ExtractedTableHead({ columns, lockedCols = [], sticky = false, s
               #
             </th>
           ) : null}
-          {segs.map((seg) => {
-            const showLocked = seg.isLeaf && lockedCols[seg.start]
-            return (
+          {segs.map((seg) => (
               <th
                 key={seg.key}
                 colSpan={seg.colSpan > 1 ? seg.colSpan : undefined}
                 rowSpan={seg.rowSpan > 1 ? seg.rowSpan : undefined}
                 className={thFor(seg)}
                 style={stickyOn ? { top: stickyTops[r] ?? 0, zIndex: 2 + r } : undefined}
-                title={showLocked ? `${seg.label} — read-only` : seg.label}
+                title={seg.label}
               >
-                <span className="block min-w-0 whitespace-normal break-words [overflow-wrap:anywhere] hyphens-auto leading-snug">
+                <span className="block whitespace-normal hyphens-none leading-snug [overflow-wrap:normal] [word-break:keep-all]">
                   {seg.label}
-                  {showLocked ? (
-                    <span className={`font-semibold normal-case tracking-normal text-cream/70 ${(sticky || stickyOn) ? 'mt-0.5 block' : 'ml-1'}`}>
-                      {(sticky || stickyOn) ? 'locked' : '· locked'}
-                    </span>
-                  ) : null}
                 </span>
               </th>
-            )
-          })}
+          ))}
         </tr>
       ))}
     </thead>
@@ -141,7 +134,7 @@ export function DirectionGlyph({ dir, className = '' }) {
 }
 
 
-/** Spreadsheet cell textarea that grows to show all wrapped text. */
+/** Textarea that grows with wrapped text; never shows a manual resize handle. */
 export function AutoGrowTextarea({
   value,
   onChange,
@@ -150,6 +143,10 @@ export function AutoGrowTextarea({
   placeholder,
   title,
   readOnly = false,
+  /** When true, Enter / pasted newlines are stripped (soft wrap still grows height). */
+  singleLine = false,
+  onFocus,
+  onBlur,
 }) {
   const ref = useRef(null)
 
@@ -184,14 +181,24 @@ export function AutoGrowTextarea({
       ref={ref}
       rows={1}
       readOnly={readOnly}
-      className={`${className} overflow-hidden outline-none ring-0 focus:outline-none focus:ring-0 ${readOnly ? 'cursor-default caret-transparent' : ''}`}
+      className={`${className} resize-none overflow-hidden outline-none ring-0 focus:outline-none focus:ring-0 ${readOnly ? 'cursor-default caret-transparent' : ''}`}
       style={style}
       value={value}
       placeholder={placeholder}
       title={title}
+      onFocus={onFocus}
+      onBlur={onBlur}
+      onKeyDown={(e) => {
+        if (singleLine && e.key === 'Enter') {
+          e.preventDefault()
+        }
+      }}
       onChange={(e) => {
         if (readOnly) return
-        onChange(e.target.value)
+        const next = singleLine
+          ? e.target.value.replace(/[\r\n]+/g, ' ')
+          : e.target.value
+        onChange(next)
         // Grow immediately on keystroke before React commits the new value height.
         requestAnimationFrame(syncHeight)
       }}

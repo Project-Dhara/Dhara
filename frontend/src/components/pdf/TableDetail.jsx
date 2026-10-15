@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Check, Pencil } from 'lucide-react'
 import Button from '../ui/Button'
 import { isGarbled } from '../../lib/garbled'
@@ -14,6 +14,7 @@ import {
   columnDraftFromTable,
   columnHeaderPath,
   columnParentPath,
+  computeFittedColumnLayout,
   displayTitle,
   summarizeUncertainCellNotes,
   invertActionFlash,
@@ -30,13 +31,21 @@ import {
   resolveEditorBodySpans,
   setHeaderPathLevel,
   tableHasMissingTitle,
+  tableSupportsPdfReference,
+  tableSupportsStructureEditor,
   titleForEdit,
   unmergeAt,
   withParentPath,
 } from '../../lib/pdfReviewHelpers'
-import { ExtractedDataCell, ExtractedTableHead } from './ExtractedTableGrid'
+import { AutoGrowTextarea, ExtractedDataCell, ExtractedTableHead } from './ExtractedTableGrid'
 import { ReferenceComparePanel } from './PdfReferenceViewer'
 import { TableEditModal } from './TableEditModal'
+import { ViewAllTableModal } from './ViewAllTableModal'
+
+/** Fixed height for the opened-record table preview (clip + View all). */
+const PREVIEW_MAX_HEIGHT_PX = 280
+/** Mount at most this many rows in the clipped preview (perf); View all has all. */
+const PREVIEW_MOUNT_CAP = 80
 
 /** Table title on the collapsed preview card (edit in the expanded detail). */
 export function TableTitleDisplay({ table, className = '' }) {
@@ -86,6 +95,13 @@ export function TableDetail({
   }))
   const [saved, setSaved] = useState(false)
   const [savingEditor, setSavingEditor] = useState(false)
+  const [viewAllOpen, setViewAllOpen] = useState(false)
+  /**
+   * How many body rows to show in the fixed-height preview. null = mount a
+   * probe (up to PREVIEW_MOUNT_CAP) and measure; never leave CSS clipping as
+   * the final display — only whole rows are kept.
+   */
+  const [fittedRowCount, setFittedRowCount] = useState(null)
   // Full undo/redo history of editor structure changes (+ last-action red/green flash)
   const [actionFlash, setActionFlash] = useState(null)
   const [undoStack, setUndoStack] = useState([]) // [{ structure, flash }, ...] oldest → newest
@@ -94,6 +110,7 @@ export function TableDetail({
   const actionFlashRef = useRef(null)
   const undoStackRef = useRef([])
   const redoStackRef = useRef([])
+  const previewClipRef = useRef(null)
   // Title value when the field was focused — blur only commits if it changed.
   const titleAtFocusRef = useRef(null)
   draftRef.current = draft
@@ -531,10 +548,17 @@ export function TableDetail({
   }
 
   const previewRows = draft.rows || []
-  const previewCap = 5
-  const previewLimit = Math.min(previewCap, previewRows.length)
+  const previewContentKey = `${table.table_id}|${previewRows.length}|${columnCount}|${draft.mergesExplicit ? 1 : 0}`
+  // Probe mounts enough rows to measure; fitted pass keeps only whole rows.
+  // Full table is available via "+N more" → View all modal.
+  const measuringPreview = fittedRowCount == null
+  const previewLimit = measuringPreview
+    ? Math.min(PREVIEW_MOUNT_CAP, previewRows.length)
+    : Math.min(Math.max(0, fittedRowCount), previewRows.length)
   const visiblePreviewRows = previewRows.slice(0, previewLimit)
-  // Card shows only the first rows; clip explicit merges so rowspan/colspan stay in-bounds.
+  const hiddenRowCount = Math.max(0, previewRows.length - previewLimit)
+  const previewOverflows = !measuringPreview && hiddenRowCount > 0
+  // Clip explicit merges so rowspan stays inside the mounted preview rows.
   const previewMerges = draft.mergesExplicit || (draft.cellMerges || []).length > 0
     ? (draft.cellMerges || [])
       .map((m) => {
@@ -554,14 +578,109 @@ export function TableDetail({
     previewMerges,
     Boolean(draft.mergesExplicit),
   )
-  const hiddenCount = Math.max(0, previewRows.length - previewLimit)
   const garbledCellCount = (draft.rows || []).flat().filter((v) => isGarbled(v)).length
   const anyCellGarbled = garbledCellCount > 0
   const lockedCols = displayColumns.map((col, i) => isNumericColumn(col, i, previewRows))
+  const previewColLayout = computeFittedColumnLayout(displayColumns, previewRows)
   const sourceRowsAligned = padRowsToColumns(
     (originalSnapshot.rows || []).map((row) => row),
     columnCount,
   )
+
+  // Remeasure when table identity / size changes (stable key — not array refs).
+  useEffect(() => {
+    setFittedRowCount(null)
+  }, [previewContentKey])
+
+  // Remeasure on viewport width changes (wrapping can change how many rows fit).
+  useEffect(() => {
+    const onResize = () => setFittedRowCount(null)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  // Never stay in the clipped probe forever (e.g. heights stuck at 0).
+  useEffect(() => {
+    if (!measuringPreview) return undefined
+    const t = window.setTimeout(() => {
+      setFittedRowCount((prev) => (
+        prev == null ? Math.min(2, Math.max(previewRows.length, 0)) : prev
+      ))
+    }, 700)
+    return () => window.clearTimeout(t)
+  }, [measuringPreview, previewRows.length])
+
+  // Count how many body rows fully fit under PREVIEW_MAX_HEIGHT (header + rows).
+  // Uses intrinsic row offsetHeights — not scrollHeight / clip rects (those fail
+  // inside the accordion's overflow:hidden and leave the probe clipped forever).
+  useLayoutEffect(() => {
+    let cancelled = false
+
+    const applyFit = () => {
+      if (cancelled) return
+      const node = previewClipRef.current
+      if (!node) {
+        if (measuringPreview) setFittedRowCount(Math.min(1, previewRows.length) || 0)
+        return
+      }
+      const tableEl = node.querySelector('table')
+      const thead = tableEl?.querySelector('thead')
+      const bodyRows = tableEl ? [...tableEl.querySelectorAll('tbody tr')] : []
+      if (!bodyRows.length) {
+        setFittedRowCount(0)
+        return
+      }
+      // Accordion may still be at 0fr; wait for a later pass.
+      if (bodyRows.every((tr) => tr.offsetHeight <= 0)) return
+
+      const theadH = thead ? thead.offsetHeight : 0
+      const budget = PREVIEW_MAX_HEIGHT_PX - theadH
+      let used = 0
+      let fit = 0
+      for (const tr of bodyRows) {
+        const h = tr.offsetHeight
+        if (h <= 0) continue
+        if (fit === 0) {
+          // Always keep at least one complete row even if it exceeds the budget.
+          fit = 1
+          used = h
+          continue
+        }
+        if (used + h > budget) break
+        used += h
+        fit += 1
+      }
+      const next = Math.min(Math.max(fit, 1), bodyRows.length, previewRows.length)
+      setFittedRowCount((prev) => {
+        if (prev == null) return next
+        // Only shrink after the probe commit (e.g. late layout / wrap).
+        if (next < prev) return next
+        return prev
+      })
+    }
+
+    applyFit()
+    // Accordion open (~420ms) and late font/layout can change heights.
+    const t1 = window.setTimeout(applyFit, 50)
+    const t2 = window.setTimeout(applyFit, 480)
+    let raf2 = 0
+    const raf1 = window.requestAnimationFrame(() => {
+      raf2 = window.requestAnimationFrame(applyFit)
+    })
+    return () => {
+      cancelled = true
+      window.clearTimeout(t1)
+      window.clearTimeout(t2)
+      window.cancelAnimationFrame(raf1)
+      window.cancelAnimationFrame(raf2)
+    }
+  }, [
+    measuringPreview,
+    previewLimit,
+    previewRows.length,
+    previewContentKey,
+    displayColumns,
+  ])
 
   const baselineCols = columnDraftFromTable(originalSnapshot.columns)
   const rowsDirty = JSON.stringify(draft.rows) !== JSON.stringify(
@@ -742,16 +861,15 @@ export function TableDetail({
     <div className="flex flex-col gap-3 border-t border-line px-3.5 pb-3.5 pt-3">
       <label className="flex flex-col gap-1">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-teal">Table title</span>
-        <textarea
-          rows={Math.min(4, Math.max(2, Math.ceil(((draft.title || '').length || 1) / 56)))}
-          className="min-h-[2.5rem] w-full resize-y rounded-md border border-line bg-white px-2.5 py-1.5 text-[13.5px] font-semibold leading-snug text-ink outline-none focus:border-teal"
+        <AutoGrowTextarea
+          singleLine
+          className="min-h-[2.5rem] w-full rounded-md border border-line bg-white px-2.5 py-1.5 text-[13.5px] font-semibold leading-snug text-ink focus:border-teal"
           value={draft.title}
           placeholder="Add a table title"
           onFocus={(e) => {
             titleAtFocusRef.current = (e.target.value || '').trim() || null
           }}
-          onChange={(e) => {
-            const nextTitle = e.target.value
+          onChange={(nextTitle) => {
             markDirty()
             setDraft((prev) => ({ ...prev, title: nextTitle }))
             onTitleLive?.(nextTitle.trim() || null)
@@ -767,7 +885,7 @@ export function TableDetail({
 
       {table.description && <p className="text-[13px] text-ink-soft">{table.description}</p>}
 
-      {jobId && table.table_id && (
+      {jobId && table.table_id && tableSupportsPdfReference(table) && (
         <ReferenceComparePanel
           jobId={jobId}
           tableId={table.table_id}
@@ -791,13 +909,30 @@ export function TableDetail({
           Extracted data ({previewRows.length} rows · {columnCount} columns
           {anyCellGarbled ? ` — ${garbledCellCount} cell(s) need review` : ''})
         </div>
-        <Button type="button" variant="primary" size="sm" onClick={openFullPageEditor}>
-          <Pencil className="h-3.5 w-3.5" strokeWidth={2.25} aria-hidden />
-          View/Edit table
-        </Button>
+        {tableSupportsStructureEditor(table) ? (
+          <Button type="button" variant="primary" size="sm" onClick={openFullPageEditor}>
+            <Pencil className="h-3.5 w-3.5" strokeWidth={2.25} aria-hidden />
+            View/Edit table
+          </Button>
+        ) : null}
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[600px] table-fixed border-collapse text-[13px]">
+      <div
+        ref={previewClipRef}
+        className={`rounded-xl border border-line ${measuringPreview ? 'overflow-x-auto overflow-y-hidden' : 'overflow-x-auto'}`}
+        style={measuringPreview ? { maxHeight: PREVIEW_MAX_HEIGHT_PX } : undefined}
+      >
+        <table className="w-full table-fixed border-collapse text-[13px]">
+          {previewColLayout.length === columnCount ? (
+            <colgroup>
+              {previewColLayout.map((col, i) => (
+                // minWidth keeps header words intact; overflow-x-auto shows all cols.
+                <col
+                  key={i}
+                  style={{ width: `${col.pct}%`, minWidth: `${col.minCh}ch` }}
+                />
+              ))}
+            </colgroup>
+          ) : null}
           <ExtractedTableHead columns={displayColumns} lockedCols={lockedCols} />
           <tbody>
             {visiblePreviewRows.map((row, r) => (
@@ -808,12 +943,14 @@ export function TableDetail({
                   const v = row[c] ?? null
                   const col = displayColumns[c]
                   const merged = span.rowSpan > 1 || span.colSpan > 1
+                  const numeric = lockedCols[c]
+                  const dense = columnCount >= 10
                   return (
                     <td
                       key={c}
                       rowSpan={span.rowSpan > 1 ? span.rowSpan : undefined}
                       colSpan={span.colSpan > 1 ? span.colSpan : undefined}
-                      className={`max-w-0 break-words [overflow-wrap:anywhere] border border-line px-2.5 py-1.5 align-top ${merged ? 'align-middle' : ''}`}
+                      className={`max-w-0 border border-line align-top ${dense ? 'px-1 py-1' : 'px-2.5 py-1.5'} ${numeric ? 'whitespace-nowrap text-center tabular-nums' : 'break-words [overflow-wrap:anywhere]'} ${merged ? 'align-middle' : ''}`}
                     >
                       <ExtractedDataCell
                         value={v}
@@ -830,15 +967,41 @@ export function TableDetail({
             ))}
           </tbody>
         </table>
-        {hiddenCount > 0 && (
-          <div className="mt-2 text-center text-[12px] text-ink-soft">
-            +{hiddenCount} more rows — open Edit table (new tab) to see and change all rows
-          </div>
-        )}
       </div>
+      {previewOverflows && (
+        <div className="mt-1 flex justify-center">
+          <button
+            type="button"
+            onClick={() => setViewAllOpen(true)}
+            className="inline-flex flex-col items-center rounded-full border border-teal bg-sage px-3.5 py-1.5 leading-tight text-teal shadow-[0_1px_3px_rgba(16,64,63,0.12)] transition-colors hover:bg-teal hover:text-cream"
+          >
+            <span className="text-[12px] font-bold">View all</span>
+            <span className="text-[10px] font-semibold tabular-nums opacity-80">
+              (+{hiddenRowCount || 1} more)
+            </span>
+          </button>
+        </div>
+      )}
+
+      {viewAllOpen ? (
+        <ViewAllTableModal
+          table={modalTable}
+          columns={displayColumns}
+          rows={previewRows}
+          sourceRows={sourceRowsAligned}
+          cellMerges={draft.cellMerges || []}
+          mergesExplicit={Boolean(draft.mergesExplicit)}
+          lockedCols={lockedCols}
+          onClose={() => setViewAllOpen(false)}
+        />
+      ) : null}
 
       {canSave && (
-        <Button variant="primary" className="self-start" onClick={handleSave}>
+        <Button
+          variant="secondary"
+          className="self-end !border-green !bg-white !text-green hover:!border-teal hover:!bg-teal hover:!text-white active:!border-teal-deep active:!bg-teal-deep active:!text-white"
+          onClick={handleSave}
+        >
           {table.human_review_needed || tableHasMissingTitle(table)
             ? 'Save review & mark resolved'
             : 'Save changes'}

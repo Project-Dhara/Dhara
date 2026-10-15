@@ -70,8 +70,8 @@ async def fill_definitions(
 ):
     """Fill classification definitions from values + catalogue/excel facts.
     Occupation columns are skipped by default (NCO matching owns those).
-    Pass allow_occupation=true when no concordance is uploaded and the steward
-    chooses Fill with AI as a fallback."""
+    Pass allow_occupation=true when no classification standard is selected and
+    the steward chooses Fill with AI as a fallback."""
     import re as _re
     from app.services.metadata.metadata_llm import fill_classification_definitions
 
@@ -114,11 +114,11 @@ async def fill_definitions(
 
 @router.get("/api/catalogue/classification-standards")
 async def get_classification_standards(user_email: str = Depends(require_user_email)):
-    """List classification concordance standards (uploads + bundled NCO CSV)."""
+    """List classification standards (uploads + bundled NCO 2015)."""
 
     def _run():
         with session_scope() as session:
-            # Re-check in case the CSV appeared after first schema init.
+            # Re-check in case backend NCO data appeared after first schema init.
             ensure_bundled_classification_standard(dbapi_connection(session))
             return list_classification_standards(dbapi_connection(session))
 
@@ -134,13 +134,13 @@ async def upload_classification_standard(
     select: str = Form("true"),
     user_email: str = Depends(require_user_email),
 ):
-    """Upload a concordance CSV, name it, and optionally select it for Classify."""
+    """Upload a classification CSV, name it, and optionally select it for Classify."""
     raw = await file.read()
     if not raw:
         raise HTTPException(400, "Empty file")
-    fname = file.filename or "concordance.csv"
+    fname = file.filename or "classification.csv"
     if not fname.lower().endswith(".csv"):
-        raise HTTPException(400, "Upload a .csv file in the NCO concordance column layout")
+        raise HTTPException(400, "Upload a .csv file in the NCO column layout")
     do_select = str(select).strip().lower() not in ("0", "false", "no")
 
     def _run():

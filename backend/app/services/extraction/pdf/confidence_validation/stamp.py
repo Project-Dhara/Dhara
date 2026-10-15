@@ -817,6 +817,10 @@ def _recover_missing_ruled_tables(
         extra["page"] = page_num
         if rc.get("bbox") and len(rc["bbox"]) >= 4:
             extra["bbox"] = [float(x) for x in rc["bbox"][:4]]
+        if rc.get("sheet"):
+            extra["sheet"] = rc.get("sheet")
+        if rc.get("source_file"):
+            extra["source_file"] = rc.get("source_file")
         # Prefer LLM semantics for the same ordinal when present.
         if i < len(tables):
             src = tables[i]
@@ -912,6 +916,15 @@ def _stamp_llm_metadata(
                 matched or _best_lines_strict_candidate(candidates),
             )
         normalized = _prefer_descriptive_llm_title(normalized, candidates)
+        # Spreadsheet candidates carry sheet/source_file; copy if still missing
+        # after attach/guard (common for ambiguous-column LLM tables).
+        if not normalized.get("sheet"):
+            for c in candidates or []:
+                if c.get("sheet"):
+                    normalized["sheet"] = c.get("sheet")
+                    if c.get("source_file") and not normalized.get("source_file"):
+                        normalized["source_file"] = c.get("source_file")
+                    break
         normalized["human_review_needed"], normalized["human_review_reason"] = derive_human_review_needed(normalized)
         tables.append(normalized)
 

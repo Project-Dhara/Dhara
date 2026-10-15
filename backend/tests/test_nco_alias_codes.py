@@ -82,7 +82,7 @@ def test_match_skips_poisoned_alias(monkeypatch):
         "app.services.classification.nco_matching._lookup_alias",
         lambda conn, text: poisoned,
     )
-    # Force empty concordance so we don't depend on DB — still must not
+    # Force empty code set so we don't depend on DB — still must not
     # return the poisoned text code via the alias path.
     monkeypatch.setattr("app.services.classification.nco_matching._load_all_codes", lambda conn: [])
 

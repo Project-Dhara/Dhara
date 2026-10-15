@@ -11,6 +11,8 @@ import ErrorBanner from '../ui/ErrorBanner'
 import KydsSummaryCard from '../KydsSummaryCard'
 import PdfConsoleLayout from './PdfConsoleLayout'
 import ProcessingStepper from '../console/ProcessingStepper'
+import StageSubstepBreadcrumb from '../console/StageSubstepBreadcrumb'
+import { INVENTORY_CRUMBS } from '../console/ConsoleStages'
 import {
   PRIMARY_FILTERS,
   REASON_FILTER_IDS,
@@ -24,11 +26,19 @@ import {
   matchesSourceTypeFilter,
   matchesTableSearch,
   SOURCE_TYPE_FILTERS,
+  scrollElementIntoViewBelowSticky,
   tableHasMissingTitle,
   tableHeaderKey,
   tableSourceSubtitle,
 } from '../../lib/pdfReviewHelpers'
-import { DeleteConfirmDialog, MergeConfirmDialog, ReviewBadge, ScrollToTopButton, TableExpandPanel } from './PdfReviewAtoms'
+import {
+  DeleteConfirmDialog,
+  LeaveProgressConfirmDialog,
+  MergeConfirmDialog,
+  ReviewBadge,
+  ScrollToTopButton,
+  TableExpandPanel,
+} from './PdfReviewAtoms'
 import { TableDetail, TableTitleDisplay } from './TableDetail'
 
 export function PdfTableEditorPage({ jobId, tableId }) {
@@ -129,8 +139,57 @@ export default function PdfReview({ jobId, filename, onDone }) {
   const [continuePhase, setContinuePhase] = useState('persist')
   const [downloadingZip, setDownloadingZip] = useState(false)
   const [downloadingId, setDownloadingId] = useState(null)
+  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false)
   const rootRef = useRef(null)
+  const stickyFiltersRef = useRef(null)
+  const tableCardRefs = useRef(new Map())
   const router = useRouter()
+
+  const requestLeaveToFiles = () => setLeaveConfirmOpen(true)
+  const confirmLeaveToFiles = () => {
+    setLeaveConfirmOpen(false)
+    onDone?.()
+  }
+  const handleStageGoToStep = (targetStep) => {
+    if (targetStep === 1) {
+      requestLeaveToFiles()
+      return
+    }
+    if (!jobId) return
+    if (targetStep === 2) {
+      router.push(`/console/review/${jobId}`)
+      return
+    }
+    if (targetStep === 3) {
+      router.push(`/console/grouping/${jobId}`)
+    }
+  }
+
+  // When a table card expands, bring it into view under the sticky filters so
+  // the opened preview is not stuck below the fold.
+  useEffect(() => {
+    if (!expanded) return undefined
+    const card = tableCardRefs.current.get(expanded)
+    if (!card) return undefined
+    let cancelled = false
+    let innerRaf = 0
+    const run = () => {
+      if (cancelled) return
+      scrollElementIntoViewBelowSticky(card, stickyFiltersRef.current)
+    }
+    // Wait for the accordion to mount / start opening before measuring.
+    const outerRaf = window.requestAnimationFrame(() => {
+      innerRaf = window.requestAnimationFrame(run)
+    })
+    // Nudge again after the expand animation so tall previews stay in view.
+    const t = window.setTimeout(run, 280)
+    return () => {
+      cancelled = true
+      window.cancelAnimationFrame(outerRaf)
+      window.cancelAnimationFrame(innerRaf)
+      window.clearTimeout(t)
+    }
+  }, [expanded])
 
   const triggerBlobDownload = async (url, fallbackName, init = {}) => {
     const res = await fetch(url, withAuthHeaders(init))
@@ -490,23 +549,38 @@ export default function PdfReview({ jobId, filename, onDone }) {
 
   if (error && !tables) {
     return (
-      <PdfConsoleLayout jobId={jobId} step={2} maxStepReached={3}>
+      <PdfConsoleLayout jobId={jobId} step={2} maxStepReached={3} onGoToStep={handleStageGoToStep}>
+        {leaveConfirmOpen ? (
+          <LeaveProgressConfirmDialog
+            onCancel={() => setLeaveConfirmOpen(false)}
+            onConfirm={confirmLeaveToFiles}
+          />
+        ) : null}
         <div className="flex flex-col gap-[18px]">
           <div className="flex flex-col">
             <button
               type="button"
               className="mb-3.5 inline-flex items-center gap-1.5 self-start text-[15px] font-semibold text-teal hover:text-teal-dark"
-              onClick={onDone}
+              onClick={requestLeaveToFiles}
             >
               <ArrowLeft className="h-4 w-4" strokeWidth={2} aria-hidden />
               Upload another PDF
             </button>
-            <div className="font-display text-[26px] font-medium leading-tight text-ink">Review Extracted Tables</div>
+            <StageSubstepBreadcrumb
+              crumbs={INVENTORY_CRUMBS}
+              activeId="preview"
+              onNavigate={(next) => {
+                if (next === 'files') requestLeaveToFiles()
+              }}
+              isReachable={() => true}
+              ariaLabel="Dataset inventory"
+              size="page"
+            />
             <div className="mt-1 text-[15px] text-ink-soft">Couldn’t load this extraction job.</div>
           </div>
           <div className="flex flex-col gap-3 rounded-xl border border-line bg-white p-5 shadow-sm sm:p-6">
             <ErrorBanner>{error}</ErrorBanner>
-            <Button variant="primary" className="self-start" onClick={onDone}>Upload PDF again</Button>
+            <Button variant="primary" className="self-start" onClick={requestLeaveToFiles}>Upload PDF again</Button>
           </div>
         </div>
       </PdfConsoleLayout>
@@ -514,10 +588,25 @@ export default function PdfReview({ jobId, filename, onDone }) {
   }
   if (!tables) {
     return (
-      <PdfConsoleLayout jobId={jobId} step={2} maxStepReached={3}>
+      <PdfConsoleLayout jobId={jobId} step={2} maxStepReached={3} onGoToStep={handleStageGoToStep}>
+        {leaveConfirmOpen ? (
+          <LeaveProgressConfirmDialog
+            onCancel={() => setLeaveConfirmOpen(false)}
+            onConfirm={confirmLeaveToFiles}
+          />
+        ) : null}
         <div className="flex flex-col gap-[18px]">
           <div className="flex flex-col">
-            <div className="font-display text-[26px] font-medium leading-tight text-ink">Review Extracted Tables</div>
+            <StageSubstepBreadcrumb
+              crumbs={INVENTORY_CRUMBS}
+              activeId="preview"
+              onNavigate={(next) => {
+                if (next === 'files') requestLeaveToFiles()
+              }}
+              isReachable={() => true}
+              ariaLabel="Dataset inventory"
+              size="page"
+            />
             <div className="mt-1 text-[15px] text-ink-soft">Loading results…</div>
           </div>
           <div className="rounded-xl border border-line bg-white p-5 py-10 text-center text-ink-soft shadow-sm sm:p-6">
@@ -714,17 +803,27 @@ export default function PdfReview({ jobId, filename, onDone }) {
     </div>
   ) : null
 
-  const chipClass = (active) =>
+  const chipClass = (active, { review = false } = {}) =>
     `dhara-tab flex h-8 flex-none items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-semibold ${
-      active
-        ? 'border-teal-deep bg-teal-deep text-cream'
-        : 'border-line bg-white text-ink-soft hover:border-teal/35 hover:bg-sage hover:text-teal-deep'
+      review
+        ? (active
+          ? 'border-[#E8A05A] bg-[#F5C48A] text-[#8A4A12]'
+          : 'border-[#F0B27A]/55 bg-[#FFF6EE] text-[#D4782E] hover:border-[#E8A05A] hover:bg-[#FFECD8]')
+        : (active
+          ? 'border-teal-deep bg-teal-deep text-cream'
+          : 'border-line bg-white text-ink-soft hover:border-teal/35 hover:bg-sage hover:text-teal-deep')
     }`
 
   return (
-    <PdfConsoleLayout jobId={jobId} step={2} maxStepReached={3}>
+    <PdfConsoleLayout jobId={jobId} step={2} maxStepReached={3} onGoToStep={handleStageGoToStep}>
     <div ref={rootRef} className="flex flex-col gap-[18px]">
       <ScrollToTopButton scrollRootRef={rootRef} />
+      {leaveConfirmOpen ? (
+        <LeaveProgressConfirmDialog
+          onCancel={() => setLeaveConfirmOpen(false)}
+          onConfirm={confirmLeaveToFiles}
+        />
+      ) : null}
       {pendingDeleteIds && (
         <DeleteConfirmDialog
           count={pendingDeleteIds.length}
@@ -748,12 +847,21 @@ export default function PdfReview({ jobId, filename, onDone }) {
           <button
             type="button"
             className="mb-3.5 inline-flex items-center gap-1.5 text-[15px] font-semibold text-teal hover:text-teal-dark"
-            onClick={onDone}
+            onClick={requestLeaveToFiles}
           >
             <ArrowLeft className="h-4 w-4" strokeWidth={2} aria-hidden />
             Upload another file
           </button>
-          <div className="font-display text-[26px] font-medium leading-tight text-ink">Review Extracted Tables</div>
+          <StageSubstepBreadcrumb
+            crumbs={INVENTORY_CRUMBS}
+            activeId="preview"
+            onNavigate={(next) => {
+              if (next === 'files') requestLeaveToFiles()
+            }}
+            isReachable={() => true}
+            ariaLabel="Dataset inventory"
+            size="page"
+          />
           <div className="mt-1.5 text-[13px] font-medium text-ink">
             {filename || 'PDF report'}
             {filteredCount > 0 ? (
@@ -772,7 +880,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
 
       {/* Content box: filters stick at the top of the scrollport while tables scroll underneath. */}
       <div className="rounded-xl border border-line bg-white shadow-sm">
-        <div className="sticky top-0 z-20 space-y-2 rounded-t-xl border-b border-line bg-white px-5 py-3 sm:px-6">
+        <div ref={stickyFiltersRef} className="sticky top-0 z-20 space-y-2 rounded-t-xl border-b border-line bg-white px-5 py-3 sm:px-6">
           <div className="space-y-1">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
               <label
@@ -875,13 +983,17 @@ export default function PdfReview({ jobId, filename, onDone }) {
               Filter by:
             </span>
             <div className="flex min-w-0 flex-1 flex-wrap gap-2" role="tablist" aria-label="Filter tables by review status">
-              {primaryFilterOptions.map(({ id, label }) => (
+              {primaryFilterOptions.map(({ id, label }) => {
+                const isReviewChip = id === 'needs_review'
+                const active = activeFilter === id
+                  || (id === 'needs_review' && REASON_FILTER_IDS.includes(activeFilter))
+                return (
                 <button
                   key={id}
                   type="button"
                   role="tab"
-                  aria-selected={activeFilter === id || (id === 'needs_review' && REASON_FILTER_IDS.includes(activeFilter))}
-                  className={chipClass(activeFilter === id || (id === 'needs_review' && REASON_FILTER_IDS.includes(activeFilter)))}
+                  aria-selected={active}
+                  className={chipClass(active, { review: isReviewChip })}
                   onClick={() => {
                     setStatusFilter(id)
                     setExpanded(null)
@@ -890,14 +1002,15 @@ export default function PdfReview({ jobId, filename, onDone }) {
                 >
                   {label}
                   <span className={`rounded-full px-1.5 py-px text-[11px] font-bold transition-colors duration-[420ms] ${
-                    activeFilter === id || (id === 'needs_review' && REASON_FILTER_IDS.includes(activeFilter))
-                      ? 'bg-cream/20 text-cream'
-                      : 'bg-cream text-ink-soft'
+                    active
+                      ? (isReviewChip ? 'bg-white/30 text-[#8A4A12]' : 'bg-cream/20 text-cream')
+                      : (isReviewChip ? 'bg-white/80 text-[#D4782E]' : 'bg-cream text-ink-soft')
                   }`}>
                     {filterCounts[id] ?? 0}
                   </span>
                 </button>
-              ))}
+                )
+              })}
             </div>
             {!selectMode ? (
               <div className="ml-auto flex flex-none items-center gap-2">
@@ -906,18 +1019,9 @@ export default function PdfReview({ jobId, filename, onDone }) {
                   size="sm"
                   disabled={tables.length < 2}
                   onClick={() => enterSelectMode('merge')}
-                  title="Merge tables that share the same column headers"
+                  title="Merge tables that flow into multiple pages"
                 >
                   Merge
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="!border-[#c45c4a] !text-[#c45c4a] hover:!bg-[#fff1ee]"
-                  disabled={tables.length === 0}
-                  onClick={() => enterSelectMode('delete')}
-                >
-                  Delete
                 </Button>
                 <Button
                   variant="secondary"
@@ -927,6 +1031,15 @@ export default function PdfReview({ jobId, filename, onDone }) {
                   title="Select tables to download as a ZIP"
                 >
                   Download
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="!border-[#c45c4a] !text-[#c45c4a] hover:!bg-[#fff1ee]"
+                  disabled={tables.length === 0}
+                  onClick={() => enterSelectMode('delete')}
+                >
+                  Delete
                 </Button>
               </div>
             ) : null}
@@ -966,13 +1079,15 @@ export default function PdfReview({ jobId, filename, onDone }) {
               <span className="flex-none text-[12px] font-semibold tracking-wide text-ink-soft">
                 Reason:
               </span>
-              {reasonFilterOptions.map(({ id, label }) => (
+              {reasonFilterOptions.map(({ id, label }) => {
+                const active = activeFilter === id
+                return (
                 <button
                   key={id}
                   type="button"
                   role="tab"
-                  aria-selected={activeFilter === id}
-                  className={chipClass(activeFilter === id)}
+                  aria-selected={active}
+                  className={chipClass(active, { review: true })}
                   onClick={() => {
                     setStatusFilter(id)
                     setExpanded(null)
@@ -981,12 +1096,13 @@ export default function PdfReview({ jobId, filename, onDone }) {
                 >
                   {label}
                   <span className={`rounded-full px-1.5 py-px text-[11px] font-bold transition-colors duration-[420ms] ${
-                    activeFilter === id ? 'bg-cream/20 text-cream' : 'bg-cream text-ink-soft'
+                    active ? 'bg-white/30 text-[#8A4A12]' : 'bg-white/80 text-[#D4782E]'
                   }`}>
                     {filterCounts[id] ?? 0}
                   </span>
                 </button>
-              ))}
+                )
+              })}
             </div>
           </TableExpandPanel>
 
@@ -1080,12 +1196,19 @@ export default function PdfReview({ jobId, filename, onDone }) {
             const reviewed = reviewedIds.has(t.table_id)
             const selected = selectedIds.has(t.table_id)
             return (
-              <div key={t.table_id} className={`overflow-hidden rounded-lg border bg-surface transition-[border-color] duration-300 ease-out ${isOpen ? 'border-teal' : selectMode && selected ? 'border-teal/50' : 'border-line'}`}>
-                <div className="flex items-start gap-2.5 px-3.5 py-2.5 hover:bg-cream">
+              <div
+                key={t.table_id}
+                ref={(node) => {
+                  if (node) tableCardRefs.current.set(t.table_id, node)
+                  else tableCardRefs.current.delete(t.table_id)
+                }}
+                className={`overflow-hidden rounded-2xl border bg-surface transition-[border-color] duration-300 ease-out ${isOpen ? 'border-teal' : selectMode && selected ? 'border-teal/50' : 'border-line'}`}
+              >
+                <div className="flex items-center gap-2.5 px-3.5 py-2.5 hover:bg-cream">
                   {selectMode && (
                     <input
                       type="checkbox"
-                      className="mt-1 h-3.5 w-3.5 flex-none accent-teal"
+                      className="h-3.5 w-3.5 flex-none accent-teal"
                       checked={selected}
                       aria-label={`Select ${displayTitle(t) || `page ${t.page} table`}`}
                       onChange={() => toggleSelected(t.table_id)}
@@ -1093,18 +1216,20 @@ export default function PdfReview({ jobId, filename, onDone }) {
                     />
                   )}
                   <div
-                    className="flex min-w-0 flex-1 cursor-pointer items-start justify-between gap-3"
+                    className="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-3"
                     onClick={() => setExpanded(isOpen ? null : t.table_id)}
                   >
                     <div className="min-w-0 flex-1">
                       <TableTitleDisplay table={t} />
-                      <div className="mt-0.5 text-[11.5px] leading-snug text-ink-soft">
-                        {tableSourceSubtitle(t) || `Page ${t.page}`}
-                        {' · '}{t.semantic_status === 'classified' ? 'AI-classified' : 'Auto-accepted (no AI review)'}
-                      </div>
+                      {tableSourceSubtitle(t) ? (
+                        <div className="mt-0.5 text-[11.5px] leading-snug text-ink-soft">
+                          {tableSourceSubtitle(t)}
+                        </div>
+                      ) : null}
                     </div>
-                    <div className="flex flex-none items-center gap-2">
-                      {!selectMode && (
+                    {/* Download in a fixed slot; status stays natural-width and right-aligned */}
+                    <div className="flex flex-none items-center gap-1.5">
+                      {!selectMode ? (
                         <button
                           type="button"
                           className="flex h-7 w-7 flex-none items-center justify-center rounded border border-line text-ink-soft hover:border-teal hover:text-teal disabled:opacity-50"
@@ -1122,27 +1247,31 @@ export default function PdfReview({ jobId, filename, onDone }) {
                             <Download className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
                           )}
                         </button>
-                      )}
-                      {reviewed ? (
-                        <Badge tone="ok">
-                          <span className="inline-flex items-center gap-1">
-                            <Check className="h-3 w-3" strokeWidth={2.5} aria-hidden />
-                            Reviewed
-                          </span>
-                        </Badge>
                       ) : (
-                        <ReviewBadge
-                          needed={
-                            Boolean(t.human_review_needed)
-                            || tableHasMissingTitle(t)
-                            || collectReviewReasons(t).size > 0
-                          }
-                          reason={
-                            t.human_review_reason
-                            || (tableHasMissingTitle(t) ? 'uncertain_title' : null)
-                          }
-                        />
+                        <span className="h-7 w-7 flex-none" aria-hidden />
                       )}
+                      <div className="flex h-7 w-[9.25rem] flex-none items-center justify-end">
+                        {reviewed ? (
+                          <Badge tone="ok">
+                            <span className="inline-flex items-center gap-1">
+                              <Check className="h-3 w-3" strokeWidth={2.5} aria-hidden />
+                              Reviewed
+                            </span>
+                          </Badge>
+                        ) : (
+                          <ReviewBadge
+                            needed={
+                              Boolean(t.human_review_needed)
+                              || tableHasMissingTitle(t)
+                              || collectReviewReasons(t).size > 0
+                            }
+                            reason={
+                              t.human_review_reason
+                              || (tableHasMissingTitle(t) ? 'uncertain_title' : null)
+                            }
+                          />
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>

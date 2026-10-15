@@ -14,7 +14,7 @@ Application code lives under `backend/app/`. `backend/main.py` re-exports `app.m
 
 **HTTP:** `app/api/routes/` — catalogue is split into `catalogue_extract`, `catalogue_publish`, `catalogue_browse`, `catalogue_standards`. Domain errors use `AppError` with a global handler. Mutating routes use `require_roles(*MUTATING_ROLES)`; catalogue/access list/get pass `organisation_id`.
 
-**MCP:** JWT by default (`MCP_HTTP_AUTH=jwt`); tools filter by organisation from the Bearer token context.
+**MCP:** Open published reads by default (`MCP_HTTP_AUTH=off`) so Claude/Cursor connectors can attach by URL; set `jwt` to require Bearer JWT. Tools filter by organisation from the Bearer token context when auth is on.
 
 **Mega-modules:** `header_utils`, `table_confidence`, `metadata_llm`, and `pdf_grouping` are split with stable re-export facades.
 
@@ -229,7 +229,7 @@ Live package: `backend/app/mcp/`. Stdio is `python -m app.mcp`.
 
 Tools: `search_datasets`, `get_metadata`, `get_table`. They are thin in the sense that they call `catalogue.query`, and they are not thin in the sense that they skip the REST authorisation arguments.
 
-`MCP_HTTP_AUTH` defaults to `off`. `jwt` checks that a Bearer token decodes; it does not load the user or pass `organisation_id` into the query. `token` compares `MCP_AUTH_TOKEN`. DNS rebinding protection is disabled so a public host can reach `/mcp`.
+`MCP_HTTP_AUTH` defaults to `off` (required for Claude custom connectors: a `401` makes Claude attempt OAuth client registration, and Dhara has no OAuth AS / DCR / CIMD yet). `jwt` checks that a Bearer token decodes and resolves organisation when present. `token` compares `MCP_AUTH_TOKEN`. DNS rebinding protection is disabled so a public host can reach `/mcp`. `/.well-known/*` must not fall through to the SPA HTML shell.
 
 Stdio has no per-request user. The process identity is whoever can run `python -m app.mcp` and whoever owns `backend/.env` (it calls `load_dotenv`). That mode is for a trusted local operator. It must not be exposed on a multi-user host without a separate OS user and a secret file that is not the database role.
 
@@ -290,11 +290,11 @@ Security first, then one vertical slice at a time. Do not delete a legacy module
 
 **Callers:** `/mcp`, `/api/catalogue/groups`, `/api/catalogue/datasets`, `/api/v1/*`, frontend catalogue page.
 
-**Changes:** Default `MCP_HTTP_AUTH` to `jwt` (or require an explicit `off` for a demo). When a user is present, pass `organisation_id` into the same query functions REST uses. Tag `batch-push` with the caller's organisation via the existing repository wrapper. Decide, in code and in a test, whether NULL-org rows stay globally visible. Document that choice; do not silently hide legacy rows if production still depends on them (**runtime** check of NULL counts first).
+**Changes:** Keep `MCP_HTTP_AUTH=off` as the connector-friendly default until an OAuth AS (DCR or CIMD) exists for Claude. When locking with `jwt`, pass `organisation_id` into the same query functions REST uses. Tag `batch-push` with the caller's organisation via the existing repository wrapper. Decide, in code and in a test, whether NULL-org rows stay globally visible. Document that choice; do not silently hide legacy rows if production still depends on them (**runtime** check of NULL counts first).
 
-**Tests:** MCP initialize without a token returns 401 when auth is on; two orgs cannot read each other's tagged datasets; publish sets `organisation_id`.
+**Tests:** MCP initialize without a token succeeds when auth is off and returns 401 when `jwt`/`token` is on; two orgs cannot read each other's tagged datasets; publish sets `organisation_id`.
 
-**Rollback:** env `MCP_HTTP_AUTH=off` restores the old default. Org tagging is additive.
+**Rollback:** env `MCP_HTTP_AUTH=jwt` re-locks `/mcp` (Claude connectors will fail until OAuth is implemented). Org tagging is additive.
 
 **Depends on:** Phase A is independent. Do B before any MCP feature work.
 

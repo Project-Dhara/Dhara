@@ -83,6 +83,7 @@ export default function Classify({
   const [ncoStandardReady, setNcoStandardReady] = useState(false)
   const [ncoNeedsStandard, setNcoNeedsStandard] = useState(false)
   const [fillAiLoading, setFillAiLoading] = useState(false)
+  const [fillAllAiLoading, setFillAllAiLoading] = useState(false)
   const [fillAiError, setFillAiError] = useState('')
   const [publishing, setPublishing] = useState(false)
   const [publishError, setPublishError] = useState('')
@@ -341,37 +342,12 @@ export default function Classify({
     }
   }
 
-  const fillDefinitionsWithAi = ({ allowOccupation = false } = {}) => {
-    if (!activeColumn) return
-    if (!allowOccupation && isOccupationColumn(selectedCol)) return
-    if (!hasLlmKey) {
-      setFillAiError('LLM key not configured — add your API key in Settings to fill definitions with AI.')
-      return
-    }
-    const columns = [{
-      name: activeColumn.name,
-      metadata_id: activeColumn._metadataId || activeColumn.aliases?.[0]?._metadataId || null,
-      values: (columnCodes[activeColumn.name] || []).map((r) => r.value || r.code).filter(Boolean),
-    }].filter((c) => c.values.length)
-    if (!columns.length) return
-    setFillAiLoading(true)
-    setFillAiError('')
-    fetch('/api/catalogue/fill-definitions', withAuthHeaders(withLlmKeyHeaders({
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ columns, allow_occupation: Boolean(allowOccupation) }),
-    })))
-      .then(async (res) => {
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ detail: 'Could not fill definitions' }))
-          throw new Error(typeof err.detail === 'string' ? err.detail : 'Could not fill definitions')
-        }
-        return res.json()
-      })
-      .then((data) => {
-        const byCol = data.definitions || {}
-        const defs = byCol[activeColumn.name] || {}
-        const nextRows = (columnCodes[activeColumn.name] || []).map((row) => {
+  const applyAiDefinitions = (byCol, columnNames, { clearNcoGate = false } = {}) => {
+    setColumnCodes((prev) => {
+      const next = { ...prev }
+      for (const name of columnNames) {
+        const defs = byCol[name] || {}
+        next[name] = (prev[name] || []).map((row) => {
           const value = String(row.value ?? '')
           const raw = defs[row.value]
             || (row.code ? defs[row.code] : undefined)
@@ -389,14 +365,82 @@ export default function Classify({
             definition: definition ?? '',
           }
         })
-        setColumnCodes((prev) => ({ ...prev, [activeColumn.name]: nextRows }))
-        if (allowOccupation) {
-          setNcoNeedsStandard(false)
-          setNcoError('')
+      }
+      return next
+    })
+    if (clearNcoGate) {
+      setNcoNeedsStandard(false)
+      setNcoError('')
+    }
+  }
+
+  const requestFillDefinitions = (columns, { allowOccupation = false } = {}) => (
+    fetch('/api/catalogue/fill-definitions', withAuthHeaders(withLlmKeyHeaders({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ columns, allow_occupation: Boolean(allowOccupation) }),
+    })))
+      .then(async (res) => {
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: 'Could not fill definitions' }))
+          throw new Error(typeof err.detail === 'string' ? err.detail : 'Could not fill definitions')
         }
+        return res.json()
+      })
+  )
+
+  const fillDefinitionsWithAi = ({ allowOccupation = false } = {}) => {
+    if (!activeColumn) return
+    if (!allowOccupation && isOccupationColumn(selectedCol)) return
+    if (!hasLlmKey) {
+      setFillAiError('LLM key not configured — add your API key in Settings to fill definitions with AI.')
+      return
+    }
+    const columns = [{
+      name: activeColumn.name,
+      metadata_id: activeColumn._metadataId || activeColumn.aliases?.[0]?._metadataId || null,
+      values: (columnCodes[activeColumn.name] || []).map((r) => r.value || r.code).filter(Boolean),
+    }].filter((c) => c.values.length)
+    if (!columns.length) return
+    setFillAiLoading(true)
+    setFillAiError('')
+    requestFillDefinitions(columns, { allowOccupation })
+      .then((data) => {
+        applyAiDefinitions(data.definitions || {}, [activeColumn.name], {
+          clearNcoGate: allowOccupation,
+        })
       })
       .catch((e) => setFillAiError(e.message))
       .finally(() => setFillAiLoading(false))
+  }
+
+  const fillAllDefinitionsWithAi = () => {
+    if (!hasLlmKey) {
+      setFillAiError('LLM key not configured — add your API key in Settings to fill definitions with AI.')
+      return
+    }
+    const columns = classifiedColumns.map((col) => ({
+      name: col.name,
+      metadata_id: col._metadataId || col.aliases?.[0]?._metadataId || null,
+      values: (columnCodes[col.name] || []).map((r) => r.value || r.code).filter(Boolean),
+    })).filter((c) => c.values.length)
+    if (!columns.length) return
+    setFillAiLoading(true)
+    setFillAllAiLoading(true)
+    setFillAiError('')
+    requestFillDefinitions(columns, { allowOccupation: true })
+      .then((data) => {
+        applyAiDefinitions(
+          data.definitions || {},
+          columns.map((c) => c.name),
+          { clearNcoGate: true },
+        )
+      })
+      .catch((e) => setFillAiError(e.message))
+      .finally(() => {
+        setFillAiLoading(false)
+        setFillAllAiLoading(false)
+      })
   }
 
   const goClassificationSettings = () => {
@@ -755,6 +799,11 @@ export default function Classify({
             saving={saving}
             incompleteNames={incompleteColumnNames}
             highlightIncomplete={highlightIncomplete}
+            fillAllAiLoading={fillAllAiLoading}
+            fillAiBusy={fillAiLoading}
+            fillAllAiError={fillAiError}
+            canFillAll={classifiedColumns.some((c) => (columnCodes[c.name] || []).length > 0)}
+            onFillAllAi={fillAllDefinitionsWithAi}
           />
           {activeColumn && (
             <CodeListEditor
@@ -762,7 +811,7 @@ export default function Classify({
               codes={activeCodes}
               dirty={columnDirty}
               fillAiLoading={fillAiLoading}
-              fillAiError={fillAiError}
+              fillAiError={fillAllAiLoading ? '' : fillAiError}
               onFillAi={() => fillDefinitionsWithAi({
                 allowOccupation: isOccupationColumn(activeColumn.name),
               })}
@@ -833,19 +882,10 @@ export default function Classify({
         </>
       )}
 
-      <div className="flex items-center gap-3.5">
+      <div className="flex items-center justify-between gap-3.5">
         {onClassificationPage ? (
           <>
-            <Button
-              disabled={!canOpenHarmonisation}
-              onClick={attemptGoToHarmonisation}
-            >
-              <span className="inline-flex items-center gap-1.5">
-                Continue to harmonisation
-                <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
-              </span>
-            </Button>
-            <span className="text-[13px] text-[#8E9398]">
+            <span className="min-w-0 text-[13px] text-[#8E9398]">
               {classifiedColumns.length === 0
                 ? (loading
                   ? 'Loading classification columns…'
@@ -854,10 +894,27 @@ export default function Classify({
                   ? 'All codes and definitions are filled — continue to verify related tables.'
                   : 'You can continue anytime. Empty codes or definitions will ask for confirmation.'}
             </span>
+            <Button
+              className="flex-none"
+              disabled={!canOpenHarmonisation}
+              onClick={attemptGoToHarmonisation}
+            >
+              <span className="inline-flex items-center gap-1.5">
+                Continue to harmonisation
+                <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
+              </span>
+            </Button>
           </>
         ) : (
           <>
-            <Button disabled={publishing} onClick={publishRelease}>
+            <span className="min-w-0 text-[13px] text-[#8E9398]">
+              {publishError
+                ? publishError
+                : classReady
+                  ? 'Catalogue already saved — continue to the publication confirmation.'
+                  : 'You can continue anytime. Incomplete codes or harmonisation will ask for confirmation.'}
+            </span>
+            <Button className="flex-none" disabled={publishing} onClick={publishRelease}>
               {publishing ? 'Continuing…' : (
                 <span className="inline-flex items-center gap-1.5">
                   Continue to publish
@@ -865,13 +922,6 @@ export default function Classify({
                 </span>
               )}
             </Button>
-            <span className="text-[13px] text-[#8E9398]">
-              {publishError
-                ? publishError
-                : classReady
-                  ? 'Catalogue already saved — continue to the publication confirmation.'
-                  : 'You can continue anytime. Incomplete codes or harmonisation will ask for confirmation.'}
-            </span>
           </>
         )}
       </div>

@@ -62,6 +62,18 @@ from app.services.ingestion.wizard.table_export import table_to_excel_bytes
 from app.services.metadata.table_id_title import _catalogue_table_title, _validate_tables
 
 router = APIRouter(tags=["Catalogue"])
+def _parse_dataset_id_config_form(raw: Optional[str]) -> Optional[dict]:
+    if raw is None or not str(raw).strip():
+        return None
+    try:
+        parsed = _json.loads(raw)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid dataset_id_config JSON: {e}") from e
+    if not isinstance(parsed, dict):
+        raise HTTPException(400, "dataset_id_config must be a JSON object")
+    return parsed
+
+
 @router.post("/api/catalogue/batch-push")
 async def batch_push(
     request: Request,
@@ -71,6 +83,7 @@ async def batch_push(
     nmds_concepts_json: Optional[str] = Form(None),
     batch_id: Optional[str] = Form(None),
     pdf_job_id: Optional[str] = Form(None),
+    dataset_id_config: Optional[str] = Form(None),
     user: CurrentUser = Depends(require_roles(*MUTATING_ROLES)),
 ):
     user_email = user.email
@@ -99,6 +112,7 @@ async def batch_push(
     nmds_concepts = _json.loads(nmds_concepts_json) if nmds_concepts_json else None
     batch_id = (batch_id or "").strip() or None
     pdf_job_id = (pdf_job_id or "").strip() or None
+    id_cfg = _parse_dataset_id_config_form(dataset_id_config)
 
     metadata_by_index = {}
     if metadata_files:
@@ -119,26 +133,35 @@ async def batch_push(
             raise HTTPException(400, f"Invalid tables_blob: {e}")
 
     def _load_sources():
+        from app.services.ingestion.table_ids import dataset_id_config_from_job
+
         staged: dict = {}
         pdf_tables: dict = {}
+        job_id_cfg = None
         with session_scope() as session:
             if batch_id:
                 from app.services.catalogue import extract_staging as _staging
                 staged = _staging.load_staging_tables(session, batch_id)
             if pdf_job_id:
+                job = pdf_jobs_repo.get_job(session, pdf_job_id)
+                if job:
+                    job_id_cfg = dataset_id_config_from_job(job)
                 for t in pdf_jobs_repo.list_active_tables(session, pdf_job_id):
                     tid = str(t.get("id") or "")
                     if tid:
                         pdf_tables[tid] = t
                         # MatchResult also keys PDF tables by _uid === id.
                         pdf_tables[str(t.get("_uid") or tid)] = t
-        return staged, pdf_tables
+        return staged, pdf_tables, job_id_cfg
 
-    staged_by_uid, pdf_by_id = await asyncio.to_thread(_load_sources)
+    staged_by_uid, pdf_by_id, job_id_cfg = await asyncio.to_thread(_load_sources)
+    if id_cfg is None and job_id_cfg:
+        id_cfg = job_id_cfg
 
     _OVERLAY_KEYS = (
-        "_uid", "id", "table_id", "dataset_id", "title", "sheet", "source_file",
-        "source_type", "original_excel_url", "source_excel_url",
+        "_uid", "id", "table_id", "dataset_id", "unique_dataset_id", "title",
+        "sheet", "source_file", "source_type", "original_excel_url",
+        "source_excel_url",
     )
 
     def _hydrate_table(raw: dict) -> dict:
@@ -193,7 +216,11 @@ async def batch_push(
         for mt in group.get("matched_tables", []):
             raw = mt.get("table") or {}
             t = _hydrate_table(raw)
-            t["title"] = _catalogue_table_title(t, mt.get("inventory_item"))
+            inv = mt.get("inventory_item") or {}
+            t["title"] = _catalogue_table_title(t, inv)
+            inv_uid = str(inv.get("unique_dataset_id") or "").strip()
+            if inv_uid and not t.get("unique_dataset_id"):
+                t["unique_dataset_id"] = inv_uid
             # Skip TOC / list-of-tables index grids — not statistical datasets.
             if _looks_like_index_or_toc_table(t):
                 continue
@@ -251,6 +278,7 @@ async def batch_push(
                     p.get("real_classifications"),
                     p.get("catalogue_placement"),
                     organisation_id=org_id,
+                    dataset_id_config=id_cfg,
                 )
                 results.append(result)
         return results

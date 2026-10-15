@@ -324,7 +324,11 @@ def _pdf_table_sort_key(table_id: str) -> Tuple[Any, int]:
 
 def _pdf_tables_from_job(job: Dict[str, Any]) -> list:
     from app.services.ingestion.review_tables import flatten_job_result_to_review_tables
+    from app.services.ingestion.table_ids import ensure_sequential_dataset_ids_on_job
 
+    # Upgrade legacy page/filename locators to ``{prefix}_{stats}_{NNNNN}`` once.
+    if ensure_sequential_dataset_ids_on_job(job):
+        _save_pdf_job(job)
     return flatten_job_result_to_review_tables(job)
 
 

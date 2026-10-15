@@ -22,18 +22,20 @@ def result_pages_only(result: Optional[Dict[Any, Any]]) -> Dict[Any, Any]:
 def source_location_label(table: Dict[str, Any]) -> Optional[str]:
     """Human-readable source location for review cards."""
     st = (table.get("source_type") or "").lower()
+    sheet = (table.get("sheet") or "").strip()
     if st == "pdf":
         page = table.get("page")
         if page is not None and str(page).strip():
             return f"Page {page}"
         return None
-    if st == "excel":
-        sheet = (table.get("sheet") or "").strip()
-        if sheet:
-            return f"Sheet {sheet}"
-        return None
+    # Prefer sheet whenever present (Excel/CSV, including LLM-validated tables
+    # that keep sheet but may omit / mistype source_type briefly).
+    if sheet:
+        return f"Sheet {sheet}"
     if st == "csv":
         return "CSV rows"
+    if st == "excel":
+        return None
     return None
 
 
@@ -71,25 +73,18 @@ def flatten_job_result_to_review_tables(
     default_filename: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Flatten page-keyed extraction result into review tables (with reviews merged)."""
-    from app.services.ingestion.table_ids import (
-        build_review_table_id,
-        dataset_id_config_from_job,
-        parse_batch_page_key,
-        physical_page_value,
-    )
+    from app.services.ingestion.table_ids import parse_batch_page_key
 
     reviews = dict(job.get("reviews") or {})
     deleted = set(job.get("deleted_table_ids") or [])
     result = result_pages_only(job.get("result"))
     batch_id = job.get("job_id")
     filename = default_filename or job.get("filename")
-    cfg = dataset_id_config_from_job(job)
     meta = batch_meta_from_result(job.get("result"))
     batch_files = list(meta.get("batch_files") or job.get("batch_files") or [])
     tables: List[Dict[str, Any]] = []
     for page_num in sorted(result.keys(), key=lambda k: int(k) if str(k).isdigit() else str(k)):
         page_tables = (result.get(page_num) or {}).get("tables") or []
-        tables_on_page = len(page_tables)
         for idx, t in enumerate(page_tables):
             file_index, _phys = parse_batch_page_key(page_num)
             src_name = t.get("source_filename") or t.get("source_file") or filename
@@ -98,15 +93,9 @@ def flatten_job_result_to_review_tables(
                 entry = batch_files[file_index] or {}
                 src_name = entry.get("filename") or src_name
                 src_type = entry.get("source_type") or src_type
-            table_id = str(t.get("table_id") or "").strip() or build_review_table_id(
-                config=cfg,
-                source_filename=src_name,
-                source_type=str(src_type or "pdf"),
-                page=physical_page_value(t, page_num),
-                index=idx,
-                tables_on_page=tables_on_page,
-                file_index=file_index,
-            )
+            table_id = str(t.get("table_id") or t.get("dataset_id") or "").strip()
+            if not table_id:
+                table_id = f"{page_num}-{idx}"
             if table_id in deleted:
                 continue
             # Also honor legacy deletes keyed by opaque page-index ids.
@@ -114,7 +103,14 @@ def flatten_job_result_to_review_tables(
             if legacy_id in deleted:
                 continue
             merged = enrich_table_for_review(
-                {**t, **reviews.get(table_id, {}), **reviews.get(legacy_id, {})},
+                {
+                    **t,
+                    **reviews.get(table_id, {}),
+                    **reviews.get(legacy_id, {}),
+                    # Always stamp source_type so Preview can hide PDF-only
+                    # reference UI (snapshot / original extraction) for Excel/CSV.
+                    "source_type": src_type,
+                },
                 table_id=table_id,
                 page_key=page_num,
                 source_filename=src_name,

@@ -15,6 +15,7 @@ import pymupdf
 from app.services.llm_prompts import (
     BATCH_SIZE,
     BATCH_VALIDATION_MAX_TOKENS_CAP,
+    LLM_PROMPT_MAX_ROWS,
     LLM_VALIDATION_TEMPERATURE,
     MAX_TOKENS_PER_PAGE,
     OPENAI_MODEL,
@@ -33,10 +34,49 @@ from app.services.extraction.pdf.utils.pymupdf import (
     log,
 )
 
+
+def _prompt_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Lean candidate set for LLM prompts without dropping distinct tables.
+
+    Prefer one grid per physical region (bbox-deduped). Prefer ruled hits when
+    present — whitespace clones mainly inflate tokens without changing output
+    once stamp/alignment re-grounds on the ruled DF.
+    """
+    deduped = dedupe_candidates_by_bbox(list(candidates or []))
+    ruled = _distinct_ruled_candidates(deduped)
+    return ruled if ruled else deduped
+
+
+def _stamp_safe(
+    page_result: Dict[str, Any],
+    page_num: int,
+    candidates: Optional[List[Dict[str, Any]]],
+    page_text: str,
+) -> Dict[str, Any]:
+    """Stamp LLM output; on stamp failure keep the raw LLM tables (don't drop)."""
+    try:
+        return _stamp_llm_metadata(page_result, page_num, candidates, page_text)
+    except Exception as e:
+        log(f"  page {page_num}: stamp failed ({e}); keeping unstamped LLM tables")
+        out = dict(page_result or {"tables": []})
+        for t in out.get("tables") or []:
+            if isinstance(t, dict):
+                t.setdefault("page", page_num)
+                t.setdefault("semantic_status", "classified")
+                t.setdefault(
+                    "extraction",
+                    {"method": "pymupdf+llm", "confidence": "llm_validated_unstamped"},
+                )
+        return out
+
+
 def build_validation_prompt(page_num: int, candidates: List[Dict[str, Any]], text: str) -> str:
-    candidates = dedupe_candidates_by_bbox(candidates)
+    candidates = _prompt_candidates(candidates)
     ruled_n = len(_distinct_ruled_candidates(candidates))
-    sections = [f"--- {t['method']}, table {i + 1} ---\n{df_to_text(t['df'])}" for i, t in enumerate(candidates)]
+    sections = [
+        f"--- {t['method']}, table {i + 1} ---\n{df_to_text(t['df'], max_rows=LLM_PROMPT_MAX_ROWS)}"
+        for i, t in enumerate(candidates)
+    ]
     count_hint = (
         f"Ruled-border detectors found {ruled_n} distinct table region(s) on this page. "
         f"Return exactly {ruled_n} object(s) in \"tables\" unless the raw text clearly shows otherwise.\n\n"
@@ -92,7 +132,12 @@ def validate_all_pages(pages_grouped: Dict[int, List[Dict[str, Any]]], page_text
             except Exception as e:
                 log(f"  page {page_num}: validation failed ({e})")
                 continue
-            validated[page_num] = result
+            validated[page_num] = _stamp_safe(
+                result,
+                page_num,
+                pages_grouped.get(page_num),
+                page_text.get(page_num, ""),
+            )
             if done % 20 == 0 or done == len(futures):
                 log(f"  validated {done}/{len(futures)} pages")
     return validated
@@ -104,9 +149,13 @@ def build_batch_validation_prompt(pages: List[int], pages_grouped: Dict[int, Lis
                                    page_text: Dict[int, str]) -> str:
     page_sections = []
     for page_num in pages:
-        candidates = dedupe_candidates_by_bbox(pages_grouped.get(page_num, []))
+        candidates = _prompt_candidates(pages_grouped.get(page_num, []))
         ruled_n = len(_distinct_ruled_candidates(candidates))
-        sections = [f"  --- {t['method']}, table {i + 1} ---\n{df_to_text(t['df'], max_rows=40)}" for i, t in enumerate(candidates)]
+        sections = [
+            f"  --- {t['method']}, table {i + 1} ---\n"
+            f"{df_to_text(t['df'], max_rows=LLM_PROMPT_MAX_ROWS)}"
+            for i, t in enumerate(candidates)
+        ]
         text = page_text.get(page_num, "")[:RAW_TEXT_CHARS_PER_PAGE_BATCHED]
         count_hint = (
             f"\nRuled-border detectors found {ruled_n} distinct table region(s). "
@@ -149,11 +198,9 @@ def validate_batch(client: openai.OpenAI, pages: List[int], pages_grouped: Dict[
         parsed = json.loads(cleaned)
 
     by_page = parsed.get("pages", {})
-    # ADDED: pass per-page pymupdf candidates + page text into stamp so
-    # ungrounded Direction columns can be stripped and alignment guard can
-    # fall back when the LLM grid is shifted.
+    # Stamp per page so one bad candidate DF cannot discard the whole batch.
     return {
-        p: _stamp_llm_metadata(
+        p: _stamp_safe(
             by_page.get(str(p), {"tables": []}),
             p,
             pages_grouped.get(p),
@@ -161,6 +208,39 @@ def validate_batch(client: openai.OpenAI, pages: List[int], pages_grouped: Dict[
         )
         for p in pages
     }
+
+
+def _fallback_validate_pages(
+    client: openai.OpenAI,
+    pages: List[int],
+    pages_grouped: Dict[int, List[Dict[str, Any]]],
+    page_text: Dict[int, str],
+    n_workers: int,
+) -> Dict[int, Dict[str, Any]]:
+    """Per-page LLM retry after a batch API failure — parallel, not sequential."""
+    out: Dict[int, Dict[str, Any]] = {}
+    workers = max(1, min(n_workers, len(pages)))
+
+    def _one(page_num: int) -> Tuple[int, Optional[Dict[str, Any]]]:
+        try:
+            result_single = validate_page(
+                client, page_num, pages_grouped[page_num], page_text.get(page_num, "")
+            )
+            return page_num, _stamp_safe(
+                result_single,
+                page_num,
+                pages_grouped.get(page_num),
+                page_text.get(page_num, ""),
+            )
+        except Exception as e2:
+            log(f"    page {page_num}: per-page fallback also failed ({e2})")
+            return page_num, None
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for page_num, result in pool.map(_one, pages):
+            if result is not None:
+                out[page_num] = result
+    return out
 
 
 def validate_all_pages_batched(pages_grouped: Dict[int, List[Dict[str, Any]]], page_text: Dict[int, str],
@@ -184,18 +264,11 @@ def validate_all_pages_batched(pages_grouped: Dict[int, List[Dict[str, Any]]], p
                 result = future.result()
             except Exception as e:
                 log(f"  batch {batch[0]}-{batch[-1]} failed, falling back to per-page ({e})")
-                for page_num in batch:
-                    try:
-                        result_single = validate_page(client, page_num, pages_grouped[page_num], page_text.get(page_num, ""))
-                        # ADDED: pass candidates + page text for Direction strip / alignment guard.
-                        validated[page_num] = _stamp_llm_metadata(
-                            result_single,
-                            page_num,
-                            pages_grouped.get(page_num),
-                            page_text.get(page_num, ""),
-                        )
-                    except Exception as e2:
-                        log(f"    page {page_num}: per-page fallback also failed ({e2})")
+                validated.update(
+                    _fallback_validate_pages(
+                        client, batch, pages_grouped, page_text, n_workers
+                    )
+                )
                 done_pages += len(batch)
                 log(f"  validated {done_pages}/{len(all_pages)} pages")
                 if progress_cb:

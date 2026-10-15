@@ -27,7 +27,7 @@ python -c "import secrets; print(secrets.token_hex(32))"
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `ENABLE_SIGNUP` | `true` | Allow `POST /api/signup`. Set `false` in locked deploys |
-| `MCP_HTTP_AUTH` | `off` | Remote `/mcp` auth: `off` (open published reads), `jwt` (login Bearer), or `token` (`MCP_AUTH_TOKEN` only) |
+| `MCP_HTTP_AUTH` | `off` | Remote `/mcp` auth: `off` (open published reads; required for Claude URL connect), `jwt` (login Bearer), or `token` (`MCP_AUTH_TOKEN` only). Do not use `jwt` with Claude connectors until OAuth is implemented. |
 | `MCP_AUTH_TOKEN` | _(unset)_ | Optional long-lived Bearer for agents when auth is enabled |
 
 Admin provisioning: `backend/scripts/create_user.py`.
@@ -82,16 +82,10 @@ empty.
 
 ## Classification data
 
-Occupation / standards CSVs are managed in the app (**Settings → Classification
-code configuration**) and stored in Postgres. Optional local file:
-
-```text
-backend/data/nco_2015_concordance.csv
-```
-
-When present, the backend auto-registers it as **NCO 2015** in the Settings
-list (selected if nothing else is). Stewards can still upload more standards.
-The full CSV is gitignored; see `.example` for headers.
+**NCO 2015** is pre-configured from backend data and auto-registered in
+**Settings → Classification code configuration** (selected if nothing else is).
+Stewards can still upload more standards there; all standards are stored in
+Postgres.
 
 ## Health checks
 

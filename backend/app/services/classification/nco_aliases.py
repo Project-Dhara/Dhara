@@ -12,11 +12,11 @@ NCO_2015_CSV_PATH = os.path.join(
 
 
 def seed_nco_2015(conn, csv_path=NCO_2015_CSV_PATH):
-    """Optional local bootstrap: register bundled concordance as a standard.
+    """Optional local bootstrap: register bundled NCO 2015 as a standard.
 
     Prefer Settings → Classification code configuration for steward uploads.
-    When ``backend/data/nco_2015_concordance.csv`` exists, this creates the
-    ``NCO 2015`` list entry (and loads ``nco_2015_codes`` if nothing is selected).
+    When backend NCO data exists, this creates the ``NCO 2015`` list entry
+    (and loads ``nco_2015_codes`` if nothing is selected).
     """
     from app.services.standards.classification_standards import ensure_bundled_nco_standard
 

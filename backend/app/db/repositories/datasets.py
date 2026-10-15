@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from datetime import date
-from typing import Any
+from typing import Any, Mapping, Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -17,6 +18,24 @@ from app.services.classification.classifications import (
     _merge_classifications,
     _merge_real_classifications,
 )
+from app.services.ingestion.table_ids import (
+    catalogue_id_stem,
+    format_sequential_dataset_id,
+    is_review_locator_id,
+    is_sequential_catalogue_id,
+    looks_like_uuid,
+    normalize_dataset_id_config,
+)
+
+logger = logging.getLogger(__name__)
+
+_COUNTERS_DDL = """
+CREATE TABLE IF NOT EXISTS dataset_id_counters (
+    stem         TEXT PRIMARY KEY,
+    last_value   INTEGER NOT NULL DEFAULT 0,
+    updated_at   TIMESTAMPTZ DEFAULT NOW()
+)
+"""
 
 STANDARD_CONCEPTS = [
     "Contact",
@@ -33,44 +52,265 @@ STANDARD_CONCEPTS = [
 ]
 
 
-_UUID_RE = re.compile(
-    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-)
-
-
-def _make_dataset_id(table: dict, index: int) -> str:
-    suffix = uuid.uuid4().hex[:6]
-    return f"DS-{index+1:03d}-{suffix}"
-
-
 def _looks_like_uuid(value: str) -> bool:
-    return bool(_UUID_RE.fullmatch(str(value or "").strip()))
+    return looks_like_uuid(value)
 
 
-def resolve_catalogue_dataset_id(table: dict, index: int) -> str:
-    """Pick the published dataset_id.
+def _max_sequential_in_datasets(session: Session, stem: str, sep: str) -> int:
+    """Highest trailing sequence already present for ``stem`` in ``datasets``."""
+    like = f"{stem}{sep}%"
+    try:
+        rows = session.execute(
+            text("SELECT dataset_id FROM datasets WHERE dataset_id LIKE :like"),
+            {"like": like},
+        ).fetchall()
+    except Exception:
+        logger.exception("Could not scan datasets for max sequential id (stem=%s)", stem)
+        return 0
+    best = 0
+    prefix = stem + sep
+    for (ds_id,) in rows:
+        raw = str(ds_id or "")
+        if not raw.startswith(prefix):
+            continue
+        tail = raw[len(prefix) :]
+        if tail.isdigit():
+            best = max(best, int(tail))
+    return best
 
-    Prefer explicit dataset ids, then a human-readable ``table_id`` when ``id``
-    is a PDF row UUID, then a non-UUID ``id`` (Excel DDI ids). Fall back to a
-    generated ``DS-…`` token.
+
+def _dataset_id_exists(session: Session, dataset_id: str) -> bool:
+    try:
+        row = session.execute(
+            text("SELECT 1 FROM datasets WHERE dataset_id = :ds LIMIT 1"),
+            {"ds": dataset_id},
+        ).first()
+        return row is not None
+    except Exception:
+        logger.exception("Could not check dataset_id existence for %s", dataset_id)
+        # Assume taken so we skip to another candidate instead of colliding.
+        return True
+
+
+def _ensure_dataset_id_counters_table(session: Session) -> bool:
+    """Create counters table if missing. Uses a savepoint so publish stays intact."""
+    try:
+        with session.begin_nested():
+            session.execute(text(_COUNTERS_DDL))
+        return True
+    except Exception:
+        logger.warning(
+            "dataset_id_counters unavailable; using datasets-scan fallback",
+            exc_info=True,
+        )
+        return False
+
+
+def _bump_counter(session: Session, stem: str, floor: int) -> Optional[int]:
+    """Atomically advance the counter; None if the counter path is unavailable."""
+    try:
+        with session.begin_nested():
+            session.execute(
+                text(
+                    """
+                    INSERT INTO dataset_id_counters (stem, last_value)
+                    VALUES (:stem, :floor)
+                    ON CONFLICT (stem) DO NOTHING
+                    """
+                ),
+                {"stem": stem, "floor": floor},
+            )
+            session.execute(
+                text(
+                    """
+                    UPDATE dataset_id_counters
+                    SET last_value = GREATEST(last_value, :floor)
+                    WHERE stem = :stem
+                    """
+                ),
+                {"stem": stem, "floor": floor},
+            )
+            row = session.execute(
+                text(
+                    """
+                    UPDATE dataset_id_counters
+                    SET last_value = last_value + 1,
+                        updated_at = NOW()
+                    WHERE stem = :stem
+                    RETURNING last_value
+                    """
+                ),
+                {"stem": stem},
+            ).one()
+            return int(row[0])
+    except Exception:
+        logger.warning(
+            "Counter bump failed for stem=%s; falling back to scan",
+            stem,
+            exc_info=True,
+        )
+        return None
+
+
+def _allocate_free_sequential(
+    session: Session,
+    *,
+    config: Mapping[str, str],
+    start_after: int,
+) -> str:
+    """Pick the next free ``…_NNNNN`` by probing ``datasets`` (never raises)."""
+    n = max(0, int(start_after))
+    for _ in range(10_000):
+        n += 1
+        candidate = format_sequential_dataset_id(n, config=config)
+        if not _dataset_id_exists(session, candidate):
+            return candidate
+    # Absolute last resort — unique, still under the configured stem.
+    stem = catalogue_id_stem(config)
+    sep = config["separator"]
+    return f"{stem}{sep}{uuid.uuid4().hex[:8].upper()}"
+
+
+def allocate_sequential_dataset_id(
+    session: Session,
+    config: Optional[Mapping[str, Any]] = None,
+) -> str:
+    """Mint the next ``{prefix}_{stats}_{NNNNN}`` id; never reuse a prior value.
+
+    Prefers ``dataset_id_counters`` (created on demand if missing). If the
+    counter path is unavailable, falls back to ``max(datasets)+1`` probing so
+    publish never fails solely because of id allocation.
     """
-    explicit = str(
-        table.get("dataset_id") or table.get("unique_dataset_id") or ""
-    ).strip()
-    if explicit and not _looks_like_uuid(explicit):
+    cfg = normalize_dataset_id_config(config)
+    stem = catalogue_id_stem(cfg)
+    floor = _max_sequential_in_datasets(session, stem, cfg["separator"])
+
+    if _ensure_dataset_id_counters_table(session):
+        for _ in range(10_000):
+            n = _bump_counter(session, stem, floor)
+            if n is None:
+                break
+            floor = max(floor, n)
+            candidate = format_sequential_dataset_id(n, config=cfg)
+            if not _dataset_id_exists(session, candidate):
+                return candidate
+            # Collision (legacy/import): keep bumping the durable counter.
+
+    return _allocate_free_sequential(session, config=cfg, start_after=floor)
+
+
+def _reuse_published_dataset_id(
+    session: Optional[Session], table: Mapping[str, Any]
+) -> Optional[str]:
+    """If this table was published before, return its catalogue dataset_id."""
+    if session is None:
+        return None
+    candidates = []
+    for key in ("dataset_id", "unique_dataset_id", "table_id", "id"):
+        val = str(table.get(key) or "").strip()
+        if val and not _looks_like_uuid(val):
+            candidates.append(val)
+    seen: set[str] = set()
+    for cand in candidates:
+        if cand in seen:
+            continue
+        seen.add(cand)
+        try:
+            with session.begin_nested():
+                row = session.execute(
+                    text(
+                        """
+                        SELECT dataset_id FROM datasets
+                        WHERE dataset_id = :c
+                           OR unique_dataset_id = :c
+                           OR table_id = :c
+                        LIMIT 1
+                        """
+                    ),
+                    {"c": cand},
+                ).first()
+        except Exception:
+            logger.exception("Republish lookup failed for candidate=%s", cand)
+            continue
+        if row and row[0]:
+            return str(row[0])
+    return None
+
+
+def prefer_existing_catalogue_dataset_id(
+    table: Mapping[str, Any],
+    *,
+    config: Optional[Mapping[str, Any]] = None,
+) -> Optional[str]:
+    """Return a catalogue id to keep, or None if a new sequential id is needed.
+
+    Keeps steward/KYDS/Excel ids. Does **not** promote Preview page locators
+    (``…_P79``) to catalogue primary keys.
+    """
+    cfg = normalize_dataset_id_config(config)
+
+    for key in ("dataset_id", "unique_dataset_id"):
+        explicit = str(table.get(key) or "").strip()
+        if not explicit or _looks_like_uuid(explicit):
+            continue
+        if is_review_locator_id(explicit):
+            continue
         return explicit
 
     row_id = str(table.get("id") or "").strip()
-    table_id = str(table.get("table_id") or "").strip()
-
-    # PDF: pk UUID in ``id``, human-readable review id in ``table_id``.
-    if row_id and _looks_like_uuid(row_id) and table_id and not _looks_like_uuid(table_id):
-        return table_id
-    if row_id and not _looks_like_uuid(row_id):
+    if row_id and not _looks_like_uuid(row_id) and not is_review_locator_id(row_id):
         return row_id
-    if table_id and not _looks_like_uuid(table_id):
+
+    table_id = str(table.get("table_id") or "").strip()
+    if table_id and is_sequential_catalogue_id(table_id, config=cfg):
         return table_id
-    return _make_dataset_id(table, index)
+
+    return None
+
+
+def resolve_catalogue_dataset_id(
+    table: dict,
+    index: int,
+    *,
+    session: Optional[Session] = None,
+    config: Optional[Mapping[str, Any]] = None,
+) -> str:
+    """Pick the published dataset_id.
+
+    Prefer explicit / Excel ids, then an already-published row (republish),
+    then allocate ``{prefix}_{stats}_{NNNNN}``. Preview locators are not used
+    as catalogue ids. ``index`` is unused (kept for call-site compatibility).
+    """
+    del index  # sequential allocator owns uniqueness
+    cfg = normalize_dataset_id_config(config)
+
+    preferred = prefer_existing_catalogue_dataset_id(table, config=cfg)
+    if preferred:
+        return preferred
+
+    try:
+        reused = _reuse_published_dataset_id(session, table)
+    except Exception:
+        logger.exception("Republish id reuse failed; allocating a new id")
+        reused = None
+    if reused:
+        return reused
+
+    if session is not None:
+        try:
+            return allocate_sequential_dataset_id(session, cfg)
+        except Exception:
+            logger.exception(
+                "Sequential dataset id allocation failed; using unique fallback"
+            )
+            stem = catalogue_id_stem(cfg)
+            sep = cfg["separator"]
+            return f"{stem}{sep}{uuid.uuid4().hex[:8].upper()}"
+
+    # Offline / unit-test fallback when no DB session is available.
+    stem = catalogue_id_stem(cfg)
+    sep = cfg["separator"]
+    return f"{stem}{sep}{uuid.uuid4().hex[:8].upper()}"
 
 
 def _extract_sl_no(row, row_index: int) -> str:
@@ -110,6 +350,7 @@ def push_to_catalogue(
     meta_real_classifications=None,
     catalogue_placement=None,
     organisation_id: uuid.UUID | str | None = None,
+    dataset_id_config: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, Any]:
     today = meta_last_updated or date.today().strftime("%B, %Y")
     if isinstance(meta_key_statistics, (dict, list)):
@@ -118,6 +359,7 @@ def push_to_catalogue(
     dataset_ids: list[str] = []
     table_id_codes: list[str] = []
     org = str(organisation_id) if organisation_id else None
+    id_cfg = normalize_dataset_id_config(dataset_id_config)
 
     # Drop Contents / index grids so they never become catalogue datasets or
     # feed redundant Classify dimensions (Sl.No, Contents, Page, …).
@@ -139,9 +381,25 @@ def push_to_catalogue(
 
     for i, table in enumerate(tables):
         enriched = enriched_data[i] if i < len(enriched_data) else {}
-        ds_id = resolve_catalogue_dataset_id(table, i)
-        table_code = ds_id
-        unique_ds_id = ds_id
+        ds_id = resolve_catalogue_dataset_id(
+            table, i, session=session, config=id_cfg
+        )
+        review_tid = str(table.get("table_id") or "").strip()
+        # Keep Preview locator (or Excel table label) on table_id for republish
+        # matching; catalogue PK is the sequential / explicit dataset_id.
+        if review_tid and not _looks_like_uuid(review_tid):
+            table_code = review_tid
+        else:
+            table_code = ds_id
+        unique_explicit = str(table.get("unique_dataset_id") or "").strip()
+        if (
+            unique_explicit
+            and not _looks_like_uuid(unique_explicit)
+            and not is_review_locator_id(unique_explicit)
+        ):
+            unique_ds_id = unique_explicit
+        else:
+            unique_ds_id = ds_id
         dataset_ids.append(ds_id)
         table_id_codes.append(table_code)
 

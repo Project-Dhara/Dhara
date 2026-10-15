@@ -23,6 +23,8 @@ REVIEW_REASONS = (
     "uncertain_semantic_role",
     "uncertain_concept",
     "ambiguous_column",
+    # AI suggested a crisp title from table content — steward should confirm.
+    "title_filled_by_ai",
     "uncertain_title",
 )
 _REASON_PRIORITY = {reason: i for i, reason in enumerate(REVIEW_REASONS)}

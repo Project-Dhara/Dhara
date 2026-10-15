@@ -167,7 +167,7 @@ def is_usable_nco_alias(alias_row, occupation_text=None) -> bool:
 
 
 def _load_all_codes(conn):
-    """Load active concordance rows from Postgres (populated via Settings upload)."""
+    """Load active classification rows from Postgres (bundled NCO or Settings upload)."""
     global _CODES_CACHE, _NODES_CACHE, _EMBED_CACHE
     if _CODES_CACHE is not None:
         return _CODES_CACHE
@@ -523,7 +523,7 @@ def _alias_result(alias_row, conn=None):
 
 
 def _title_for_code(conn, code: str, level: str) -> Optional[str]:
-    """Resolve a hierarchy title from the concordance when an alias omitted it."""
+    """Resolve a hierarchy title from the active standard when an alias omitted it."""
     code = str(code or "").strip()
     if not code:
         return None

@@ -1,4 +1,4 @@
-"""Standards service — classification concordance upload / select / delete."""
+"""Standards service — classification standard upload / select / delete."""
 from __future__ import annotations
 
 from app.services.standards.classification_standards import (

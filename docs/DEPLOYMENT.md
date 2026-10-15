@@ -55,7 +55,7 @@ Do not drop tables to "fix" drift. Add a forward migration.
 | `DEFAULT_ORGANISATION_NAME` | Display name used when the row is created. |
 | `BOOTSTRAP_ADMIN_EMAIL` | If set, that email's first membership is `administrator`. Otherwise the first member of the org is admin and later signups are `data_steward`. |
 
-Roles are stored and returned by `/api/me`. Mutating catalogue/PDF/upload routes require `administrator` or `data_steward`; access API requires a read role. MCP HTTP auth defaults to Bearer JWT (`MCP_HTTP_AUTH=jwt`).
+Roles are stored and returned by `/api/me`. Mutating catalogue/PDF/upload routes require `administrator` or `data_steward`; access API requires a read role. MCP HTTP auth defaults to open published reads (`MCP_HTTP_AUTH=off`) so Claude/Cursor can connect by URL.
 
 CORS allows every origin. Tighten this before exposing the API to a browser on the public internet.
 
@@ -103,7 +103,7 @@ Do not put provider keys in job rows. Today the key is passed only as a worker a
 
 HTTP tools are mounted at `/mcp` on the API port. Stdio is `python -m app.mcp` from `backend/`. Stdio trusts the OS user and loads `backend/.env`. Run it only as a dedicated account, with a database role that cannot read more than that account should see. The tools do not apply an organisation filter even when HTTP JWT is enabled.
 
-`MCP_HTTP_AUTH` defaults to `off` in `app/mcp/http_asgi.py`. The OpenAPI text on the FastAPI app describes JWT as the usual client setup; that text is not the code default.
+`MCP_HTTP_AUTH` defaults to `off` in `app/mcp/http_asgi.py` and Settings. Do not set `jwt` on a deploy that Claude custom connectors use until OAuth discovery (DCR/CIMD) is implemented — Claude treats a `401` as “start sign-in” and fails registration.
 
 ### Logging and health
 
@@ -175,7 +175,7 @@ That workflow does not prove migrations, tenant isolation, or the upload-to-grou
 
 - Unique `JWT_SECRET` per environment. `ENABLE_SIGNUP=false` on shared deployments.
 - TLS to Postgres (`sslmode=require` on hosted databases).
-- `MCP_HTTP_AUTH=jwt` or `token` if `/mcp` is reachable. `off` publishes catalogue reads.
+- Keep `MCP_HTTP_AUTH=off` for Claude/Cursor URL connectors (published catalogue reads). Use `jwt` or `token` only when clients can supply a Bearer token; Claude custom connectors need OAuth before `jwt` works.
 - After encryption exists: `LLM_CREDENTIALS_KEY` only in the secret store. Rotate any provider key that was stored in the browser or returned by `GET /api/llm-key`.
 - `DISABLE_REQUEST_TIME_DDL=true` only after Alembic has been applied and vector indexes have been checked.
 - Do not commit `backend/.env`.
