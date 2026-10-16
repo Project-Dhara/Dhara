@@ -14,7 +14,7 @@ uvicorn main:app --host 0.0.0.0 --port "${BACKEND_PORT:-8000}" &
 BACKEND_PID=$!
 
 cd /app/frontend
-npm run dev -- -p "${PORT:-8080}" &
+npm run start -- -p "${PORT:-8080}" &
 FRONTEND_PID=$!
 
 # If either process dies, exit so the container restarts cleanly rather

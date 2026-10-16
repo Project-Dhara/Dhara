@@ -1,9 +1,10 @@
-# ── Stage 1: Install Next.js frontend deps (dev server; no production build) ─
+# ── Stage 1: Install Next.js frontend deps and production build ─────────────
 FROM node:20-slim AS frontend
 WORKDIR /frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ .
+RUN npm run build
 
 # ── Stage 2: single runtime image with both Node (frontend) and Python
 #    (backend) -- Next.js needs its own long-lived server process now (it's
@@ -24,8 +25,7 @@ RUN python3 -m venv /opt/venv \
 ENV PATH="/opt/venv/bin:${PATH}"
 COPY backend/ ./backend/
 
-# Frontend -- copy source + node_modules; `npm run dev` needs them (no .next
-# production build).
+# Frontend -- copy source, node_modules, and .next production build.
 COPY --from=frontend /frontend /app/frontend
 
 ENV BACKEND_PORT=8000
