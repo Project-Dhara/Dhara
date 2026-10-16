@@ -63,17 +63,28 @@ OPENAI_MODEL = "gpt-4o-mini"
 ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 # I/O-bound OpenAI calls — concurrency is not CPU-bound. Default high enough
 # that ~100+ uncertain pages finish in a few waves rather than a long queue.
-OPENAI_WORKERS = _env_int("PDF_OPENAI_WORKERS", 12)
-BATCH_SIZE = _env_int("PDF_LLM_BATCH_SIZE", 6)
-MAX_TOKENS_PER_PAGE = 4500
-SINGLE_PAGE_MAX_TOKENS = 7000
+OPENAI_WORKERS = _env_int("PDF_OPENAI_WORKERS", 16)
+# Smaller batches → shorter completions → less timeout/fallback risk on large PDFs.
+BATCH_SIZE = _env_int("PDF_LLM_BATCH_SIZE", 4)
+MAX_TOKENS_PER_PAGE = 3000
+SINGLE_PAGE_MAX_TOKENS = 5000
+HEADER_FIX_MAX_TOKENS_PER_PAGE = 900
+HEADER_FIX_BATCH_MAX_TOKENS_CAP = 4500
 RAW_TEXT_CHARS_PER_PAGE_BATCHED = 1200
 PDF_VALIDATION_RAW_TEXT_CHARS = 2500
 LLM_VALIDATION_TEMPERATURE = 0
-BATCH_VALIDATION_MAX_TOKENS_CAP = 18000
+BATCH_VALIDATION_MAX_TOKENS_CAP = 12000
 # Rows of each candidate grid included in the LLM prompt (reconstruction still
 # uses full candidate grids in post-stamp alignment — this only shrinks prompt).
-LLM_PROMPT_MAX_ROWS = _env_int("PDF_LLM_PROMPT_MAX_ROWS", 25)
+LLM_PROMPT_MAX_ROWS = _env_int("PDF_LLM_PROMPT_MAX_ROWS", 20)
+LLM_HEADER_PROMPT_MAX_ROWS = _env_int("PDF_LLM_HEADER_PROMPT_MAX_ROWS", 8)
+# When true, skip extra LLM title-fill calls after validation (titles stay from
+# reconstruct / heuristics). Default off so missing/gibberish titles get a crisp
+# AI suggestion flagged as ``title_filled_by_ai`` (Excel + PDF parity).
+# Set PDF_DEFER_TITLE_FILL=1 to trade that for upload speed.
+DEFER_TITLE_FILL = (os.environ.get("PDF_DEFER_TITLE_FILL") or "0").strip().lower() not in (
+    "0", "false", "no", "off",
+)
 
 # ── CLI sample paths (``python -m app.services.extraction.pdf``) ─────────────────
 _BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -105,6 +116,11 @@ TASK_A_RECONSTRUCTION_RULES = """TASK A -- RECONSTRUCT THE TABLE:
     "No. of Births (In Lakhs)", "*Birth Rate"]
     WRONG (5 phantom columns): ["Year", "In Lakhs", "Birth Rate", "Mid Year Population", "No. of Births"]
   Every data row length MUST equal len(columns); values stay under their leaf headers.
+- ROTATED / VERTICAL HEADERS: crop and census tables often draw leaf labels (Autumn, Maize,
+  Total Pulses, …) rotated 90° or as one letter per line under spanning parents (Wet Paddy /
+  Dry Paddy / Grains). Read those labels upright, keep the parent→leaf hierarchy in the
+  flattened name (e.g. "Wet Paddy / Autumn", "Grains / Maize"), and NEVER treat the bare
+  1…N / 3…25 column-number strip under the headers as column names.
 - Column names in the output MUST be unique. If the same leaf header (e.g. a year, "Male"/"Female",
   or a repeated sub-metric) appears under two different parent groups, you MUST fold the parent group
   into the name so the two columns read differently (e.g. "2023-24 (Sanctioned)" and
@@ -148,10 +164,11 @@ TASK_A_RECONSTRUCTION_RULES = """TASK A -- RECONSTRUCT THE TABLE:
     * Every row MUST include that Direction/Trend cell — the rows array length must equal the columns
       array length. Do not declare a Direction column and then omit that cell from the row.
     * If you cannot tell whether an arrow is up or down, still put your best guess ("up" or "down") in the
-      cell, add a note in "uncertain_cells", and flag the column for human review (see Task B input_type).
+      cell and add a note in "uncertain_cells".
   Do NOT invent, append, or fill a Direction / Trend / Change column when none exists in the source
   table. If the table has no such column, omit it entirely (do not invent up/down values)."""
 
+# Kept for optional later-stage classification; upload validation no longer sends Task B.
 TASK_B_CLASSIFICATION_RULES = """TASK B -- UNDERSTAND THE TABLE (initial semantic classification only):
 After reconstructing a table, determine what it appears to mean, using the page text, table title, headers,
 extracted values, and any notes/footnotes as context.
@@ -229,40 +246,41 @@ human_review_needed / input_type / human_review_reason rules (both for each clas
 - Do NOT attempt harmonization, do NOT map to any external standard/code list (e.g. NMDS/LGD/NCO), and do NOT
   group this table with any other table. That happens in a later stage, not here."""
 
-TABLE_SCHEMA_EXAMPLE = """{
+# Upload-path schema: reconstruction only (no Task B classification payload).
+TABLE_RECONSTRUCT_SCHEMA_EXAMPLE = """{
   "tables": [
     {
       "title": "...",
       "description": "...",
-      "classification": {
-        "domain": {"value": "...", "human_review_needed": false, "input_type": null, "input_options": null, "human_review_reason": null},
-        "subject": {"value": "...", "human_review_needed": false, "input_type": null, "input_options": null, "human_review_reason": null},
-        "entity": {"value": "...", "human_review_needed": false, "input_type": null, "input_options": null, "human_review_reason": null},
-        "table_type": {"value": "...", "human_review_needed": false, "input_type": null, "input_options": null, "human_review_reason": null},
-        "geography": {"value": "...", "human_review_needed": false, "input_type": null, "input_options": null, "human_review_reason": null},
-        "time_period": {"value": "...", "human_review_needed": false, "input_type": null, "input_options": null, "human_review_reason": null},
-        "frequency": {"value": null, "human_review_needed": false, "input_type": null, "input_options": null, "human_review_reason": null},
-        "unit": {"value": "...", "human_review_needed": false, "input_type": null, "input_options": null, "human_review_reason": null}
-      },
-      "columns": [
-        {
-          "name": "...", "role": "identifier | dimension | measure | attribute | unknown",
-          "concept": "...", "description": "...",
-          "data_type": "string | integer | decimal | date | boolean | categorical | unknown",
-          "unit": "...", "category": "...",
-          "human_review_needed": false, "input_type": null, "input_options": null, "human_review_reason": null
-        }
-      ],
+      "columns": [{"name": "..."}, {"name": "..."}],
       "rows": [["...", "..."], ["...", "..."]],
       "notes": [],
       "uncertain_cells": ["row 3, col 'Total': pymupdf_lines_strict=120 vs pymupdf_text=170, kept lines_strict"]
     }
   ]
 }
-Do not include a top-level "human_review_needed" on the table object -- that final flag is computed
-deterministically from the field/column flags and uncertain_cells afterward, not by you.
-When human_review_needed is true, always pair it with input_type ("dropdown" or "inputbox") as shown above.
+Do not include classification, role, concept, data_type, or human_review_* fields — those are filled later.
+Do not include a top-level "human_review_needed" on the table object.
 Do not include a Direction/Trend column in columns/rows unless it is present in the source table."""
+
+TABLE_HEADER_FIX_SCHEMA_EXAMPLE = """{
+  "tables": [
+    {
+      "title": "...",
+      "description": null,
+      "columns": [{"name": "Year"}, {"name": "Mid Year Population as on 1st July (In Lakhs)"}, {"name": "No. of Births (In Lakhs)"}],
+      "rows": [],
+      "notes": [],
+      "uncertain_cells": []
+    }
+  ]
+}
+Emit ONE object per distinct ruled table. columns MUST be unique flattened leaf names (same rules as Task A).
+Set "rows" to [] — the pipeline copies body cells from the ruled-border extraction using your column names.
+Do not invent data rows. Do not include classification or semantic fields."""
+
+# Backward-compatible alias (older imports / docs).
+TABLE_SCHEMA_EXAMPLE = TABLE_RECONSTRUCT_SCHEMA_EXAMPLE
 
 
 def pdf_single_page_validation_user_prompt(
@@ -271,13 +289,33 @@ def pdf_single_page_validation_user_prompt(
     raw_page_text: str,
     candidates_block: str,
     count_hint: str,
+    mode: str = "full",
 ) -> str:
-    """Full user message for one-page PDF table reconstruct + classify."""
-    return f"""You are processing page {page_num} of a government statistical PDF. You have two jobs on
-this page, in order, in this same response:
+    """User message for one-page PDF table reconstruct (upload path; no Task B)."""
+    if mode == "header":
+        return f"""You are fixing column headers on page {page_num} of a government statistical PDF.
 
-A. RECONSTRUCT each table on the page.
-B. UNDERSTAND what each reconstructed table means (initial semantic classification only).
+The ruled-border extractor already has the body cells. Your ONLY job is to emit clean flattened
+column names and a descriptive title for each distinct table. Leave "rows" as [].
+
+Raw page text:
+{raw_page_text}
+
+Extracted candidates (headers may be wrong/glued/rotated; body is trustworthy):
+{candidates_block}
+
+{count_hint}{TASK_A_RECONSTRUCTION_RULES}
+
+ROTATED HEADER NOTE: if leaf labels look empty, reversed, or letter-spaced (e.g. "A n t u m n"),
+rebuild them from the raw page text under the correct parent groups (Wet Paddy / Dry Paddy / …).
+
+Return ONLY valid JSON (no markdown fences) shaped as:
+{TABLE_HEADER_FIX_SCHEMA_EXAMPLE}
+If there is genuinely no table on this page, return {{"tables": []}}."""
+
+    return f"""You are processing page {page_num} of a government statistical PDF.
+Your ONLY job on this page: RECONSTRUCT each table (title, columns, rows).
+Do NOT classify semantics (no domain/subject/role/concept).
 
 You are given one or more independent extractions of the same page's table(s) by detection
 strategies (pymupdf_lines_strict / pymupdf_lines for ruled borders, and pymupdf_text for
@@ -293,10 +331,8 @@ Extracted candidates:
 
 {count_hint}{TASK_A_RECONSTRUCTION_RULES}
 
-{TASK_B_CLASSIFICATION_RULES}
-
 Return ONLY valid JSON (no markdown fences) shaped as:
-{TABLE_SCHEMA_EXAMPLE}
+{TABLE_RECONSTRUCT_SCHEMA_EXAMPLE}
 If there is genuinely no table on this page, return {{"tables": []}}."""
 
 
@@ -304,11 +340,27 @@ def pdf_batch_validation_user_prompt(
     *,
     page_numbers: list[int],
     page_sections_block: str,
+    mode: str = "full",
 ) -> str:
-    """Full user message for batched PDF validation."""
-    return f"""You are processing {len(page_numbers)} pages of a government statistical PDF. For each page you
-have two jobs, in order, in this same response: A) reconstruct each table on that page, B) understand what each
-reconstructed table means (initial semantic classification only).
+    """User message for batched PDF validation (upload path; no Task B)."""
+    if mode == "header":
+        return f"""You are fixing column headers on {len(page_numbers)} pages of a government statistical PDF.
+For each page, emit clean flattened column names and a descriptive title for each distinct table.
+Leave "rows" as [] — body cells are copied from the ruled-border extraction afterward.
+
+{page_sections_block}
+
+{TASK_A_RECONSTRUCTION_RULES}
+- If a page genuinely has no table, its entry should be {{"tables": []}}.
+
+Return ONLY valid JSON (no markdown fences) with exactly one top-level key "pages", mapping each page number
+(as a string) to its own {{"tables": [...]}} object shaped like:
+{TABLE_HEADER_FIX_SCHEMA_EXAMPLE}
+Include an entry for every one of these page numbers, even if empty: {page_numbers}"""
+
+    return f"""You are processing {len(page_numbers)} pages of a government statistical PDF.
+For each page your ONLY job is to RECONSTRUCT each table (title, columns, rows).
+Do NOT classify semantics (no domain/subject/role/concept).
 
 For each page below, you are given one or more independent extractions of that page's table(s) by detection
 strategies (pymupdf_lines_strict / pymupdf_lines for ruled borders, and pymupdf_text for whitespace alignment),
@@ -322,11 +374,9 @@ specifically because they looked ambiguous -- produce a nearly empty or garbled 
 {TASK_A_RECONSTRUCTION_RULES}
 - If a page genuinely has no table, its entry should be {{"tables": []}}.
 
-{TASK_B_CLASSIFICATION_RULES}
-
 Return ONLY valid JSON (no markdown fences) with exactly one top-level key "pages", mapping each page number
 (as a string) to its own {{"tables": [...]}} object shaped like this per table:
-{TABLE_SCHEMA_EXAMPLE}
+{TABLE_RECONSTRUCT_SCHEMA_EXAMPLE}
 Include an entry for every one of these page numbers, even if empty: {page_numbers}"""
 
 

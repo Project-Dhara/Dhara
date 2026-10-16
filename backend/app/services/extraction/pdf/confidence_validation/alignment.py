@@ -713,13 +713,22 @@ def _uncertain_note_is_alignment_mismatch(note: Any) -> bool:
     markers = (
         "values may sit under the wrong header",
         "values may be shifted under the wrong headers",
+        "some values may sit under the wrong headers",
         "column headers and values did not line up",
         "rebuilt from the pdf",
+        "restored the table from the pdf",
+        "columns looked misaligned",
         "multi-level headers may have been collapsed",
         "leading s.no./name columns were dropped",
         "sparse reconstruction",
+        "many cells are empty",
+        "some rows are missing",
+        "missing data rows",
+        "column headers were rotated or stacked",
+        "column headers still look rotated",
         "title or caption line may have been treated as column headers",
         "column layout check found",
+        "column layout looks wrong",
         "looks like a value column but is mostly empty",
         "looks like a value column but most cells are not numbers",
         "serial numbers appear stuck to the next column",
@@ -768,8 +777,8 @@ def _apply_column_alignment_guard(
                 "col_index": -1, "name": "(table structure)", "kind": "structure",
                 "pattern": "structure",
                 "detail": (
-                    f"Too many columns ({len(columns)} vs ~{cand_ncols} in the PDF grid) "
-                    "— a title/caption may have been treated as headers."
+                    f"Too many columns — extracted {len(columns)}, but the PDF shows "
+                    f"about {cand_ncols}. A title/caption may have been treated as headers."
                 ),
             })
         elif cand_ncols >= 4 and len(columns) <= max(2, cand_ncols // 2):
@@ -777,8 +786,8 @@ def _apply_column_alignment_guard(
                 "col_index": -1, "name": "(table structure)", "kind": "structure",
                 "pattern": "structure",
                 "detail": (
-                    f"Too few columns ({len(columns)} vs ~{cand_ncols} in the PDF grid) "
-                    "— multi-level headers may have been collapsed."
+                    f"Too few columns — extracted {len(columns)}, but the PDF shows "
+                    f"about {cand_ncols}. Multi-level headers may have been collapsed."
                 ),
             })
         elif (
@@ -789,8 +798,8 @@ def _apply_column_alignment_guard(
                 "col_index": -1, "name": "(table structure)", "kind": "structure",
                 "pattern": "structure",
                 "detail": (
-                    f"Too few columns ({len(columns)} vs ~{cand_ncols} in the PDF grid) "
-                    "— leading S.No./Name columns were dropped from the reconstruction."
+                    f"Too few columns — extracted {len(columns)}, but the PDF shows "
+                    f"about {cand_ncols}. Leading S.No./Name columns may be missing."
                 ),
             })
         else:
@@ -811,9 +820,8 @@ def _apply_column_alignment_guard(
                     "col_index": -1, "name": "(table structure)", "kind": "structure",
                     "pattern": "structure",
                     "detail": (
-                        f"Sparse reconstruction ({empty_frac:.0%} empty rows, "
-                        f"body fill {llm_body:.0%} vs PDF grid {cand_body:.0%}) "
-                        "— most values were dropped or crammed into trailing rows."
+                        "Many cells are empty — values look dropped or packed into "
+                        "the last rows. Compare with the PDF."
                     ),
                 })
             else:
@@ -834,8 +842,9 @@ def _apply_column_alignment_guard(
                         "col_index": -1, "name": "(table structure)", "kind": "structure",
                         "pattern": "structure",
                         "detail": (
-                            f"Missing data rows ({llm_n} kept vs ~{cand_n} in the PDF grid) "
-                            "— a TOTAL/summary or mid-table block was dropped."
+                            f"Some rows are missing — extracted {llm_n} of about {cand_n} "
+                            "from the PDF. Check whether a TOTAL/summary row or a mid-table "
+                            "section was left out."
                         ),
                     })
 
@@ -858,8 +867,8 @@ def _apply_column_alignment_guard(
         if note not in uncertain:
             uncertain.append(note)
     summary = (
-        f"Column layout check found {len(issues)} issue(s); "
-        "values may be shifted under the wrong headers."
+        f"Column layout looks wrong ({len(issues)} issue"
+        f"{'' if len(issues) == 1 else 's'}) — some values may sit under the wrong headers."
     )
     if summary not in notes:
         notes.append(summary)
@@ -921,9 +930,8 @@ def _apply_column_alignment_guard(
                     "confidence": "alignment_guard_fallback",
                 }
                 fallback_note = (
-                    "Rebuilt from the PDF ruled grid after column layout mismatch "
-                    f"(grid fill {cand_fill:.0%}; earlier reconstruction {llm_fill:.0%}). "
-                    "Verify values sit under the right headers."
+                    "Columns looked misaligned, so we restored the table from the "
+                    "PDF grid. Please check that each value sits under the correct header."
                 )
                 notes.append(fallback_note)
                 uncertain.append(fallback_note)

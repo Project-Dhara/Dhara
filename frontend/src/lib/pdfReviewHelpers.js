@@ -82,12 +82,84 @@ export function formatUncertainCellNote(note) {
   const raw = String(note ?? '').trim()
   if (!raw) return raw
 
-  // Compact summaries from the alignment guard — pass through.
+  // Compact summaries from the alignment guard — pass through when already clear.
   if (/^Blank value columns?\b/i.test(raw)) return raw
-  if (/^Too (few|many) columns\b/i.test(raw)) return raw
-  if (/^Rebuilt from the PDF ruled grid\b/i.test(raw)) return raw
+  if (/^Some rows are missing\b/i.test(raw)) return raw
+  if (/^Many cells are empty\b/i.test(raw)) return raw
+  if (/^Columns looked misaligned\b/i.test(raw)) return raw
+  if (/^Column layout looks wrong\b/i.test(raw)) return raw
+  if (/^Some column headers were rotated or stacked\b/i.test(raw)) return raw
+  if (/^Some column headers still look rotated\b/i.test(raw)) return raw
+  if (/^Too (few|many) columns — extracted\b/i.test(raw)) return raw
   if (/^Column\s+\d+\s+\("/i.test(raw) && /:\s*(blank|expected numbers|up\/down|serial)/i.test(raw)) {
     return raw
+  }
+
+  const tooManyCols = raw.match(
+    /^Too many columns\s*\((\d+)\s+vs\s*~?(\d+)\s+in the PDF grid\)\.?$/i,
+  )
+  if (tooManyCols) {
+    return `Too many columns — extracted ${tooManyCols[1]}, but the PDF shows about ${tooManyCols[2]}.`
+  }
+  const tooFewCols = raw.match(
+    /^Too few columns\s*\((\d+)\s+vs\s*~?(\d+)\s+in the PDF grid\)\.?$/i,
+  )
+  if (tooFewCols) {
+    return `Too few columns — extracted ${tooFewCols[1]}, but the PDF shows about ${tooFewCols[2]}.`
+  }
+  if (/^Too few columns vs the PDF grid\.?$/i.test(raw)) {
+    return 'Too few columns compared with the PDF.'
+  }
+  if (/^Too (few|many) columns\b/i.test(raw)) return raw
+
+  // Older steward copy — drop jargon (grid fill %, "ruled grid", "reconstruction").
+  const missingRows = raw.match(
+    /^Missing data rows\s*\((\d+)\s+kept vs\s*~?(\d+)\s+in the PDF grid\)\s*[—–-]?\s*(.*)$/i,
+  )
+  if (missingRows) {
+    return (
+      `Some rows are missing — extracted ${missingRows[1]} of about ${missingRows[2]} `
+      + 'from the PDF. Check whether a TOTAL/summary row or a mid-table section was left out.'
+    )
+  }
+
+  if (/^Sparse reconstruction\b/i.test(raw)) {
+    return (
+      'Many cells are empty — values look dropped or packed into the last rows. '
+      + 'Compare with the PDF.'
+    )
+  }
+
+  if (
+    /^Rebuilt from the PDF ruled grid\b/i.test(raw)
+    || /^Column headers and values did not line up/i.test(raw)
+  ) {
+    return (
+      'Columns looked misaligned, so we restored the table from the PDF grid. '
+      + 'Please check that each value sits under the correct header.'
+    )
+  }
+
+  const layoutCheck = raw.match(
+    /^Column layout check found\s+(\d+)\s+issue\(s\);\s*values may be shifted under the wrong headers\.?$/i,
+  )
+  if (layoutCheck) {
+    const n = Number(layoutCheck[1])
+    return (
+      `Column layout looks wrong (${n} issue${n === 1 ? '' : 's'}) — `
+      + 'some values may sit under the wrong headers.'
+    )
+  }
+  if (/^Column layout check found\b/i.test(raw)) {
+    const count = raw.match(/\((\d+)\s*issue/i) || raw.match(/\((\d+)\s*column/i)
+    const n = count ? Number(count[1]) : null
+    if (n != null) {
+      return (
+        `Column layout looks wrong (${n} issue${n === 1 ? '' : 's'}) — `
+        + 'some values may sit under the wrong headers.'
+      )
+    }
+    return 'Column layout looks wrong — some values may sit under the wrong headers.'
   }
 
   const alignmentCol = raw.match(
@@ -112,30 +184,25 @@ export function formatUncertainCellNote(note) {
     return `Column "${priorNonNumericSimple[1]}": expected numbers.`
   }
 
-  const addedGuardReplace = raw.match(
-    /^ADDED guard:\s*replaced LLM rows\/columns with\s+(\S+)\s+candidate after alignment mismatch\s*\(candidate numeric fill\s+(\S+)\s+vs\s+LLM\s+(\S+)\)\.?$/i,
-  )
-  if (addedGuardReplace) {
+  if (
+    /^ADDED guard:\s*replaced LLM rows\/columns with\s+\S+\s+candidate after alignment mismatch/i.test(raw)
+  ) {
     return (
-      `Rebuilt from the PDF ruled grid after column layout mismatch `
-      + `(grid fill ${addedGuardReplace[2].trim()}; earlier reconstruction ${addedGuardReplace[3].trim()}). `
-      + 'Verify values sit under the right headers.'
+      'Columns looked misaligned, so we restored the table from the PDF grid. '
+      + 'Please check that each value sits under the correct header.'
     )
   }
 
   if (/^ADDED guard:\s*reconstructed table failed column-alignment checks/i.test(raw)) {
     const count = raw.match(/\((\d+)\s*column/i)
-    const n = count ? count[1] : null
-    return n
-      ? `Column layout check found ${n} issue(s).`
-      : 'Column layout check found issues.'
-  }
-
-  if (/^Column headers and values did not line up/i.test(raw)) {
-    return raw.replace(
-      /^Column headers and values did not line up[\s\S]*?\(([^)]+)\)\.?$/i,
-      (_, fill) => `Rebuilt from the PDF ruled grid after column layout mismatch (${fill}). Verify values sit under the right headers.`,
-    )
+    const n = count ? Number(count[1]) : null
+    if (n != null) {
+      return (
+        `Column layout looks wrong (${n} issue${n === 1 ? '' : 's'}) — `
+        + 'some values may sit under the wrong headers.'
+      )
+    }
+    return 'Column layout looks wrong — some values may sit under the wrong headers.'
   }
 
   const conflict = raw.match(
@@ -263,7 +330,9 @@ function humanizeAlignmentDetail(detail, colIndex, name) {
   if (tooMany || (colIndex < 0 && /title\/caption line misread as headers/i.test(d))) {
     const a = tooMany?.[1]
     const b = tooMany?.[2]
-    if (a && b) return `Too many columns (${a} vs ~${b} in the PDF grid).`
+    if (a && b) {
+      return `Too many columns — extracted ${a}, but the PDF shows about ${b}.`
+    }
   }
 
   const tooFew = d.match(
@@ -272,8 +341,27 @@ function humanizeAlignmentDetail(detail, colIndex, name) {
   if (tooFew || (colIndex < 0 && /multi-level header collapsed/i.test(d))) {
     const a = tooFew?.[1]
     const b = tooFew?.[2]
-    if (a && b) return `Too few columns (${a} vs ~${b} in the PDF grid).`
-    return 'Too few columns vs the PDF grid.'
+    if (a && b) {
+      return `Too few columns — extracted ${a}, but the PDF shows about ${b}.`
+    }
+    return 'Too few columns compared with the PDF.'
+  }
+
+  // Already-stored structure details from older jobs.
+  if (/^Missing data rows\b/i.test(d)) {
+    const m = d.match(/\((\d+)\s+kept vs\s*~?(\d+)/i)
+    if (m) {
+      return (
+        `Some rows are missing — extracted ${m[1]} of about ${m[2]} from the PDF. `
+        + 'Check whether a TOTAL/summary row or a mid-table section was left out.'
+      )
+    }
+  }
+  if (/^Sparse reconstruction\b/i.test(d)) {
+    return (
+      'Many cells are empty — values look dropped or packed into the last rows. '
+      + 'Compare with the PDF.'
+    )
   }
 
   return d
@@ -392,9 +480,10 @@ export function isNumericColumn(col, colIndex, rows) {
 
 
 /**
- * Column layout for ``table-layout: fixed`` previews that must fit the
- * container width (no horizontal scroll / clip). Returns ``{ pct, minCh }``;
- * callers that fit-to-width should apply ``pct`` only (ignore ``minCh``).
+ * Column layout for ``table-layout: fixed`` previews. Returns ``{ pct, minCh }``
+ * per column. Use ``pct`` for relative widths; set the table's ``minWidth`` to
+ * the sum of ``minCh`` (in ``ch``) so wide tables can scroll horizontally.
+ * Fit-to-width callers should apply ``pct`` only and omit the table min-width.
  */
 export function computeFittedColumnLayout(columns, rows, { sampleRows = 48 } = {}) {
   const cols = columns || []

@@ -1202,7 +1202,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
                   if (node) tableCardRefs.current.set(t.table_id, node)
                   else tableCardRefs.current.delete(t.table_id)
                 }}
-                className={`overflow-hidden rounded-2xl border bg-surface transition-[border-color] duration-300 ease-out ${isOpen ? 'border-teal' : selectMode && selected ? 'border-teal/50' : 'border-line'}`}
+                className={`min-w-0 overflow-hidden rounded-2xl border bg-surface transition-[border-color] duration-300 ease-out ${isOpen ? 'border-teal' : selectMode && selected ? 'border-teal/50' : 'border-line'}`}
               >
                 <div className="flex items-center gap-2.5 px-3.5 py-2.5 hover:bg-cream">
                   {selectMode && (

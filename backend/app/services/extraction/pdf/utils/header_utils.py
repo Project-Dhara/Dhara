@@ -87,6 +87,12 @@ from app.services.extraction.pdf.utils.dataframe_build import (
     _recover_stub_from_caption,
     dataframe_from_extracted_rows,
 )
+from app.services.extraction.pdf.utils.vertical_headers import (
+    VERTICAL_HEADER_REVIEW_NOTE,
+    collapse_stacked_header_cell,
+    headers_still_look_stacked,
+    repair_vertical_header_rows,
+)
 
 __all__ = [
     "_row_is_column_number_strip",
@@ -161,4 +167,8 @@ __all__ = [
     "_promote_leading_leaf_strip",
     "_recover_stub_from_caption",
     "dataframe_from_extracted_rows",
+    "VERTICAL_HEADER_REVIEW_NOTE",
+    "collapse_stacked_header_cell",
+    "headers_still_look_stacked",
+    "repair_vertical_header_rows",
 ]

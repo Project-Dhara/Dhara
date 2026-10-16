@@ -75,13 +75,19 @@ def main():
     log("Stage 3: confidence-classifying pages (no LLM)")
     t0 = time.time()
     outline_index = build_pdf_outline_index(PDF_PATH)
-    high_results, llm_pages, reason_counts = split_by_confidence(
+    high_results, llm_pages, reason_counts, llm_tiers = split_by_confidence(
         pages_grouped,
         page_text,
         pdf_path=PDF_PATH,
         outline_index=outline_index,
     )
-    log(f"  {len(high_results)} page(s) auto-accepted (no LLM call), {len(llm_pages)} page(s) need OpenAI validation, in {time.time() - t0:.1f}s")
+    n_header = sum(1 for t in llm_tiers.values() if t == "header")
+    n_full = len(llm_pages) - n_header
+    log(
+        f"  {len(high_results)} page(s) auto-accepted (no LLM call), "
+        f"{len(llm_pages)} page(s) need OpenAI validation "
+        f"({n_header} header-fix, {n_full} full), in {time.time() - t0:.1f}s"
+    )
     for reason, count in sorted(reason_counts.items(), key=lambda kv: -kv[1]):
         log(f"    [llm bucket] {count}x: {reason}")
 
@@ -90,9 +96,22 @@ def main():
     if args.skip_validation:
         log(f"Skipping OpenAI validation (--skip-validation) -- output only has the {len(high_results)} auto-accepted page(s).")
     else:
-        log(f"Stage 4: validating/restructuring {len(llm_pages)} page(s) with OpenAI (batches of {BATCH_SIZE}, {OPENAI_WORKERS} workers)")
+        log(
+            f"Stage 4: validating/restructuring {len(llm_pages)} page(s) with OpenAI "
+            f"(batches of {BATCH_SIZE}, {OPENAI_WORKERS} workers; reconstruct-only)"
+        )
         t0 = time.time()
-        llm_results = validate_all_pages_batched(llm_pages, page_text)
+        llm_results: Dict[int, Dict[str, Any]] = {}
+        header_pages = {p: c for p, c in llm_pages.items() if llm_tiers.get(p) == "header"}
+        full_pages = {p: c for p, c in llm_pages.items() if llm_tiers.get(p) != "header"}
+        if header_pages:
+            llm_results.update(
+                validate_all_pages_batched(header_pages, page_text, mode="header")
+            )
+        if full_pages:
+            llm_results.update(
+                validate_all_pages_batched(full_pages, page_text, mode="full")
+            )
         log(f"  validated {len(llm_results)} page(s) in {time.time() - t0:.1f}s")
         validated_by_page.update(llm_results)
         missing = _llm_pages_missing_tables(llm_pages, llm_results)

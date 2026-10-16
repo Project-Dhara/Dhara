@@ -70,6 +70,9 @@ def _candidates_from_pymupdf_table(
     rows = tab.extract()
     if not rows:
         return []
+    from app.services.extraction.pdf.utils.vertical_headers import repair_vertical_header_rows
+
+    rows, vertical_meta = repair_vertical_header_rows(rows, page=page, tab=tab)
     bb = tab.bbox
     fallback = [float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3])]
     segments = split_extracted_rows_on_table_markers(rows)
@@ -78,6 +81,14 @@ def _candidates_from_pymupdf_table(
         df = dataframe_from_extracted_rows(seg_rows)
         if df is None or getattr(df, "empty", True):
             continue
+        if vertical_meta.get("repaired"):
+            try:
+                df.attrs["dhara_vertical_headers_repaired"] = True
+                df.attrs["dhara_vertical_headers_repaired_cells"] = int(
+                    vertical_meta.get("repaired_cells") or 0
+                )
+            except Exception:
+                pass
         bbox = _bbox_for_row_slice(tab, start, end, fallback)
         is_chart, reason = looks_like_chart_candidate(
             df, page=page, bbox=bbox, page_text=page_text,

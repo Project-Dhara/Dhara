@@ -244,7 +244,7 @@ def _row_values_are_column_index(vals: List[str], n_cols: int) -> bool:
         nums = [int(v) for v in nonempty]
     except ValueError:
         return False
-    return bool(nums) and nums == list(range(1, len(nums) + 1))
+    return bool(nums) and all(nums[i] == nums[0] + i for i in range(len(nums)))
 
 def _df_without_leading_column_index(df: pd.DataFrame) -> pd.DataFrame:
     """Drop a leading 1..N reference strip so it does not skew mixed-type checks.
@@ -279,10 +279,18 @@ def clean_dataframe_light(df: pd.DataFrame) -> pd.DataFrame:
     meta = None
     caption = None
     banner_id = None
+    vertical_repaired = False
+    vertical_repaired_cells = 0
     try:
         meta = list(getattr(df, "attrs", {}).get("dhara_column_meta") or [])
         caption = getattr(df, "attrs", {}).get("dhara_table_caption")
         banner_id = getattr(df, "attrs", {}).get("dhara_banner_table_id")
+        vertical_repaired = bool(
+            getattr(df, "attrs", {}).get("dhara_vertical_headers_repaired")
+        )
+        vertical_repaired_cells = int(
+            getattr(df, "attrs", {}).get("dhara_vertical_headers_repaired_cells") or 0
+        )
     except Exception:
         meta = None
     cleaned = df.map(lambda v: _cell_str(v) or None)
@@ -309,6 +317,9 @@ def clean_dataframe_light(df: pd.DataFrame) -> pd.DataFrame:
         cleaned.attrs["dhara_table_caption"] = caption
     if banner_id:
         cleaned.attrs["dhara_banner_table_id"] = banner_id
+    if vertical_repaired:
+        cleaned.attrs["dhara_vertical_headers_repaired"] = True
+        cleaned.attrs["dhara_vertical_headers_repaired_cells"] = vertical_repaired_cells
     return cleaned
 
 def profile_table(df: pd.DataFrame) -> Dict[str, Any]:
@@ -430,6 +441,20 @@ def _structural_bucket_for_df(df: pd.DataFrame) -> Tuple[str, str, Dict[str, Any
 
     if info["header_has_multiline"] or info["duplicate_columns"] or info["header_dupe_in_first_row"]:
         return "llm", "structural issue (multiline/duplicate header or header glued into first row)", info
+
+    # Rotated / letter-spaced leaves that geometry repair couldn't fully clean.
+    try:
+        from app.services.extraction.pdf.utils.vertical_headers import (
+            headers_still_look_stacked,
+        )
+        if headers_still_look_stacked([str(c) for c in primary.columns]):
+            return (
+                "llm",
+                "rotated or stacked column headers still need cleanup",
+                info,
+            )
+    except Exception:
+        pass
 
     if info["mixed_type_columns"] > 0:
         return "llm", "column(s) with a murky numeric/text mix, likely misaligned cells", info
@@ -638,6 +663,40 @@ def table_dict_from_df(
     banner_id = in_grid_banner_id or banner_from_page
     if banner_id:
         result["banner_table_id"] = banner_id
+    try:
+        vertical_repaired = bool(
+            getattr(cleaned, "attrs", {}).get("dhara_vertical_headers_repaired")
+            or getattr(df, "attrs", {}).get("dhara_vertical_headers_repaired")
+        )
+    except Exception:
+        vertical_repaired = False
+    try:
+        from app.services.extraction.pdf.utils.vertical_headers import (
+            VERTICAL_HEADER_REVIEW_NOTE,
+            VERTICAL_HEADER_STILL_BAD_NOTE,
+            headers_still_look_stacked,
+        )
+    except Exception:
+        VERTICAL_HEADER_REVIEW_NOTE = (
+            "Some column headers were rotated or stacked in the PDF — "
+            "we rebuilt those labels. Please confirm they match the source."
+        )
+        VERTICAL_HEADER_STILL_BAD_NOTE = (
+            "Some column headers still look rotated or letter-spaced after automatic "
+            "repair. Please fix the names so they match the PDF."
+        )
+        headers_still_look_stacked = lambda _names: False  # noqa: E731
+
+    still_stacked = headers_still_look_stacked(col_names)
+    if vertical_repaired or still_stacked:
+        note = (
+            VERTICAL_HEADER_STILL_BAD_NOTE if still_stacked else VERTICAL_HEADER_REVIEW_NOTE
+        )
+        result["notes"] = list(result.get("notes") or []) + [note]
+        result["uncertain_cells"] = list(result.get("uncertain_cells") or []) + [note]
+        if not result.get("human_review_needed"):
+            result["human_review_needed"] = True
+            result["human_review_reason"] = "uncertain_extraction"
     return result
 
 __all__ = [

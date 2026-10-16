@@ -23,8 +23,10 @@ _TABLE_CAPTION_RE = re.compile(
     re.I,
 )
 
+# Compound ids like ``A-1 & A-2`` (same rule as caption._TABLE_ID_CORE_RE).
 _TABLE_CAPTION_ID_CORE = (
-    r"(?:[A-Z0-9][\w.\-–—/]*(?:\s*\([^)]{0,48}\))?|\([^)]{1,48}\))"
+    r"(?:[A-Z0-9][\w.\-–—/]*(?:\s*(?:&|and|,|/)\s*[A-Z0-9][\w.\-–—/]*)*"
+    r"(?:\s*\([^)]{0,48}\))?|\([^)]{1,48}\))"
 )
 
 _EXTENDED_CAPTION_RES = (

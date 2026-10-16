@@ -32,7 +32,10 @@ def _row_is_column_number_strip(row: Sequence[Any], n_cols: int) -> bool:
         nums = [int(_cell_str(v)) for v in non_empty]
     except ValueError:
         return False
-    return bool(nums) and nums == list(range(1, len(nums) + 1))
+    # Contiguous index strip (1..N, or 3..25 under measure columns only).
+    if not nums:
+        return False
+    return all(nums[i] == nums[0] + i for i in range(len(nums)))
 
 _OPEN_CODE_RE = re.compile(r"^[<>]=?\s*\d+\+?$|^\d+\+$")
 
@@ -41,8 +44,9 @@ _UNIT_GROUP_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Allow ``&`` / ``and`` in compound ids (e.g. ``TABLE : A-1 & A-2``).
 _TABLE_BANNER_RE = re.compile(
-    r"^(?:table\s*[:.\-–—]?\s*[a-z0-9][\w\s.\-–—/]*|"
+    r"^(?:table\s*[:.\-–—]?\s*[a-z0-9][\w\s.\-–—/&]*|"
     r"statement\s*[:.\-–—]?\s*\d+|"
     r"annex(?:ure)?\s*[:.\-–—]?\s*[a-z0-9]+)$",
     re.IGNORECASE,
@@ -60,14 +64,17 @@ _DOC_KIND_RE = (
 )
 
 _TABLE_ID_TOKEN_RE = r"[A-Z0-9][\w.\-–—/]*"
-
+# One or more id tokens joined by ``&`` / ``and`` / ``,`` / ``/`` (A-1 & A-2).
+_TABLE_ID_JOIN_RE = r"(?:\s*(?:&|and|,|/)\s*)"
 _TABLE_ID_CORE_RE = (
-    rf"(?:{_TABLE_ID_TOKEN_RE}(?:\s*\([^)]{{0,48}}\))?|\([^)]{{1,48}}\))"
+    rf"(?:{_TABLE_ID_TOKEN_RE}(?:{_TABLE_ID_JOIN_RE}{_TABLE_ID_TOKEN_RE})*"
+    rf"(?:\s*\([^)]{{0,48}}\))?|\([^)]{{1,48}}\))"
 )
 
 _TABLE_ID_ONLY_RE = re.compile(
     rf"^(?:{_DOC_KIND_RE}\s*[:.\-–—]?\s*{_TABLE_ID_CORE_RE}"
-    rf"|[A-Z]{{1,3}}\s*[-–—]?\s*\d+(?:\.\d+)?)\s*$",
+    rf"|[A-Z]{{1,3}}\s*[-–—]?\s*\d+(?:\.\d+)?(?:{_TABLE_ID_JOIN_RE}"
+    rf"[A-Z]{{1,3}}\s*[-–—]?\s*\d+(?:\.\d+)?)*)\s*$",
     re.IGNORECASE,
 )
 
@@ -329,15 +336,34 @@ def _is_in_grid_subtitle(label: str) -> bool:
     return True
 
 def _looks_like_column_list_banner(label: str) -> bool:
-    """Comma/slash-separated field lists that belong in headers, not titles."""
+    """Comma/slash-separated field lists that belong in headers, not titles.
+
+    Keeps real CRS captions that use commas inside a long phrase, e.g.
+    ``POPULATION, REGISTRATION UNITS, MONTHLY RETURNS DUE AND RECEIVED (…)``.
+    Those have at least one multi-word clause; true column lists are short
+    field names like ``Scheme name, beneficiaries, budget``.
+    """
     s = _cell_str(label)
     if not s:
         return False
     parts = [p.strip() for p in re.split(r"[,;/|]", s) if p.strip()]
     if len(parts) < 2:
         return False
+    # Any long clause → descriptive caption, not a header field list.
+    if any(len(p.split()) > 5 for p in parts):
+        return False
+    if sum(len(p.split()) for p in parts) >= 10:
+        return False
+    # ALL-CAPS vital-stats captions with commas are titles, not col lists.
+    letters = [c for c in s if c.isalpha()]
+    if (
+        len(s) >= 40
+        and letters
+        and sum(1 for c in letters if c.isupper()) / len(letters) >= 0.7
+    ):
+        return False
     shortish = sum(1 for p in parts if len(p) <= 40 and len(p.split()) <= 5)
-    return shortish >= max(2, len(parts) - 1) and len(s) <= 160
+    return shortish == len(parts) and len(s) <= 160
 
 def extract_in_grid_caption(
     rows: Optional[List[List[Any]]],

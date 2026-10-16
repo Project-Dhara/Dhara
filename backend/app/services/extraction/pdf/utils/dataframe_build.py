@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, List, Optional, Sequence
+from typing import Any, List, Optional, Sequence, Tuple
 
 from app.services.extraction.pdf.utils.caption import (
     _blank,

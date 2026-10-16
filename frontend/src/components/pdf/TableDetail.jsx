@@ -50,13 +50,21 @@ const PREVIEW_MOUNT_CAP = 80
 /** Table title on the collapsed preview card (edit in the expanded detail). */
 export function TableTitleDisplay({ table, className = '' }) {
   const title = displayTitle(table)
+  const filledByAi = Boolean(table?.title_filled_by_ai)
   if (title) {
     return (
-      <div
-        className={`min-w-0 whitespace-normal break-words text-[14px] font-semibold leading-snug text-ink ${className}`}
-        title={title}
-      >
-        {title}
+      <div className={`min-w-0 ${className}`}>
+        <div
+          className="whitespace-normal break-words text-[14px] font-semibold leading-snug text-ink"
+          title={filledByAi ? `${title} (title by AI)` : title}
+        >
+          {title}
+        </div>
+        {filledByAi ? (
+          <div className="mt-0.5 text-[11px] font-semibold tracking-wide text-[#2F6FED]">
+            Title by AI
+          </div>
+        ) : null}
       </div>
     )
   }
@@ -857,31 +865,62 @@ export function TableDetail({
     )
   }
 
+  // Explicit table min-width: <col minWidth> is ignored under table-fixed + % widths,
+  // so without this the preview never overflows and horizontal scroll never appears.
+  const previewMinWidthCh = previewColLayout.length === columnCount
+    ? previewColLayout.reduce((sum, col) => sum + (Number(col.minCh) || 0), 0)
+    : Math.max(columnCount * 6, 48)
+
+  const showStructureEditor = Boolean(
+    jobId && table.table_id && tableSupportsStructureEditor(table),
+  )
+
   return (
-    <div className="flex flex-col gap-3 border-t border-line px-3.5 pb-3.5 pt-3">
-      <label className="flex flex-col gap-1">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-teal">Table title</span>
-        <AutoGrowTextarea
-          singleLine
-          className="min-h-[2.5rem] w-full rounded-md border border-line bg-white px-2.5 py-1.5 text-[13.5px] font-semibold leading-snug text-ink focus:border-teal"
-          value={draft.title}
-          placeholder="Add a table title"
-          onFocus={(e) => {
-            titleAtFocusRef.current = (e.target.value || '').trim() || null
-          }}
-          onChange={(nextTitle) => {
-            markDirty()
-            setDraft((prev) => ({ ...prev, title: nextTitle }))
-            onTitleLive?.(nextTitle.trim() || null)
-          }}
-          onBlur={(e) => {
-            const next = (e.target.value || '').trim() || null
-            if (next === titleAtFocusRef.current) return
-            onTitleCommit?.(next)
-            titleAtFocusRef.current = next
-          }}
-        />
-      </label>
+    <div className="flex min-w-0 flex-col gap-3 border-t border-line px-3.5 pb-3.5 pt-3">
+      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+        <label className="flex min-w-0 flex-1 flex-col gap-1">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-teal">
+            Table title
+            {table.title_filled_by_ai ? ' — filled by AI' : ''}
+          </span>
+          <AutoGrowTextarea
+            singleLine
+            className={`min-h-[2.5rem] w-full rounded-md border bg-white px-2.5 py-1.5 text-[13.5px] font-semibold leading-snug text-ink focus:border-teal ${
+              table.title_filled_by_ai
+                ? 'border-[#5B8DEF]/55 bg-[#EEF4FF]/40'
+                : 'border-line'
+            }`}
+            value={draft.title}
+            placeholder="Add a table title"
+            onFocus={(e) => {
+              titleAtFocusRef.current = (e.target.value || '').trim() || null
+            }}
+            onChange={(nextTitle) => {
+              markDirty()
+              setDraft((prev) => ({ ...prev, title: nextTitle }))
+              onTitleLive?.(nextTitle.trim() || null)
+            }}
+            onBlur={(e) => {
+              const next = (e.target.value || '').trim() || null
+              if (next === titleAtFocusRef.current) return
+              onTitleCommit?.(next)
+              titleAtFocusRef.current = next
+            }}
+          />
+        </label>
+        {showStructureEditor ? (
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            className="shrink-0 self-start sm:mt-5"
+            onClick={openFullPageEditor}
+          >
+            <Pencil className="h-3.5 w-3.5" strokeWidth={2.25} aria-hidden />
+            View/Edit table
+          </Button>
+        ) : null}
+      </div>
 
       {table.description && <p className="text-[13px] text-ink-soft">{table.description}</p>}
 
@@ -904,32 +943,25 @@ export function TableDetail({
         </>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
       <div className="text-[11px] font-bold uppercase tracking-wide text-green">
-          Extracted data ({previewRows.length} rows · {columnCount} columns
-          {anyCellGarbled ? ` — ${garbledCellCount} cell(s) need review` : ''})
-        </div>
-        {tableSupportsStructureEditor(table) ? (
-          <Button type="button" variant="primary" size="sm" onClick={openFullPageEditor}>
-            <Pencil className="h-3.5 w-3.5" strokeWidth={2.25} aria-hidden />
-            View/Edit table
-          </Button>
-        ) : null}
+        Extracted data ({previewRows.length} rows · {columnCount} columns
+        {anyCellGarbled ? ` — ${garbledCellCount} cell(s) need review` : ''})
       </div>
       <div
         ref={previewClipRef}
-        className={`rounded-xl border border-line ${measuringPreview ? 'overflow-x-auto overflow-y-hidden' : 'overflow-x-auto'}`}
+        className={`min-w-0 w-full max-w-full rounded-xl border border-line ${
+          measuringPreview ? 'overflow-x-auto overflow-y-hidden' : 'overflow-x-auto'
+        }`}
         style={measuringPreview ? { maxHeight: PREVIEW_MAX_HEIGHT_PX } : undefined}
       >
-        <table className="w-full table-fixed border-collapse text-[13px]">
+        <table
+          className="table-fixed border-collapse text-[13px]"
+          style={{ width: '100%', minWidth: `${previewMinWidthCh}ch` }}
+        >
           {previewColLayout.length === columnCount ? (
             <colgroup>
               {previewColLayout.map((col, i) => (
-                // minWidth keeps header words intact; overflow-x-auto shows all cols.
-                <col
-                  key={i}
-                  style={{ width: `${col.pct}%`, minWidth: `${col.minCh}ch` }}
-                />
+                <col key={i} style={{ width: `${col.pct}%` }} />
               ))}
             </colgroup>
           ) : null}

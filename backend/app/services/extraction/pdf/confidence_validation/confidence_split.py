@@ -23,6 +23,22 @@ from app.services.extraction.pdf.utils.pymupdf import (
     log,
 )
 
+def _llm_tier_for_reason(reason: str) -> str:
+    """Map classifier reason → LLM workload tier.
+
+    ``header``: body grid is usable; only titles / flattened headers need the model.
+    ``full``: sparse, misaligned, or glued cells — keep full reconstruct quality path.
+    """
+    r = (reason or "").lower()
+    if (
+        "structural issue" in r
+        or "placeholder column header" in r
+        or "rotated or stacked column headers" in r
+    ):
+        return "header"
+    return "full"
+
+
 def split_by_confidence(
     pages_grouped: Dict[int, List[Dict[str, Any]]],
     page_text: Optional[Dict[int, str]] = None,
@@ -35,6 +51,7 @@ def split_by_confidence(
       high_results   -- {page_num: {"tables": [...]}} accepted directly, no LLM
       llm_pages      -- {page_num: candidates} still needing the OpenAI step
       reason_counts  -- {reason: count} for the "llm" bucket, for visibility into why
+      llm_tiers      -- {page_num: "header"|"full"} workload tier for LLM pages
 
     For high-confidence pages, titles are inferred from page_text, positioned
     text above the table bbox, extended caption patterns, and PDF outline —
@@ -45,6 +62,7 @@ def split_by_confidence(
     high_results: Dict[int, Dict[str, Any]] = {}
     llm_pages: Dict[int, List[Dict[str, Any]]] = {}
     reason_counts: Dict[str, int] = {}
+    llm_tiers: Dict[int, str] = {}
 
     doc = None
     if pdf_path and Path(pdf_path).is_file():
@@ -81,6 +99,7 @@ def split_by_confidence(
                     or c.get("method") in ("excel_grid", "csv_grid")
                 ]
                 llm_pages[page_num] = ruled or candidates
+                llm_tiers[page_num] = _llm_tier_for_reason(reason)
                 reason_counts[reason] = reason_counts.get(reason, 0) + 1
             if progress_cb and (idx == total or idx % 10 == 0):
                 progress_cb(idx, total)
@@ -88,7 +107,7 @@ def split_by_confidence(
         if doc is not None:
             doc.close()
 
-    return high_results, llm_pages, reason_counts
+    return high_results, llm_pages, reason_counts, llm_tiers
 
 
 # ── Stage 3: MEITY-empanelled LLM validation / restructuring ─────────────

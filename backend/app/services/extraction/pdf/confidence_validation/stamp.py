@@ -40,6 +40,12 @@ from app.services.extraction.pdf.confidence_validation.table_confidence import (
     dedupe_column_names,
     table_dict_from_df,
 )
+from app.services.extraction.pdf.utils.vertical_headers import (
+    VERTICAL_HEADER_REVIEW_NOTE,
+    VERTICAL_HEADER_STILL_BAD_NOTE,
+    df_had_vertical_header_repair,
+    headers_still_look_stacked,
+)
 
 def _norm_header_key(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip().lower())
@@ -414,7 +420,7 @@ def _row_is_column_index_strip(row: Sequence[Any]) -> bool:
         nums = [int(str(v).strip()) for v in non_empty]
     except ValueError:
         return False
-    return bool(nums) and nums == list(range(1, len(nums) + 1))
+    return bool(nums) and all(nums[i] == nums[0] + i for i in range(len(nums)))
 
 
 def _row_has_measure_like_values(row: Sequence[Any]) -> bool:
@@ -878,11 +884,73 @@ def _recover_missing_ruled_tables(
     return out
 
 
+def _classification_has_values(classification: Any) -> bool:
+    if not isinstance(classification, dict):
+        return False
+    for field in classification.values():
+        if isinstance(field, dict) and field.get("value") not in (None, ""):
+            return True
+        if field not in (None, "", {}, []):
+            if not isinstance(field, dict):
+                return True
+    return False
+
+
+def _hydrate_rows_from_candidate_for_header_fix(
+    table: Dict[str, Any],
+    candidates: Optional[List[Dict[str, Any]]],
+    used: Optional[set] = None,
+) -> Dict[str, Any]:
+    """Header-only LLM path: copy body cells from the matched ruled grid.
+
+    The model returns flattened column names (+ title) with ``rows: []``. Prefer
+    the candidate body so we keep extract quality without regenerating cells.
+    """
+    columns = table.get("columns") or []
+    rows = table.get("rows") or []
+    if not columns:
+        return table
+    cand = _pick_candidate_for_llm_table(table, candidates, used)
+    if cand is None:
+        return table
+    df = cand.get("df")
+    if df is None or getattr(df, "empty", True):
+        return table
+
+    n_cand_rows = int(df.shape[0])
+    # Already has a substantial body — keep LLM rows (full reconstruct path).
+    if rows and len(rows) >= max(2, int(n_cand_rows * 0.5)):
+        return table
+
+    n_llm = len(columns)
+    n_cand = int(df.shape[1])
+    # Width mismatch: keep LLM column names; pad/trim candidate cells to match.
+    body: List[List[Any]] = []
+    for raw in df.values.tolist():
+        cells = list(raw[:n_llm])
+        while len(cells) < n_llm:
+            cells.append(None)
+        body.append([None if v is None or (isinstance(v, float) and v != v) else v for v in cells[:n_llm]])
+    table["rows"] = body
+    notes = list(table.get("notes") or [])
+    note = (
+        "ADDED: header-fix path — body rows copied from ruled-border candidate "
+        f"({n_cand} cols × {n_cand_rows} rows → {n_llm} LLM column names)."
+    )
+    if note not in notes:
+        notes.append(note)
+    table["notes"] = notes
+    _stamp_bbox_from_candidate(table, cand)
+    return table
+
+
 def _stamp_llm_metadata(
     page_result: Dict[str, Any],
     page_num: int,
     candidates: Optional[List[Dict[str, Any]]] = None,
     page_text: str = "",
+    *,
+    llm_mode: str = "full",
 ) -> Dict[str, Any]:
     """Adds the pipeline-level bookkeeping fields (which extraction path
     produced this, whether it's been semantically classified, whether a
@@ -891,13 +959,20 @@ def _stamp_llm_metadata(
 
     ADDED: strips ungrounded Direction/Trend columns, then runs
     _apply_column_alignment_guard, then attaches pymupdf multi-level header
-    meta / merge empties, before derive_human_review_needed."""
+    meta / merge empties, before derive_human_review_needed.
+    ``llm_mode="header"`` hydrates empty row bodies from the ruled candidate.
+    """
     # Dedupe strategy clones so attach/guard/recover see one grid per region.
     candidates = dedupe_candidates_by_bbox(list(candidates or []))
     tables = []
     used_candidates: set = set()
     for t in page_result.get("tables", []):
         normalized = _normalize_table(t)
+        if llm_mode == "header":
+            # Don't claim candidates yet — alignment/attach still need them.
+            normalized = _hydrate_rows_from_candidate_for_header_fix(
+                normalized, candidates, None
+            )
         normalized = _strip_ungrounded_direction_columns(normalized, candidates, page_text)
         normalized = _apply_column_alignment_guard(normalized, candidates, used_candidates)
         if normalized.pop("_skip_structure_attach", False):
@@ -905,9 +980,14 @@ def _stamp_llm_metadata(
         else:
             normalized = _attach_structure_from_candidates(normalized, candidates, used_candidates)
             normalized["columns"] = dedupe_column_names(normalized.get("columns") or [])
-        normalized["semantic_status"] = "classified"
+        # Upload path is reconstruct-only; mark classified only if Task B values exist.
+        if _classification_has_values(normalized.get("classification")):
+            normalized["semantic_status"] = "classified"
+        else:
+            normalized["semantic_status"] = "not_classified"
         if not (isinstance(normalized.get("extraction"), dict) and normalized["extraction"].get("confidence") == "alignment_guard_fallback"):
-            normalized["extraction"] = {"method": "pymupdf+llm", "confidence": "llm_validated"}
+            conf = "llm_header_fix" if llm_mode == "header" else "llm_validated"
+            normalized["extraction"] = {"method": "pymupdf+llm", "confidence": conf}
         normalized["page"] = page_num
         if not normalized.get("bbox"):
             matched, _ = _best_matching_ruled_candidate(normalized, candidates, used_candidates)
@@ -925,6 +1005,7 @@ def _stamp_llm_metadata(
                     if c.get("source_file") and not normalized.get("source_file"):
                         normalized["source_file"] = c.get("source_file")
                     break
+        _stamp_vertical_header_review_note(normalized, candidates)
         normalized["human_review_needed"], normalized["human_review_reason"] = derive_human_review_needed(normalized)
         tables.append(normalized)
 
@@ -932,3 +1013,32 @@ def _stamp_llm_metadata(
         tables, candidates, page_num, page_text, used_candidates
     )
     return {"tables": tables}
+
+
+def _stamp_vertical_header_review_note(
+    table: Dict[str, Any],
+    candidates: Optional[List[Dict[str, Any]]],
+) -> None:
+    """Flag steward review when extract repaired (or still has) vertical headers."""
+    repaired = any(
+        df_had_vertical_header_repair(c.get("df"))
+        for c in (candidates or [])
+        if isinstance(c, dict)
+    )
+    names = [
+        str(col.get("name") or "")
+        for col in (table.get("columns") or [])
+        if isinstance(col, dict)
+    ]
+    still_bad = headers_still_look_stacked(names)
+    if not repaired and not still_bad:
+        return
+    note = VERTICAL_HEADER_STILL_BAD_NOTE if still_bad else VERTICAL_HEADER_REVIEW_NOTE
+    notes = list(table.get("notes") or [])
+    uncertain = list(table.get("uncertain_cells") or [])
+    if note not in notes:
+        notes.append(note)
+    if note not in uncertain:
+        uncertain.append(note)
+    table["notes"] = notes
+    table["uncertain_cells"] = uncertain

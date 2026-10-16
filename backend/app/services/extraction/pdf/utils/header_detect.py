@@ -376,7 +376,7 @@ def detect_header_rows(body: List[List[Any]], n_cols: int) -> Tuple[int, List[in
                 nums = [int(_cell_str(v)) for v in non_empty]
             except ValueError:
                 nums = []
-            if nums and nums == list(range(1, len(nums) + 1)):
+            if nums and all(nums[j] == nums[0] + j for j in range(len(nums))):
                 skip_rows.append(i)
 
     header_count = 0

@@ -1,20 +1,19 @@
-"""LLM table reconstruction + semantic classification API calls."""
+"""LLM table reconstruction API calls (upload path; no Task B classification)."""
 from __future__ import annotations
 
 import json
 import re
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import openai
-import pandas as pd
-import pymupdf
 
 from app.services.llm_prompts import (
     BATCH_SIZE,
     BATCH_VALIDATION_MAX_TOKENS_CAP,
+    HEADER_FIX_BATCH_MAX_TOKENS_CAP,
+    HEADER_FIX_MAX_TOKENS_PER_PAGE,
+    LLM_HEADER_PROMPT_MAX_ROWS,
     LLM_PROMPT_MAX_ROWS,
     LLM_VALIDATION_TEMPERATURE,
     MAX_TOKENS_PER_PAGE,
@@ -34,6 +33,27 @@ from app.services.extraction.pdf.utils.pymupdf import (
     log,
 )
 
+_LLMMode = str  # "full" | "header"
+
+
+def _prompt_max_rows(mode: _LLMMode) -> int:
+    return LLM_HEADER_PROMPT_MAX_ROWS if mode == "header" else LLM_PROMPT_MAX_ROWS
+
+
+def _batch_max_tokens(mode: _LLMMode, n_pages: int) -> int:
+    if mode == "header":
+        return min(
+            HEADER_FIX_BATCH_MAX_TOKENS_CAP,
+            HEADER_FIX_MAX_TOKENS_PER_PAGE * max(1, n_pages),
+        )
+    return min(BATCH_VALIDATION_MAX_TOKENS_CAP, MAX_TOKENS_PER_PAGE * max(1, n_pages))
+
+
+def _single_max_tokens(mode: _LLMMode) -> int:
+    if mode == "header":
+        return min(SINGLE_PAGE_MAX_TOKENS, HEADER_FIX_MAX_TOKENS_PER_PAGE * 2)
+    return SINGLE_PAGE_MAX_TOKENS
+
 
 def _prompt_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Lean candidate set for LLM prompts without dropping distinct tables.
@@ -52,17 +72,22 @@ def _stamp_safe(
     page_num: int,
     candidates: Optional[List[Dict[str, Any]]],
     page_text: str,
+    *,
+    mode: _LLMMode = "full",
 ) -> Dict[str, Any]:
     """Stamp LLM output; on stamp failure keep the raw LLM tables (don't drop)."""
     try:
-        return _stamp_llm_metadata(page_result, page_num, candidates, page_text)
+        return _stamp_llm_metadata(
+            page_result, page_num, candidates, page_text, llm_mode=mode
+        )
     except Exception as e:
         log(f"  page {page_num}: stamp failed ({e}); keeping unstamped LLM tables")
         out = dict(page_result or {"tables": []})
         for t in out.get("tables") or []:
             if isinstance(t, dict):
                 t.setdefault("page", page_num)
-                t.setdefault("semantic_status", "classified")
+                # Reconstruct-only upload path — semantics filled later.
+                t.setdefault("semantic_status", "not_classified")
                 t.setdefault(
                     "extraction",
                     {"method": "pymupdf+llm", "confidence": "llm_validated_unstamped"},
@@ -70,11 +95,18 @@ def _stamp_safe(
         return out
 
 
-def build_validation_prompt(page_num: int, candidates: List[Dict[str, Any]], text: str) -> str:
+def build_validation_prompt(
+    page_num: int,
+    candidates: List[Dict[str, Any]],
+    text: str,
+    *,
+    mode: _LLMMode = "full",
+) -> str:
     candidates = _prompt_candidates(candidates)
     ruled_n = len(_distinct_ruled_candidates(candidates))
+    max_rows = _prompt_max_rows(mode)
     sections = [
-        f"--- {t['method']}, table {i + 1} ---\n{df_to_text(t['df'], max_rows=LLM_PROMPT_MAX_ROWS)}"
+        f"--- {t['method']}, table {i + 1} ---\n{df_to_text(t['df'], max_rows=max_rows)}"
         for i, t in enumerate(candidates)
     ]
     count_hint = (
@@ -90,16 +122,24 @@ def build_validation_prompt(page_num: int, candidates: List[Dict[str, Any]], tex
         if sections
         else "(no table candidates extracted on this page)",
         count_hint=count_hint,
+        mode=mode,
     )
 
 
-def validate_page(client: openai.OpenAI, page_num: int, candidates: List[Dict[str, Any]], text: str) -> Dict[str, Any]:
-    prompt = build_validation_prompt(page_num, candidates, text)
+def validate_page(
+    client: openai.OpenAI,
+    page_num: int,
+    candidates: List[Dict[str, Any]],
+    text: str,
+    *,
+    mode: _LLMMode = "full",
+) -> Dict[str, Any]:
+    prompt = build_validation_prompt(page_num, candidates, text, mode=mode)
     resp = client.chat.completions.create(
         model=OPENAI_MODEL,
         response_format={"type": "json_object"},
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=SINGLE_PAGE_MAX_TOKENS,
+        max_tokens=_single_max_tokens(mode),
         temperature=LLM_VALIDATION_TEMPERATURE,
     )
     text_out = resp.choices[0].message.content
@@ -110,9 +150,14 @@ def validate_page(client: openai.OpenAI, page_num: int, candidates: List[Dict[st
         return json.loads(cleaned)
 
 
-def validate_all_pages(pages_grouped: Dict[int, List[Dict[str, Any]]], page_text: Dict[int, str],
-                        n_workers: int = OPENAI_WORKERS,
-                        api_key: Optional[str] = None) -> Dict[int, Dict[str, Any]]:
+def validate_all_pages(
+    pages_grouped: Dict[int, List[Dict[str, Any]]],
+    page_text: Dict[int, str],
+    n_workers: int = OPENAI_WORKERS,
+    api_key: Optional[str] = None,
+    *,
+    mode: _LLMMode = "full",
+) -> Dict[int, Dict[str, Any]]:
     key = (api_key or "").strip()
     if not key:
         return {}
@@ -120,7 +165,14 @@ def validate_all_pages(pages_grouped: Dict[int, List[Dict[str, Any]]], page_text
     validated: Dict[int, Dict[str, Any]] = {}
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
         futures = {
-            pool.submit(validate_page, client, page_num, candidates, page_text.get(page_num, "")): page_num
+            pool.submit(
+                validate_page,
+                client,
+                page_num,
+                candidates,
+                page_text.get(page_num, ""),
+                mode=mode,
+            ): page_num
             for page_num, candidates in pages_grouped.items()
         }
         done = 0
@@ -137,23 +189,30 @@ def validate_all_pages(pages_grouped: Dict[int, List[Dict[str, Any]]], page_text
                 page_num,
                 pages_grouped.get(page_num),
                 page_text.get(page_num, ""),
+                mode=mode,
             )
             if done % 20 == 0 or done == len(futures):
-                log(f"  validated {done}/{len(futures)} pages")
+                log(f"  validated {done}/{len(futures)} pages ({mode})")
     return validated
 
 
 # ── Stage 4: batched MEITY-empanelled LLM validation (for the "needs LLM" bucket) ─
 
-def build_batch_validation_prompt(pages: List[int], pages_grouped: Dict[int, List[Dict[str, Any]]],
-                                   page_text: Dict[int, str]) -> str:
+def build_batch_validation_prompt(
+    pages: List[int],
+    pages_grouped: Dict[int, List[Dict[str, Any]]],
+    page_text: Dict[int, str],
+    *,
+    mode: _LLMMode = "full",
+) -> str:
     page_sections = []
+    max_rows = _prompt_max_rows(mode)
     for page_num in pages:
         candidates = _prompt_candidates(pages_grouped.get(page_num, []))
         ruled_n = len(_distinct_ruled_candidates(candidates))
         sections = [
             f"  --- {t['method']}, table {i + 1} ---\n"
-            f"{df_to_text(t['df'], max_rows=LLM_PROMPT_MAX_ROWS)}"
+            f"{df_to_text(t['df'], max_rows=max_rows)}"
             for i, t in enumerate(candidates)
         ]
         text = page_text.get(page_num, "")[:RAW_TEXT_CHARS_PER_PAGE_BATCHED]
@@ -175,19 +234,24 @@ def build_batch_validation_prompt(pages: List[int], pages_grouped: Dict[int, Lis
     return pdf_batch_validation_user_prompt(
         page_numbers=pages,
         page_sections_block=page_sections_block,
+        mode=mode,
     )
 
 
-def validate_batch(client: openai.OpenAI, pages: List[int], pages_grouped: Dict[int, List[Dict[str, Any]]],
-                    page_text: Dict[int, str]) -> Dict[int, Dict[str, Any]]:
-    prompt = build_batch_validation_prompt(pages, pages_grouped, page_text)
+def validate_batch(
+    client: openai.OpenAI,
+    pages: List[int],
+    pages_grouped: Dict[int, List[Dict[str, Any]]],
+    page_text: Dict[int, str],
+    *,
+    mode: _LLMMode = "full",
+) -> Dict[int, Dict[str, Any]]:
+    prompt = build_batch_validation_prompt(pages, pages_grouped, page_text, mode=mode)
     resp = client.chat.completions.create(
         model=OPENAI_MODEL,
         response_format={"type": "json_object"},
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=min(
-            BATCH_VALIDATION_MAX_TOKENS_CAP, MAX_TOKENS_PER_PAGE * len(pages)
-        ),
+        max_tokens=_batch_max_tokens(mode, len(pages)),
         temperature=LLM_VALIDATION_TEMPERATURE,
     )
     text_out = resp.choices[0].message.content
@@ -205,6 +269,7 @@ def validate_batch(client: openai.OpenAI, pages: List[int], pages_grouped: Dict[
             p,
             pages_grouped.get(p),
             page_text.get(p, ""),
+            mode=mode,
         )
         for p in pages
     }
@@ -216,6 +281,8 @@ def _fallback_validate_pages(
     pages_grouped: Dict[int, List[Dict[str, Any]]],
     page_text: Dict[int, str],
     n_workers: int,
+    *,
+    mode: _LLMMode = "full",
 ) -> Dict[int, Dict[str, Any]]:
     """Per-page LLM retry after a batch API failure — parallel, not sequential."""
     out: Dict[int, Dict[str, Any]] = {}
@@ -224,13 +291,18 @@ def _fallback_validate_pages(
     def _one(page_num: int) -> Tuple[int, Optional[Dict[str, Any]]]:
         try:
             result_single = validate_page(
-                client, page_num, pages_grouped[page_num], page_text.get(page_num, "")
+                client,
+                page_num,
+                pages_grouped[page_num],
+                page_text.get(page_num, ""),
+                mode=mode,
             )
             return page_num, _stamp_safe(
                 result_single,
                 page_num,
                 pages_grouped.get(page_num),
                 page_text.get(page_num, ""),
+                mode=mode,
             )
         except Exception as e2:
             log(f"    page {page_num}: per-page fallback also failed ({e2})")
@@ -243,10 +315,16 @@ def _fallback_validate_pages(
     return out
 
 
-def validate_all_pages_batched(pages_grouped: Dict[int, List[Dict[str, Any]]], page_text: Dict[int, str],
-                                batch_size: int = BATCH_SIZE, n_workers: int = OPENAI_WORKERS,
-                                progress_cb: Optional[Callable[[int, int], None]] = None,
-                                api_key: Optional[str] = None) -> Dict[int, Dict[str, Any]]:
+def validate_all_pages_batched(
+    pages_grouped: Dict[int, List[Dict[str, Any]]],
+    page_text: Dict[int, str],
+    batch_size: int = BATCH_SIZE,
+    n_workers: int = OPENAI_WORKERS,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+    api_key: Optional[str] = None,
+    *,
+    mode: _LLMMode = "full",
+) -> Dict[int, Dict[str, Any]]:
     key = (api_key or "").strip()
     if not key:
         return {}
@@ -256,27 +334,35 @@ def validate_all_pages_batched(pages_grouped: Dict[int, List[Dict[str, Any]]], p
 
     validated: Dict[int, Dict[str, Any]] = {}
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
-        futures = {pool.submit(validate_batch, client, batch, pages_grouped, page_text): batch for batch in batches}
+        futures = {
+            pool.submit(
+                validate_batch, client, batch, pages_grouped, page_text, mode=mode
+            ): batch
+            for batch in batches
+        }
         done_pages = 0
         for future in as_completed(futures):
             batch = futures[future]
             try:
                 result = future.result()
             except Exception as e:
-                log(f"  batch {batch[0]}-{batch[-1]} failed, falling back to per-page ({e})")
+                log(f"  batch {batch[0]}-{batch[-1]} ({mode}) failed, falling back to per-page ({e})")
                 validated.update(
                     _fallback_validate_pages(
-                        client, batch, pages_grouped, page_text, n_workers
+                        client, batch, pages_grouped, page_text, n_workers, mode=mode
                     )
                 )
                 done_pages += len(batch)
-                log(f"  validated {done_pages}/{len(all_pages)} pages")
+                log(f"  validated {done_pages}/{len(all_pages)} pages ({mode})")
                 if progress_cb:
                     progress_cb(done_pages, len(all_pages))
                 continue
             validated.update(result)
             done_pages += len(batch)
-            log(f"  validated {done_pages}/{len(all_pages)} pages ({len(batches)} batches of ~{batch_size})")
+            log(
+                f"  validated {done_pages}/{len(all_pages)} pages "
+                f"({len(batches)} {mode} batches of ~{batch_size})"
+            )
             if progress_cb:
                 progress_cb(done_pages, len(all_pages))
     return validated

@@ -342,38 +342,43 @@ def derive_human_review_needed(table: Dict[str, Any]) -> tuple[bool, Optional[st
     elif title_needs_review(table.get("title"), table.get("columns") or []):
         reasons_present.add("uncertain_title")
 
-    if table.get("semantic_status") != "classified":
-        # Auto-accepted path: only surface title-related review.
-        if "title_filled_by_ai" in reasons_present:
-            return True, "title_filled_by_ai"
-        if "uncertain_title" in reasons_present:
-            return True, "uncertain_title"
-        return False, None
-
     uncertain_cells = table.get("uncertain_cells") or []
     rows = table.get("rows") or []
-    if uncertain_cells:
-        if any(_uncertain_note_is_alignment_mismatch(note) for note in uncertain_cells):
-            # Notes written by _apply_column_alignment_guard (legacy + human wording).
-            reasons_present.add("column_alignment_mismatch")
-        if any(_looks_garbled(note) for note in uncertain_cells) or _rows_look_garbled(rows):
+
+    def _add_extraction_reasons() -> None:
+        if uncertain_cells:
+            if any(_uncertain_note_is_alignment_mismatch(note) for note in uncertain_cells):
+                # Notes written by _apply_column_alignment_guard (legacy + human wording).
+                reasons_present.add("column_alignment_mismatch")
+            if any(_looks_garbled(note) for note in uncertain_cells) or _rows_look_garbled(rows):
+                reasons_present.add("garbled_extracted_value")
+            elif any(
+                " vs " in str(note) and not _uncertain_note_is_alignment_mismatch(note)
+                for note in uncertain_cells
+            ):
+                # Matches this pipeline's own uncertain_cells note format (see
+                # TASK_A_RECONSTRUCTION_RULES / uncertain_cells example) --
+                # "row X, col Y: candidateA=... vs candidateB=...".
+                # Alignment-guard notes are excluded so fill-rate comparisons are
+                # not misread as cell conflicts.
+                reasons_present.add("conflicting_extraction")
+            elif "column_alignment_mismatch" not in reasons_present:
+                reasons_present.add("uncertain_extraction")
+        elif _rows_look_garbled(rows):
+            # Garbled values can show up even without an explicit uncertain_cells
+            # note, e.g. a private-use-area glyph both candidates agreed on.
             reasons_present.add("garbled_extracted_value")
-        elif any(
-            " vs " in str(note) and not _uncertain_note_is_alignment_mismatch(note)
-            for note in uncertain_cells
-        ):
-            # Matches this pipeline's own uncertain_cells note format (see
-            # TASK_A_RECONSTRUCTION_RULES / uncertain_cells example) --
-            # "row X, col Y: candidateA=... vs candidateB=...".
-            # Alignment-guard notes are excluded so fill-rate comparisons are
-            # not misread as cell conflicts.
-            reasons_present.add("conflicting_extraction")
-        elif "column_alignment_mismatch" not in reasons_present:
-            reasons_present.add("uncertain_extraction")
-    elif _rows_look_garbled(rows):
-        # Garbled values can show up even without an explicit uncertain_cells
-        # note, e.g. a private-use-area glyph both candidates agreed on.
-        reasons_present.add("garbled_extracted_value")
+
+    if table.get("semantic_status") != "classified":
+        # Auto-accepted / reconstruct-only upload path: title + extraction
+        # signals only — do not flag role=="unknown" (Task B not run yet).
+        _add_extraction_reasons()
+        if not reasons_present:
+            return False, None
+        reason = min(reasons_present, key=lambda r: _REASON_PRIORITY.get(r, len(REVIEW_REASONS)))
+        return True, reason
+
+    _add_extraction_reasons()
 
     classification = table.get("classification") or {}
     for f in classification.values():
