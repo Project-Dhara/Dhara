@@ -510,28 +510,15 @@ def _restore_missing_data_rows_from_candidate(
             llm_to_cand[li] = ci
             used_cand.add(ci)
 
-    # Keep leading 1..N / (1)(2)(3) reference strips under headers, and any
-    # blank-stub measure rows the LLM dropped. Mid-table index strips (between
-    # year rows) stay dropped — those are not body data.
-    def _is_leading_index_strip(idx: int) -> bool:
-        if not _row_is_column_index_strip(cand_rows[idx]):
-            return False
-        for j in range(idx):
-            if not _row_is_column_index_strip(cand_rows[j]):
-                return False
-        return True
-
+    # Re-insert blank-stub measure rows the LLM dropped. Do NOT re-insert the
+    # leading 1..N / (1)(2)(3) index strip — it reads as a duplicate numeric
+    # header row in Preview. Mid-table index strips stay dropped too.
     insert_idxs = {
         i
         for i, row in enumerate(cand_rows)
         if i not in used_cand
-        and (
-            _is_leading_index_strip(i)
-            or (
-                _row_has_measure_like_values(row)
-                and not _row_is_column_index_strip(row)
-            )
-        )
+        and _row_has_measure_like_values(row)
+        and not _row_is_column_index_strip(row)
     }
     if not insert_idxs:
         return

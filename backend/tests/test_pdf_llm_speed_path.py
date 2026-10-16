@@ -95,6 +95,74 @@ def test_reconstruct_only_does_not_flag_unknown_roles():
     assert reason is None
 
 
+def test_soft_alignment_notes_do_not_need_review():
+    """PDF-grid restore / missing-row / header-rebuild hints are no-review for now."""
+    soft_notes = [
+        (
+            "Columns looked misaligned, so we restored the table from the PDF grid. "
+            "Please check that each value sits under the correct header."
+        ),
+        (
+            "Some rows are missing — extracted 15 of about 18 from the PDF. "
+            "Check whether a TOTAL/summary row or a mid-table section was left out."
+        ),
+        (
+            "Some column headers were rotated or stacked in the PDF — "
+            "we rebuilt those labels. Please confirm they match the source."
+        ),
+    ]
+    needed, reason = derive_human_review_needed(
+        {
+            "title": "Live Births by Birth Order and Weight (Urban)",
+            "columns": [
+                {
+                    "name": "Male",
+                    "role": "measure",
+                    "human_review_needed": True,
+                    "human_review_reason": "column_alignment_mismatch",
+                },
+            ],
+            "rows": [["10"]],
+            "uncertain_cells": soft_notes,
+            "semantic_status": "classified",
+            "classification": {},
+        }
+    )
+    assert needed is False
+    assert reason is None
+
+    # A real blank-column note alongside soft notes must still flag review.
+    needed2, reason2 = derive_human_review_needed(
+        {
+            "title": "Live Births by Birth Order and Weight (Urban)",
+            "columns": [{"name": "Total", "role": "measure"}],
+            "rows": [["—"]],
+            "uncertain_cells": [soft_notes[0], "Blank value column: Total."],
+            "semantic_status": "classified",
+            "classification": {},
+        }
+    )
+    assert needed2 is True
+    assert reason2 == "column_alignment_mismatch"
+
+    # Still-broken stacked headers remain review-needed.
+    needed3, reason3 = derive_human_review_needed(
+        {
+            "title": "Live Births by Birth Order and Weight (Urban)",
+            "columns": [{"name": "A u t u m n", "role": "measure"}],
+            "rows": [["10"]],
+            "uncertain_cells": [
+                "Some column headers still look rotated or letter-spaced after automatic "
+                "repair. Please fix the names so they match the PDF."
+            ],
+            "semantic_status": "classified",
+            "classification": {},
+        }
+    )
+    assert needed3 is True
+    assert reason3 in ("uncertain_extraction", "column_alignment_mismatch")
+
+
 def test_header_fix_hydrates_rows_from_candidate():
     df = pd.DataFrame(
         [["1991", "100"], ["1992", "110"]],

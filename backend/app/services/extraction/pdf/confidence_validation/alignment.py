@@ -701,6 +701,36 @@ def _format_alignment_issue_note(issue: Dict[str, Any]) -> str:
     return f'Column {idx + 1} ("{name}"): needs review.'
 
 
+def _uncertain_note_is_review_exempt(note: Any) -> bool:
+    """Informational notes that should NOT force human review.
+
+    Temporary policy: successful PDF-grid restore, missing-row count hints,
+    and successful rotated/stacked header rebuilds stay visible in
+    uncertain_cells but roll up as no review needed. (Still-broken stacked
+    headers remain review-needed.)
+    """
+    s = str(note or "").strip().lower()
+    if not s:
+        return False
+    if s.startswith("columns looked misaligned"):
+        return True
+    if s.startswith("some rows are missing"):
+        return True
+    # Successful vertical-header rebuild (not the still-broken variant).
+    if s.startswith("some column headers were rotated or stacked"):
+        return True
+    # Legacy steward / internal wording for the same cases.
+    if s.startswith("rebuilt from the pdf"):
+        return True
+    if s.startswith("missing data rows"):
+        return True
+    if s.startswith("column headers and values did not line up"):
+        return True
+    if s.startswith("added guard:") and "replaced llm" in s:
+        return True
+    return False
+
+
 def _uncertain_note_is_alignment_mismatch(note: Any) -> bool:
     """True for alignment-guard notes (legacy codes or human-readable wording)."""
     s = str(note or "").lower()
@@ -961,12 +991,28 @@ def _apply_column_alignment_guard(
                                 col["input_type"] = "inputbox"
 
     if not fallback_used:
-        # Ensure at least one column carries the reason for derive_* rollup.
-        if not any(c.get("human_review_reason") == "column_alignment_mismatch" for c in table["columns"]):
+        # Ensure at least one column carries the reason for derive_* rollup,
+        # unless every uncertain note is review-exempt (restore / missing-rows).
+        soft_only = bool(uncertain) and all(
+            _uncertain_note_is_review_exempt(n) for n in uncertain
+        )
+        if not soft_only and not any(
+            c.get("human_review_reason") == "column_alignment_mismatch" for c in table["columns"]
+        ):
             if table["columns"]:
                 table["columns"][0]["human_review_needed"] = True
                 table["columns"][0]["human_review_reason"] = "column_alignment_mismatch"
                 table["columns"][0]["input_type"] = table["columns"][0].get("input_type") or "inputbox"
+    else:
+        # Successful restore: drop alignment review flags left on replaced columns
+        # when the only remaining notes are informational (restore / missing-rows).
+        if uncertain and all(_uncertain_note_is_review_exempt(n) for n in uncertain):
+            for col in table.get("columns") or []:
+                if col.get("human_review_reason") == "column_alignment_mismatch":
+                    col["human_review_needed"] = False
+                    col["human_review_reason"] = None
+                    if col.get("input_type") == "inputbox" and not col.get("input_options"):
+                        col["input_type"] = None
 
     table["notes"] = notes
     table["uncertain_cells"] = uncertain

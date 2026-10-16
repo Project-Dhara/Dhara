@@ -557,11 +557,49 @@ export function tableHasGarbledCells(table) {
 }
 
 
+/**
+ * Informational notes that stay visible but must not force "Review needed"
+ * / uncertain extraction (PDF-grid restore, missing-row hints, successful
+ * rotated/stacked header rebuild). Still-broken stacked headers stay flagged.
+ */
+export function isReviewExemptUncertainNote(note) {
+  const raw = String(note ?? '').trim()
+  if (!raw) return false
+  if (/^Columns looked misaligned\b/i.test(raw)) return true
+  if (/^Some rows are missing\b/i.test(raw)) return true
+  // Successful rebuild only — not "still look rotated…".
+  if (/^Some column headers were rotated or stacked\b/i.test(raw)) return true
+  // Legacy steward / internal wording for the same cases.
+  if (/^Rebuilt from the PDF\b/i.test(raw)) return true
+  if (/^Missing data rows\b/i.test(raw)) return true
+  if (/^Column headers and values did not line up/i.test(raw)) return true
+  if (/^ADDED guard:\s*replaced LLM rows/i.test(raw)) return true
+  return false
+}
+
+
+/** True when every uncertain_cells note is a review-exempt alignment hint. */
+export function isSoftAlignmentUncertaintyOnly(table) {
+  const cells = table?.uncertain_cells || []
+  return cells.length > 0 && cells.every(isReviewExemptUncertainNote)
+}
+
+
 export function collectReviewReasons(table) {
   const reasons = new Set()
+  const softOnly = isSoftAlignmentUncertaintyOnly(table)
   const add = (reason) => {
     const canonical = canonicalizeReviewReason(reason)
-    if (canonical) reasons.add(canonical)
+    if (!canonical) return
+    // Soft restore / missing-rows hints map to uncertain_extraction via alias —
+    // skip so filters keep these tables under "No review needed".
+    if (
+      softOnly
+      && (canonical === 'uncertain_extraction' || reason === 'column_alignment_mismatch')
+    ) {
+      return
+    }
+    reasons.add(canonical)
   }
   if (table.human_review_reason) add(table.human_review_reason)
   for (const field of Object.values(table.classification || {})) {
@@ -571,7 +609,10 @@ export function collectReviewReasons(table) {
     if (col.human_review_reason) add(col.human_review_reason)
   }
   if (tableHasGarbledCells(table)) add('garbled_extracted_value')
-  if ((table.uncertain_cells || []).length > 0 && !reasons.has('conflicting_extraction')) {
+  const actionableUncertain = (table.uncertain_cells || []).filter(
+    (n) => !isReviewExemptUncertainNote(n),
+  )
+  if (actionableUncertain.length > 0 && !reasons.has('conflicting_extraction')) {
     add('uncertain_extraction')
   }
   // AI-proposed title from content — steward should confirm.
@@ -592,21 +633,27 @@ export function isAiClassified(table) {
 }
 
 
+/** Whether Preview should treat the table as needing steward review. */
+export function tableNeedsHumanReview(table) {
+  if (tableHasMissingTitle(table)) return true
+  if (tableHasGarbledCells(table)) return true
+  if (collectReviewReasons(table).size > 0) return true
+  // Stored jobs may still have human_review_needed from soft alignment notes.
+  if (isSoftAlignmentUncertaintyOnly(table)) return false
+  return Boolean(table.human_review_needed)
+}
+
+
 export function matchesStatusFilter(table, filter, reviewed) {
   if (filter === 'all') return true
   if (filter === 'reviewed') return reviewed
   if (filter === 'needs_review') {
     if (reviewed) return false
-    return (
-      Boolean(table.human_review_needed)
-      || tableHasMissingTitle(table)
-      || collectReviewReasons(table).size > 0
-      || tableHasGarbledCells(table)
-    )
+    return tableNeedsHumanReview(table)
   }
   if (filter === 'no_review') {
     if (tableHasMissingTitle(table)) return false
-    return !table.human_review_needed && !tableHasGarbledCells(table) && collectReviewReasons(table).size === 0
+    return !tableNeedsHumanReview(table)
   }
   if (filter === 'dev_ai_classified') return isAiClassified(table)
   if (filter === 'dev_auto_extracted') return !isAiClassified(table)
@@ -854,6 +901,23 @@ export function columnHeaderPath(col) {
 export function columnHeaderPathForDisplay(col) {
   let path = columnHeaderPath(col).map((p) => String(p || '').trim()).filter(Boolean)
   if (!path.length) return ['']
+
+  // Drop bare column-index leaves ("Forest" / "4") left by loose PDF extracts.
+  while (
+    path.length >= 2
+    && /^\d{1,3}$/.test(path[path.length - 1])
+  ) {
+    path = path.slice(0, -1)
+  }
+
+  // Collapse duplicated parent/leaf labels ("Forest" / "FOREST").
+  const deduped = []
+  for (const part of path) {
+    const prev = deduped[deduped.length - 1]
+    if (prev && prev.toLowerCase() === part.toLowerCase()) continue
+    deduped.push(part)
+  }
+  path = deduped
 
   if (path.length === 1) {
     const m = path[0].match(/^(.+?)\s*\(([^)]+)\)\s*$/)

@@ -97,7 +97,11 @@ def test_swapped_llm_missing_total_rebuilds_from_ruled():
         for r in rows
     )
     assert any(str(r[1]).strip().upper() == "TOTAL" and "13950000" in str(r[6]) for r in rows)
-    assert out.get("uncertain_cells"), "fallback must leave a review signal"
+    assert out.get("uncertain_cells"), "fallback must leave an informational note"
+    assert any(
+        str(n).startswith("Columns looked misaligned")
+        for n in (out.get("uncertain_cells") or [])
+    )
 
 
 def test_swapped_llm_without_ghost_rows_still_rebuilds():

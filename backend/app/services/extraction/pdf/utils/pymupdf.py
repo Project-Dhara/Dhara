@@ -217,15 +217,69 @@ def _bboxes_same_table(a: Optional[List[float]], b: Optional[List[float]]) -> bo
     return _bbox_iou(a, b) >= 0.55 or _bbox_overlap_frac(a, b) >= 0.65
 
 
+_BARE_INDEX_COL_RE = re.compile(r"^\d{1,3}$")
+
+
+def _substantive_column_count(df: Any) -> int:
+    """Count real measure/label columns, ignoring phantom index-leaf splits.
+
+    The loose ``lines`` strategy often invents empty interstitial columns whose
+    leaf name is just ``3`` / ``4`` under the real header. Counting those as
+    "richer" made dedupe prefer a 47-col mess over a clean 18-col lines_strict
+    grid (land-utilisation / crop tables).
+    """
+    if df is None or getattr(df, "empty", True):
+        return 0
+    meta = list(getattr(df, "attrs", {}).get("dhara_column_meta") or [])
+    n = 0
+    for i, col in enumerate(df.columns):
+        name = re.sub(r"\s*\(\d+\)\s*$", "", str(col).strip())
+        if not name or re.match(r"^Col_\d+$", name, re.I):
+            continue
+        if _BARE_INDEX_COL_RE.match(name):
+            continue
+        if meta and i < len(meta):
+            path = [
+                str(p).strip()
+                for p in (meta[i].get("header_path") or [])
+                if str(p).strip()
+            ]
+            # ``Forest / 4`` phantom leaf — not a real extra column.
+            if len(path) >= 2 and _BARE_INDEX_COL_RE.match(path[-1]):
+                continue
+        n += 1
+    return n
+
+
+def _grid_nonempty_ratio(df: Any) -> float:
+    if df is None or getattr(df, "empty", True) or int(df.size) == 0:
+        return 0.0
+    filled = 0
+    total = int(df.size)
+    for v in df.values.ravel():
+        if v is None:
+            continue
+        s = str(v).strip()
+        if not s or s.lower() in ("nan", "none"):
+            continue
+        filled += 1
+    return filled / total
+
+
 def _candidate_grid_score(cand: Dict[str, Any]) -> Tuple[int, int, int]:
-    """Rank overlapping strategy hits: more columns win, then more cells, then method."""
+    """Rank overlapping strategy hits by *real* columns, then fill, then method.
+
+    Raw column count is a poor signal: phantom interstitial columns inflate
+    ``lines`` grids without adding information.
+    """
     df = cand.get("df")
     if df is None or getattr(df, "empty", True):
         return (0, 0, 0)
-    n_rows, n_cols = int(df.shape[0]), int(df.shape[1])
+    sub = _substantive_column_count(df)
+    fill = int(round(_grid_nonempty_ratio(df) * 1000))
     method = str(cand.get("method") or "")
     method_bonus = max(0, 3 - _METHOD_RANK.get(method, 9))
-    return (n_cols, n_rows * n_cols, method_bonus)
+    return (sub, fill, method_bonus)
 
 
 def _is_substantially_richer(challenger: Dict[str, Any], incumbent: Dict[str, Any]) -> bool:
@@ -234,14 +288,20 @@ def _is_substantially_richer(challenger: Dict[str, Any], incumbent: Dict[str, An
     Common failure: lines_strict returns only the stub/label columns while
     lines recovers the full month/measure grid; the stub bbox sits inside the
     full table so naive method-rank dedupe kept the fragment.
+
+    Counter-failure we also guard: lines returns many more *phantom* columns
+    than lines_strict while substantive headers stay the same — that must NOT
+    count as richer.
     """
     sc = _candidate_grid_score(challenger)
     si = _candidate_grid_score(incumbent)
-    if sc[0] >= si[0] + 3 and sc[1] > si[1]:
+    # Need clearly more real columns (not just interstitial index leaves).
+    if sc[0] >= si[0] + 3 and sc[1] >= int(si[1] * 0.75):
         return True
-    if sc[0] > si[0] and sc[1] >= max(si[1] * 2, si[1] + 20):
+    if sc[0] > si[0] and sc[1] >= si[1] + 80:
         return True
-    if sc[0] == si[0] and sc[1] >= si[1] * 2 + 10:
+    if sc[0] == si[0] and sc[1] >= si[1] + 150:
+        # Same real width but much denser fill (stub vs full body).
         return True
     return False
 

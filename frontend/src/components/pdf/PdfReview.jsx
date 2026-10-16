@@ -29,6 +29,7 @@ import {
   scrollElementIntoViewBelowSticky,
   tableHasMissingTitle,
   tableHeaderKey,
+  tableNeedsHumanReview,
   tableSourceSubtitle,
 } from '../../lib/pdfReviewHelpers'
 import {
@@ -1260,14 +1261,12 @@ export default function PdfReview({ jobId, filename, onDone }) {
                           </Badge>
                         ) : (
                           <ReviewBadge
-                            needed={
-                              Boolean(t.human_review_needed)
-                              || tableHasMissingTitle(t)
-                              || collectReviewReasons(t).size > 0
-                            }
+                            needed={tableNeedsHumanReview(t)}
                             reason={
-                              t.human_review_reason
-                              || (tableHasMissingTitle(t) ? 'uncertain_title' : null)
+                              tableNeedsHumanReview(t)
+                                ? (t.human_review_reason
+                                  || (tableHasMissingTitle(t) ? 'uncertain_title' : null))
+                                : null
                             }
                           />
                         )}

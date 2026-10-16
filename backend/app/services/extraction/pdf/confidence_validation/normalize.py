@@ -27,6 +27,7 @@ from app.services.extraction.pdf.confidence_validation.alignment import (
     _looks_garbled,
     _rows_look_garbled,
     _uncertain_note_is_alignment_mismatch,
+    _uncertain_note_is_review_exempt,
 )
 from app.services.extraction.pdf.confidence_validation.table_confidence import (
     dedupe_column_names,
@@ -343,18 +344,24 @@ def derive_human_review_needed(table: Dict[str, Any]) -> tuple[bool, Optional[st
         reasons_present.add("uncertain_title")
 
     uncertain_cells = table.get("uncertain_cells") or []
+    # Restore / missing-row hints stay in uncertain_cells for display but do not
+    # count toward extraction review (temporary: treat as no review needed).
+    actionable_uncertain = [
+        n for n in uncertain_cells if not _uncertain_note_is_review_exempt(n)
+    ]
+    soft_alignment_only = bool(uncertain_cells) and not actionable_uncertain
     rows = table.get("rows") or []
 
     def _add_extraction_reasons() -> None:
-        if uncertain_cells:
-            if any(_uncertain_note_is_alignment_mismatch(note) for note in uncertain_cells):
+        if actionable_uncertain:
+            if any(_uncertain_note_is_alignment_mismatch(note) for note in actionable_uncertain):
                 # Notes written by _apply_column_alignment_guard (legacy + human wording).
                 reasons_present.add("column_alignment_mismatch")
-            if any(_looks_garbled(note) for note in uncertain_cells) or _rows_look_garbled(rows):
+            if any(_looks_garbled(note) for note in actionable_uncertain) or _rows_look_garbled(rows):
                 reasons_present.add("garbled_extracted_value")
             elif any(
                 " vs " in str(note) and not _uncertain_note_is_alignment_mismatch(note)
-                for note in uncertain_cells
+                for note in actionable_uncertain
             ):
                 # Matches this pipeline's own uncertain_cells note format (see
                 # TASK_A_RECONSTRUCTION_RULES / uncertain_cells example) --
@@ -387,7 +394,11 @@ def derive_human_review_needed(table: Dict[str, Any]) -> tuple[bool, Optional[st
 
     for col in table.get("columns", []):
         if col.get("human_review_needed") and col.get("human_review_reason"):
-            reasons_present.add(col["human_review_reason"])
+            reason = col["human_review_reason"]
+            # Soft restore / missing-rows notes alone: ignore alignment column flags.
+            if soft_alignment_only and reason == "column_alignment_mismatch":
+                continue
+            reasons_present.add(reason)
         if col.get("role") == "unknown":
             reasons_present.add("uncertain_semantic_role")
 

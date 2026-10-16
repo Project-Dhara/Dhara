@@ -25,10 +25,14 @@ from app.services.extraction.pdf.utils.header_detect import (
     detect_header_rows,
     resolve_column_headers,
 )
+from app.services.extraction.pdf.utils.vertical_headers import (
+    normalize_multiline_header_cell,
+)
 
 from app.services.extraction.pdf.utils.grid_repair import (
     _find_sex_column,
     coalesce_phantom_grid_columns,
+    collapse_index_leaf_phantom_columns,
     expand_collapsed_sex_pair_rows,
     fold_label_wrap_continuation_rows,
     fold_orphan_parenthetical_share_rows,
@@ -202,12 +206,26 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
     )
 
     resolved = resolve_column_headers(header_matrix, n_cols)
+    # Normalize newline-broken / Sl. No. vertical stubs in resolved headers.
+    for col in resolved:
+        raw_name = str(col.get("name") or "")
+        fixed = normalize_multiline_header_cell(raw_name)
+        if fixed and fixed != raw_name:
+            col["name"] = fixed
+        path = list(col.get("header_path") or [])
+        if path:
+            col["header_path"] = [
+                normalize_multiline_header_cell(p) or p for p in path
+            ]
     leaf_names = _uniquify_columns([c["name"] for c in resolved])
     column_meta = []
     for i in range(n_cols):
         path = [str(p) for p in (resolved[i].get("header_path") or []) if str(p).strip()]
         if not path:
             path = [resolved[i].get("name") or leaf_names[i]]
+        # Drop bare index leaves that snuck into paths (Forest / 4).
+        while len(path) >= 2 and re.fullmatch(r"\d{1,3}", str(path[-1]).strip() or ""):
+            path = path[:-1]
         # Keep original leaf labels in header_path for display (S.R.S. under
         # Birth Rate vs Death Rate). DataFrame column names stay uniquified.
         column_meta.append({
@@ -222,21 +240,14 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
         for i in range(header_count, len(padded))
         if i not in skip_rows and not _blank(padded[i])
     ]
-    # Index strips (1..N / (1)(2)(3)) are skipped for header naming but must
-    # remain visible as the first body row(s) when they sit under the headers.
-    leading_index: List[List[Any]] = []
-    for i in range(header_count, len(padded)):
-        if i not in skip_rows:
-            break
-        if _blank(padded[i]):
-            continue
-        if _row_is_column_number_strip(padded[i], n_cols):
-            leading_index.append(padded[i])
-        else:
-            # Non-index skip (banner) — stop; don't pull mid-table strips forward.
-            break
-    if leading_index:
-        body = leading_index + body
+    # Drop leading 1..N / (1)(2)(3) index strips from the body. Keeping them
+    # made Preview look like column names were "repeated" as a numeric header
+    # row (1, 2, 3…) under every real label — especially on land-use / crop
+    # tables with vertical headers.
+    body = [
+        row for row in body
+        if not _row_is_column_number_strip(row, n_cols)
+    ]
     caption = extract_in_grid_caption(padded)
     leaf_names, column_meta = _recover_stub_from_caption(
         leaf_names, column_meta, caption.get("title")
@@ -262,6 +273,8 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
     # Collapse PyMuPDF interstitial phantom columns (Cause/(2)/(3), Male/(2)/(3))
     # and fold stub-only wrap rows into the parent disease row.
     df = coalesce_phantom_grid_columns(df)
+    # Loose ``lines`` extracts often add bare ``3``/``4`` leaves under real names.
+    df = collapse_index_leaf_phantom_columns(df)
     df = fold_label_wrap_continuation_rows(df)
     df = fold_orphan_parenthetical_share_rows(df)
     return df

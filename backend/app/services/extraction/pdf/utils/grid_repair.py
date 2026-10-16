@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.services.extraction.pdf.utils.caption import (
     _TABLE_BANNER_RE,
@@ -293,6 +293,11 @@ def _coalesce_split_cell_values(left: Any, right: Any) -> Optional[str]:
         return b
     if b in a:
         return a
+    # Decimal split across a hairline column: "30708.2" + "5" → "30708.25".
+    if re.fullmatch(r"-?\d+\.\d+", a) and re.fullmatch(r"\d{1,3}", b):
+        return f"{a}{b}"
+    if re.fullmatch(r"-?\d+\.", a) and re.fullmatch(r"\d+", b):
+        return f"{a}{b}"
     # Mid-word split across adjacent phantom columns ("Septicae" + "mia",
     # "originati" + "ng in the"). Glue when the right fragment is a short
     # lowercase/continuation tail; otherwise space-join.
@@ -300,6 +305,114 @@ def _coalesce_split_cell_values(left: Any, right: Any) -> Optional[str]:
         if b[0].islower() or (len(b) <= 6 and " " not in b and not b[0].isdigit()):
             return f"{a}{b}"
     return f"{a} {b}".strip()
+
+
+def collapse_index_leaf_phantom_columns(df):
+    """Merge ``Forest`` + phantom ``4`` leaf columns from loose ``lines`` extracts.
+
+    When the header path is ``[Name]`` next to ``[Name, "4"]`` (or a bare
+    numeric column name under the same parent), collapse into one column and
+    glue split decimal fragments in the body.
+    """
+    import pandas as pd
+
+    if df is None or getattr(df, "empty", True) or df.shape[1] < 2:
+        return df
+
+    meta = list(getattr(df, "attrs", {}).get("dhara_column_meta") or [])
+    if meta and len(meta) != df.shape[1]:
+        meta = []
+
+    def _path(i: int) -> List[str]:
+        if meta and i < len(meta):
+            return [
+                str(p).strip()
+                for p in (meta[i].get("header_path") or [])
+                if str(p).strip()
+            ]
+        return [str(df.columns[i])]
+
+    def _is_index_leaf(i: int) -> bool:
+        name = re.sub(r"\s*\(\d+\)\s*$", "", str(df.columns[i]).strip())
+        if re.fullmatch(r"\d{1,3}", name):
+            return True
+        path = _path(i)
+        return bool(path) and bool(re.fullmatch(r"\d{1,3}", path[-1]))
+
+    keep_idx: List[int] = []
+    absorb_into: Dict[int, List[int]] = {}
+    i = 0
+    n = df.shape[1]
+    while i < n:
+        if i + 1 < n and not _is_index_leaf(i) and _is_index_leaf(i + 1):
+            left_path = _path(i)
+            right_path = _path(i + 1)
+            left_key = [p.lower() for p in left_path]
+            right_parent = [p.lower() for p in right_path[:-1]] if len(right_path) >= 2 else left_key
+            # Same parent banner, or right is bare index next to a labelled col.
+            same_family = (
+                left_key == right_parent
+                or (
+                    len(right_path) == 1
+                    and re.fullmatch(r"\d{1,3}", right_path[0] or "")
+                )
+                or (
+                    len(left_path) == 1
+                    and len(right_path) == 2
+                    and left_path[0].lower() == right_path[0].lower()
+                )
+            )
+            if same_family:
+                run = [i + 1]
+                j = i + 2
+                while j < n and _is_index_leaf(j):
+                    jp = _path(j)
+                    if len(jp) >= 2 and [p.lower() for p in jp[:-1]] == right_parent:
+                        run.append(j)
+                        j += 1
+                        continue
+                    if len(jp) == 1 and re.fullmatch(r"\d{1,3}", jp[0] or ""):
+                        run.append(j)
+                        j += 1
+                        continue
+                    break
+                keep_idx.append(i)
+                absorb_into[i] = run
+                i = j
+                continue
+        keep_idx.append(i)
+        i += 1
+
+    if not absorb_into:
+        return df
+
+    series_list: List[List[Optional[str]]] = []
+    new_meta: List[dict] = []
+    new_cols: List[Any] = []
+    for i in keep_idx:
+        vals = [_cell_str(v) or None for v in df.iloc[:, i].tolist()]
+        for j in absorb_into.get(i, []):
+            right_vals = df.iloc[:, j].tolist()
+            vals = [
+                _coalesce_split_cell_values(vals[r], right_vals[r])
+                for r in range(len(vals))
+            ]
+        series_list.append(vals)
+        new_cols.append(df.columns[i])
+        if meta:
+            new_meta.append(dict(meta[i]))
+
+    out = pd.DataFrame(
+        [list(vals) for vals in zip(*series_list)] if series_list else [],
+        columns=new_cols,
+    )
+    for key, val in getattr(df, "attrs", {}).items():
+        if key == "dhara_column_meta":
+            continue
+        out.attrs[key] = val
+    if new_meta and len(new_meta) == out.shape[1]:
+        out.attrs["dhara_column_meta"] = new_meta
+    return out
 
 def _header_path_key(meta: Optional[dict], fallback_name: str) -> Tuple[str, ...]:
     if not meta:
@@ -1399,6 +1512,7 @@ __all__ = [
     "_sex_tokens_from_cell",
     "_split_measure_cell_to_n",
     "coalesce_phantom_grid_columns",
+    "collapse_index_leaf_phantom_columns",
     "expand_collapsed_sex_pair_rows",
     "fold_label_wrap_continuation_rows",
     "fold_orphan_parenthetical_share_rows",

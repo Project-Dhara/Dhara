@@ -171,6 +171,21 @@ html {
   }
 }
 
+/* Soft coral pulse when guiding the steward to a missing metadata field. */
+@keyframes dhara-locate-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(217, 91, 104, 0);
+  }
+  45% {
+    box-shadow: 0 0 0 7px rgba(217, 91, 104, 0.16);
+  }
+}
+
+.dhara-locate-pulse {
+  animation: dhara-locate-pulse 1.35s var(--dhara-ease) 2;
+}
+
 @keyframes dhara-carousel-forward {
   from {
     opacity: 0;
@@ -225,6 +240,7 @@ html {
   .dhara-group-panel,
   .dhara-carousel-panel-forward,
   .dhara-carousel-panel-back,
+  .dhara-locate-pulse,
   .dhara-surface:hover {
     animation: none !important;
     transform: none !important;

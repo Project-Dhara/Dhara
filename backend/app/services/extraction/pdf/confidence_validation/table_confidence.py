@@ -694,7 +694,9 @@ def table_dict_from_df(
         )
         result["notes"] = list(result.get("notes") or []) + [note]
         result["uncertain_cells"] = list(result.get("uncertain_cells") or []) + [note]
-        if not result.get("human_review_needed"):
+        # Successful rebuild is informational only (no review). Still-broken
+        # stacked headers remain review-needed.
+        if still_stacked and not result.get("human_review_needed"):
             result["human_review_needed"] = True
             result["human_review_reason"] = "uncertain_extraction"
     return result

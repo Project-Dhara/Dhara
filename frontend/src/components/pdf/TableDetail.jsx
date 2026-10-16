@@ -31,6 +31,7 @@ import {
   resolveEditorBodySpans,
   setHeaderPathLevel,
   tableHasMissingTitle,
+  tableNeedsHumanReview,
   tableSupportsPdfReference,
   tableSupportsStructureEditor,
   titleForEdit,
@@ -717,8 +718,7 @@ export function TableDetail({
       table.cell_merges_explicit || (Array.isArray(table.cell_merges) && table.cell_merges.length > 0)
     )
   const canSave = (
-    table.human_review_needed
-    || tableHasMissingTitle(table)
+    tableNeedsHumanReview(table)
     || structureDirty
     || titleDirty
   ) && !saved
@@ -1034,7 +1034,7 @@ export function TableDetail({
           className="self-end !border-green !bg-white !text-green hover:!border-teal hover:!bg-teal hover:!text-white active:!border-teal-deep active:!bg-teal-deep active:!text-white"
           onClick={handleSave}
         >
-          {table.human_review_needed || tableHasMissingTitle(table)
+          {tableNeedsHumanReview(table)
             ? 'Save review & mark resolved'
             : 'Save changes'}
         </Button>
