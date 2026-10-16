@@ -659,39 +659,26 @@ export default function BatchReview({
     prefersReducedMotion,
   ])
 
-  const openMissingChecklist = useCallback((preferredGroupIndex = null) => {
-    if (incompleteGroups.length === 0) return false
-    let start = 0
-    if (preferredGroupIndex != null) {
-      const idx = incompleteGroups.findIndex((item) => item.groupIndex === preferredGroupIndex)
-      if (idx >= 0) start = idx
-    }
-    setMissingChecklistOpen(true)
-    goToIncompleteItem(start, {
-      announce: true,
-      preface: 'Next',
-    })
-    return true
-  }, [incompleteGroups, goToIncompleteItem])
-
-  // Checklist list updates live as fields are filled, but never navigate away
-  // while the steward is typing — only Save (below) advances to the next group.
+  // Checklist updates live as fields are filled; keep the cursor in range.
   useEffect(() => {
-    if (!missingChecklistOpen) return
     if (incompleteGroups.length === 0) {
-      setMissingChecklistOpen(false)
       setMissingChecklistCursor(0)
       return
     }
     if (missingChecklistCursor >= incompleteGroups.length) {
       setMissingChecklistCursor(incompleteGroups.length - 1)
     }
-  }, [missingChecklistOpen, incompleteGroups, missingChecklistCursor])
+  }, [incompleteGroups, missingChecklistCursor])
 
   const handleSaveGroup = (groupIndex) => {
     const missingSheet = missingRequiredSheetFields(groups[groupIndex]?.metadata, sheetColumns)
     if (missingSheet.length > 0 || !isComplete(nmdsByGroup[groupIndex]?.fields || emptyFields())) {
-      openMissingChecklist(groupIndex)
+      // Still incomplete — jump to this group's first missing field.
+      const listIndex = incompleteGroups.findIndex((item) => item.groupIndex === groupIndex)
+      goToIncompleteItem(listIndex >= 0 ? listIndex : 0, {
+        announce: true,
+        preface: 'Next',
+      })
       return
     }
     clearLocateTimers()
@@ -699,36 +686,30 @@ export default function BatchReview({
     setFocusFieldKey(null)
 
     // After Save succeeds, advance only on explicit save — never while typing.
-    if (missingChecklistOpen) {
-      // This group is complete, so it is already absent from incompleteGroups
-      // (values update on each keystroke). Remaining items are what is left.
-      const remaining = incompleteGroups.filter((item) => item.groupIndex !== groupIndex)
-      if (remaining.length === 0) {
-        setMissingChecklistOpen(false)
-        setMissingChecklistCursor(0)
-        setToast({ type: 'success', message: 'All required fields are filled.' })
-        return
-      }
-      const nextIdx = Math.min(missingChecklistCursor, remaining.length - 1)
-      const next = remaining[nextIdx]
-      const liveIndex = incompleteGroups.findIndex((item) => item.groupIndex === next.groupIndex)
-      goToIncompleteItem(liveIndex >= 0 ? liveIndex : nextIdx, {
-        announce: true,
-        preface: 'Saved. Next',
-      })
+    const remaining = incompleteGroups.filter((item) => item.groupIndex !== groupIndex)
+    if (remaining.length === 0) {
+      setToast({ type: 'success', message: 'All required fields are filled.' })
       return
     }
-
-    setToast({ type: 'success', message: 'Group data saved.' })
+    const nextIdx = Math.min(missingChecklistCursor, remaining.length - 1)
+    const next = remaining[nextIdx]
+    const liveIndex = incompleteGroups.findIndex((item) => item.groupIndex === next.groupIndex)
+    goToIncompleteItem(liveIndex >= 0 ? liveIndex : nextIdx, {
+      announce: true,
+      preface: 'Saved. Next',
+    })
   }
 
   const handlePush = async () => {
     if (incompleteGroups.length > 0) {
-      openMissingChecklist()
+      // Checklist is already visible — jump to the first (or current) missing field.
+      goToIncompleteItem(Math.min(missingChecklistCursor, incompleteGroups.length - 1), {
+        announce: true,
+        preface: 'Next',
+      })
       return
     }
 
-    setMissingChecklistOpen(false)
     setStep('pushing')
     setError('')
     setToast(null)
@@ -873,7 +854,7 @@ export default function BatchReview({
 
       {error && <ErrorBanner>{error}</ErrorBanner>}
 
-      {step === 'review' && missingChecklistOpen && incompleteGroups.length > 0 && (
+      {step === 'review' && incompleteGroups.length > 0 && (
         <div className="rounded-lg border border-coral/40 bg-[rgba(217,91,104,0.06)] px-4 py-3 text-sm leading-relaxed text-ink">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
@@ -881,7 +862,7 @@ export default function BatchReview({
                 {incompleteGroups.length} group{incompleteGroups.length !== 1 ? 's' : ''} still need required fields
               </strong>
               <div className="mt-1 text-[13px] text-ink-soft">
-                Fill the fields for the current group, then click Save on that group to move to the next. Click a row or Next only when you want to jump.
+                Fill the missing fields below. Click Save Metadata (or Save on a group) to jump to each one.
               </div>
             </div>
             <div className="flex flex-none flex-wrap items-center gap-2">
@@ -896,13 +877,6 @@ export default function BatchReview({
               >
                 Next incomplete
               </Button>
-              <button
-                type="button"
-                className="rounded-lg border border-line bg-white px-3 py-1.5 font-sans text-[12.5px] font-semibold text-ink-soft hover:border-teal/35 hover:text-teal-deep"
-                onClick={() => setMissingChecklistOpen(false)}
-              >
-                Show autofill summary
-              </button>
             </div>
           </div>
           <ul className="mt-3 m-0 max-h-[220px] list-none space-y-1.5 overflow-y-auto p-0">
@@ -914,16 +888,11 @@ export default function BatchReview({
               const isCurrent = listIndex === missingChecklistCursor
               return (
                 <li key={item.groupIndex}>
-                  <button
-                    type="button"
-                    onClick={() => goToIncompleteItem(listIndex, {
-                      announce: true,
-                      preface: 'Next',
-                    })}
-                    className={`flex w-full items-start gap-2 rounded-lg border px-3 py-2 text-left transition-colors ${
+                  <div
+                    className={`flex w-full items-start gap-2 rounded-lg border px-3 py-2 text-left ${
                       isCurrent
                         ? 'border-coral/55 bg-white shadow-sm'
-                        : 'border-transparent bg-white/60 hover:border-coral/30 hover:bg-white'
+                        : 'border-transparent bg-white/60'
                     }`}
                   >
                     <span className={`mt-0.5 flex h-[18px] w-[18px] flex-none items-center justify-center rounded-full text-[10.5px] font-bold ${
@@ -939,7 +908,7 @@ export default function BatchReview({
                         Missing: {parts.join(', ')}
                       </span>
                     </span>
-                  </button>
+                  </div>
                 </li>
               )
             })}
@@ -947,7 +916,7 @@ export default function BatchReview({
         </div>
       )}
 
-      {step === 'review' && !(missingChecklistOpen && incompleteGroups.length > 0) && autofillStatus && (
+      {step === 'review' && incompleteGroups.length === 0 && autofillStatus && (
         <div className={`rounded-lg border px-4 py-3 text-sm leading-relaxed ${autofillStatusClass}`}>
           <strong>{autofillStatus.title}</strong>
           <div className="mt-1 [overflow-wrap:anywhere]">{autofillStatus.body}</div>
