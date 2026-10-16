@@ -43,6 +43,8 @@ Rules:
 * Prefer explicit evidence in the facts over inference.
 * Do not contradict explicit KYDS information.
 * Generate concise, catalogue-ready values.
+* `description` is required for catalogue display. Prefer `dataset_context.description` (KYDS), adapted to this group's tables and titles when needed. If KYDS has no description, write 1–2 factual sentences from table titles, column names, geography, and time period in the facts. Do not leave `description` null when those inputs support a short summary.
+* `product`, `category`, `geography`, `frequency`, and `time_period` should also be filled whenever the facts or KYDS support a concise value — do not leave them null out of caution when titles/columns clearly imply them.
 * `key_statistics` MUST be a short plain-text summary for catalogue display
   (2–6 bullets or short sentences). Highlight a few headline figures only
   (e.g. top categories, weights, notable highs/lows, or period-end values).

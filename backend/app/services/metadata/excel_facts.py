@@ -591,7 +591,10 @@ def extract_facts_from_tables(tables: List[Dict[str, Any]], source_label: str) -
         tbl_facts = {
             "sheet_name": sheet_name,
             "title_context": title,
-            "description": None,
+            "description": (
+                str(table.get("description") or table.get("short_description") or "").strip()
+                or None
+            ),
             "table_name": f"{sheet_name} / {title}",
             "table_boundaries": {
                 "start_row": 0,

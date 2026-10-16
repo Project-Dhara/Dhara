@@ -22,6 +22,18 @@ from app.services.metadata.metadata_llm import (
 # enough to cut wall time across many groups without thrashing rate limits.
 _STAGE4_MAX_WORKERS = 5
 
+# Catalogue fields Stage 4 must try to fill when blank. Optional date/remarks
+# fields stay nullable without blocking or forcing another LLM pass forever.
+_PRIORITY_FILL_FIELDS = (
+    "product",
+    "category",
+    "geography",
+    "frequency",
+    "time_period",
+    "description",
+    "key_statistics",
+)
+
 
 def _group_metadata_is_empty(metadata: Optional[dict], fields: Optional[list] = None) -> bool:
     """True when no *fillable* catalogue fields are set.
@@ -74,6 +86,102 @@ def _resolve_data_source(
     if not text or _looks_like_filename_source(text, known_filenames):
         return kyds_source
     return text
+
+
+def _kyds_description(kyds: Optional[dict]) -> str:
+    if not isinstance(kyds, dict):
+        return ""
+    return str(kyds.get("description") or "").strip()
+
+
+def _fallback_description_from_group(g: dict, facts: Optional[dict] = None) -> str:
+    """Last-resort catalogue blurb from titles when LLM/KYDS left description blank."""
+    bits: list[str] = []
+    meta = g.get("metadata") or {}
+    for candidate in (
+        meta.get("title"),
+        g.get("file_name"),
+        g.get("name"),
+    ):
+        text = str(candidate or "").strip()
+        if text and text not in bits:
+            bits.append(text)
+    tables = [mt.get("table") for mt in (g.get("matched_tables") or []) if isinstance(mt, dict)]
+    tables.extend(t for t in (g.get("tables") or []) if isinstance(t, dict))
+    for table in tables[:3]:
+        if not isinstance(table, dict):
+            continue
+        title = str(table.get("title") or table.get("table_id") or "").strip()
+        if title and title not in bits:
+            bits.append(title)
+    if facts and isinstance(facts, dict):
+        for sheet in facts.get("sheets") or []:
+            for tbl in (sheet.get("tables") or [])[:2]:
+                desc = str((tbl or {}).get("description") or "").strip()
+                ctx = str((tbl or {}).get("title_context") or "").strip()
+                for text in (desc, ctx):
+                    if text and text not in bits:
+                        bits.append(text)
+    if not bits:
+        return ""
+    if len(bits) == 1:
+        return bits[0]
+    head, *rest = bits
+    return f"{head}. Covers: {'; '.join(rest)}."
+
+
+def _resolve_description(
+    current: Any,
+    kyds: Optional[dict],
+    g: Optional[dict] = None,
+    facts: Optional[dict] = None,
+) -> str:
+    """Keep an existing description; else KYDS, else a short title-based fallback."""
+    text = str(current or "").strip()
+    if text:
+        return text
+    kyds_desc = _kyds_description(kyds)
+    if kyds_desc:
+        return kyds_desc
+    if g is not None:
+        return _fallback_description_from_group(g, facts)
+    return ""
+
+
+def _merge_llm_metadata(
+    prior: Optional[dict],
+    llm_meta: dict,
+    *,
+    kyds: Optional[dict],
+    known_filenames: Optional[set],
+    g: dict,
+    facts: Optional[dict],
+) -> dict:
+    """Fill blank catalogue fields from the LLM without overwriting workbook values."""
+    prior = dict(prior or {})
+    merged: dict = {}
+    for field in METADATA_FIELDS:
+        existing = str(prior.get(field) or "").strip()
+        if existing:
+            merged[field] = prior.get(field)
+            continue
+        incoming = llm_meta.get(field)
+        if incoming is not None and str(incoming).strip():
+            merged[field] = incoming
+        else:
+            merged[field] = prior.get(field) if field in prior else None
+    merged["data_source"] = _resolve_data_source(
+        merged.get("data_source") or prior.get("data_source"),
+        kyds,
+        known_filenames,
+    )
+    merged["description"] = _resolve_description(
+        merged.get("description"),
+        kyds,
+        g,
+        facts,
+    )
+    return merged
 
 
 def _sanitize_group_data_source(
@@ -245,11 +353,9 @@ def _fill_empty_group_metadata(
     standard: str = "nmds",
 ) -> tuple[bool, list[dict]]:
     """Stage 4 -- LLM metadata creation per group (mirrors the notebook's
-    `generate_metadata_per_group`). Only groups with no metadata (i.e. not
-    matched to a row in an uploaded metadata workbook) are touched; groups
-    that already carry values parsed from a metadata file are left as-is,
-    per bullet 1 -- metadata-file entry stays the source of truth when the
-    user provided one.
+    `generate_metadata_per_group`). Runs when any priority catalogue field is
+    still blank (product, description, geography, etc.). Existing non-empty
+    workbook values are kept; the LLM only fills empty fields.
 
     When `standard` is `sdg`, fills UN SDG indicator fields instead of the
     catalogue sheet fields. Catalogue values are still produced when possible
@@ -297,20 +403,19 @@ def _fill_empty_group_metadata(
         return _group_metadata_is_empty(g.get("metadata"), METADATA_FIELDS)
 
     def _needs_llm_fill(g: dict) -> bool:
-        """True when catalogue fields besides title/Source are still blank.
+        """True when any priority catalogue field is still blank.
 
         Grouping stamps a title, and KYDS (or a filename) may already occupy
-        Source. Neither of those should block Stage 4 when a Settings key is
-        present. Groups that already carry workbook values (Product,
-        Description, and so on) stay untouched.
+        Source. Partial workbook mapping (e.g. Product filled, Description
+        empty) must still run Stage 4 so blank required fields get filled;
+        existing non-empty values are preserved on merge.
         """
         if not _group_tables(g):
             return False
         if use_sdg:
             return _is_empty(g)
         meta = g.get("metadata") or {}
-        others = [f for f in METADATA_FIELDS if f not in ("title", "data_source")]
-        return not any(str(meta.get(f) or "").strip() for f in others)
+        return any(not str(meta.get(f) or "").strip() for f in _PRIORITY_FILL_FIELDS)
 
     # Decide before KYDS source injection as well as after a previous pass
     # that only wrote Source. Either way, Source alone must not skip the LLM.
@@ -384,15 +489,23 @@ def _fill_empty_group_metadata(
                 llm_output = generate_metadata_with_llm(
                     facts, kyds=kyds_responses, complete_fn=extractor._complete,
                 )
-                meta = _stringify_metadata_values(parse_llm_metadata_output(llm_output))
+                llm_meta = _stringify_metadata_values(parse_llm_metadata_output(llm_output))
                 known = _known_filenames_for_group(g, facts)
-                meta["data_source"] = _resolve_data_source(
-                    meta.get("data_source"), kyds_responses, known,
-                )
+                prior = dict(g.get("metadata") or {})
+                meta = _stringify_metadata_values(_merge_llm_metadata(
+                    prior,
+                    llm_meta,
+                    kyds=kyds_responses,
+                    known_filenames=known,
+                    g=g,
+                    facts=facts,
+                ))
                 g["metadata"] = meta
                 g["_llm_filled"] = True
+                # Only credit fields the LLM/fallback newly populated (were blank before).
                 g["_llm_filled_fields"] = [
-                    f for f in METADATA_FIELDS if str(meta.get(f) or "").strip()
+                    f for f in METADATA_FIELDS
+                    if str(meta.get(f) or "").strip() and not str(prior.get(f) or "").strip()
                 ]
             # Keep a display name when the client sent PDF-style groups.
             if not g.get("file_name") and g.get("name"):

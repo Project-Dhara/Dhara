@@ -836,7 +836,7 @@ export default function BatchReview({
             <>
               <h2 className="text-xl font-bold text-ink">Fill in Metadata</h2>
               <p className="m-0 text-[13px] leading-relaxed text-ink-soft">
-                {totalMatched} table{totalMatched !== 1 ? 's' : ''} matched across {groups.length} metadata group{groups.length !== 1 ? 's' : ''}.
+                {groups.length} metadata group{groups.length !== 1 ? 's' : ''} present.
                 Please fill them in groupwise below, including the NMDS fields for each group. Your entries are kept as you move between groups. Nothing is pushed to the catalogue until you confirm below.
               </p>
             </>
@@ -844,7 +844,7 @@ export default function BatchReview({
             <>
               <h2 className="text-xl font-bold text-ink">Review auto-mapped catalogue</h2>
               <p className="m-0 text-[13px] leading-relaxed text-ink-soft">
-                {totalMatched} table{totalMatched !== 1 ? 's' : ''} matched across {groups.length} metadata group{groups.length !== 1 ? 's' : ''}.
+                {groups.length} metadata group{groups.length !== 1 ? 's' : ''} present.
                 Kindly review the fields across all groups. Nothing is pushed until you confirm below.
               </p>
             </>
