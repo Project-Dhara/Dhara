@@ -69,6 +69,9 @@ export default function Classify({
   const [selectedCol, setSelectedCol] = useState(null)
   const [columnCodes, setColumnCodes] = useState({})
   const [savedCodes, setSavedCodes] = useState({})
+  // Columns the steward has saved at least once — chips turn green on Save,
+  // even when codes/definitions are still empty (publish still warns).
+  const [confirmedColumns, setConfirmedColumns] = useState(() => new Set())
   const [saving, setSaving] = useState(false)
   const [openRule, setOpenRule] = useState(null)
   const [ruleState, setRuleState] = useState({}) // harmonise entry id -> 'skip' | undefined
@@ -154,6 +157,7 @@ export default function Classify({
       const codes = Object.fromEntries(columns.map((c) => [c.name, cloneCodeRows(c.codes)]))
       setColumnCodes(codes)
       setSavedCodes(codes)
+      setConfirmedColumns(new Set())
       setSelectedCol(columns[0]?.name ?? null)
       setAliasVerified({})
       setHarmDirty({})
@@ -192,9 +196,20 @@ export default function Classify({
   }
   const setCodeField = (rowIndex, field, value) => setCodeFieldFor(selectedCol, rowIndex, field, value)
 
+  const markColumnConfirmed = (name, extraNames = []) => {
+    if (!name && !extraNames.length) return
+    setConfirmedColumns((prev) => {
+      const next = new Set(prev)
+      if (name) next.add(name)
+      extraNames.forEach((n) => { if (n) next.add(n) })
+      return next
+    })
+  }
+
   const persistTargets = (targets, rows, { markSavedName } = {}) => {
     if (!rows || !targets?.length) return
     const codes = rows.map((row) => ({ ...row }))
+    const targetNames = targets.map((t) => t.name).filter(Boolean)
     const byGroup = {}
     targets.forEach((t) => {
       if (!t._metadataId || !t.name) return
@@ -202,13 +217,19 @@ export default function Classify({
       if (!byGroup[t._metadataId].includes(t.name)) byGroup[t._metadataId].push(t.name)
     })
     const entries = Object.entries(byGroup)
+    const confirmSaved = () => {
+      if (markSavedName) {
+        setSavedCodes((prev) => ({ ...prev, [markSavedName]: codes }))
+        markColumnConfirmed(markSavedName, targetNames)
+      }
+    }
     if (!entries.length) {
-      if (markSavedName) setSavedCodes((prev) => ({ ...prev, [markSavedName]: codes }))
+      confirmSaved()
       return
     }
     const live = entries.filter(([id]) => id && !String(id).startsWith('pending-'))
     if (!live.length) {
-      if (markSavedName) setSavedCodes((prev) => ({ ...prev, [markSavedName]: codes }))
+      confirmSaved()
       return
     }
     setSaving(true)
@@ -230,9 +251,7 @@ export default function Classify({
       })
     ))
       .then(() => {
-        if (markSavedName) {
-          setSavedCodes((prev) => ({ ...prev, [markSavedName]: codes }))
-        }
+        confirmSaved()
       })
       .catch(() => {})
       .finally(() => setSaving(false))
@@ -358,10 +377,14 @@ export default function Classify({
           } else if (raw && typeof raw === 'object' && String(raw.definition || '').trim()) {
             definition = String(raw.definition)
           }
-          // On Fill with AI: copy value → code (no AI). Definition comes from AI above.
+          // Fill with AI only writes definitions. Leave code blank (or keep a
+          // real steward/NCO code); never copy value → code.
+          const existingCode = String(row.code ?? '').trim()
+          const keepCode = existingCode
+            && existingCode.toLowerCase() !== value.trim().toLowerCase()
           return {
             ...row,
-            code: value,
+            code: keepCode ? row.code : '',
             definition: definition ?? '',
           }
         })
@@ -515,8 +538,8 @@ export default function Classify({
     }
   }
 
-  // Always track incomplete columns for the locator strip; field highlight in
-  // the editor still waits until the user dismisses the incomplete dialog.
+  // Field-level gaps (for publish warning / yellow cells). Chip color uses
+  // confirmedColumns instead — green after Save, even when gaps remain.
   const incompleteColumnNames = useMemo(() => new Set(
     classifiedColumns
       .filter((c) => {
@@ -525,6 +548,12 @@ export default function Classify({
       })
       .map((c) => c.name),
   ), [classifiedColumns, columnCodes])
+
+  const unconfirmedColumnNames = useMemo(() => new Set(
+    classifiedColumns
+      .filter((c) => !confirmedColumns.has(c.name))
+      .map((c) => c.name),
+  ), [classifiedColumns, confirmedColumns])
 
   useEffect(() => {
     if (highlightIncomplete && incompleteColumnNames.size === 0) {
@@ -797,7 +826,7 @@ export default function Classify({
             selectedCol={selectedCol}
             onSelect={setSelectedCol}
             saving={saving}
-            incompleteNames={incompleteColumnNames}
+            incompleteNames={unconfirmedColumnNames}
             highlightIncomplete={highlightIncomplete}
             fillAllAiLoading={fillAllAiLoading}
             fillAiBusy={fillAiLoading}

@@ -11,7 +11,7 @@ const CHIP_CAP = 12
 
 /**
  * Column locator: searchable combobox + color-coded chips
- * (green = mapped, coral/red = unmapped; stronger red when highlightIncomplete).
+ * (green = saved/confirmed, coral/red = not yet saved; stronger red when highlightIncomplete).
  */
 export default function ColumnChipGrid({
   columns,
@@ -54,7 +54,7 @@ export default function ColumnChipGrid({
       return {
         value: c.name,
         label: `${c.name} (${n})`,
-        badge: isUnmapped ? 'Unmapped' : 'Mapped',
+        badge: isUnmapped ? 'Not saved' : 'Saved',
         badgeTone: isUnmapped ? 'warn' : 'ok',
       }
     }),
@@ -81,8 +81,8 @@ export default function ColumnChipGrid({
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span>Classified columns</span>
           <span className={cardNoteClass}>
-            {mappedCount}/{columns.length} mapped
-            {unmapped.size > 0 ? ` · ${unmapped.size} unmapped` : ''}
+            {mappedCount}/{columns.length} saved
+            {unmapped.size > 0 ? ` · ${unmapped.size} not saved` : ''}
             {saving ? ' · saving…' : ''}
             {fillAllAiError ? ` · ${fillAllAiError}` : ''}
           </span>
@@ -93,7 +93,7 @@ export default function ColumnChipGrid({
             className="h-8 flex-none rounded-md border-0 bg-teal px-3 text-[12.5px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]"
             disabled={fillAiBusy || !canFillAll}
             onClick={onFillAllAi}
-            title="Fill codes and definitions for every classified column"
+            title="Fill definitions for every classified column (codes stay blank)"
           >
             {fillAllAiLoading ? 'Filling all…' : 'Fill all with AI'}
           </button>
@@ -146,8 +146,8 @@ export default function ColumnChipGrid({
                 onClick={() => onSelect(c.name)}
                 title={
                   related > 0
-                    ? `${c.name} · ${n} codes · ${isUnmapped ? 'unmapped' : 'mapped'} · +${related} related`
-                    : `${c.name} · ${n} codes · ${isUnmapped ? 'unmapped' : 'mapped'}`
+                    ? `${c.name} · ${n} values · ${isUnmapped ? 'not saved' : 'saved'} · +${related} related`
+                    : `${c.name} · ${n} values · ${isUnmapped ? 'not saved' : 'saved'}`
                 }
               >
                 <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold leading-none">

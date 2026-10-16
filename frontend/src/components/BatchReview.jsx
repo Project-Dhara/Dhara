@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowRight, Info } from 'lucide-react'
+import { AlertTriangle, ArrowRight, ChevronDown, Info } from 'lucide-react'
 import { withLlmKeyHeaders } from '../lib/llmKey'
 import { withAuthHeaders } from '../lib/auth'
 import { CLICK_THROUGH_ENABLED } from '../lib/clickThrough'
@@ -855,31 +855,18 @@ export default function BatchReview({
       {error && <ErrorBanner>{error}</ErrorBanner>}
 
       {step === 'review' && incompleteGroups.length > 0 && (
-        <div className="rounded-lg border border-coral/40 bg-[rgba(217,91,104,0.06)] px-4 py-3 text-sm leading-relaxed text-ink">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <strong className="text-coral">
-                {incompleteGroups.length} group{incompleteGroups.length !== 1 ? 's' : ''} still need required fields
-              </strong>
-              <div className="mt-1 text-[13px] text-ink-soft">
-                Fill the missing fields below. Click Save Metadata (or Save on a group) to jump to each one.
-              </div>
-            </div>
-            <div className="flex flex-none flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={incompleteGroups.length < 2}
-                onClick={() => goToIncompleteItem(
-                  (missingChecklistCursor + 1) % incompleteGroups.length,
-                  { announce: true, preface: 'Next' },
-                )}
-              >
-                Next incomplete
-              </Button>
-            </div>
-          </div>
-          <ul className="mt-3 m-0 max-h-[220px] list-none space-y-1.5 overflow-y-auto p-0">
+        <details className="group rounded-lg border border-coral/40 bg-[rgba(217,91,104,0.06)] text-sm text-ink open:pb-3">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+            <strong className="min-w-0 font-semibold text-coral">
+              {incompleteGroups.length} group{incompleteGroups.length !== 1 ? 's' : ''} with incomplete data
+            </strong>
+            <ChevronDown
+              className="h-4 w-4 flex-none text-coral transition-transform duration-200 group-open:rotate-180"
+              strokeWidth={2}
+              aria-hidden
+            />
+          </summary>
+          <ul className="m-0 max-h-[240px] list-none space-y-1.5 overflow-y-auto px-3 pb-0 pt-0">
             {incompleteGroups.map((item, listIndex) => {
               const parts = [
                 ...item.missingFields.map((c) => c.label),
@@ -913,7 +900,7 @@ export default function BatchReview({
               )
             })}
           </ul>
-        </div>
+        </details>
       )}
 
       {step === 'review' && incompleteGroups.length === 0 && autofillStatus && (
