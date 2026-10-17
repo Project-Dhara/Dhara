@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 # confidence_validation → pdf → extraction → services → app → backend
 load_dotenv(Path(__file__).resolve().parents[5] / ".env")
 
-from app.services.llm_prompts import BATCH_SIZE, CPU_WORKERS, OPENAI_WORKERS, OUTPUT_DIR, PDF_PATH
+from app.services.llm_prompts import BATCH_SIZE, OPENAI_WORKERS, OUTPUT_DIR, PDF_PATH, resolve_cpu_workers
 from app.services.extraction.pdf.confidence_validation.confidence_split import (
     _llm_pages_missing_tables,
     split_by_confidence,
@@ -22,7 +22,6 @@ from app.services.extraction.pdf.confidence_validation.llm import (
     _log_representative_examples,
     validate_all_pages_batched,
 )
-from app.services.extraction.pdf.confidence_validation.table_confidence import build_pdf_outline_index
 from app.services.extraction.pdf.utils.pymupdf import (
     classify_pages,
     extract_all_tables,
@@ -46,7 +45,7 @@ def main():
 
     log(f"Stage 1: classifying pages in {PDF_PATH.name}")
     t0 = time.time()
-    text_pages, page_text = classify_pages(PDF_PATH)
+    text_pages, page_text, outline_index = classify_pages(PDF_PATH)
     log(f"  {len(text_pages)} text-bearing page(s) found in {time.time() - t0:.1f}s")
 
     if args.pages:
@@ -58,9 +57,9 @@ def main():
         target_pages = text_pages
     log(f"Running on {len(target_pages)} page(s)")
 
-    log(f"Stage 2: extracting tables with pymupdf ({CPU_WORKERS} workers)")
+    log(f"Stage 2: extracting tables with pymupdf ({resolve_cpu_workers()} workers)")
     t0 = time.time()
-    all_tables = extract_all_tables(PDF_PATH, target_pages)
+    all_tables = extract_all_tables(PDF_PATH, target_pages, page_text=page_text)
     log(f"  {len(all_tables)} table candidate(s) found in {time.time() - t0:.1f}s")
 
     pages_grouped = group_by_page(all_tables)
@@ -74,7 +73,6 @@ def main():
 
     log("Stage 3: confidence-classifying pages (no LLM)")
     t0 = time.time()
-    outline_index = build_pdf_outline_index(PDF_PATH)
     high_results, llm_pages, reason_counts = split_by_confidence(
         pages_grouped,
         page_text,

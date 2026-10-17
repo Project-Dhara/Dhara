@@ -19,7 +19,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import pandas as pd
 import pymupdf
 
-from app.services.llm_prompts import CPU_WORKERS, EXTRACT_CHUNK_PAGES, TEXT_MIN_CHARS
+from app.services.llm_prompts import (
+    EXTRACT_CHUNK_PAGES,
+    TEXT_MIN_CHARS,
+    resolve_cpu_workers,
+)
 from app.services.extraction.pdf.utils.workers import extract_pymupdf_chunk
 
 
@@ -29,17 +33,29 @@ def log(msg: str) -> None:
 
 # ── Stage 1: classify pages ──────────────────────────────────────────────
 
-def classify_pages(pdf_path: Path, min_chars: int = TEXT_MIN_CHARS) -> tuple[List[int], Dict[int, str]]:
+def classify_pages(
+    pdf_path: Path,
+    min_chars: int = TEXT_MIN_CHARS,
+) -> tuple[List[int], Dict[int, str], Dict[int, List[str]]]:
+    """Scan text-bearing pages and build the outline index in one PDF open."""
+    from app.services.extraction.pdf.confidence_validation.title_infer import (
+        outline_index_from_toc,
+    )
+
     doc = pymupdf.open(pdf_path)
     text_pages: List[int] = []
     page_text: Dict[int, str] = {}
-    for i, page in enumerate(doc, start=1):
-        text = page.get_text("text")
-        if len(text.strip()) >= min_chars:
-            text_pages.append(i)
-            page_text[i] = text
-    doc.close()
-    return text_pages, page_text
+    try:
+        for i, page in enumerate(doc, start=1):
+            text = page.get_text("text")
+            if len(text.strip()) >= min_chars:
+                text_pages.append(i)
+                page_text[i] = text
+        toc = doc.get_toc() or []
+        n_pages = doc.page_count
+    finally:
+        doc.close()
+    return text_pages, page_text, outline_index_from_toc(toc, n_pages)
 
 
 # ── Stage 2: extract tables ──────────────────────────────────────────────
@@ -80,9 +96,21 @@ def chunk_list(
     return [shuffled[i:i + size] for i in range(0, len(shuffled), size)]
 
 
-def extract_all_tables(pdf_path: Path, pages: List[int], n_workers: int = CPU_WORKERS,
-                        progress_cb: Optional[Callable[[int, int], None]] = None) -> List[Dict[str, Any]]:
+def extract_all_tables(
+    pdf_path: Path,
+    pages: List[int],
+    n_workers: Optional[int] = None,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+    page_text: Optional[Dict[int, str]] = None,
+) -> List[Dict[str, Any]]:
     """Runs extract_pymupdf_chunk over `pages` across a process pool.
+
+    Worker count defaults to ``resolve_cpu_workers()`` (CPUs × available RAM,
+    overridable via ``PDF_CPU_WORKERS``) so the same image scales on laptop
+    and server without changing extraction logic.
+
+    When ``page_text`` is provided (from ``classify_pages``), each chunk
+    receives only its pages' text so workers skip a second ``get_text`` pass.
 
     If a worker dies (e.g. OOM-killed), ProcessPoolExecutor marks *every*
     pending/in-flight future as failed, not just the chunk that actually
@@ -92,11 +120,17 @@ def extract_all_tables(pdf_path: Path, pages: List[int], n_workers: int = CPU_WO
     likely caused the crash, instead of silently returning partial tables."""
     total_pages = len(pages)
     all_tables: List[Dict[str, Any]] = []
+    remaining_set = set(pages)
     remaining = list(pages)
-    workers = max(1, n_workers)
+    workers = max(1, int(n_workers) if n_workers is not None else resolve_cpu_workers())
     attempt = 0
     max_attempts = 4
     chunk_pages = max(1, EXTRACT_CHUNK_PAGES)
+    text_by_page = page_text or {}
+    log(
+        f"[extract] using {workers} PyMuPDF worker(s) "
+        f"(PDF_CPU_WORKERS override or autoscaled from host CPUs/RAM)"
+    )
 
     while remaining and attempt < max_attempts:
         attempt += 1
@@ -106,22 +140,32 @@ def extract_all_tables(pdf_path: Path, pages: List[int], n_workers: int = CPU_WO
 
         pool_broke = False
         with ProcessPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(extract_pymupdf_chunk, str(pdf_path), chunk): chunk for chunk in chunks}
+            futures = {}
+            for chunk in chunks:
+                chunk_text = (
+                    {p: text_by_page[p] for p in chunk if p in text_by_page}
+                    if text_by_page
+                    else None
+                )
+                futures[pool.submit(
+                    extract_pymupdf_chunk, str(pdf_path), chunk, chunk_text,
+                )] = chunk
             for future in as_completed(futures):
                 chunk = futures[future]
                 try:
                     all_tables.extend(future.result())
-                    remaining = [p for p in remaining if p not in chunk]
+                    remaining_set.difference_update(chunk)
                 except BrokenProcessPool as e:
                     pool_broke = True
                     log(f"[extract] process pool crashed on chunk {chunk[0]}-{chunk[-1]} "
                         f"(likely OOM): {e}")
                 except Exception as e:
                     log(f"[extract] chunk {chunk[0]}-{chunk[-1]} failed: {e}")
-                    remaining = [p for p in remaining if p not in chunk]
+                    remaining_set.difference_update(chunk)
                 if progress_cb:
-                    progress_cb(total_pages - len(remaining), total_pages)
+                    progress_cb(total_pages - len(remaining_set), total_pages)
 
+        remaining = [p for p in remaining if p in remaining_set]
         if not remaining:
             break
         if not pool_broke:
@@ -150,23 +194,18 @@ def filter_candidate_pages(pages_grouped: Dict[int, List[Dict[str, Any]]]) -> Di
 
     Drops text-only false positives (prose misread as tables) while retaining
     real grids whose lines are too light/partial for lines_strict alone.
-    Also drops chart/figure false positives (wide numeric crumb grids).
-    """
-    from app.services.extraction.pdf.confidence_validation.table_confidence import (
-        looks_like_chart_candidate,
-    )
 
+    Chart/figure false positives are already dropped inside the extract
+    workers (``looks_like_chart_candidate`` with page context); re-running
+    the structural-only check here was redundant work on every candidate.
+    """
     out: Dict[int, List[Dict[str, Any]]] = {}
     for page_num, candidates in pages_grouped.items():
-        kept = [
-            c for c in candidates
-            if not looks_like_chart_candidate(c.get("df"), bbox=c.get("bbox"))[0]
-        ]
         if any(
             str(c.get("method") or "") in ("pymupdf_lines_strict", "pymupdf_lines")
-            for c in kept
+            for c in candidates
         ):
-            out[page_num] = kept
+            out[page_num] = candidates
     return out
 
 
@@ -613,13 +652,14 @@ def run_pdf_extraction(
             on_progress(stage, percent, message)
 
     progress("classify", 2, f"Scanning {pdf_path.name} for text-bearing pages")
-    text_pages, page_text = classify_pages(pdf_path)
+    text_pages, page_text, outline_index = classify_pages(pdf_path)
     progress("classify", 10, f"{len(text_pages)} text-bearing page(s) found")
 
     progress("extract", 10, f"Extracting tables from {len(text_pages)} page(s)")
     all_tables = extract_all_tables(
         pdf_path,
         text_pages,
+        page_text=page_text,
         progress_cb=lambda done, total: progress(
             "extract", 10 + int(35 * done / total), f"Extracted {done}/{total} page(s)"
         ),
@@ -628,10 +668,11 @@ def run_pdf_extraction(
 
     pages_grouped = filter_candidate_pages(group_by_page(all_tables))
     pages_grouped = resolve_dual_column_pages(pdf_path, pages_grouped, page_text)
-    from app.services.extraction.pdf.confidence_validation.table_confidence import (
-        build_pdf_outline_index,
-    )
-    progress("extract", 44, "Building document outline index")
-    outline_index = build_pdf_outline_index(pdf_path)
+    # Collapse strategy clones once before confidence / LLM (same function,
+    # avoids repeating fill-density scans on every downstream stage).
+    pages_grouped = {
+        page_num: dedupe_candidates_by_bbox(candidates)
+        for page_num, candidates in pages_grouped.items()
+    }
     progress("extract", 45, f"{len(pages_grouped)} page(s) with ruled table candidates")
     return pages_grouped, page_text, outline_index

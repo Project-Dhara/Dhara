@@ -311,13 +311,41 @@ def partition_side_by_side_candidates(
     return left_cands, right_cands
 
 
+def _extract_clipped_on_page(
+    page: Any,
+    page_num: int,
+    clip: pymupdf.Rect,
+    side: str,
+    page_text: str = "",
+) -> List[Dict[str, Any]]:
+    """Run pymupdf table strategies inside a clip on an already-open page."""
+    from app.services.extraction.pdf.utils.workers import _candidates_from_pymupdf_table
+
+    results: List[Dict[str, Any]] = []
+    # Ruled only — text strategy is unused for dual-column merge picks.
+    for strategy in ("lines_strict", "lines"):
+        try:
+            found = page.find_tables(strategy=strategy, clip=clip)
+        except Exception:
+            continue
+        for tab in found.tables:
+            results.extend(
+                _candidates_from_pymupdf_table(
+                    tab,
+                    page_num=page_num,
+                    method=f"pymupdf_{strategy}_{side}",
+                    extra={"dual_half": side},
+                    page=page,
+                    page_text=page_text,
+                )
+            )
+    return results
+
+
 def _extract_clipped(
     pdf_path: str, page_num: int, clip: pymupdf.Rect, side: str
 ) -> List[Dict[str, Any]]:
     """Run pymupdf table strategies inside a clip rectangle."""
-    from app.services.extraction.pdf.utils.workers import _candidates_from_pymupdf_table
-
-    results: List[Dict[str, Any]] = []
     doc = pymupdf.open(pdf_path)
     try:
         page = doc[page_num - 1]
@@ -325,42 +353,29 @@ def _extract_clipped(
             page_text = page.get_text("text") or ""
         except Exception:
             page_text = ""
-        # Ruled only — text strategy is unused for dual-column merge picks.
-        for strategy in ("lines_strict", "lines"):
-            try:
-                found = page.find_tables(strategy=strategy, clip=clip)
-            except Exception:
-                continue
-            for tab in found.tables:
-                results.extend(
-                    _candidates_from_pymupdf_table(
-                        tab,
-                        page_num=page_num,
-                        method=f"pymupdf_{strategy}_{side}",
-                        extra={"dual_half": side},
-                        page=page,
-                        page_text=page_text,
-                    )
-                )
+        return _extract_clipped_on_page(page, page_num, clip, side, page_text)
     finally:
         doc.close()
-    return results
 
 
 def _clip_halves_from_midpage(
     pdf_path: str, page_num: int
 ) -> Optional[Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]]:
+    """Re-extract left/right halves with a single PDF open (not three)."""
     doc = pymupdf.open(pdf_path)
     try:
         page = doc[page_num - 1]
         mid = page.rect.width / 2.0
         left_clip = pymupdf.Rect(page.rect.x0, page.rect.y0, mid - _GUTTER_PT, page.rect.y1)
         right_clip = pymupdf.Rect(mid + _GUTTER_PT, page.rect.y0, page.rect.x1, page.rect.y1)
+        try:
+            page_text = page.get_text("text") or ""
+        except Exception:
+            page_text = ""
+        left = _extract_clipped_on_page(page, page_num, left_clip, "left", page_text)
+        right = _extract_clipped_on_page(page, page_num, right_clip, "right", page_text)
     finally:
         doc.close()
-
-    left = _extract_clipped(pdf_path, page_num, left_clip, "left")
-    right = _extract_clipped(pdf_path, page_num, right_clip, "right")
 
     def _ruled(cands):
         strict = [c for c in cands if "lines_strict" in c.get("method", "")]

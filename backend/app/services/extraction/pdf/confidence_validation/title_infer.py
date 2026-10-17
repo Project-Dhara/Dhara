@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 _TITLE_CHROME_RE = re.compile(
     r"^(?:"
@@ -521,6 +521,36 @@ def _matches_extended_caption(line: str) -> bool:
         return False
     return any(p.match(s) for p in _EXTENDED_CAPTION_RES)
 
+def outline_index_from_toc(
+    toc: Optional[Sequence[Any]],
+    n_pages: int,
+) -> Dict[int, List[str]]:
+    """Build page→outline breadcrumb map from an already-loaded PDF TOC."""
+    if n_pages < 1:
+        return {}
+    items = sorted(
+        (
+            (int(e[0]), _normalize_title_line(str(e[1])), int(e[2]))
+            for e in (toc or [])
+            if isinstance(e, (list, tuple)) and len(e) >= 3 and str(e[1]).strip()
+        ),
+        key=lambda x: (x[2], x[0]),
+    )
+
+    stack: Dict[int, str] = {}
+    index: Dict[int, List[str]] = {}
+    item_idx = 0
+    for page in range(1, n_pages + 1):
+        while item_idx < len(items) and items[item_idx][2] <= page:
+            lvl, title, _ = items[item_idx]
+            stack[lvl] = title
+            for deeper in [k for k in stack if k > lvl]:
+                del stack[deeper]
+            item_idx += 1
+        index[page] = [stack[k] for k in sorted(stack)]
+    return index
+
+
 def build_pdf_outline_index(pdf_path: Union[str, Path]) -> Dict[int, List[str]]:
     """
     Map each 1-based page number to the outline/bookmark breadcrumb active on
@@ -543,27 +573,7 @@ def build_pdf_outline_index(pdf_path: Union[str, Path]) -> Dict[int, List[str]]:
     finally:
         doc.close()
 
-    items = sorted(
-        (
-            (int(e[0]), _normalize_title_line(str(e[1])), int(e[2]))
-            for e in toc
-            if isinstance(e, (list, tuple)) and len(e) >= 3 and str(e[1]).strip()
-        ),
-        key=lambda x: (x[2], x[0]),
-    )
-
-    stack: Dict[int, str] = {}
-    index: Dict[int, List[str]] = {}
-    item_idx = 0
-    for page in range(1, n_pages + 1):
-        while item_idx < len(items) and items[item_idx][2] <= page:
-            lvl, title, _ = items[item_idx]
-            stack[lvl] = title
-            for deeper in [k for k in stack if k > lvl]:
-                del stack[deeper]
-            item_idx += 1
-        index[page] = [stack[k] for k in sorted(stack)]
-    return index
+    return outline_index_from_toc(toc, n_pages)
 
 def extract_page_text_blocks(doc: Any, page_num: int) -> List[Dict[str, float]]:
     """
@@ -856,6 +866,7 @@ __all__ = [
     "extract_page_text_blocks",
     "infer_title_from_page_text",
     "infer_title_meta_from_page_text",
+    "outline_index_from_toc",
     "strip_caption_label_prefix",
     "title_looks_like_gibberish",
     "title_needs_review",

@@ -29,7 +29,6 @@ from app.services.llm_prompts import (
 from app.services.extraction.pdf.confidence_validation.confidence_split import df_to_text
 from app.services.extraction.pdf.confidence_validation.stamp import _stamp_llm_metadata
 from app.services.extraction.pdf.utils.pymupdf import (
-    _distinct_ruled_candidates,
     dedupe_candidates_by_bbox,
     log,
 )
@@ -41,9 +40,17 @@ def _prompt_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     Prefer one grid per physical region (bbox-deduped). Prefer ruled hits when
     present — whitespace clones mainly inflate tokens without changing output
     once stamp/alignment re-grounds on the ruled DF.
+
+    After bbox-dedupe, ruled filtering alone is enough — a second dedupe over
+    the ruled subset was redundant (no overlapping clones remain).
     """
     deduped = dedupe_candidates_by_bbox(list(candidates or []))
-    ruled = _distinct_ruled_candidates(deduped)
+    ruled = [
+        c for c in deduped
+        if str(c.get("method") or "") in ("pymupdf_lines_strict", "pymupdf_lines")
+        and c.get("df") is not None
+        and not getattr(c["df"], "empty", True)
+    ]
     return ruled if ruled else deduped
 
 
@@ -72,7 +79,8 @@ def _stamp_safe(
 
 def build_validation_prompt(page_num: int, candidates: List[Dict[str, Any]], text: str) -> str:
     candidates = _prompt_candidates(candidates)
-    ruled_n = len(_distinct_ruled_candidates(candidates))
+    # _prompt_candidates already returns ruled-only (or the deduped set).
+    ruled_n = len(candidates)
     sections = [
         f"--- {t['method']}, table {i + 1} ---\n{df_to_text(t['df'], max_rows=LLM_PROMPT_MAX_ROWS)}"
         for i, t in enumerate(candidates)
@@ -150,7 +158,7 @@ def build_batch_validation_prompt(pages: List[int], pages_grouped: Dict[int, Lis
     page_sections = []
     for page_num in pages:
         candidates = _prompt_candidates(pages_grouped.get(page_num, []))
-        ruled_n = len(_distinct_ruled_candidates(candidates))
+        ruled_n = len(candidates)
         sections = [
             f"  --- {t['method']}, table {i + 1} ---\n"
             f"{df_to_text(t['df'], max_rows=LLM_PROMPT_MAX_ROWS)}"

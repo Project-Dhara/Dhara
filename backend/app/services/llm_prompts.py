@@ -11,6 +11,13 @@ from typing import Optional
 # ── Host sizing (override via env on constrained or large boxes) ─────────────
 _HOST_CPUS = max(1, os.cpu_count() or 1)
 
+# ~1GB RSS headroom per PyMuPDF worker (PDF reopen + page DataFrames).
+_MB_PER_CPU_WORKER = 1024
+# Keep headroom for uvicorn / OS / LLM client so extract does not OOM the box.
+_RAM_RESERVE_MB = 1536
+# Sanity ceiling when autoscaling on very large instances (override via env).
+_DEFAULT_CPU_WORKERS_MAX = 32
+
 
 def _env_int(name: str, default: int) -> int:
     raw = (os.environ.get(name) or "").strip()
@@ -22,38 +29,161 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-def _available_ram_mb() -> Optional[int]:
-    """Best-effort MemAvailable (Linux); None when unknown."""
+def _read_cgroup_memory_limit_mb() -> Optional[int]:
+    """Docker/K8s memory limit when present; None if unlimited/unknown."""
+    candidates = (
+        "/sys/fs/cgroup/memory.max",  # cgroup v2
+        "/sys/fs/cgroup/memory/memory.limit_in_bytes",  # cgroup v1
+    )
+    for path in candidates:
+        try:
+            raw = Path(path).read_text(encoding="utf-8").strip()
+        except Exception:
+            continue
+        if not raw or raw == "max":
+            continue
+        try:
+            nbytes = int(raw)
+        except ValueError:
+            continue
+        # Huge sentinel values mean "no limit" on cgroup v1.
+        if nbytes <= 0 or nbytes >= (1 << 60):
+            continue
+        return max(1, nbytes // (1024 * 1024))
+    return None
+
+
+def _read_linux_meminfo_mb() -> tuple[Optional[int], Optional[int]]:
+    """Return (MemAvailable_mb, MemTotal_mb) from /proc/meminfo."""
+    avail: Optional[int] = None
+    total: Optional[int] = None
     try:
         with open("/proc/meminfo", encoding="utf-8") as fh:
             for line in fh:
                 if line.startswith("MemAvailable:"):
-                    return int(line.split()[1]) // 1024
+                    avail = int(line.split()[1]) // 1024
+                elif line.startswith("MemTotal:"):
+                    total = int(line.split()[1]) // 1024
     except Exception:
-        pass
-    return None
+        return None, None
+    return avail, total
+
+
+def _read_macos_mem_mb() -> tuple[Optional[int], Optional[int]]:
+    """Return (approx_available_mb, total_mb) via sysctl / vm_stat."""
+    import subprocess
+
+    total: Optional[int] = None
+    try:
+        out = subprocess.check_output(
+            ["sysctl", "-n", "hw.memsize"], stderr=subprocess.DEVNULL, text=True
+        ).strip()
+        total = max(1, int(out) // (1024 * 1024))
+    except Exception:
+        return None, None
+
+    # Prefer free+inactive pages when vm_stat is available; else ~55% of total.
+    avail: Optional[int] = None
+    try:
+        vm = subprocess.check_output(
+            ["vm_stat"], stderr=subprocess.DEVNULL, text=True
+        )
+        page_size = 4096
+        for line in vm.splitlines():
+            if "page size of" in line:
+                # e.g. "Mach Virtual Memory Statistics: (page size of 16384 bytes)"
+                parts = line.replace("(", " ").replace(")", " ").split()
+                for i, tok in enumerate(parts):
+                    if tok.isdigit() and i + 1 < len(parts) and parts[i + 1].startswith("bytes"):
+                        page_size = int(tok)
+                        break
+        counts = {"Pages free": 0, "Pages inactive": 0, "Pages speculative": 0}
+        for line in vm.splitlines():
+            for key in counts:
+                if line.startswith(key):
+                    num = line.split(":")[-1].strip().rstrip(".")
+                    counts[key] = int(num.replace(".", ""))
+                    break
+        avail = max(
+            1,
+            ((counts["Pages free"] + counts["Pages inactive"] + counts["Pages speculative"])
+             * page_size)
+            // (1024 * 1024),
+        )
+    except Exception:
+        avail = max(1, int(total * 0.55))
+    return avail, total
+
+
+def _available_ram_mb() -> Optional[int]:
+    """Best-effort usable RAM for extract workers (cgroup / Linux / macOS)."""
+    cgroup = _read_cgroup_memory_limit_mb()
+    avail, total = _read_linux_meminfo_mb()
+    if avail is None and total is None:
+        avail, total = _read_macos_mem_mb()
+
+    # Inside Docker the cgroup limit is the real ceiling even if host MemAvailable
+    # looks larger.
+    if cgroup is not None:
+        if total is None:
+            total = cgroup
+        else:
+            total = min(total, cgroup)
+        if avail is None:
+            avail = total
+        else:
+            avail = min(avail, cgroup)
+
+    if avail is None and total is None:
+        return None
+
+    # File-cache / inactive pages are reclaimable. macOS vm_stat "free" often
+    # understates this and would collapse workers to 1 on an 8GB laptop.
+    if total is not None:
+        reclaim_floor = max(1, int(total * 0.45))
+        if avail is None:
+            avail = reclaim_floor
+        else:
+            avail = max(avail, min(reclaim_floor, max(1, total - 512)))
+    return max(1, int(avail))
 
 
 def _default_cpu_workers() -> int:
-    """Process-pool size for PyMuPDF.
+    """Process-pool size for PyMuPDF — scales with instance CPUs and RAM.
 
     Each worker re-opens the full PDF and holds page DataFrames. On small hosts
-    (e.g. 2 vCPU / 4GB) defaulting to cpu_count() OOMs mid-extract, which
-    triggers BrokenProcessPool retries and looks like a hang on
-    \"Extracting tables from the document\". Cap by ~1GB available RAM per worker.
+    (e.g. 8GB laptops) we stay conservative so extract does not OOM and retry.
+    On larger servers, workers track ``cpu_count`` and available RAM
+    (~1GB/worker after a fixed reserve) up to ``PDF_CPU_WORKERS_MAX``.
     """
-    cpus = _HOST_CPUS
+    cpus = max(1, os.cpu_count() or 1)
+    # Leave one core for the API process when the box has spare capacity.
+    cpu_cap = cpus if cpus <= 2 else max(1, cpus - 1)
+
     avail = _available_ram_mb()
-    if avail is not None:
-        mem_cap = max(1, avail // 1024)
-        return max(1, min(cpus, mem_cap, 8))
-    return max(1, min(cpus, 4))
+    hard_max = _env_int("PDF_CPU_WORKERS_MAX", _DEFAULT_CPU_WORKERS_MAX)
+    if avail is None:
+        # Unknown RAM: scale with CPUs but stay modest.
+        return max(1, min(cpu_cap, 4, hard_max))
+
+    usable = max(512, int(avail) - _RAM_RESERVE_MB)
+    mem_cap = max(1, usable // _MB_PER_CPU_WORKER)
+    return max(1, min(cpu_cap, mem_cap, hard_max))
+
+
+def resolve_cpu_workers() -> int:
+    """Effective PyMuPDF worker count (env override or autoscaled default)."""
+    raw = (os.environ.get("PDF_CPU_WORKERS") or "").strip()
+    if raw:
+        return _env_int("PDF_CPU_WORKERS", 1)
+    return _default_cpu_workers()
 
 
 # ── PyMuPDF extraction ───────────────────────────────────────────────────────
 TEXT_MIN_CHARS = 20
-# Was hard-coded to 3 for local ~8GB RAM laptops; scale with cores, capped by RAM.
-CPU_WORKERS = _env_int("PDF_CPU_WORKERS", _default_cpu_workers())
+# Resolved at import for callers/logging; extract path re-resolves at run time
+# so server instances pick up current cgroup/RAM without a code change.
+CPU_WORKERS = resolve_cpu_workers()
 # Pages per process-pool task. Smaller chunks → more frequent progress updates
 # and less work lost when a worker is OOM-killed.
 EXTRACT_CHUNK_PAGES = _env_int("PDF_EXTRACT_CHUNK_PAGES", 8)
