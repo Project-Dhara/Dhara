@@ -25,10 +25,17 @@ def test_gibberish_titles_need_review():
     assert title_looks_like_gibberish("Source file: demo.xlsx")
     assert title_looks_like_gibberish("\uf8ff\uf8ff\uf8ff")
     assert title_looks_like_gibberish("|||| ··· ###")
+    hash_pdf = (
+        "cf503361bf9e75ca602b611d5ecda46c24c0c2f805a32b208c17dbb194cbd5a1.pdf"
+    )
+    assert title_looks_like_gibberish(hash_pdf)
+    assert title_looks_like_gibberish(f"{hash_pdf}, {hash_pdf}")
+    assert title_needs_review(f"{hash_pdf}, {hash_pdf}", cols)
     assert title_needs_review("Sheet: MySheetName", cols)
     assert title_needs_review("", cols)
     assert title_needs_review("D-14", cols) or title_needs_review("TABLE: D-14", cols)
     assert not title_looks_like_gibberish("Infant Deaths by Age and Sex (Urban)")
+    assert not title_looks_like_gibberish("Annual Report 2023.pdf")  # human filename OK
     assert not title_needs_review("Infant Deaths by Age and Sex (Urban)", cols)
 
 

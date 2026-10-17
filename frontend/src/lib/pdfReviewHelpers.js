@@ -51,13 +51,14 @@ export const CLASSIFICATION_LABELS = {
 
 
 /** Canonical review-reason chips shown in the filter bar. Backend may still
- *  emit finer codes (column_alignment_mismatch, uncertain_semantic_role); those
- *  are folded into these labels so overlapping filters aren't duplicated. */
+ *  emit finer codes (column_alignment_mismatch); those are folded into these
+ *  labels so overlapping filters aren't duplicated.
+ *  ``ambiguous_column`` / ``uncertain_semantic_role`` ("clearer role") were
+ *  dropped — they confused stewards when the grid already matched the PDF. */
 export const REASON_LABELS = {
   garbled_extracted_value: 'Garbled/corrupted value',
   conflicting_extraction: 'Conflicting extraction',
   uncertain_extraction: 'Uncertain extraction',
-  ambiguous_column: 'Ambiguous column',
   uncertain_concept: 'Uncertain concept',
   title_filled_by_ai: 'Title filled by AI',
   uncertain_title: 'Uncertain title',
@@ -67,7 +68,9 @@ export const REASON_LABELS = {
 /** Map backend-specific reasons onto the chip the reviewer actually filters by. */
 export const REASON_ALIASES = {
   column_alignment_mismatch: 'uncertain_extraction',
-  uncertain_semantic_role: 'ambiguous_column',
+  // Dropped clearer-role flags — ignore if still present on old sessions.
+  uncertain_semantic_role: null,
+  ambiguous_column: null,
   // Prior frontend-only id; keep filtering old sessions.
   missing_title: 'uncertain_title',
 }
@@ -81,7 +84,6 @@ export const REVIEW_REASON_PRIORITY = [
   'garbled_extracted_value',
   'uncertain_extraction',
   'conflicting_extraction',
-  'ambiguous_column',
   'uncertain_concept',
   'title_filled_by_ai',
   'uncertain_title',
@@ -307,7 +309,11 @@ function humanizeExtractionMethod(method) {
 
 export function canonicalizeReviewReason(reason) {
   if (!reason) return reason
-  return REASON_ALIASES[reason] || reason
+  if (Object.prototype.hasOwnProperty.call(REASON_ALIASES, reason)) {
+    // Explicit null alias = drop (e.g. retired clearer-role flags).
+    return REASON_ALIASES[reason]
+  }
+  return reason
 }
 
 
@@ -418,7 +424,7 @@ export function computeFittedColumnLayout(columns, rows, { sampleRows = 48 } = {
 
   const sample = (rows || []).slice(0, sampleRows)
   const specs = cols.map((col, i) => {
-    // Use display leaf (e.g. MALE not "MALE (DOMICILIARY)") for sizing.
+    // Use display leaf (after redundant ``(Group)`` strip) for sizing.
     const displayPath = columnHeaderPathForDisplay(col)
     const leaf = String(displayPath[displayPath.length - 1] || col?.name || '').trim()
     const headerLen = Math.max(leaf.length, 1)
@@ -545,23 +551,17 @@ export function reviewFlagSummary(table) {
   }
 
   const flaggedCols = (table.columns || []).filter(
-    (c) => c?.human_review_needed && c?.human_review_reason,
+    (c) => c?.human_review_needed && canonicalizeReviewReason(c?.human_review_reason),
   )
-  if (flaggedCols.length && (primary === 'ambiguous_column' || primary === 'uncertain_concept')) {
+  if (flaggedCols.length && primary === 'uncertain_concept') {
     const names = flaggedCols
       .map((c) => String(c.name || '').trim() || 'Column')
       .filter(Boolean)
     if (flaggedCols.length === 1) {
-      return truncateReviewDetail(
-        primary === 'ambiguous_column'
-          ? `Column "${names[0]}" needs a clearer role or meaning.`
-          : `Column "${names[0]}" has an uncertain concept.`,
-      )
+      return truncateReviewDetail(`Column "${names[0]}" has an uncertain concept.`)
     }
     return truncateReviewDetail(
-      primary === 'ambiguous_column'
-        ? `${flaggedCols.length} columns need clearer roles (${listColumnNames(names)}).`
-        : `${flaggedCols.length} columns have uncertain concepts (${listColumnNames(names)}).`,
+      `${flaggedCols.length} columns have uncertain concepts (${listColumnNames(names)}).`,
     )
   }
 
@@ -589,9 +589,6 @@ export function reviewFlagSummary(table) {
   if (primary === 'uncertain_extraction') {
     return 'Extraction needs a quick check before accepting.'
   }
-  if (primary === 'ambiguous_column') {
-    return 'One or more columns need a clearer role or meaning.'
-  }
   if (primary === 'uncertain_concept') {
     return 'A column concept could not be determined confidently.'
   }
@@ -614,16 +611,22 @@ export function matchesStatusFilter(table, filter, reviewed) {
   if (filter === 'reviewed') return reviewed
   if (filter === 'needs_review') {
     if (reviewed) return false
+    const reasons = collectReviewReasons(table)
+    const tableFlagActive = Boolean(table.human_review_needed)
+      && Boolean(canonicalizeReviewReason(table.human_review_reason))
     return (
-      Boolean(table.human_review_needed)
+      tableFlagActive
       || tableHasMissingTitle(table)
-      || collectReviewReasons(table).size > 0
+      || reasons.size > 0
       || tableHasGarbledCells(table)
     )
   }
   if (filter === 'no_review') {
     if (tableHasMissingTitle(table)) return false
-    return !table.human_review_needed && !tableHasGarbledCells(table) && collectReviewReasons(table).size === 0
+    const reasons = collectReviewReasons(table)
+    const tableFlagActive = Boolean(table.human_review_needed)
+      && Boolean(canonicalizeReviewReason(table.human_review_reason))
+    return !tableFlagActive && !tableHasGarbledCells(table) && reasons.size === 0
   }
   if (filter === 'dev_ai_classified') return isAiClassified(table)
   if (filter === 'dev_auto_extracted') return !isAiClassified(table)
@@ -897,30 +900,18 @@ export function isUnitOrNoteParenthetical(paren) {
 
 
 /**
- * Preview/review header path: split ``MALE (DOMICILIARY)`` into group+leaf and
- * drop redundant ``(GROUP)`` on leaves so headers stay short and readable.
- * Does NOT split unit notes (``Area (in Ha)`` stays one leaf — matches editor).
+ * Preview/review header path — same structure as the view/edit editor
+ * (``columnHeaderPath``), plus one cleanup: when a leaf repeats its parent in
+ * brackets (``MALE (DOMICILIARY)`` under DOMICILIARY), drop the redundant
+ * ``(GROUP)``. Never invent a parent row from a lone ``Leaf (note)`` name —
+ * that made preview/original disagree with view/edit (e.g. ``Area (in Ha)``,
+ * crop/season qualifiers).
  */
 export function columnHeaderPathForDisplay(col) {
   let path = columnHeaderPath(col).map((p) => String(p || '').trim()).filter(Boolean)
   if (!path.length) return ['']
 
-  if (path.length === 1) {
-    const m = path[0].match(/^(.+?)\s*\(([^)]+)\)\s*$/)
-    if (m) {
-      const leaf = m[1].trim()
-      const group = m[2].trim()
-      // Category qualifiers only (DOMICILIARY / RURAL), never unit notes.
-      if (
-        leaf
-        && group
-        && !isUnitOrNoteParenthetical(group)
-        && /^[A-Za-z][A-Za-z0-9\s.\-/]{1,48}$/.test(group)
-      ) {
-        path = [group, leaf]
-      }
-    }
-  } else {
+  if (path.length >= 2) {
     const leaf = path[path.length - 1]
     const ancestors = path.slice(0, -1)
     const m = leaf.match(/^(.+?)\s*\(([^)]+)\)\s*$/)
@@ -1077,9 +1068,9 @@ export function isFootnoteSourceLabel(value) {
 
 
 /**
- * Value to show at a merge origin. When the span starts on an empty Sl.No.
- * cell that absorbed a Mean/CV label from the right, pull the first non-empty
- * cell inside the colspan.
+ * Value to show at a merge origin. When the span starts on an empty leading
+ * label (e.g. blank Sl.No. for Total/ALL), pull the first non-empty cell
+ * inside the colspan.
  */
 export function spanDisplayValue(rows, r, c, span) {
   const row = rows?.[r]
@@ -1435,30 +1426,17 @@ export function buildBodyCellSpans(rows, columns) {
           if (restrictGroup && groupKeyFor(nc) !== key) break
           if (!restrictGroup && !measureCols.includes(nc) && !labelSet.has(nc)) break
           if (restrictGroup) {
-            // Absorb empty Sl.No. / Freq / % siblings in the stack.
+            // Absorb empty Freq / % siblings to the right only. Leading empty
+            // Sl.No. is a gutter between frequency stacks and the appendix —
+            // pulling left into it mis-anchors Mean/SD/CV under the left stack.
             if (covered[r][nc] || !isEmptyMergeCell(rows[r]?.[nc])) break
           } else if (!measureCols.includes(nc) || covered[r][nc] || !isEmptyMergeCell(rows[r]?.[nc])) {
             break
           }
           colSpan += 1
         }
-        // Pull empty same-group cells on the left into the merge (PDF Mean
-        // spans the whole Appendix block, not Range alone).
-        if (restrictGroup) {
-          let left = 0
-          while (
-            c - left - 1 >= 0
-            && groupKeyFor(c - left - 1) === key
-            && !covered[r][c - left - 1]
-            && isEmptyMergeCell(rows[r]?.[c - left - 1])
-          ) {
-            left += 1
-          }
-          if (left > 0) {
-            originC = c - left
-            colSpan += left
-          }
-        }
+        // Do not left-pull group banners: appendix labels sit in Range with an
+        // empty Sl.No. gutter to the left; merge must grow right into values.
       }
       // Total / ALL in Crop (or Name) with blank leading Sl. No. — PDF merges
       // those stub label cells; rightward empty-label extend alone misses it.
@@ -1533,8 +1511,7 @@ export function buildBodyCellSpans(rows, columns) {
         r += 1
         continue
       }
-      // Keep label-pass merges that start on an empty Sl.No. cell (Mean/CV
-      // pulled left across the Appendix stack).
+      // Keep label-pass merges already claimed (section / group banners).
       const existing = spans[r][c]
       if (existing && ((existing.colSpan || 1) > 1 || (existing.rowSpan || 1) > 1)) {
         r += Math.max(1, existing.rowSpan || 1)
@@ -1667,6 +1644,32 @@ export function stripCaptionLabelPrefix(title) {
 }
 
 
+/** Content-hash / UUID upload filenames must never display as captions. */
+function titleLooksLikeOpaqueFilename(title) {
+  const s = String(title || '').trim()
+  if (!s) return false
+  const isOpaque = (tok) => {
+    const base = String(tok || '').trim().replace(/\\/g, '/').split('/').pop() || ''
+    const m = base.match(/^(.+)\.(pdf|xlsx?|xls|csv|docx?)$/i)
+    const stem = m ? m[1] : base
+    if (!stem) return false
+    if (/^[0-9a-f]{32,64}$/i.test(stem)) return true
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(stem)) {
+      return true
+    }
+    const alnum = stem.replace(/[^0-9a-z]/gi, '')
+    if (alnum.length >= 24) {
+      const hexish = (alnum.match(/[0-9a-f]/gi) || []).length
+      if (hexish / alnum.length >= 0.9) return true
+    }
+    return false
+  }
+  const parts = s.split(/[,;]+/).map((p) => p.trim()).filter(Boolean)
+  if (parts.length && parts.every(isOpaque)) return true
+  return isOpaque(s)
+}
+
+
 export function isUsableTableTitle(title, columns) {
   const t = stripCaptionLabelPrefix(String(title || '').trim())
   if (!t || t.length < 4) return false
@@ -1674,6 +1677,8 @@ export function isUsableTableTitle(title, columns) {
   if (/[–—-]$/.test(t)) return false
   // Joined header rows — not a real table title
   if (t.includes(' · ') || (t.match(/\|/g) || []).length >= 2) return false
+  // Uploaded object keys (sha256.pdf, sha256.pdf) are not captions.
+  if (titleLooksLikeOpaqueFilename(t)) return false
   const colNames = (columns || [])
     .map((c) => String(c?.name ?? c ?? '').trim().toLowerCase())
     .filter(Boolean)

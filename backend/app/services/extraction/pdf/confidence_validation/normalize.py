@@ -70,6 +70,16 @@ def _coerce_reason(raw: Any) -> Optional[str]:
     return None
 
 
+# Column "clearer role" signals — historically set by mechanical name uniquify
+# (Percentage (2) / Percentage (Number of Deaths)) and bare role==unknown.
+# Stewards found them confusing and redundant when the grid already matches
+# the PDF; drop them so they never drive Review needed.
+_DROPPED_COLUMN_ROLE_REASONS = frozenset({
+    "ambiguous_column",
+    "uncertain_semantic_role",
+})
+
+
 def _normalize_review_flag(human_review_needed: Any, human_review_reason: Any) -> tuple[bool, Optional[str]]:
     """Normalizes one (human_review_needed, human_review_reason) pair.
     human_review_needed=false always forces reason to null. A true flag
@@ -80,6 +90,8 @@ def _normalize_review_flag(human_review_needed: Any, human_review_reason: Any) -
         return False, None
     reason = _coerce_reason(human_review_reason)
     if reason is None:
+        return False, None
+    if reason in _DROPPED_COLUMN_ROLE_REASONS:
         return False, None
     return True, reason
 
@@ -322,10 +334,10 @@ def derive_human_review_needed(table: Dict[str, Any]) -> tuple[bool, Optional[st
         or ADDED column_alignment_mismatch from the post-LLM grid guard
       - semantic classification uncertainty -> a classification field or
         column marked human_review_needed=true (each keeping its own
-        reason), or a column whose role genuinely couldn't be determined
-        (role == "unknown" -> uncertain_semantic_role, material to
-        understanding the table regardless of whether the model itself
-        flagged it)
+        reason). A bare ``role == "unknown"`` without a column-level
+        review flag is NOT enough — stamp/LLM defaults leave many clear
+        headers (Sl.No., age bands, measures) as unknown and that was
+        flooding Preview with false "clearer role" reviews.
       - missing / unusable title -> uncertain_title (also applies on the
         deterministic no-LLM path so Preview's Review needed filter sees it)
 
@@ -386,13 +398,19 @@ def derive_human_review_needed(table: Dict[str, Any]) -> tuple[bool, Optional[st
     classification = table.get("classification") or {}
     for f in classification.values():
         if isinstance(f, dict) and f.get("human_review_needed") and f.get("human_review_reason"):
-            reasons_present.add(f["human_review_reason"])
+            r = f["human_review_reason"]
+            if r not in _DROPPED_COLUMN_ROLE_REASONS:
+                reasons_present.add(r)
 
     for col in table.get("columns", []):
         if col.get("human_review_needed") and col.get("human_review_reason"):
-            reasons_present.add(col["human_review_reason"])
-        if col.get("role") == "unknown":
-            reasons_present.add("uncertain_semantic_role")
+            r = col["human_review_reason"]
+            if r not in _DROPPED_COLUMN_ROLE_REASONS:
+                reasons_present.add(r)
+        # Do not escalate from role=="unknown" alone. Clearer-role /
+        # ambiguous_column flags are dropped entirely (see
+        # _DROPPED_COLUMN_ROLE_REASONS) — they confused stewards when the
+        # extracted grid already matched the PDF.
 
     if not reasons_present:
         return False, None

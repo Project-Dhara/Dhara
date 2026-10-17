@@ -6,7 +6,6 @@ import re
 from typing import Any, List, Optional, Sequence, Tuple
 
 from app.services.extraction.pdf.utils.caption import (
-    _BARE_INDEX_RE,
     _COL_NUM_RE,
     _LEAF_MAX_LEN,
     _TABLE_BANNER_RE,
@@ -573,7 +572,8 @@ def detect_header_rows(body: List[List[Any]], n_cols: int) -> Tuple[int, List[in
         if col_nums > len(non_empty) * 0.5:
             skip_rows.append(i)
             continue
-        # Pure 1..N index row (including nearly-complete strips with one hole).
+        # Pure 1,2,3,…,N index row (allows one blank hole — PyMuPDF often
+        # drops the Planned "3" under vertical headers).
         if _row_is_column_number_strip(row, n_cols):
             skip_rows.append(i)
 

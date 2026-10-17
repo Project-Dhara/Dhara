@@ -387,35 +387,17 @@ def _restore_body_merge_empties_from_df(table: Dict[str, Any], df: pd.DataFrame)
     table["rows"] = rows
 
 
-_COL_INDEX_STRIP_RE = re.compile(r"^\(\d+\)$")
-_BARE_COL_INDEX_RE = re.compile(r"^\d{1,2}$")
-
-
 def _row_is_column_index_strip(row: Sequence[Any]) -> bool:
     """True for header '(1)(2)(3)' or bare 1..N index strips — not data rows.
 
     Birth-order / count rows like ``1, 0, 633, 6322, …`` must stay False.
+    Near-complete strips with one blank hole (``1,2,,4,…,13``) count as index.
     """
-    non_empty = [v for v in row if not _cell_is_empty(v)]
-    if len(non_empty) < 2:
-        return False
-    paren_hits = sum(
-        1 for v in non_empty
-        if _COL_INDEX_STRIP_RE.match(str(v).strip())
-    )
-    if paren_hits > len(non_empty) * 0.5:
-        return True
-    # Bare 1,2,3,…,N under headers (common in CRS PDFs). Require almost-full
-    # coverage so a real data row with small integers is never treated as an index.
-    if len(non_empty) < 3:
-        return False
-    if not all(_BARE_COL_INDEX_RE.match(str(v).strip()) for v in non_empty):
-        return False
-    try:
-        nums = [int(str(v).strip()) for v in non_empty]
-    except ValueError:
-        return False
-    return bool(nums) and nums == list(range(1, len(nums) + 1))
+    from app.services.extraction.pdf.utils.caption import _row_is_column_number_strip
+
+    cells = list(row) if row is not None else []
+    n_cols = max(len(cells), 1)
+    return _row_is_column_number_strip(cells, n_cols)
 
 
 def _row_has_measure_like_values(row: Sequence[Any]) -> bool:

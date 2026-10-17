@@ -64,6 +64,36 @@ def enrich_table_for_review(
     loc = source_location_label(out)
     if loc:
         out["source_location"] = loc
+    # Refresh review rollup on read so older false positives (role==unknown
+    # alone, frequency-stack Sl.No. (2) flags, hash.pdf titles) clear without
+    # re-extract.
+    try:
+        from app.services.extraction.pdf.confidence_validation.normalize import (
+            derive_human_review_needed,
+        )
+        from app.services.extraction.pdf.confidence_validation.table_confidence import (
+            dedupe_column_names,
+        )
+        from app.services.extraction.pdf.confidence_validation.title_infer import (
+            title_looks_like_gibberish,
+        )
+
+        cols = out.get("columns")
+        if isinstance(cols, list) and cols:
+            repaired = []
+            for c in cols:
+                repaired.append(dict(c) if isinstance(c, dict) else c)
+            out["columns"] = dedupe_column_names(repaired)
+        # Drop content-hash / opaque upload filenames used as titles.
+        if title_looks_like_gibberish(out.get("title")):
+            out["title"] = None
+            if str(out.get("title_source") or "").startswith("heuristic"):
+                out["title_source"] = "cleared_unusable"
+        needed, reason = derive_human_review_needed(out)
+        out["human_review_needed"] = bool(needed)
+        out["human_review_reason"] = reason
+    except Exception:
+        pass
     return out
 
 

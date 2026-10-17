@@ -6,20 +6,23 @@ import re
 from typing import Any, List, Optional, Sequence, Tuple
 
 from app.services.extraction.pdf.utils.caption import (
-    _TABLE_BANNER_RE,
     _TABLE_ID_THEN_TITLE_RE,
     _blank,
     _cell_str,
     _is_descriptive_in_grid_title,
     _is_measurement_number,
+    _is_mid_grid_table_split_id,
     _is_numeric_cell,
-    _is_table_id_only,
     _pad_row,
     _row_is_full_width_banner,
 )
 
 def _row_table_id_label(row: Sequence[Any]) -> Optional[str]:
-    """Return the TABLE/STATEMENT/ANNEX id if this row is a caption marker."""
+    """Return the TABLE/STATEMENT/ANNEX id if this row starts a new table block.
+
+    Uses the stricter mid-grid id check so disease serials like ``E48`` in the
+    S.No. column do not look like a glued second-table caption.
+    """
     non_empty = [_cell_str(v) for v in row if _cell_str(v)]
     if not non_empty:
         return None
@@ -28,7 +31,7 @@ def _row_table_id_label(row: Sequence[Any]) -> Optional[str]:
     combined = _TABLE_ID_THEN_TITLE_RE.match(label)
     if combined and _is_descriptive_in_grid_title(combined.group("title")):
         return _cell_str(combined.group("id"))
-    if _is_table_id_only(label) or _TABLE_BANNER_RE.match(label):
+    if _is_mid_grid_table_split_id(label):
         return label
     return None
 
@@ -80,8 +83,23 @@ def _split_hybrid_table_marker_row(
             numeric_row[i] = cells[i]
     return banner_row, numeric_row
 
+def _row_looks_like_sex_pair_body(row: Sequence[Any]) -> bool:
+    """True for cause-of-death style body rows (code + name + M/F + measures)."""
+    cells = [_cell_str(v) for v in row]
+    nonempty = [v for v in cells if v]
+    if len(nonempty) < 4:
+        return False
+    sexish = sum(1 for v in nonempty if v.upper() in {"M", "F", "T", "MALE", "FEMALE"})
+    nums = sum(1 for v in nonempty if _is_numeric_cell(v))
+    # Long stub text (disease name) plus sex + measures → body, not a caption.
+    long_text = sum(1 for v in nonempty if len(v) >= 12 and not _is_numeric_cell(v))
+    return sexish >= 1 and nums >= 3 and long_text >= 1
+
+
 def _row_is_new_table_marker(row: Sequence[Any]) -> bool:
     """True when a row is an in-grid TABLE/STATEMENT caption starting a block."""
+    if _row_looks_like_sex_pair_body(row):
+        return False
     if _row_table_id_label(row) is None:
         return False
     hybrid_banner, hybrid_nums = _split_hybrid_table_marker_row(row)
@@ -221,6 +239,69 @@ def _distinct_non_numeric_labels(rows: Optional[List[List[Any]]]) -> int:
     return len(labels)
 
 
+def _index_strip_fill_count(rows: Optional[List[List[Any]]]) -> int:
+    """How many bare 1..N tokens sit on the leading column-index strip."""
+    if not rows:
+        return 0
+    from app.services.extraction.pdf.utils.caption import (
+        _col_index_nums_from_row,
+        _row_is_column_number_strip,
+    )
+
+    n_cols = max((len(r) for r in rows), default=0)
+    for row in rows[:12]:
+        if _row_is_column_number_strip(row, n_cols):
+            nums = _col_index_nums_from_row(row) or []
+            return len(nums)
+    return 0
+
+
+def extract_needs_cell_clip(rows: Optional[List[List[Any]]]) -> bool:
+    """Cheap scan: True when ``tab.extract()`` looks vertically glued.
+
+    Per-cell ``get_textbox`` is expensive on wide grids; only pay that cost
+    when extract already shows glued index packs or mashed header leaves.
+    Full-width caption banners are ignored (they are long but not glue).
+    """
+    if not rows:
+        return False
+    if _glued_numeric_token_count(rows) >= 2:
+        return True
+    # Vertical leaves jammed into one cell beside other header cells, e.g.
+    # "Analysed Prior harvest of the cultivator Other Reasons".
+    leaf_toks = (
+        "planned",
+        "analysed",
+        "analyzed",
+        "prior harvest",
+        "other reasons",
+        "sampling error",
+        "productivity",
+        "non avail",
+        "unreli",
+        "discrep",
+        "late receipt",
+        "no.of exp",
+        "no. of exp",
+        "area(ha)",
+        "area (ha)",
+    )
+    for row in rows[:8]:
+        nonempty = [_cell_str(c) for c in (row or []) if _cell_str(c)]
+        # Captions / titles are a single spanning cell — not vertical glue.
+        if len(nonempty) < 2:
+            continue
+        for s in nonempty:
+            if _is_numeric_cell(s):
+                continue
+            parts = s.split()
+            low = s.lower()
+            leaf_hits = sum(1 for tok in leaf_toks if tok in low)
+            if leaf_hits >= 2 and len(parts) >= 4:
+                return True
+    return False
+
+
 def prefer_cell_extracted_rows(
     extracted: Optional[List[List[Any]]],
     by_cells: Optional[List[List[Any]]],
@@ -229,7 +310,7 @@ def prefer_cell_extracted_rows(
 
     Cell clips fix vertical-header glue on non-response annexures, but can
     scramble other grids (crumb letter stacks). Prefer cells when extract has
-    glued index/measure packs or far fewer distinct header labels.
+    glued index/measure packs, a gappier 1..N strip, or far fewer header labels.
     """
     if by_cells and not extracted:
         return by_cells
@@ -240,6 +321,11 @@ def prefer_cell_extracted_rows(
     glued_ex = _glued_numeric_token_count(extracted)
     glued_cells = _glued_numeric_token_count(by_cells)
     if glued_ex > glued_cells:
+        return by_cells  # type: ignore[return-value]
+    # Fill a missing Planned "3" (and similar) without always switching grids.
+    idx_ex = _index_strip_fill_count(extracted)
+    idx_cells = _index_strip_fill_count(by_cells)
+    if idx_cells > idx_ex and glued_cells <= glued_ex:
         return by_cells  # type: ignore[return-value]
     labels_ex = _distinct_non_numeric_labels(extracted)
     labels_cells = _distinct_non_numeric_labels(by_cells)
@@ -1668,6 +1754,7 @@ __all__ = [
     "coalesce_phantom_grid_columns",
     "collapse_split_grid_columns",
     "expand_collapsed_sex_pair_rows",
+    "extract_needs_cell_clip",
     "extract_pymupdf_table_rows",
     "fold_header_label_wrap_rows",
     "fold_label_wrap_continuation_rows",

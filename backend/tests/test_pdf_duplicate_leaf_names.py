@@ -1,4 +1,4 @@
-"""Repeated leaf labels under distinct groups must not become Total (2)/(3)."""
+"""Repeated leaf labels must stay stable — no ``(2)`` / ambiguous_column noise."""
 
 from __future__ import annotations
 
@@ -39,15 +39,147 @@ def test_dedupe_keeps_shared_leaf_when_paths_differ():
     assert not any(c.get("human_review_reason") == "ambiguous_column" for c in out)
 
 
-def test_dedupe_still_suffixes_true_flat_duplicates():
+def test_dedupe_keeps_flat_duplicates_without_review_flag():
+    """Two Year columns stay Year/Year — no Year (2) ambiguous_column chip."""
     cols = [
         {"name": "Year", "header_path": ["Year"]},
         {"name": "Year", "header_path": ["Year"]},
     ]
     out = dedupe_column_names([dict(c) for c in cols])
-    assert out[0]["name"] == "Year"
-    assert out[1]["name"] == "Year (2)"
-    assert out[1].get("human_review_reason") == "ambiguous_column"
+    assert [c["name"] for c in out] == ["Year", "Year"]
+    assert not any(c.get("human_review_needed") for c in out)
+    assert not any(c.get("human_review_reason") == "ambiguous_column" for c in out)
+
+
+def test_dedupe_promotes_distinct_groups_into_header_path():
+    cols = [
+        {"name": "Total", "header_group": "Oil Seeds", "header_path": ["Total"]},
+        {"name": "Total", "header_group": "Fibre", "header_path": ["Total"]},
+    ]
+    out = dedupe_column_names([dict(c) for c in cols])
+    assert [c["name"] for c in out] == ["Total", "Total"]
+    assert out[0]["header_path"] == ["Oil Seeds", "Total"]
+    assert out[1]["header_path"] == ["Fibre", "Total"]
+    assert not any(c.get("human_review_reason") == "ambiguous_column" for c in out)
+
+
+def test_dedupe_keeps_frequency_stack_repeats_unflagged():
+    leaf_cycle = ["Sl.No.", "Range", "Freq.", "% of Freq."]
+    cols = []
+    for _ in range(3):
+        for leaf in leaf_cycle:
+            cols.append({"name": leaf, "header_path": [leaf], "header_group": None})
+    out = dedupe_column_names([dict(c) for c in cols])
+    assert [c["name"] for c in out] == leaf_cycle * 3
+    assert not any(c.get("human_review_needed") for c in out)
+
+
+def test_dedupe_repairs_prior_occurrence_suffix_flags():
+    """Older Sl.No. (2) / Percentage (2) + ambiguous_column are cleaned up."""
+    cols = [
+        {"name": "Sl.No.", "header_path": ["Sl.No."]},
+        {"name": "Range", "header_path": ["Range"]},
+        {"name": "Freq.", "header_path": ["Freq."]},
+        {"name": "% of Freq.", "header_path": ["% of Freq."]},
+        {
+            "name": "Sl.No. (2)",
+            "header_path": ["Sl.No."],
+            "human_review_needed": True,
+            "human_review_reason": "ambiguous_column",
+            "input_type": "inputbox",
+        },
+        {"name": "Range (2)", "header_path": ["Range"], "human_review_needed": True,
+         "human_review_reason": "ambiguous_column", "input_type": "inputbox"},
+        {"name": "Freq. (2)", "header_path": ["Freq."], "human_review_needed": True,
+         "human_review_reason": "ambiguous_column", "input_type": "inputbox"},
+        {"name": "% of Freq. (2)", "header_path": ["% of Freq."], "human_review_needed": True,
+         "human_review_reason": "ambiguous_column", "input_type": "inputbox"},
+    ]
+    out = dedupe_column_names([dict(c) for c in cols])
+    assert [c["name"] for c in out] == [
+        "Sl.No.", "Range", "Freq.", "% of Freq.",
+        "Sl.No.", "Range", "Freq.", "% of Freq.",
+    ]
+    assert not any(c.get("human_review_needed") for c in out)
+
+
+def test_dedupe_keeps_paired_percentage_columns_unflagged():
+    cols = [
+        {"name": "Age Group years", "header_path": ["Age Group years"]},
+        {"name": "Male", "header_path": ["Male"]},
+        {"name": "Percentage", "header_path": ["Percentage"]},
+        {"name": "Female", "header_path": ["Female"]},
+        {"name": "Percentage", "header_path": ["Percentage"]},
+        {"name": "Total", "header_path": ["Total"]},
+        {"name": "Percentage", "header_path": ["Percentage"]},
+    ]
+    out = dedupe_column_names([dict(c) for c in cols])
+    assert [c["name"] for c in out] == [
+        "Age Group years", "Male", "Percentage", "Female", "Percentage", "Total", "Percentage",
+    ]
+    assert not any(c.get("human_review_needed") for c in out)
+
+
+def test_dedupe_repairs_prior_paired_percentage_suffix_flags():
+    cols = [
+        {"name": "Age Group years", "header_path": ["Age Group years"]},
+        {"name": "Male", "header_path": ["Male"]},
+        {"name": "Percentage", "header_path": ["Percentage"]},
+        {"name": "Female", "header_path": ["Female"]},
+        {
+            "name": "Percentage (2)",
+            "header_path": ["Percentage"],
+            "human_review_needed": True,
+            "human_review_reason": "ambiguous_column",
+            "input_type": "inputbox",
+        },
+        {"name": "Total", "header_path": ["Total"]},
+        {
+            "name": "Percentage (3)",
+            "header_path": ["Percentage"],
+            "human_review_needed": True,
+            "human_review_reason": "ambiguous_column",
+            "input_type": "inputbox",
+        },
+    ]
+    out = dedupe_column_names([dict(c) for c in cols])
+    assert [c["name"] for c in out] == [
+        "Age Group years", "Male", "Percentage", "Female", "Percentage", "Total", "Percentage",
+    ]
+    assert not any(c.get("human_review_needed") for c in out)
+
+
+def test_dedupe_repairs_group_qualified_percentage_name():
+    """Percentage (Number of Deaths) → Percentage under Number of Deaths path."""
+    cols = [
+        {
+            "name": "Male",
+            "header_group": "Number of Deaths",
+            "header_path": ["Number of Deaths", "Male"],
+        },
+        {
+            "name": "Percentage",
+            "header_group": "Number of Deaths",
+            "header_path": ["Number of Deaths", "Percentage"],
+        },
+        {
+            "name": "Female",
+            "header_group": "Number of Deaths",
+            "header_path": ["Number of Deaths", "Female"],
+        },
+        {
+            "name": "Percentage (Number of Deaths)",
+            "header_group": "Number of Deaths",
+            "header_path": ["Number of Deaths", "Percentage"],
+            "human_review_needed": True,
+            "human_review_reason": "ambiguous_column",
+            "input_type": "inputbox",
+        },
+    ]
+    out = dedupe_column_names([dict(c) for c in cols])
+    assert [c["name"] for c in out] == ["Male", "Percentage", "Female", "Percentage"]
+    assert out[3]["header_path"] == ["Number of Deaths", "Percentage"]
+    assert not any(c.get("human_review_needed") for c in out)
 
 
 def test_table_dict_uses_path_leaf_not_df_uniquify_suffix():
@@ -58,7 +190,7 @@ def test_table_dict_uses_path_leaf_not_df_uniquify_suffix():
     df.attrs["dhara_column_meta"] = [
         {"name": "District", "header_group": None, "header_path": ["District"]},
         {
-            "name": "Total (2)",  # stale uniquify in meta name
+            "name": "Total (2)",
             "header_group": "Oil Seeds",
             "header_path": ["Non Food Crops", "Oil Seeds", "Total"],
         },
@@ -90,7 +222,6 @@ def test_dataframe_build_meta_name_is_real_leaf():
     totals = [m for m in meta if str((m.get("header_path") or [None])[-1]) == "Total"]
     assert len(totals) >= 2
     assert all(m.get("name") == "Total" for m in totals)
-    # DataFrame columns may still be uniquified for pandas.
     assert list(df.columns).count("Total") + sum(
         1 for c in df.columns if str(c).startswith("Total (")
     ) >= 2

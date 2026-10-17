@@ -292,29 +292,14 @@ _BARE_INDEX_RE = re.compile(r"^\d{1,2}$")
 def _row_values_are_column_index(vals: List[str], n_cols: int) -> bool:
     """True when a row is a bare 1..N column-number strip under headers.
 
-    Also accepts a nearly-complete strip with a small hole (``1,2,,4,…,13``)
-    — vertical-header extracts often drop one index cell, and leaving that
-    row in the profile makes empty reason columns look "active", tanking
-    ``nonempty_ratio`` and forcing a destructive LLM pass.
+    Accepts a near-complete strip with a small hole (``1,2,,4,…,13``) so those
+    reference rows are dropped from fill-rate scoring. Otherwise empty reason
+    columns stay "active" only because of index tokens and the page is sent to
+    LLM, which corrupts an otherwise clean ruled extract.
     """
-    from app.services.extraction.pdf.utils.caption import (
-        _is_nearly_consecutive_col_index,
-    )
+    from app.services.extraction.pdf.utils.caption import _row_is_column_number_strip
 
-    nonempty = [v for v in vals if v]
-    if len(nonempty) < max(3, int(n_cols * 0.6)):
-        return False
-    if not all(_BARE_INDEX_RE.match(v) for v in nonempty):
-        return False
-    try:
-        nums = [int(v) for v in nonempty]
-    except ValueError:
-        return False
-    if not nums:
-        return False
-    if nums == list(range(1, len(nums) + 1)):
-        return True
-    return _is_nearly_consecutive_col_index(nums)
+    return _row_is_column_number_strip(vals, n_cols)
 
 def _df_without_leading_column_index(df: pd.DataFrame) -> pd.DataFrame:
     """Drop a leading 1..N reference strip so it does not skew mixed-type checks.
@@ -641,45 +626,17 @@ def _empty_column_fraction(df: pd.DataFrame) -> float:
     return empty / int(df.shape[1])
 
 
-def _named_empty_columns_look_intentional(df: pd.DataFrame) -> bool:
-    """True when blank columns still have real headers and a dense identity core.
-
-    Non-response annexures leave reason / Sub Total / Total leaves empty when
-    every district responded — that is not a bisected grid. Placeholder
-    ``Col_N`` empties and crumb-numeric headers still fail this check.
-    """
-    if df is None or getattr(df, "empty", True) or df.shape[1] < 4:
-        return False
-    n_rows, n_cols = int(df.shape[0]), int(df.shape[1])
-    empty_idxs = [
-        i for i in range(n_cols)
-        if not any(_cell_str(v) for v in df.iloc[:, i].tolist())
-    ]
-    if not empty_idxs:
-        return True
-    for i in empty_idxs:
-        name = str(df.columns[i] if i < len(df.columns) else "")
-        if _is_placeholder_column_name(name):
-            return False
-        if not re.search(r"[A-Za-z]{3,}", name):
-            return False
-    dense = 0
-    for i in range(n_cols):
-        if i in empty_idxs:
-            continue
-        vals = [_cell_str(v) for v in df.iloc[:, i].tolist()]
-        fill = sum(1 for v in vals if v) / max(n_rows, 1)
-        if fill >= 0.5:
-            dense += 1
-    return dense >= 3
-
-
 def _structural_bucket_for_df(df: pd.DataFrame) -> Tuple[str, str, Dict[str, Any]]:
     """Classify one cleaned DataFrame as high-confidence or needing LLM."""
     primary = clean_dataframe_light(df)
     info = profile_table(primary)
     info["empty_column_fraction"] = round(_empty_column_fraction(primary), 3)
     info["gappy_column_index"] = _leading_column_index_is_gappy(primary)
+
+    # Prefer the gappy-index diagnosis over sparse fill: bisected grids often
+    # look sparse too after the index strip is ignored for fill-rate scoring.
+    if info["gappy_column_index"]:
+        return "llm", "column-number strip is gappy (phantom column split / misaligned measures)", info
 
     if info["n_rows"] < MIN_ROWS or info["nonempty_ratio"] < MIN_NONEMPTY_RATIO:
         return "llm", "near-empty or sparse lines_strict candidate", info
@@ -690,15 +647,8 @@ def _structural_bucket_for_df(df: pd.DataFrame) -> Tuple[str, str, Dict[str, Any
     if info["mixed_type_columns"] > 0:
         return "llm", "column(s) with a murky numeric/text mix, likely misaligned cells", info
 
-    if info["gappy_column_index"]:
-        return "llm", "column-number strip is gappy (phantom column split / misaligned measures)", info
-
     if info["empty_column_fraction"] >= 0.2 and info["n_cols"] >= 10:
-        # Profile already dropped the leading index strip; reason/Total leaves
-        # that are truly blank are fine when stubs + primary measures are dense.
-        scored = _df_without_leading_column_index(primary)
-        if not _named_empty_columns_look_intentional(scored):
-            return "llm", "many empty columns (likely bisected grid / split numeric cells)", info
+        return "llm", "many empty columns (likely bisected grid / split numeric cells)", info
 
     if any(str(c).startswith("Col_") for c in primary.columns):
         return "llm", "placeholder column header (blank in the raw table) -- real header likely lives outside the ruled region", info
@@ -764,21 +714,86 @@ def _header_path_key(col: Dict[str, Any]) -> Optional[Tuple[str, ...]]:
     return key or None
 
 
+def _column_leaf_name(col: Dict[str, Any]) -> str:
+    path = _header_path_key(col)
+    raw = path[-1] if path else str(col.get("name") or "")
+    return _strip_uniquify_header_suffix(raw)
+
+
+def _clear_clearer_role_flag(col: Dict[str, Any]) -> None:
+    """Drop ambiguous_column / uncertain_semantic_role — not steward-actionable."""
+    reason = col.get("human_review_reason")
+    if reason not in ("ambiguous_column", "uncertain_semantic_role"):
+        return
+    col["human_review_needed"] = False
+    col["human_review_reason"] = None
+    if col.get("input_type") == "inputbox" and not col.get("input_options"):
+        col["input_type"] = None
+
+
+def _repair_group_qualified_leaf_name(col: Dict[str, Any]) -> None:
+    """Undo ``Percentage (Number of Deaths)`` / ``Percentage (2)`` → bare leaf.
+
+    Older dedupe stuffed header_group or an occurrence counter into the name;
+    Preview already shows the parent as a multilevel header.
+    """
+    raw_name = str(col.get("name") or "").strip()
+    m = re.match(r"^(.+?)\s*\(([^)]+)\)\s*$", raw_name)
+    if not m:
+        return
+    leaf, paren = m.group(1).strip(), m.group(2).strip()
+    if not leaf or not paren:
+        return
+    path = _header_path_key(col)
+    # Digit-only paren is an occurrence suffix (Percentage (2)).
+    if re.fullmatch(r"\d+", paren):
+        restored = _strip_uniquify_header_suffix(path[-1]) if path else leaf
+        col["name"] = restored or leaf
+        return
+    group = str(col.get("header_group") or col.get("category") or "").strip()
+    path_parent = path[-2] if path and len(path) >= 2 else ""
+    paren_l = paren.lower()
+    if paren_l != group.lower() and paren_l != path_parent.lower():
+        return
+    parent = group or path_parent or paren
+    col["name"] = leaf
+    col["header_group"] = parent
+    if path and len(path) >= 2:
+        col["header_path"] = [str(p) for p in path[:-1]] + [leaf]
+    else:
+        col["header_path"] = [parent, leaf]
+
+
 def dedupe_column_names(columns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Guarantee unique column names when header paths do not already do so.
+    """Keep stable display leaf names when headers repeat.
 
-    Multi-level tables often repeat leaf labels (``Total`` under Oil Seeds,
-    Fibre, Plantation). Preview/editor show the path leaf; parent groups
-    disambiguate. Renaming those to ``Total (2)`` / ``Total (3)`` only for
-    pandas uniqueness must not leak into the API ``name`` field.
+    Statistical tables routinely repeat leaves (``Percentage`` after Male /
+    Female / Total, ``Sl.No.`` / ``Range`` stacks, ``Total`` under crop
+    groups). Preview already disambiguates via ``header_path`` / position.
+    Inventing ``Name (2)`` / ``Name (Group)`` and flagging ``ambiguous_column``
+    was a false "clearer roles" review — not a real quality issue.
 
-    When two columns share a name *and* the same (or missing) header_path,
-    disambiguate: prefer category/header_group as a qualifier, else a plain
-    occurrence suffix. Distinct full paths keep the shared leaf name.
+    Behaviour:
+      - Distinct non-empty ``header_path`` values → keep shared leaf (unchanged).
+      - Distinct ``header_group`` / category with flat paths → promote group
+        into ``header_path`` and keep the leaf name (no suffix).
+      - Otherwise keep the shared leaf as-is — never rename, never set
+        ``ambiguous_column``.
+      - Repair older ``Leaf (N)`` / ``Leaf (Group)`` names and clear all
+        clearer-role review flags on columns.
+
     Shared by auto-accept (table_dict_from_df) and LLM (_normalize_table).
     """
+    for col in columns:
+        if not isinstance(col, dict):
+            continue
+        _repair_group_qualified_leaf_name(col)
+        _clear_clearer_role_flag(col)
+
     by_name: Dict[str, List[int]] = {}
     for i, col in enumerate(columns):
+        if not isinstance(col, dict):
+            continue
         name = str(col.get("name") or "").strip()
         if name:
             by_name.setdefault(name, []).append(i)
@@ -789,24 +804,34 @@ def dedupe_column_names(columns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         paths = [_header_path_key(columns[i]) for i in idxs]
         # Distinct non-empty paths → groups already disambiguate; keep leaf.
         if all(p is not None for p in paths) and len(set(paths)) == len(paths):
+            for i in idxs:
+                _clear_clearer_role_flag(columns[i])
             continue
-        counters = 0
+
+        groups: List[str] = []
         for i in idxs:
-            counters += 1
-            if counters == 1:
-                continue  # first occurrence keeps the original name
-            col = columns[i]
-            qualifier = col.get("category") or col.get("header_group")
-            if qualifier and str(qualifier).strip().lower() not in name.lower():
-                new_name = f"{name} ({qualifier})"
-            else:
-                new_name = f"{name} ({counters})"
-            col["name"] = new_name
-            col.setdefault("human_review_needed", False)
-            if not col["human_review_needed"]:
-                col["human_review_needed"] = True
-                col["human_review_reason"] = "ambiguous_column"
-                col["input_type"] = col.get("input_type") or "inputbox"
+            g = columns[i].get("category") or columns[i].get("header_group")
+            groups.append(str(g).strip() if g else "")
+        # Distinct groups on flat paths → promote into header_path (display
+        # multilevel), keep the shared leaf name.
+        if (
+            all(groups)
+            and len({g.lower() for g in groups}) == len(idxs)
+        ):
+            for i, g in zip(idxs, groups):
+                leaf = _column_leaf_name(columns[i]) or name
+                columns[i]["name"] = leaf
+                columns[i]["header_group"] = g
+                columns[i]["header_path"] = [g, leaf]
+                _clear_clearer_role_flag(columns[i])
+            continue
+
+        # Flat repeats (Percentage×3, Sl.No. stacks, etc.): keep shared leaf.
+        for i in idxs:
+            leaf = _column_leaf_name(columns[i]) or _strip_uniquify_header_suffix(name)
+            if leaf:
+                columns[i]["name"] = leaf
+            _clear_clearer_role_flag(columns[i])
     return columns
 
 def table_dict_from_df(

@@ -113,11 +113,13 @@ def _row_to_working_job(job: PdfJob) -> dict:
 
 
 def _row_to_table(row: PdfTable) -> dict:
+    from app.services.ingestion.review_tables import enrich_table_for_review
+
     classification = row.classification or {}
     if isinstance(classification, str):
         classification = json.loads(classification)
     flat = flatten_classification_text(classification)
-    return {
+    base = {
         "id": str(row.id),
         "job_id": row.job_id,
         "table_id": row.table_id,
@@ -138,6 +140,12 @@ def _row_to_table(row: PdfTable) -> dict:
         "human_review_reason": row.human_review_reason,
         "semantic_status": row.semantic_status,
     }
+    # Same read-time review refresh as job-result flatten (clears stale flags).
+    return enrich_table_for_review(
+        base,
+        table_id=str(row.table_id),
+        page_key=row.page,
+    )
 
 
 def get_for_user(

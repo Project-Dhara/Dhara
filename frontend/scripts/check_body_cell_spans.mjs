@@ -27,6 +27,9 @@ execSync(
 const require = createRequire(import.meta.url)
 const {
   buildBodyCellSpans,
+  buildMultiLevelHeaderRows,
+  buildEditorHeaderRows,
+  columnHeaderPathForDisplay,
   reconcileBodyMergesWithAutoInfer,
   resolveDisplayBodySpans,
 } = require(out)
@@ -81,5 +84,59 @@ for (let r = 0; r < rows.length; r += 1) {
   }
 }
 assert((previewSpans[2]?.[3]?.rowSpan || 1) === 1, 'no false Sesamum rowspan after reconcile')
+
+// Frequency × 3 stacks + appendix (Mean/SD/CV): banners must merge right from
+// Range into empty Freq/% — never left into the empty Sl.No. gutter.
+const freqCols = [
+  { name: 'Sl.No.' }, { name: 'Range' }, { name: 'Freq.' }, { name: '% of Freq.' },
+  { name: 'Sl.No.' }, { name: 'Range' }, { name: 'Freq.' }, { name: '% of Freq.' },
+  { name: 'Sl.No.' }, { name: 'Range' }, { name: 'Freq' }, { name: '% of Freq.' },
+  { name: 'Sl.No.' }, { name: 'Range' }, { name: 'Freq' }, { name: '% of Freq.' },
+]
+const freqRows = [
+  ['14', '1300 - 1399', '8', '0.41', '44', '4300 - 4399', '44', '2.26', '74', '7300 - 7399', '4', '0.21', null, 'Mean', null, null],
+  ['15', '1400 - 1499', '3', '0.15', '45', '4400 - 4499', '37', '1.90', '75', '7400 - 7499', '3', '0.15', null, 'Paddy', '3537.521', null],
+  ['16', '1500 - 1599', '1', '0.05', '46', '4500 - 4599', '28', '1.44', '76', '7500 - 7599', '1', '0.05', null, 'Rice', '2324.151', null],
+  ['17', '1600 - 1699', '2', '0.10', '47', '4600 - 4699', '20', '1.03', '77', '7600 - 7699', '2', '0.10', null, 'Standard Deviation', null, null],
+  ['18', '1700 - 1799', '1', '0.05', '48', '4700 - 4799', '15', '0.77', '78', '7700 - 7799', '1', '0.05', null, 'Paddy', '1620.158', null],
+  ['21', '2000 - 2099', '1', '0.05', '51', '5000 - 5099', '8', '0.41', '81', '8000 - 8099', '1', '0.05', null, 'Coefficient of variation (CV)', null, null],
+  ['22', '2100 - 2199', '1', '0.05', '52', '5100 - 5199', '6', '0.31', '82', '8100 - 8199', '1', '0.05', null, '45.80', null, null],
+]
+const freqSpans = buildBodyCellSpans(freqRows, freqCols)
+for (const r of [0, 3, 5, 6]) {
+  const s = freqSpans[r][13]
+  assert(s && (s.colSpan || 1) >= 2, `appendix row ${r}: Mean/SD/CV must colspan right from Range`)
+  assert(
+    freqSpans[r][12] && (freqSpans[r][12].colSpan || 1) === 1,
+    `appendix row ${r}: must not left-merge into empty Sl.No. gutter`,
+  )
+  assert(freqSpans[r][14] == null, `appendix row ${r}: Freq covered by rightward banner merge`)
+}
+assert((freqSpans[1][13]?.colSpan || 1) === 1, 'Paddy label stays unmerged')
+assert(freqSpans[1][14] && !isNaN(Number(freqRows[1][14])), 'Paddy value stays in Freq column')
+
+// Preview must not invent a parent row from ``Leaf (note)`` — match view/edit.
+const unitCol = { name: 'Area (in Ha)', header_path: ['Area (in Ha)'] }
+assert(
+  JSON.stringify(columnHeaderPathForDisplay(unitCol)) === JSON.stringify(['Area (in Ha)']),
+  'Area (in Ha) must stay a single leaf in preview',
+)
+const qualCol = { name: 'MALE (DOMICILIARY)', header_path: ['MALE (DOMICILIARY)'] }
+assert(
+  JSON.stringify(columnHeaderPathForDisplay(qualCol)) === JSON.stringify(['MALE (DOMICILIARY)']),
+  'bracket qualifier must not become a fake parent when not in header_path',
+)
+const nested = {
+  name: 'MALE (DOMICILIARY)',
+  header_group: 'DOMICILIARY',
+  header_path: ['DOMICILIARY', 'MALE (DOMICILIARY)'],
+}
+assert(
+  JSON.stringify(columnHeaderPathForDisplay(nested)) === JSON.stringify(['DOMICILIARY', 'MALE']),
+  'redundant (GROUP) on leaf still stripped when parent exists',
+)
+const previewH = buildMultiLevelHeaderRows([unitCol, qualCol])
+const editorH = buildEditorHeaderRows([unitCol, qualCol])
+assert(previewH.depth === 1 && editorH.depth === 1, 'preview/editor depth must match for flat paren leaves')
 
 console.log('check_body_cell_spans: ok')

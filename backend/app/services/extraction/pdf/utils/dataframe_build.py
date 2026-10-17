@@ -8,7 +8,6 @@ from typing import Any, List, Optional, Sequence
 from app.services.extraction.pdf.utils.caption import (
     _blank,
     _cell_str,
-    _col_index_nums_from_row,
     _is_leaf_header_token,
     _is_measurement_number,
     _pad_row,
@@ -250,21 +249,8 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
         for i in range(header_count, len(padded))
         if i not in skip_rows and not _blank(padded[i])
     ]
-    # Index strips (1..N / (1)(2)(3)) are skipped for header naming but kept as
-    # the first body row when complete. Incomplete strips (``1,2,,4,…,13``)
-    # stay omitted — they look like data and force a destructive LLM pass.
-    def _index_strip_is_complete(row: Sequence[Any]) -> bool:
-        nums = _col_index_nums_from_row(row)
-        if not nums:
-            return False
-        if nums == list(range(1, n_cols + 1)):
-            return True
-        # Dense 1..N under every filled column (birth-order style).
-        return (
-            nums == list(range(1, len(nums) + 1))
-            and len(nums) >= max(3, int(n_cols * 0.9))
-        )
-
+    # Index strips (1..N / (1)(2)(3)) are skipped for header naming but must
+    # remain visible as the first body row(s) when they sit under the headers.
     leading_index: List[List[Any]] = []
     for i in range(header_count, len(padded)):
         if i not in skip_rows:
@@ -272,8 +258,7 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
         if _blank(padded[i]):
             continue
         if _row_is_column_number_strip(padded[i], n_cols):
-            if _index_strip_is_complete(padded[i]):
-                leading_index.append(padded[i])
+            leading_index.append(padded[i])
         else:
             # Non-index skip (banner) — stop; don't pull mid-table strips forward.
             break

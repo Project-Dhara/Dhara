@@ -87,9 +87,18 @@ _TABLE_BANNER_RE = re.compile(
 )
 
 # Bare CRS / vital-stats codes used as full-width id banners (D-14, B-6).
+# Hyphen is optional here so caption/header helpers still accept ``D14``.
 _SHORT_TABLE_CODE_RE = re.compile(
     r"^(?:TABLE\s*[:.\-–—]?\s*)?"
     r"(?P<code>[A-Z]{1,3})\s*[-–—]?\s*(?P<num>\d+(?:\.\d+)?)\s*$",
+    re.IGNORECASE,
+)
+
+# Mid-grid table splits must require a hyphen (D-14 / B-6). Bare ``E48`` /
+# ``A20`` codes are often disease/cause serials in the S.No. column.
+_HYPHENATED_SHORT_TABLE_CODE_RE = re.compile(
+    r"^(?:TABLE\s*[:.\-–—]?\s*)?"
+    r"(?P<code>[A-Z]{1,3})\s*[-–—]\s*(?P<num>\d+(?:\.\d+)?)\s*$",
     re.IGNORECASE,
 )
 
@@ -296,6 +305,26 @@ def _is_table_id_only(label: str) -> bool:
     if _TABLE_ID_ONLY_RE.match(s):
         return True
     return bool(len(s) <= 40 and _SHORT_TABLE_CODE_RE.match(s))
+
+
+def _is_mid_grid_table_split_id(label: str) -> bool:
+    """Caption ids that may start a *new* physical table mid-extract.
+
+    Stricter than ``_is_table_id_only``: bare letter+digits (``E48``, ``A20``)
+    match disease/cause serials and must not split a single ruled grid.
+    Accept ``TABLE: …`` / Statement banners and hyphenated short codes
+    (``D-14``, ``B-6``).
+    """
+    s = _cell_str(label)
+    if not s:
+        return False
+    if _TABLE_BANNER_RE.match(s):
+        return True
+    if re.match(rf"^{_DOC_KIND_RE}\b", s, re.IGNORECASE):
+        return bool(_TABLE_ID_ONLY_RE.match(s) or _TABLE_ID_THEN_TITLE_RE.match(s))
+    if len(s) <= 40 and _HYPHENATED_SHORT_TABLE_CODE_RE.match(s):
+        return True
+    return False
 
 def _is_descriptive_in_grid_title(label: str) -> bool:
     """
@@ -520,6 +549,7 @@ __all__ = [
     "_is_descriptive_in_grid_title",
     "_is_in_grid_subtitle",
     "_is_measurement_number",
+    "_is_mid_grid_table_split_id",
     "_is_numeric_cell",
     "_is_table_id_only",
     "extract_in_grid_caption",

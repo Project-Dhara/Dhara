@@ -107,6 +107,7 @@ Rules:
 - 3 to {_MAX_TITLE_WORDS} words, Title Case or ALL CAPS if the data is vital-statistics style.
 - Summarize what the table measures (topic + key breakdown if clear).
 - Do NOT include TABLE/Statement ids (e.g. "TABLE: D-14", "D-12").
+- Do NOT use the source filename, upload hash, or object key as the title.
 - Do NOT list column headers or join them with commas / " — ".
 - Do NOT invent geography or years that are not supported by headers/rows/context.
 - Prefer a clear noun phrase (e.g. "Infant Deaths by Age and Sex (Urban)").

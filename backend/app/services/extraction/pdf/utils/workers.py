@@ -66,30 +66,18 @@ def _candidates_from_pymupdf_table(
     """Build one candidate per physical table; split glued multi-TABLE grids."""
     from app.services.extraction.pdf.utils.header_utils import dataframe_from_extracted_rows, split_extracted_rows_on_table_markers
     from app.services.extraction.pdf.utils.grid_repair import (
-        _distinct_non_numeric_labels,
-        _glued_numeric_token_count,
+        extract_needs_cell_clip,
         extract_pymupdf_table_rows,
         prefer_cell_extracted_rows,
     )
     from app.services.extraction.pdf.confidence_validation.table_confidence import looks_like_chart_candidate
 
-    # Use per-cell textboxes only when they may beat extract() (glued index
-    # packs / sparse header labels from vertical headers). Skipping the
-    # get_textbox pass on clean grids is a large win; prefer_* still decides
-    # when both are present, so output stays identical for those cases.
+    # tab.extract() first. Per-cell get_textbox is only used when extract()
+    # already looks vertically glued — otherwise it dominates extract time.
     extracted = tab.extract()
     by_cells = None
-    if page is not None:
-        if not extracted:
-            by_cells = extract_pymupdf_table_rows(page, tab)
-        else:
-            glued_ex = _glued_numeric_token_count(extracted)
-            n_cols = max((len(r) for r in extracted[:8]), default=0)
-            labels_ex = _distinct_non_numeric_labels(extracted)
-            # Same situations prefer_cell_extracted_rows can choose by_cells:
-            # numeric glue, or too few text labels vs grid width.
-            if glued_ex > 0 or (n_cols >= 4 and labels_ex < max(3, n_cols - 1)):
-                by_cells = extract_pymupdf_table_rows(page, tab)
+    if page is not None and extract_needs_cell_clip(extracted):
+        by_cells = extract_pymupdf_table_rows(page, tab)
     rows = prefer_cell_extracted_rows(extracted, by_cells)
     if not rows:
         return []
@@ -154,20 +142,13 @@ def _run_strategies_on_page(
     return results
 
 
-def extract_pymupdf_chunk(
-    pdf_path: str,
-    pages: List[int],
-    page_text_by_page: Optional[Dict[int, str]] = None,
-) -> List[Dict[str, Any]]:
+def extract_pymupdf_chunk(pdf_path: str, pages: List[int]) -> List[Dict[str, Any]]:
     """Runs pymupdf table-detection strategies over one chunk of pages.
 
     Ruled strategies (lines_strict, lines) always run. The text strategy is
     off by default: text-only pages are dropped by ``filter_candidate_pages``,
     and text clones on ruled pages mainly bloat LLM prompts. Opt back in with
     PDF_EXTRACT_TEXT_STRATEGY=1.
-
-    ``page_text_by_page`` is optional pre-extracted text from classify (same
-    strings); when present, skips a redundant ``page.get_text`` per page.
     """
     import os
 
@@ -178,19 +159,15 @@ def extract_pymupdf_chunk(
     force_text = (os.environ.get("PDF_EXTRACT_TEXT_STRATEGY") or "").strip() in (
         "1", "true", "True", "yes", "YES",
     )
-    text_map = page_text_by_page or {}
 
     doc = pymupdf.open(pdf_path)
     try:
         for page_num in pages:
             page = doc[page_num - 1]
-            if page_num in text_map:
-                page_text = text_map[page_num] or ""
-            else:
-                try:
-                    page_text = page.get_text("text") or ""
-                except Exception:
-                    page_text = ""
+            try:
+                page_text = page.get_text("text") or ""
+            except Exception:
+                page_text = ""
             page_hits = _run_strategies_on_page(
                 page, page_num, page_text, ("lines_strict", "lines"),
             )

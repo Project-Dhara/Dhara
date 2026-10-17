@@ -49,3 +49,37 @@ def test_gappy_index_strip_forces_llm():
     bucket, reason, info = _structural_bucket_for_df(df)
     assert bucket == "llm", (bucket, reason, info)
     assert "gappy" in reason or "empty columns" in reason
+
+
+def test_near_complete_index_strip_does_not_force_sparse_llm():
+    """Non-response annexures: one blank index cell + empty reason columns.
+
+    The 1,2,,4,…,13 strip must be ignored for fill-rate scoring so the page
+    stays high-confidence (LLM reconstruction was inventing merges / columns).
+    """
+    index = [str(i) if i != 3 else None for i in range(1, 14)]
+    body = [
+        [str(i), f"District{i}", "10", "10"] + [None] * 9
+        for i in range(1, 8)
+    ]
+    df = pd.DataFrame(
+        [index] + body,
+        columns=[
+            "Sl No",
+            "Name of District",
+            "Planned",
+            "Analysed",
+            "Prior harvest of the cultivator",
+            "Other Reasons",
+            "Sub Total (5+6)",
+            "Non Availablity of crop",
+            "Unrelailable doubtful data",
+            "Late receipt of returns",
+            "Discrepancy of data",
+            "Sub Total (8+9+10+11)",
+            "Total",
+        ],
+    )
+    bucket, reason, info = _structural_bucket_for_df(df)
+    assert bucket == "high", (bucket, reason, info)
+    assert info["nonempty_ratio"] >= 0.5

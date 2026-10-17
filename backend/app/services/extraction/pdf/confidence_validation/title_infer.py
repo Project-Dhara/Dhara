@@ -72,9 +72,53 @@ _CONTEXT_META_LINE_RE = re.compile(
     re.I,
 )
 
+# Content-addressed upload stems (md5 / sha1 / sha256) and UUIDs.
+_HASH_FILE_STEM_RE = re.compile(r"^[0-9a-f]{32,64}$", re.I)
+_UUID_FILE_STEM_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.I,
+)
+_DOC_FILE_EXT_RE = re.compile(r"\.(pdf|xlsx?|xls|csv|docx?)$", re.I)
+
 def _is_context_meta_line(line: str) -> bool:
     s = _normalize_title_line(line)
     return bool(s) and bool(_CONTEXT_META_LINE_RE.match(s))
+
+
+def _token_is_opaque_upload_filename(token: str) -> bool:
+    """True for hash/UUID upload names like ``cf5033…a1.pdf`` (not real captions)."""
+    t = (token or "").strip().strip(",;:").strip()
+    if not t:
+        return False
+    t = t.replace("\\", "/").split("/")[-1]
+    has_ext = bool(_DOC_FILE_EXT_RE.search(t))
+    stem = _DOC_FILE_EXT_RE.sub("", t) if has_ext else t
+    if not stem:
+        return False
+    if _HASH_FILE_STEM_RE.match(stem) or _UUID_FILE_STEM_RE.match(stem):
+        return True
+    # Long mostly-hex stems from content-addressed storage.
+    alnum = re.sub(r"[^0-9a-z]", "", stem.lower())
+    if len(alnum) >= 24:
+        hexish = sum(1 for c in alnum if c in "0123456789abcdef")
+        if hexish / len(alnum) >= 0.9:
+            return True
+    return False
+
+
+def _title_is_opaque_filename_list(title: str) -> bool:
+    """True when the whole title is one or more opaque upload filenames."""
+    s = _normalize_title_line(title)
+    if not s:
+        return False
+    # "hash.pdf, hash.pdf" / "hash.pdf; hash.pdf"
+    parts = [p.strip() for p in re.split(r"[,;]+", s) if p.strip()]
+    if parts and all(_token_is_opaque_upload_filename(p) for p in parts):
+        return True
+    # Single token (possibly with spaces stripped incorrectly upstream).
+    if _token_is_opaque_upload_filename(s):
+        return True
+    return False
 
 def _line_mentions_column(line: str, col_name: str) -> bool:
     """True when ``col_name`` appears as a whole token/phrase in ``line``.
@@ -92,12 +136,16 @@ def title_looks_like_gibberish(title: Optional[str]) -> bool:
     """True for corrupted / nonsense titles that must never be shown as captions.
 
     Covers private-use glyphs, mojibake, sheet/source meta leftovers, extreme
-    symbol density, and repeated-token spam from bad merge-fill context.
+    symbol density, content-hash upload filenames (``cf5033….pdf``), and
+    repeated-token spam from bad merge-fill context.
     """
     s = _normalize_title_line(title or "")
     if not s:
         return False
     if _is_context_meta_line(s):
+        return True
+    # Uploaded object keys / hashes must never surface as table captions.
+    if _title_is_opaque_filename_list(s):
         return True
     # Private-use / replacement / common mojibake pairs.
     if re.search(r"[\ue000-\uf8ff\ufffd]", s):

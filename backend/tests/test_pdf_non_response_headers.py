@@ -11,7 +11,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.services.extraction.pdf.utils.grid_repair import fold_header_label_wrap_rows
+from app.services.extraction.pdf.utils.grid_repair import (
+    extract_needs_cell_clip,
+    fold_header_label_wrap_rows,
+)
 from app.services.extraction.pdf.utils.header_utils import dataframe_from_extracted_rows
 
 
@@ -79,6 +82,21 @@ def _paths(df):
     return [list(m.get("header_path") or []) for m in meta]
 
 
+def test_cell_clip_gate_ignores_captions_but_catches_glue():
+    caption = [["DISTRICTWISE AREA PRODUCTIVITY AND PRODUCTION OF RICE FOR LOCAL"] + [None] * 5]
+    assert not extract_needs_cell_clip(caption)
+    glued_leaves = [[
+        "Sl No",
+        "District",
+        "Planned",
+        "Analysed Prior harvest of the cultivator Other Reasons",
+        "Total",
+    ]]
+    assert extract_needs_cell_clip(glued_leaves)
+    glued_index = [["1", "2", "3 4 5 6", "7", "8", "9", "10", "11", "12", "13"]]
+    assert extract_needs_cell_clip(glued_index)
+
+
 def test_fold_merges_conducted_due_to_wrap():
     folded = fold_header_label_wrap_rows(_non_response_rows())
     # Wrap row removed; parent cell completed.
@@ -118,22 +136,3 @@ def test_non_response_multilevel_headers():
     assert "Planned" not in body_flat
     assert "conducted due to" not in body_flat
     assert "Thiruvananthapuram" in [str(v) for v in df.iloc[:, 1].tolist()]
-    # Complete 1..13 index strip may stay; first district must still be present.
-    assert str(df.iloc[0, 1]) in {"2", "Thiruvananthapuram"}
-
-
-def test_gappy_index_strip_not_kept_as_body():
-    """Page-1 style ``1,2,,4,…,13`` must not become the first data row."""
-    idx = [str(i) for i in range(1, 14)]
-    idx[2] = None  # missing Planned index "3"
-    out = []
-    for r in _non_response_rows():
-        if r == [str(i) for i in range(1, 14)]:
-            out.append(idx)
-        else:
-            out.append(r)
-    df = dataframe_from_extracted_rows(out)
-    assert str(df.iloc[0, 1]) == "Thiruvananthapuram"
-    assert str(df.iloc[0, 2]) == "90"
-    first = [str(v) for v in df.iloc[0].tolist() if v is not None and str(v) != "nan"]
-    assert "7" not in first and "8" not in first
