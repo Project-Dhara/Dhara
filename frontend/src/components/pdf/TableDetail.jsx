@@ -13,6 +13,7 @@ import {
   closeEditorWindow,
   columnDraftFromTable,
   columnHeaderPath,
+  columnLeafLabel,
   columnParentPath,
   computeFittedColumnLayout,
   displayTitle,
@@ -25,11 +26,14 @@ import {
   notifyTableEdited,
   padRowsToColumns,
   promoteMergeValuesBeforeRowDelete,
+  reconcileBodyMergesWithAutoInfer,
   reorderColumnRange,
   reorderRowRange,
   reshapeRows,
+  resolveDisplayBodySpans,
   resolveEditorBodySpans,
   setHeaderPathLevel,
+  spanDisplayValue,
   tableHasMissingTitle,
   tableSupportsPdfReference,
   tableSupportsStructureEditor,
@@ -85,14 +89,23 @@ export function TableDetail({
     rows: padRowsToColumns(table.rows || [], (table.columns || []).length),
   }))
 
-  const [draft, setDraft] = useState(() => ({
-    title: titleForEdit(table),
-    columns: columnDraftFromTable(table.columns || []),
-    rows: padRowsToColumns(table.rows || [], (table.columns || []).length),
-    cellMerges: Array.isArray(table.cell_merges) ? table.cell_merges.map((m) => ({ ...m })) : [],
-    mergesExplicit: Boolean(table.cell_merges_explicit)
-      || (Array.isArray(table.cell_merges) && table.cell_merges.length > 0),
-  }))
+  const [draft, setDraft] = useState(() => {
+    const columns = columnDraftFromTable(table.columns || [])
+    const rows = padRowsToColumns(table.rows || [], columns.length)
+    const reconciled = reconcileBodyMergesWithAutoInfer(
+      rows,
+      columns,
+      Array.isArray(table.cell_merges) ? table.cell_merges : [],
+      Boolean(table.cell_merges_explicit),
+    )
+    return {
+      title: titleForEdit(table),
+      columns,
+      rows,
+      cellMerges: reconciled.cellMerges,
+      mergesExplicit: reconciled.mergesExplicit,
+    }
+  })
   const [saved, setSaved] = useState(false)
   const [savingEditor, setSavingEditor] = useState(false)
   const [viewAllOpen, setViewAllOpen] = useState(false)
@@ -128,14 +141,23 @@ export function TableDetail({
   // Keep local draft in sync when the table is updated from the full-page editor tab.
   useEffect(() => {
     if (editorOnly) return undefined
-    setDraft((prev) => ({
-      ...prev,
-      columns: columnDraftFromTable(table.columns || []),
-      rows: padRowsToColumns(table.rows || [], (table.columns || []).length),
-      cellMerges: Array.isArray(table.cell_merges) ? table.cell_merges.map((m) => ({ ...m })) : [],
-      mergesExplicit: Boolean(table.cell_merges_explicit)
-        || (Array.isArray(table.cell_merges) && table.cell_merges.length > 0),
-    }))
+    setDraft((prev) => {
+      const columns = columnDraftFromTable(table.columns || [])
+      const rows = padRowsToColumns(table.rows || [], columns.length)
+      const reconciled = reconcileBodyMergesWithAutoInfer(
+        rows,
+        columns,
+        Array.isArray(table.cell_merges) ? table.cell_merges : [],
+        Boolean(table.cell_merges_explicit),
+      )
+      return {
+        ...prev,
+        columns,
+        rows,
+        cellMerges: reconciled.cellMerges,
+        mergesExplicit: reconciled.mergesExplicit,
+      }
+    })
   }, [editorOnly, table.table_id, table.columns, table.rows, table.cell_merges, table.cell_merges_explicit])
 
   const openFullPageEditor = () => {
@@ -254,9 +276,9 @@ export function TableDetail({
       columns: prev.columns.map((c, i) => {
         if (i !== idx) return c
         const header_group = group || null
-        const leaf = c.name || columnHeaderPath(c).slice(-1)[0] || 'Column'
+        const leaf = columnLeafLabel(c)
         const header_path = header_group ? [header_group, leaf] : [leaf]
-        return { ...c, header_group, header_path }
+        return { ...c, name: leaf, header_group, header_path }
       }),
     }), { axis: 'cols', from: null, to: { start: idx, end: idx } })
   }
@@ -270,10 +292,11 @@ export function TableDetail({
         ...prev,
         columns: prev.columns.map((c, i) => {
           if (i !== idx) return c
-          const leaf = c.name || columnHeaderPath(c).slice(-1)[0] || 'Column'
+          const leaf = columnLeafLabel(c)
           const header_path = [...parents, leaf]
           return {
             ...c,
+            name: leaf,
             header_path,
             header_group: parents[parents.length - 1] || null,
           }
@@ -295,7 +318,7 @@ export function TableDetail({
       const colSpan = c1 - c0 + 1
       if (rowSpan <= 1 && colSpan <= 1) return prev
       // First manual merge: lock in any auto-inferred spans so they don't disappear.
-      let nextMerges = prev.mergesExplicit || (prev.cellMerges || []).length > 0
+      let nextMerges = prev.mergesExplicit
         ? (prev.cellMerges || []).map((m) => ({ ...m }))
         : mergesFromSpans(resolveEditorBodySpans(prev.rows, prev.columns, prev.cellMerges, false))
       nextMerges = nextMerges.filter((m) => {
@@ -558,25 +581,13 @@ export function TableDetail({
   const visiblePreviewRows = previewRows.slice(0, previewLimit)
   const hiddenRowCount = Math.max(0, previewRows.length - previewLimit)
   const previewOverflows = !measuringPreview && hiddenRowCount > 0
-  // Clip explicit merges so rowspan stays inside the mounted preview rows.
-  const previewMerges = draft.mergesExplicit || (draft.cellMerges || []).length > 0
-    ? (draft.cellMerges || [])
-      .map((m) => {
-        const r = Number(m.r) || 0
-        const c = Number(m.c) || 0
-        if (r >= previewLimit) return null
-        const rowSpan = Math.min(Math.max(1, Number(m.rowSpan) || 1), previewLimit - r)
-        const colSpan = Math.max(1, Number(m.colSpan) || 1)
-        if (rowSpan <= 1 && colSpan <= 1) return null
-        return { r, c, rowSpan, colSpan }
-      })
-      .filter(Boolean)
-    : []
-  const previewCellSpans = resolveEditorBodySpans(
-    visiblePreviewRows,
+  // Same span resolver as View all / Edit — full grid first, then clip window.
+  const previewCellSpans = resolveDisplayBodySpans(
+    previewRows,
     displayColumns,
-    previewMerges,
+    draft.cellMerges,
     Boolean(draft.mergesExplicit),
+    previewLimit,
   )
   const garbledCellCount = (draft.rows || []).flat().filter((v) => isGarbled(v)).length
   const anyCellGarbled = garbledCellCount > 0
@@ -705,9 +716,7 @@ export function TableDetail({
   const titleDirty = (draft.title || '').trim() !== titleForEdit(table)
   const structureDirty = colsDirty || vsTableColsDirty || rowsDirty || vsTableRowsDirty
     || JSON.stringify(draft.cellMerges || []) !== JSON.stringify(table.cell_merges || [])
-    || Boolean(draft.mergesExplicit) !== Boolean(
-      table.cell_merges_explicit || (Array.isArray(table.cell_merges) && table.cell_merges.length > 0)
-    )
+    || Boolean(draft.mergesExplicit) !== Boolean(table.cell_merges_explicit)
   const canSave = (
     table.human_review_needed
     || tableHasMissingTitle(table)
@@ -732,7 +741,7 @@ export function TableDetail({
       classification: table.classification || {},
       columns,
       rows: padRowsToColumns(draft.rows, columns.length),
-      cell_merges: draft.cellMerges || [],
+      cell_merges: draft.mergesExplicit ? (draft.cellMerges || []) : [],
       cell_merges_explicit: Boolean(draft.mergesExplicit),
       human_review_needed: false,
       human_review_reason: null,
@@ -756,7 +765,7 @@ export function TableDetail({
       title: (draft.title || '').trim() || table.title || null,
       columns,
       rows: padRowsToColumns(draft.rows, columns.length),
-      cell_merges: draft.cellMerges || [],
+      cell_merges: draft.mergesExplicit ? (draft.cellMerges || []) : [],
       cell_merges_explicit: Boolean(draft.mergesExplicit),
       human_review_needed: false,
       human_review_reason: null,
@@ -858,8 +867,8 @@ export function TableDetail({
   }
 
   return (
-    <div className="flex flex-col gap-3 border-t border-line px-3.5 pb-3.5 pt-3">
-      <label className="flex flex-col gap-1">
+    <div className="flex min-w-0 max-w-full flex-col gap-3 border-t border-line px-3.5 pb-3.5 pt-3">
+      <label className="flex min-w-0 flex-col gap-1">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-teal">Table title</span>
         <AutoGrowTextarea
           singleLine
@@ -904,84 +913,94 @@ export function TableDetail({
         </>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
-      <div className="text-[11px] font-bold uppercase tracking-wide text-green">
+      {/* Toolbar stays outside the table scroller so View/Edit never slides off-card. */}
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0 text-[11px] font-bold uppercase tracking-wide text-green">
           Extracted data ({previewRows.length} rows · {columnCount} columns
           {anyCellGarbled ? ` — ${garbledCellCount} cell(s) need review` : ''})
         </div>
         {tableSupportsStructureEditor(table) ? (
-          <Button type="button" variant="primary" size="sm" onClick={openFullPageEditor}>
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            className="flex-none shrink-0"
+            onClick={openFullPageEditor}
+          >
             <Pencil className="h-3.5 w-3.5" strokeWidth={2.25} aria-hidden />
             View/Edit table
           </Button>
         ) : null}
       </div>
-      <div
-        ref={previewClipRef}
-        className={`rounded-xl border border-line ${measuringPreview ? 'overflow-x-auto overflow-y-hidden' : 'overflow-x-auto'}`}
-        style={measuringPreview ? { maxHeight: PREVIEW_MAX_HEIGHT_PX } : undefined}
-      >
-        <table className="w-full table-fixed border-collapse text-[13px]">
-          {previewColLayout.length === columnCount ? (
-            <colgroup>
-              {previewColLayout.map((col, i) => (
-                // minWidth keeps header words intact; overflow-x-auto shows all cols.
-                <col
-                  key={i}
-                  style={{ width: `${col.pct}%`, minWidth: `${col.minCh}ch` }}
-                />
+      {/* min-w-0 keeps wide tables scrolling inside the card instead of growing past the border. */}
+      <div className="relative min-w-0 max-w-full">
+        <div
+          ref={previewClipRef}
+          className={`min-w-0 max-w-full rounded-xl border border-line ${measuringPreview ? 'overflow-x-auto overflow-y-hidden' : 'overflow-x-auto'}`}
+          style={measuringPreview ? { maxHeight: PREVIEW_MAX_HEIGHT_PX } : undefined}
+        >
+          <table className="w-full table-fixed border-collapse text-[13px]">
+            {previewColLayout.length === columnCount ? (
+              <colgroup>
+                {previewColLayout.map((col, i) => (
+                  // minWidth keeps header words intact; overflow-x-auto shows all cols.
+                  <col
+                    key={i}
+                    style={{ width: `${col.pct}%`, minWidth: `${col.minCh}ch` }}
+                  />
+                ))}
+              </colgroup>
+            ) : null}
+            <ExtractedTableHead columns={displayColumns} lockedCols={lockedCols} />
+            <tbody>
+              {visiblePreviewRows.map((row, r) => (
+                <tr key={r}>
+                  {Array.from({ length: columnCount }, (_, c) => {
+                    const span = previewCellSpans[r]?.[c]
+                    if (span == null) return null
+                    const col = displayColumns[c]
+                    const merged = span.rowSpan > 1 || span.colSpan > 1
+                    const numeric = lockedCols[c]
+                    const dense = columnCount >= 10
+                    return (
+                      <td
+                        key={c}
+                        rowSpan={span.rowSpan > 1 ? span.rowSpan : undefined}
+                        colSpan={span.colSpan > 1 ? span.colSpan : undefined}
+                        className={`max-w-0 border border-line ${dense ? 'px-1 py-1' : 'px-2.5 py-1.5'} ${merged ? 'align-middle text-center break-words [overflow-wrap:anywhere]' : 'align-top'} ${!merged && numeric ? 'whitespace-nowrap text-center tabular-nums' : ''} ${!merged && !numeric ? 'break-words [overflow-wrap:anywhere]' : ''}`}
+                      >
+                        <ExtractedDataCell
+                          value={spanDisplayValue(previewRows, r, c, span)}
+                          sourceValue={sourceRowsAligned[r]?.[c]}
+                          col={col}
+                          locked
+                          fitWidth
+                          center={merged}
+                          onChange={() => {}}
+                        />
+                      </td>
+                    )
+                  })}
+                </tr>
               ))}
-            </colgroup>
-          ) : null}
-          <ExtractedTableHead columns={displayColumns} lockedCols={lockedCols} />
-          <tbody>
-            {visiblePreviewRows.map((row, r) => (
-              <tr key={r}>
-                {Array.from({ length: columnCount }, (_, c) => {
-                  const span = previewCellSpans[r]?.[c]
-                  if (span == null) return null
-                  const v = row[c] ?? null
-                  const col = displayColumns[c]
-                  const merged = span.rowSpan > 1 || span.colSpan > 1
-                  const numeric = lockedCols[c]
-                  const dense = columnCount >= 10
-                  return (
-                    <td
-                      key={c}
-                      rowSpan={span.rowSpan > 1 ? span.rowSpan : undefined}
-                      colSpan={span.colSpan > 1 ? span.colSpan : undefined}
-                      className={`max-w-0 border border-line align-top ${dense ? 'px-1 py-1' : 'px-2.5 py-1.5'} ${numeric ? 'whitespace-nowrap text-center tabular-nums' : 'break-words [overflow-wrap:anywhere]'} ${merged ? 'align-middle' : ''}`}
-                    >
-                      <ExtractedDataCell
-                        value={v}
-                        sourceValue={sourceRowsAligned[r]?.[c]}
-                        col={col}
-                        locked
-                        fitWidth
-                        onChange={() => {}}
-                      />
-                    </td>
-                  )
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {previewOverflows && (
-        <div className="mt-1 flex justify-center">
-          <button
-            type="button"
-            onClick={() => setViewAllOpen(true)}
-            className="inline-flex flex-col items-center rounded-full border border-teal bg-sage px-3.5 py-1.5 leading-tight text-teal shadow-[0_1px_3px_rgba(16,64,63,0.12)] transition-colors hover:bg-teal hover:text-cream"
-          >
-            <span className="text-[12px] font-bold">View all</span>
-            <span className="text-[10px] font-semibold tabular-nums opacity-80">
-              (+{hiddenRowCount || 1} more)
-            </span>
-          </button>
+            </tbody>
+          </table>
         </div>
-      )}
+        {previewOverflows ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-2 z-10 flex justify-center px-2">
+            <button
+              type="button"
+              onClick={() => setViewAllOpen(true)}
+              className="pointer-events-auto inline-flex flex-col items-center rounded-full border border-teal bg-sage px-3.5 py-1.5 leading-tight text-teal shadow-[0_1px_3px_rgba(16,64,63,0.12)] transition-colors hover:bg-teal hover:text-cream"
+            >
+              <span className="text-[12px] font-bold">View all</span>
+              <span className="text-[10px] font-semibold tabular-nums opacity-80">
+                (+{hiddenRowCount || 1} more)
+              </span>
+            </button>
+          </div>
+        ) : null}
+      </div>
 
       {viewAllOpen ? (
         <ViewAllTableModal

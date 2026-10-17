@@ -216,6 +216,8 @@ export function ExtractedDataCell({
   locked,
   onChange,
   fitWidth = false,
+  /** Center text (merged body cells: Mean / SD / CV spans). */
+  center = false,
 }) {
   const flagged = isGarbled(sourceValue) || (value == null && col?.input_type === 'dropdown')
   const editable = !locked
@@ -227,12 +229,13 @@ export function ExtractedDataCell({
       : null
   const controlWidth = fitWidth ? 'w-full min-w-0 max-w-full' : 'w-full min-w-[4.5rem]'
   const fitStyle = fitWidth ? { minWidth: 0, width: '100%', maxWidth: '100%' } : undefined
+  const alignClass = center ? 'text-center' : ''
 
   if (editable && (dropdownOptions || directionCol)) {
     const opts = directionCol ? directionSelectOptions(dropdownOptions || col?.input_options) : dropdownOptions
     return (
       <select
-        className={`${controlWidth} box-border rounded-none border-0 bg-transparent px-1 py-0.5 text-[12.5px] outline-none ring-0 focus:outline-none focus:ring-0 ${flagged ? 'bg-[#fff8e1]' : ''} ${dir?.className || ''}`}
+        className={`${controlWidth} box-border rounded-none border-0 bg-transparent px-1 py-0.5 text-[12.5px] outline-none ring-0 focus:outline-none focus:ring-0 ${alignClass} ${flagged ? 'bg-[#fff8e1]' : ''} ${dir?.className || ''}`}
         style={fitStyle}
         value={value ?? ''}
         onChange={(e) => onChange(e.target.value || null)}
@@ -258,7 +261,7 @@ export function ExtractedDataCell({
       <AutoGrowTextarea
         value={text}
         onChange={onChange}
-        className={`${controlWidth} box-border resize-none appearance-none rounded-none border-0 bg-transparent px-1.5 py-1 text-[12.5px] leading-snug [overflow-wrap:anywhere] break-words whitespace-pre-wrap shadow-none outline-none focus-visible:outline-none ${flagged ? 'bg-[#fff8e1]' : ''}`}
+        className={`${controlWidth} box-border resize-none appearance-none rounded-none border-0 bg-transparent px-1.5 py-1 text-[12.5px] leading-snug [overflow-wrap:anywhere] break-words whitespace-pre-wrap shadow-none outline-none focus-visible:outline-none ${alignClass} ${flagged ? 'bg-[#fff8e1]' : ''}`}
         style={fitStyle}
       />
     )
@@ -278,7 +281,7 @@ export function ExtractedDataCell({
   const display = value === null || value === undefined || value === '' ? null : String(value)
   return (
     <span
-      className={`block min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-snug ${display == null ? 'italic text-[#a49c8e]' : 'text-ink'}`}
+      className={`block min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-snug ${alignClass} ${display == null ? 'italic text-[#a49c8e]' : 'text-ink'}`}
       title={display || ''}
     >
       {display == null ? '—' : display}

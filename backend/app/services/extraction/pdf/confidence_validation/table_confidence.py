@@ -9,7 +9,7 @@ backward-compatible imports.
 import math
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import pandas as pd
 
@@ -61,18 +61,29 @@ _CHART_CAPTION_RE = re.compile(
     r"|pie\s*chart"
     r"|bar\s*chart"
     r"|bar\s*graph"
+    r"|percentage\s+of\b"
+    r"|area\s+of\b.+\b(?:in\s*ha|ha)\b"
     r")\b",
     re.I,
 )
 
-def _header_looks_numeric_fragment(name: str) -> bool:
+def _strip_uniquify_header_suffix(name: str) -> str:
+    """Drop pandas-style `` (2)`` / `` (3)`` so chart crumbs stay numeric."""
     s = _cell_str(name)
+    return re.sub(r"\s*\(\d+\)\s*$", "", s).strip()
+
+
+def _header_looks_numeric_fragment(name: str) -> bool:
+    s = _strip_uniquify_header_suffix(name)
     if not s:
         return True
     compact = re.sub(r"[\s,]", "", s)
     if not compact:
         return True
-    if re.fullmatch(r"[\d.\-]+", compact):
+    # Point labels from line/bar charts: 54%, 76.57, 381, Col_12 crumbs.
+    if re.fullmatch(r"\d{1,3}%", compact):
+        return True
+    if re.fullmatch(r"[\d.\-]+%?", compact):
         return True
     # Short digit-heavy crumbs from chart value labels ("83145", "27", "Col_12").
     digits = sum(ch.isdigit() for ch in compact)
@@ -153,11 +164,27 @@ def looks_like_chart_candidate(
 
     cols = [_cell_str(c) for c in cleaned.columns]
     numeric_hdr = sum(1 for c in cols if _header_looks_numeric_fragment(c))
+    percent_hdr = sum(
+        1 for c in cols
+        if re.fullmatch(r"\d{1,3}%", re.sub(r"[\s,]", "", _strip_uniquify_header_suffix(c)))
+    )
     text_hdr = sum(
         1
         for c in cols
         if c and not _header_looks_numeric_fragment(c) and re.search(r"[A-Za-z]{3,}", c)
     )
+    # Body fill — chart extractions are mostly empty under value-label headers.
+    try:
+        total = max(1, n_rows * n_cols)
+        filled = sum(
+            1
+            for i in range(n_rows)
+            for v in cleaned.iloc[i].tolist()
+            if _cell_str(v)
+        )
+        body_fill = filled / total
+    except Exception:
+        body_fill = 1.0
 
     if n_cols < 8 and n_rows >= 3:
         # Compact grids are almost never chart false-positives. Highlighted
@@ -177,6 +204,21 @@ def looks_like_chart_candidate(
     )
     header_smoke = text_hdr <= max(1, n_cols // 20) and numeric_hdr >= max(3, n_cols // 5)
 
+    # Line-chart point labels: one short row of 54%/57%/… crumbs, empty body.
+    if (
+        n_rows <= 3
+        and n_cols >= 6
+        and text_hdr <= 1
+        and numeric_hdr >= max(4, int(n_cols * 0.55))
+        and body_fill <= 0.35
+    ):
+        return True, (
+            f"chart value-label strip {n_rows}x{n_cols} "
+            f"(numeric headers {numeric_hdr}/{n_cols}, fill={body_fill:.2f})"
+        )
+    if percent_hdr >= max(4, int(n_cols * 0.5)) and text_hdr <= 1 and n_rows <= 4:
+        return True, f"percent point-label grid ({percent_hdr}/{n_cols} % headers)"
+
     if wide_sparse and header_smoke:
         return True, (
             f"chart-like grid {n_rows}x{n_cols} "
@@ -185,19 +227,33 @@ def looks_like_chart_candidate(
     # Real wide statistical tables (many named columns) never need drawing scans.
     if text_hdr >= 2 and not wide_sparse:
         return False, ""
-    if not (wide_sparse or header_smoke or (n_cols >= 10 and text_hdr <= 1)):
+    # Bar charts often land as ~8–11 cols of numeric crumbs (not "wide_sparse").
+    crumb_grid = (
+        n_cols >= 8
+        and text_hdr <= 1
+        and numeric_hdr >= max(4, int(n_cols * 0.55))
+        and body_fill <= 0.55
+    )
+    if not (wide_sparse or header_smoke or crumb_grid or (n_cols >= 10 and text_hdr <= 1)):
         return False, ""
 
     fat = _count_fat_rects_in_bbox(page, bbox)
     caption_local = _local_chart_caption(page, bbox)
-    if fat >= 6 and (wide_sparse or header_smoke or caption_local):
+    if fat >= 6 and (wide_sparse or header_smoke or crumb_grid or caption_local):
         return True, f"chart bars in region (fat_rects={fat})"
-    if caption_local and (wide_sparse or header_smoke or fat >= 3):
+    if crumb_grid and fat >= 4:
+        return True, f"numeric-crumb grid with filled bars (fat_rects={fat})"
+    if caption_local and (wide_sparse or header_smoke or crumb_grid or fat >= 3):
         return True, "Graph/Chart caption over non-tabular region"
-    if caption_local and n_cols >= 10 and text_hdr <= 1:
+    if caption_local and n_cols >= 8 and text_hdr <= 1:
         return True, "Graph/Chart caption with label-less wide grid"
     if page_text and _CHART_CAPTION_RE.search(page_text) and wide_sparse and header_smoke:
         return True, "page Graph/Chart caption with chart-like grid"
+    if crumb_grid and header_smoke:
+        return True, (
+            f"chart-like crumb grid {n_rows}x{n_cols} "
+            f"(numeric headers {numeric_hdr}/{n_cols})"
+        )
     return False, ""
 
 def _cell_str(v: Any) -> str:
@@ -234,7 +290,17 @@ def _is_type_placeholder(v: str) -> bool:
 _BARE_INDEX_RE = re.compile(r"^\d{1,2}$")
 
 def _row_values_are_column_index(vals: List[str], n_cols: int) -> bool:
-    """True when a row is a bare 1..N column-number strip under headers."""
+    """True when a row is a bare 1..N column-number strip under headers.
+
+    Also accepts a nearly-complete strip with a small hole (``1,2,,4,…,13``)
+    — vertical-header extracts often drop one index cell, and leaving that
+    row in the profile makes empty reason columns look "active", tanking
+    ``nonempty_ratio`` and forcing a destructive LLM pass.
+    """
+    from app.services.extraction.pdf.utils.caption import (
+        _is_nearly_consecutive_col_index,
+    )
+
     nonempty = [v for v in vals if v]
     if len(nonempty) < max(3, int(n_cols * 0.6)):
         return False
@@ -244,7 +310,11 @@ def _row_values_are_column_index(vals: List[str], n_cols: int) -> bool:
         nums = [int(v) for v in nonempty]
     except ValueError:
         return False
-    return bool(nums) and nums == list(range(1, len(nums) + 1))
+    if not nums:
+        return False
+    if nums == list(range(1, len(nums) + 1)):
+        return True
+    return _is_nearly_consecutive_col_index(nums)
 
 def _df_without_leading_column_index(df: pd.DataFrame) -> pd.DataFrame:
     """Drop a leading 1..N reference strip so it does not skew mixed-type checks.
@@ -270,6 +340,69 @@ _PLACEHOLDER_COL_RE = re.compile(r"^Col_\d+$", re.I)
 def _is_placeholder_column_name(name: str) -> bool:
     s = (name or "").strip()
     return (not s) or bool(_PLACEHOLDER_COL_RE.match(s))
+
+def _row_is_placeholder_only(row: Sequence[Any]) -> bool:
+    """True when every cell is empty or a dash/NA placeholder (no real data)."""
+    if row is None:
+        return True
+    cells = list(row)
+    if not cells:
+        return True
+    for v in cells:
+        s = _cell_str(v)
+        if not s:
+            continue
+        if not _is_type_placeholder(s):
+            return False
+    # All-empty rows are also placeholders (after dropna they are rare).
+    return True
+
+
+def strip_trailing_placeholder_rows(rows: Optional[List[List[Any]]]) -> List[List[Any]]:
+    """Drop a trailing run of dash/NA/empty rows. Mid-table placeholders stay.
+
+    Shared exit gate for auto-accept and LLM paths so ghost rows cannot
+    reappear after attach/restore steps.
+    """
+    if not rows:
+        return []
+    out = [list(r) if isinstance(r, list) else [] for r in rows]
+    while out and _row_is_placeholder_only(out[-1]):
+        out.pop()
+    return out
+
+
+def sanitize_table_trailing_placeholders(table: Dict[str, Any]) -> Dict[str, Any]:
+    """In-place strip of trailing placeholder rows on a table dict."""
+    if not isinstance(table, dict):
+        return table
+    table["rows"] = strip_trailing_placeholder_rows(table.get("rows") or [])
+    return table
+
+
+def _drop_trailing_placeholder_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove dash-only / empty rows glued under the last real totals row.
+
+    LLM reconstruction and loose ruled extracts often invent a block of
+    ``-``/``—`` rows after District Total. Mid-table placeholder rows (e.g.
+    sparse NA measures) are left alone — only a trailing run is trimmed.
+    """
+    if df is None or getattr(df, "empty", True):
+        return df
+    kept = strip_trailing_placeholder_rows(df.values.tolist())
+    if len(kept) == len(df):
+        return df
+    if not kept:
+        # Keep at least the structural frame; never wipe the whole table.
+        return df
+    out = pd.DataFrame(kept, columns=list(df.columns))
+    try:
+        for key, val in getattr(df, "attrs", {}).items():
+            out.attrs[key] = val
+    except Exception:
+        pass
+    return out.reset_index(drop=True)
+
 
 def clean_dataframe_light(df: pd.DataFrame) -> pd.DataFrame:
     """Whitespace-normalize cells, blank out empty strings, drop fully-empty
@@ -309,6 +442,7 @@ def clean_dataframe_light(df: pd.DataFrame) -> pd.DataFrame:
         cleaned.attrs["dhara_table_caption"] = caption
     if banner_id:
         cleaned.attrs["dhara_banner_table_id"] = banner_id
+    cleaned = _drop_trailing_placeholder_rows(cleaned)
     return cleaned
 
 def profile_table(df: pd.DataFrame) -> Dict[str, Any]:
@@ -364,7 +498,11 @@ def profile_table(df: pd.DataFrame) -> Dict[str, Any]:
         nonempty = [v for v in vals if v and not _is_type_placeholder(v)]
         if len(nonempty) < 3:
             continue
-        if _is_stub_code_column(nonempty) or _is_row_label_stub_column(nonempty):
+        if (
+            _is_stub_code_column(nonempty)
+            or _is_row_label_stub_column(nonempty)
+            or _is_identity_stub_column(nonempty)
+        ):
             continue
         numeric_frac = sum(_is_numeric_cell(v) for v in nonempty) / len(nonempty)
         if MIXED_TYPE_LOW < numeric_frac < MIXED_TYPE_HIGH:
@@ -420,10 +558,128 @@ def _is_row_label_stub_column(nonempty: List[str]) -> bool:
         return False
     return codeish >= 2 and (codeish + labelish) == len(nonempty)
 
+
+_TOTAL_LABEL_RE = re.compile(
+    r"(?i)\b(?:grand\s+)?totals?\b|\btotals?\s*$"
+)
+
+
+def _is_identity_stub_column(nonempty: List[str]) -> bool:
+    """Serial + section/total labels share one stub (Block / Sl.No.).
+
+    Panchayat-wise tables park ``1..N``, district banners, and ``X Total`` in
+    the same left column. That looks like a murky numeric/text mix but is a
+    real identity stub — sending it to the LLM invents dash-only ghost rows.
+    Rejects columns that still hold measurement numbers (true misalignment).
+    """
+    if len(nonempty) < 3:
+        return False
+    serials = 0
+    labels = 0
+    for v in nonempty:
+        s = (v or "").strip()
+        if not s:
+            continue
+        if re.fullmatch(r"\d{1,4}", s):
+            # Pure zeros are measure blanks, not row serials.
+            if int(s) == 0:
+                return False
+            serials += 1
+            continue
+        # Any non-serial number (0.00, 56.03, 10000) means this is not a stub.
+        if _is_numeric_cell(s):
+            return False
+        if not re.search(r"[A-Za-z]", s):
+            return False
+        labels += 1
+    if serials < 2 or labels < 1:
+        return False
+    # Prefer stubs that actually carry a Total / section-style label — bare
+    # name lists with a few ints are usually a mis-split measure column.
+    has_totalish = any(_TOTAL_LABEL_RE.search(v) for v in nonempty)
+    has_section = any(
+        re.fullmatch(r"[A-Z][A-Z\s.\-/]{2,}", (v or "").strip())
+        for v in nonempty
+    )
+    return has_totalish or has_section
+
+def _leading_column_index_is_gappy(df: pd.DataFrame) -> bool:
+    """True when a 1..N index strip has empty holes (phantom column split).
+
+    Clean extracts put ``1 2 3 … N`` under every column. Bisected grids leave
+    blanks between numbers (``1 2 3 _ 4 _ 5``) while still listing 1..N — that
+    misaligns every measure row and must not auto-accept.
+    """
+    if df is None or getattr(df, "empty", True) or df.shape[0] < 1 or df.shape[1] < 4:
+        return False
+    row = [_cell_str(v) for v in df.iloc[0].values]
+    nonempty = [v for v in row if v]
+    if len(nonempty) < max(4, int(df.shape[1] * 0.45)):
+        return False
+    if not all(re.fullmatch(r"\d{1,3}", v) for v in nonempty):
+        return False
+    try:
+        nums = [int(v) for v in nonempty]
+    except ValueError:
+        return False
+    if nums != list(range(1, len(nums) + 1)):
+        return False
+    # Perfect dense strip under every column — keep.
+    if len(nonempty) >= int(df.shape[1] * 0.9):
+        return False
+    # 1..N present but with empty interstitial columns.
+    return True
+
+
+def _empty_column_fraction(df: pd.DataFrame) -> float:
+    if df is None or getattr(df, "empty", True) or df.shape[1] < 1:
+        return 0.0
+    empty = 0
+    for i in range(int(df.shape[1])):
+        if not any(_cell_str(v) for v in df.iloc[:, i].tolist()):
+            empty += 1
+    return empty / int(df.shape[1])
+
+
+def _named_empty_columns_look_intentional(df: pd.DataFrame) -> bool:
+    """True when blank columns still have real headers and a dense identity core.
+
+    Non-response annexures leave reason / Sub Total / Total leaves empty when
+    every district responded — that is not a bisected grid. Placeholder
+    ``Col_N`` empties and crumb-numeric headers still fail this check.
+    """
+    if df is None or getattr(df, "empty", True) or df.shape[1] < 4:
+        return False
+    n_rows, n_cols = int(df.shape[0]), int(df.shape[1])
+    empty_idxs = [
+        i for i in range(n_cols)
+        if not any(_cell_str(v) for v in df.iloc[:, i].tolist())
+    ]
+    if not empty_idxs:
+        return True
+    for i in empty_idxs:
+        name = str(df.columns[i] if i < len(df.columns) else "")
+        if _is_placeholder_column_name(name):
+            return False
+        if not re.search(r"[A-Za-z]{3,}", name):
+            return False
+    dense = 0
+    for i in range(n_cols):
+        if i in empty_idxs:
+            continue
+        vals = [_cell_str(v) for v in df.iloc[:, i].tolist()]
+        fill = sum(1 for v in vals if v) / max(n_rows, 1)
+        if fill >= 0.5:
+            dense += 1
+    return dense >= 3
+
+
 def _structural_bucket_for_df(df: pd.DataFrame) -> Tuple[str, str, Dict[str, Any]]:
     """Classify one cleaned DataFrame as high-confidence or needing LLM."""
     primary = clean_dataframe_light(df)
     info = profile_table(primary)
+    info["empty_column_fraction"] = round(_empty_column_fraction(primary), 3)
+    info["gappy_column_index"] = _leading_column_index_is_gappy(primary)
 
     if info["n_rows"] < MIN_ROWS or info["nonempty_ratio"] < MIN_NONEMPTY_RATIO:
         return "llm", "near-empty or sparse lines_strict candidate", info
@@ -433,6 +689,16 @@ def _structural_bucket_for_df(df: pd.DataFrame) -> Tuple[str, str, Dict[str, Any
 
     if info["mixed_type_columns"] > 0:
         return "llm", "column(s) with a murky numeric/text mix, likely misaligned cells", info
+
+    if info["gappy_column_index"]:
+        return "llm", "column-number strip is gappy (phantom column split / misaligned measures)", info
+
+    if info["empty_column_fraction"] >= 0.2 and info["n_cols"] >= 10:
+        # Profile already dropped the leading index strip; reason/Total leaves
+        # that are truly blank are fine when stubs + primary measures are dense.
+        scored = _df_without_leading_column_index(primary)
+        if not _named_empty_columns_look_intentional(scored):
+            return "llm", "many empty columns (likely bisected grid / split numeric cells)", info
 
     if any(str(c).startswith("Col_") for c in primary.columns):
         return "llm", "placeholder column header (blank in the raw table) -- real header likely lives outside the ruled region", info
@@ -490,43 +756,57 @@ def classify_page(candidates: List[Dict[str, Any]]) -> Tuple[str, str, Dict[str,
     label = "lines_strict" if method0 == "pymupdf_lines_strict" else "lines"
     return "high", f"all {label} tables pass structural checks", last_info
 
+def _header_path_key(col: Dict[str, Any]) -> Optional[Tuple[str, ...]]:
+    raw = col.get("header_path")
+    if not isinstance(raw, (list, tuple)):
+        return None
+    key = tuple(str(p).strip() for p in raw if str(p).strip())
+    return key or None
+
+
 def dedupe_column_names(columns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Guarantee unique column names in the output.
+    """Guarantee unique column names when header paths do not already do so.
 
-    A flattened multi-level header (e.g. two "2023-24" leaf columns under
-    different parent groups like "Sanctioned" / "Released") should carry its
-    group in the name, but neither the deterministic (no-LLM) path nor the
-    LLM always does this. Duplicate names corrupt the table for any
-    downstream consumer keyed by column name, so disambiguate deterministically
-    here: prefer the column's own category/header_group as a qualifier,
-    falling back to a plain occurrence suffix. Does not touch already-unique
-    names. Shared by both the auto-accepted (table_dict_from_df) and
-    LLM-validated (_normalize_table) paths so neither can leak duplicates.
+    Multi-level tables often repeat leaf labels (``Total`` under Oil Seeds,
+    Fibre, Plantation). Preview/editor show the path leaf; parent groups
+    disambiguate. Renaming those to ``Total (2)`` / ``Total (3)`` only for
+    pandas uniqueness must not leak into the API ``name`` field.
+
+    When two columns share a name *and* the same (or missing) header_path,
+    disambiguate: prefer category/header_group as a qualifier, else a plain
+    occurrence suffix. Distinct full paths keep the shared leaf name.
+    Shared by auto-accept (table_dict_from_df) and LLM (_normalize_table).
     """
-    seen: Dict[str, int] = {}
-    for col in columns:
+    by_name: Dict[str, List[int]] = {}
+    for i, col in enumerate(columns):
         name = str(col.get("name") or "").strip()
-        seen[name] = seen.get(name, 0) + 1
+        if name:
+            by_name.setdefault(name, []).append(i)
 
-    counters: Dict[str, int] = {}
-    for col in columns:
-        name = str(col.get("name") or "").strip()
-        if not name or seen.get(name, 0) <= 1:
+    for name, idxs in by_name.items():
+        if len(idxs) <= 1:
             continue
-        counters[name] = counters.get(name, 0) + 1
-        if counters[name] == 1:
-            continue  # first occurrence keeps the original name
-        qualifier = col.get("category") or col.get("header_group")
-        if qualifier and str(qualifier).strip().lower() not in name.lower():
-            new_name = f"{name} ({qualifier})"
-        else:
-            new_name = f"{name} ({counters[name]})"
-        col["name"] = new_name
-        col.setdefault("human_review_needed", False)
-        if not col["human_review_needed"]:
-            col["human_review_needed"] = True
-            col["human_review_reason"] = "ambiguous_column"
-            col["input_type"] = col.get("input_type") or "inputbox"
+        paths = [_header_path_key(columns[i]) for i in idxs]
+        # Distinct non-empty paths → groups already disambiguate; keep leaf.
+        if all(p is not None for p in paths) and len(set(paths)) == len(paths):
+            continue
+        counters = 0
+        for i in idxs:
+            counters += 1
+            if counters == 1:
+                continue  # first occurrence keeps the original name
+            col = columns[i]
+            qualifier = col.get("category") or col.get("header_group")
+            if qualifier and str(qualifier).strip().lower() not in name.lower():
+                new_name = f"{name} ({qualifier})"
+            else:
+                new_name = f"{name} ({counters})"
+            col["name"] = new_name
+            col.setdefault("human_review_needed", False)
+            if not col["human_review_needed"]:
+                col["human_review_needed"] = True
+                col["human_review_reason"] = "ambiguous_column"
+                col["input_type"] = col.get("input_type") or "inputbox"
     return columns
 
 def table_dict_from_df(
@@ -570,9 +850,13 @@ def table_dict_from_df(
             header_path = [str(p).strip() for p in raw_path if str(p).strip()]
         if not header_path:
             leaf = str(m.get("name") or name)
+            # DF labels may carry a pandas uniquify suffix — strip for display.
+            leaf = re.sub(r"\s*\(\d+\)\s*$", "", leaf).strip() or leaf
             header_path = [header_group, leaf] if header_group else [leaf]
+        # Prefer path leaf over uniquified DataFrame / meta name ("Total (2)").
+        display_name = header_path[-1] if header_path else str(m.get("name") or name)
         columns.append({
-            "name": str(m.get("name") or name),
+            "name": display_name,
             "header_group": header_group or (header_path[-2] if len(header_path) >= 2 else None),
             "header_path": header_path,
             "role": "unknown",
@@ -624,7 +908,10 @@ def table_dict_from_df(
             "frequency": dict(empty_field), "unit": dict(empty_field),
         },
         "columns": columns,
-        "rows": [[None if v is None else str(v) for v in row] for row in cleaned.values.tolist()],
+        "rows": strip_trailing_placeholder_rows(
+            # cleaned.values can reintroduce float NaN; never emit the "nan" string.
+            [[_cell_str(v) or None for v in row] for row in cleaned.values.tolist()]
+        ),
         "notes": [],
         "uncertain_cells": [],
         "semantic_status": "not_classified",
@@ -638,7 +925,7 @@ def table_dict_from_df(
     banner_id = in_grid_banner_id or banner_from_page
     if banner_id:
         result["banner_table_id"] = banner_id
-    return result
+    return sanitize_table_trailing_placeholders(result)
 
 __all__ = [
     "MIN_NONEMPTY_RATIO",
@@ -649,8 +936,13 @@ __all__ = [
     "_descriptive_line_near_caption_id",
     "_is_caption_id_only",
     "_is_column_group_banner",
+    "_is_identity_stub_column",
     "_is_row_label_stub_column",
     "_is_stub_code_column",
+    "_row_is_placeholder_only",
+    "_drop_trailing_placeholder_rows",
+    "sanitize_table_trailing_placeholders",
+    "strip_trailing_placeholder_rows",
     "_is_weak_inferred_title",
     "_matches_extended_caption",
     "_structural_bucket_for_df",

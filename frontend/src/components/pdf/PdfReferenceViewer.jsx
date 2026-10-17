@@ -5,6 +5,10 @@ import { createPortal } from 'react-dom'
 import { Loader2, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { withAuthHeaders } from '../../lib/auth'
 import Button from '../ui/Button'
+import {
+  resolveDisplayBodySpans,
+  spanDisplayValue,
+} from '../../lib/pdfReviewHelpers'
 import { ExtractedTableHead } from './ExtractedTableGrid'
 
 /** PDF page/table crop for side-by-side review comparison. */
@@ -114,7 +118,10 @@ export function EditorZoomControls({ zoom, onChange, label }) {
 /** Read-only frozen extraction for Original tab. */
 export function OriginalExtractionGrid({ columns, rows, maxRows = 8 }) {
   const cols = columns || []
-  const preview = (rows || []).slice(0, maxRows)
+  const allRows = rows || []
+  const preview = allRows.slice(0, maxRows)
+  // Same display path as preview / view / edit (full-grid resolve, then clip).
+  const spans = resolveDisplayBodySpans(allRows, cols, [], false, preview.length)
   return (
     <div className="overflow-x-auto rounded-lg border border-line bg-white">
       <table className="w-full min-w-[480px] table-fixed border-collapse text-[12.5px]">
@@ -122,18 +129,32 @@ export function OriginalExtractionGrid({ columns, rows, maxRows = 8 }) {
         <tbody>
           {preview.map((row, r) => (
             <tr key={r}>
-              {cols.map((_, c) => (
-                <td key={c} className="max-w-0 border border-line px-2 py-1 break-words [overflow-wrap:anywhere] align-top text-ink">
-                  {row?.[c] == null || row[c] === '' ? <span className="text-[#a49c8e]">—</span> : String(row[c])}
-                </td>
-              ))}
+              {cols.map((_, c) => {
+                const span = spans[r]?.[c]
+                if (span == null) return null
+                const merged = (span.rowSpan || 1) > 1 || (span.colSpan || 1) > 1
+                const value = spanDisplayValue(allRows, r, c, span)
+                const empty = value == null || value === ''
+                return (
+                  <td
+                    key={c}
+                    rowSpan={span.rowSpan > 1 ? span.rowSpan : undefined}
+                    colSpan={span.colSpan > 1 ? span.colSpan : undefined}
+                    className={`max-w-0 border border-line px-2 py-1 break-words [overflow-wrap:anywhere] text-ink ${
+                      merged ? 'align-middle text-center' : 'align-top'
+                    }`}
+                  >
+                    {empty ? <span className="text-[#a49c8e]">—</span> : String(value)}
+                  </td>
+                )
+              })}
             </tr>
           ))}
         </tbody>
       </table>
-      {(rows || []).length > preview.length && (
+      {allRows.length > preview.length && (
         <div className="border-t border-line px-2.5 py-1.5 text-[11px] text-ink-soft">
-          Showing {preview.length} of {rows.length} original rows
+          Showing {preview.length} of {allRows.length} original rows
         </div>
       )}
     </div>

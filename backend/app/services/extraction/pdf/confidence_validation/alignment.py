@@ -543,6 +543,106 @@ def _dataframe_substantive_row_count(df: pd.DataFrame) -> int:
     return _count_substantive_data_rows(df.values.tolist())
 
 
+_SUMMARY_ROW_LABEL_RE = re.compile(
+    r"(?i)\b(?:"
+    r"(?:grand\s+)?totals?|sub[-\s]?totals?|all\s+seasons?|all\s+india|"
+    r"overall|aggregate|combined|average|mean\b"
+    r")\b"
+)
+
+
+def _first_row_label(row: Sequence[Any]) -> str:
+    """Leading identity label for a data row (first non-empty cell)."""
+    for v in row or ():
+        if _cell_is_empty(v):
+            continue
+        s = str(v).strip()
+        if s:
+            return s
+    return ""
+
+
+def _norm_row_label(label: str) -> str:
+    return re.sub(r"\s+", " ", (label or "").strip().lower())
+
+
+def _substantive_row_labels(rows: Sequence[Sequence[Any]]) -> List[str]:
+    labels: List[str] = []
+    for row in rows:
+        if not row or _row_is_column_index_strip(row) or _row_is_placeholder_only(row):
+            continue
+        lab = _first_row_label(row)
+        if lab:
+            labels.append(lab)
+    return labels
+
+
+def _looks_summary_row_label(label: str) -> bool:
+    return bool(label and _SUMMARY_ROW_LABEL_RE.search(label))
+
+
+def _same_width_ruled_candidate(
+    table: Dict[str, Any],
+    matched_cand: Optional[Dict[str, Any]],
+    wide_cand: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Candidate with the same column count as the LLM table (row-integrity checks)."""
+    n = len(table.get("columns") or [])
+    if n <= 0:
+        return None
+    for cand in (matched_cand, wide_cand):
+        if cand is None:
+            continue
+        df = cand.get("df")
+        if df is None or getattr(df, "empty", True):
+            continue
+        if int(df.shape[1]) == n:
+            return cand
+    return None
+
+
+def _llm_missing_summary_or_labeled_rows(
+    rows: Sequence[Sequence[Any]],
+    cand_df: pd.DataFrame,
+) -> bool:
+    """True when the ruled grid has summary/identity labels the LLM omitted."""
+    if cand_df is None or getattr(cand_df, "empty", True):
+        return False
+    llm_norms = {_norm_row_label(x) for x in _substantive_row_labels(rows)}
+    llm_norms.discard("")
+    if not llm_norms:
+        return False
+    cand_labels = _substantive_row_labels(cand_df.values.tolist())
+    missing = []
+    for lab in cand_labels:
+        key = _norm_row_label(lab)
+        if not key or key in llm_norms:
+            continue
+        # Fuzzy: "TOTAL (URBAN)" vs truncated "TOTAL"
+        if any(key in lk or lk in key for lk in llm_norms if len(lk) >= 4):
+            continue
+        missing.append(lab)
+    if not missing:
+        return False
+    # Require at least one missing label to look like a TOTAL/summary/footer,
+    # or ≥2 distinct identity labels dropped (mid-table block).
+    if any(_looks_summary_row_label(m) for m in missing):
+        return True
+    return len(missing) >= 2
+
+
+def _structure_issue_needs_wide_grid(issues: List[Dict[str, Any]]) -> bool:
+    """True for collapsed/stub/sparse structure — not same-width missing-rows."""
+    for i in issues:
+        if i.get("kind") != "structure":
+            continue
+        detail = str(i.get("detail") or "").lower()
+        if detail.startswith("missing data rows"):
+            continue
+        return True
+    return False
+
+
 def _best_lines_strict_candidate(candidates: Optional[List[Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
     """Prefer lines_strict; fall back to looser lines (not text) when strict missed.
 
@@ -718,6 +818,7 @@ def _uncertain_note_is_alignment_mismatch(note: Any) -> bool:
         "multi-level headers may have been collapsed",
         "leading s.no./name columns were dropped",
         "sparse reconstruction",
+        "missing data rows",
         "title or caption line may have been treated as column headers",
         "column layout check found",
         "looks like a value column but is mostly empty",
@@ -761,43 +862,63 @@ def _apply_column_alignment_guard(
     wide_cand = _best_lines_strict_candidate(candidates) if candidates else None
     best_cand = matched_cand or wide_cand
     structure_cand = wide_cand or matched_cand
+    # Row-count / fill checks must use a same-width grid. Comparing a complete
+    # 7-col season table to an unrelated 15-col table on the same page causes
+    # false "too few columns" / wrong rebuilds.
+    row_cand = _same_width_ruled_candidate(table, matched_cand, wide_cand)
     if structure_cand is not None:
         cand_ncols = int(structure_cand["df"].shape[1])
-        if cand_ncols >= 2 and len(columns) >= max(6, cand_ncols * 2):
+        llm_ncols = len(columns)
+        same_width_match = (
+            matched_cand is not None
+            and matched_cand is not structure_cand
+            and int(matched_cand["df"].shape[1]) == llm_ncols
+        )
+        if cand_ncols >= 2 and llm_ncols >= max(6, cand_ncols * 2):
             issues.append({
                 "col_index": -1, "name": "(table structure)", "kind": "structure",
                 "pattern": "structure",
                 "detail": (
-                    f"Too many columns ({len(columns)} vs ~{cand_ncols} in the PDF grid) "
+                    f"Too many columns ({llm_ncols} vs ~{cand_ncols} in the PDF grid) "
                     "— a title/caption may have been treated as headers."
                 ),
             })
-        elif cand_ncols >= 4 and len(columns) <= max(2, cand_ncols // 2):
+        elif (
+            cand_ncols >= 4
+            # Strict < half: equality (7 vs 15) is a different same-page table,
+            # not a collapsed header of the wide grid.
+            and llm_ncols < max(3, cand_ncols // 2)
+            and not (
+                same_width_match
+                and not _llm_missing_identity_stubs(table, structure_cand)
+                and not _llm_starts_at_sex_column(columns)
+            )
+        ):
             issues.append({
                 "col_index": -1, "name": "(table structure)", "kind": "structure",
                 "pattern": "structure",
                 "detail": (
-                    f"Too few columns ({len(columns)} vs ~{cand_ncols} in the PDF grid) "
+                    f"Too few columns ({llm_ncols} vs ~{cand_ncols} in the PDF grid) "
                     "— multi-level headers may have been collapsed."
                 ),
             })
         elif (
-            cand_ncols >= len(columns) + 2
+            cand_ncols >= llm_ncols + 2
             and _llm_missing_identity_stubs(table, structure_cand)
         ):
             issues.append({
                 "col_index": -1, "name": "(table structure)", "kind": "structure",
                 "pattern": "structure",
                 "detail": (
-                    f"Too few columns ({len(columns)} vs ~{cand_ncols} in the PDF grid) "
+                    f"Too few columns ({llm_ncols} vs ~{cand_ncols} in the PDF grid) "
                     "— leading S.No./Name columns were dropped from the reconstruction."
                 ),
             })
-        else:
+        elif row_cand is not None:
             # Same width but hollow body: LLM kept headers/S.No. labels while
             # dropping most measure rows (blank mid-table, values dumped at end).
             llm_body = _table_body_fill_ratio(columns, rows)
-            cand_body = _dataframe_body_fill_ratio(structure_cand["df"])
+            cand_body = _dataframe_body_fill_ratio(row_cand["df"])
             empty_frac = _empty_row_fraction(rows)
             if (
                 len(rows) >= 8
@@ -820,15 +941,17 @@ def _apply_column_alignment_guard(
                 # LLM dropped whole data rows (e.g. footer TOTAL) or left
                 # placeholder-only ghosts while the ruled grid is complete.
                 llm_n = _count_substantive_data_rows(rows)
-                cand_n = _dataframe_substantive_row_count(structure_cand["df"])
+                cand_n = _dataframe_substantive_row_count(row_cand["df"])
                 blank_measure_hit = any(
                     i.get("pattern") == "empty_measure" for i in issues
                 )
-                # +2 alone is enough; +1 also fires when a measure col is blank
-                # (Vital Stats: missing TOTAL row with wiped Total column).
-                if cand_n >= 4 and (
-                    cand_n >= llm_n + 2
+                labeled_gap = _llm_missing_summary_or_labeled_rows(rows, row_cand["df"])
+                # +2 alone is enough; +1 when a measure col is blank (Vital Stats)
+                # or when a TOTAL/summary / labeled mid-table row is missing.
+                if cand_n >= 3 and (
+                    (cand_n >= 4 and cand_n >= llm_n + 2)
                     or (blank_measure_hit and cand_n >= llm_n + 1)
+                    or (labeled_gap and cand_n >= llm_n + 1)
                 ):
                     issues.append({
                         "col_index": -1, "name": "(table structure)", "kind": "structure",
@@ -876,10 +999,22 @@ def _apply_column_alignment_guard(
     fallback_used = False
     if (severe or has_blank_measure) and candidates:
         cand, cand_idx = matched_cand, matched_idx
-        # Structure repairs (dropped stubs / collapsed headers) must use the
-        # widest ruled grid, not a fragment that matches the LLM's wrong width.
-        if (has_structure_issue or has_blank_measure) and wide_cand is not None:
+        # Collapsed headers / dropped stubs / sparse bodies need the widest
+        # ruled grid. Same-width missing-row repairs must keep the matched
+        # table — never steal an unrelated wider grid from the same page.
+        needs_wide = _structure_issue_needs_wide_grid(issues) or (
+            has_blank_measure and row_cand is None
+        )
+        if needs_wide and wide_cand is not None:
             cand = wide_cand
+            cand_idx = None
+            if candidates:
+                for i, c in enumerate(candidates):
+                    if c is cand:
+                        cand_idx = i
+                        break
+        elif (has_structure_issue or has_blank_measure) and row_cand is not None:
+            cand = row_cand
             cand_idx = None
             if candidates:
                 for i, c in enumerate(candidates):
@@ -909,6 +1044,7 @@ def _apply_column_alignment_guard(
                 cand_fill >= 0.5 and cand_fill > llm_fill + 0.25
             )
             if take_fallback:
+                target_row_n = _dataframe_substantive_row_count(cand["df"])
                 fallback = table_dict_from_df(
                     cand["df"],
                     method=str(cand.get("method") or "pymupdf_lines_strict"),
@@ -925,32 +1061,73 @@ def _apply_column_alignment_guard(
                     f"(grid fill {cand_fill:.0%}; earlier reconstruction {llm_fill:.0%}). "
                     "Verify values sit under the right headers."
                 )
-                notes.append(fallback_note)
-                uncertain.append(fallback_note)
                 fallback_used = True
                 table["_skip_structure_attach"] = True
                 if used_candidates is not None and cand_idx is not None:
                     used_candidates.add(cand_idx)
-                # Re-detect on fallback grid (usually clean); keep prior notes.
+                # Re-detect on the ruled grid we just adopted. Pre-fallback notes
+                # ("Missing data rows…", layout mismatch) describe the LLM grid
+                # that no longer exists — drop them. Only residual problems on
+                # the rebuilt grid (e.g. still-blank measures) need review.
                 issues = _detect_column_alignment_issues(table["columns"], table["rows"])
-                if not any(i.get("pattern") == "empty_measure" for i in issues):
-                    # Drop stale "Blank value column: TOTAL" notes the rebuild fixed.
-                    def _is_blank_col_note(n: Any) -> bool:
-                        return isinstance(n, str) and n.lower().startswith("blank value column")
-                    notes = [n for n in notes if not _is_blank_col_note(n)]
-                    uncertain = [u for u in uncertain if not _is_blank_col_note(u)]
-                    # Keep the rebuild explanation.
+                final_n = _count_substantive_data_rows(table["rows"])
+                rebuild_incomplete = (
+                    target_row_n >= 3 and final_n + 1 < target_row_n
+                )
+
+                def _is_alignment_guard_note(n: Any) -> bool:
+                    if not isinstance(n, str):
+                        return False
+                    s = n.lower()
+                    if s.startswith("column layout check found"):
+                        return True
+                    if s.startswith("blank value column"):
+                        return True
+                    if s.startswith("missing data rows"):
+                        return True
+                    return _uncertain_note_is_alignment_mismatch(n)
+
+                notes = [n for n in notes if not _is_alignment_guard_note(n)]
+                uncertain = [u for u in uncertain if not _is_alignment_guard_note(u)]
+                if issues or rebuild_incomplete:
+                    for note in _summarize_alignment_issue_notes(issues):
+                        if note not in uncertain:
+                            uncertain.append(note)
+                    if rebuild_incomplete:
+                        incomplete_note = (
+                            f"Missing data rows ({final_n} kept vs ~{target_row_n} in the PDF grid) "
+                            "— a TOTAL/summary or mid-table block was dropped."
+                        )
+                        if incomplete_note not in uncertain:
+                            uncertain.append(incomplete_note)
+                    residual_summary = (
+                        f"Column layout check found {max(len(issues), 1)} issue(s); "
+                        "values may be shifted under the wrong headers."
+                    )
+                    if residual_summary not in notes:
+                        notes.append(residual_summary)
                     if fallback_note not in notes:
                         notes.append(fallback_note)
                     if fallback_note not in uncertain:
                         uncertain.append(fallback_note)
-                if issues:
                     for idx, col in enumerate(table["columns"]):
                         if idx in {i["col_index"] for i in issues}:
                             col["human_review_needed"] = True
                             col["human_review_reason"] = "column_alignment_mismatch"
                             if col.get("input_type") is None:
                                 col["input_type"] = "inputbox"
+                    if rebuild_incomplete and table["columns"]:
+                        if not any(
+                            c.get("human_review_reason") == "column_alignment_mismatch"
+                            for c in table["columns"]
+                        ):
+                            table["columns"][0]["human_review_needed"] = True
+                            table["columns"][0]["human_review_reason"] = (
+                                "column_alignment_mismatch"
+                            )
+                            table["columns"][0]["input_type"] = (
+                                table["columns"][0].get("input_type") or "inputbox"
+                            )
 
     if not fallback_used:
         # Ensure at least one column carries the reason for derive_* rollup.

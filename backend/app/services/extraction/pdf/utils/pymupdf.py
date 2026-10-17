@@ -228,6 +228,32 @@ def _candidate_grid_score(cand: Dict[str, Any]) -> Tuple[int, int, int]:
     return (n_cols, n_rows * n_cols, method_bonus)
 
 
+def _cell_nonempty(v: Any) -> bool:
+    if v is None:
+        return False
+    if isinstance(v, float) and pd.isna(v):
+        return False
+    s = str(v).strip()
+    return bool(s) and s.lower() not in {"nan", "none", "<na>"}
+
+
+def _candidate_fill_density(cand: Dict[str, Any]) -> float:
+    """Share of non-empty cells — phantom-wide grids score much lower."""
+    df = cand.get("df")
+    if df is None or getattr(df, "empty", True):
+        return 0.0
+    n_rows, n_cols = int(df.shape[0]), int(df.shape[1])
+    total = n_rows * n_cols
+    if total <= 0:
+        return 0.0
+    filled = 0
+    for i in range(n_cols):
+        for v in df.iloc[:, i].tolist():
+            if _cell_nonempty(v):
+                filled += 1
+    return filled / total
+
+
 def _is_substantially_richer(challenger: Dict[str, Any], incumbent: Dict[str, Any]) -> bool:
     """True when challenger is clearly the full table and incumbent a fragment.
 
@@ -237,10 +263,20 @@ def _is_substantially_richer(challenger: Dict[str, Any], incumbent: Dict[str, An
     """
     sc = _candidate_grid_score(challenger)
     si = _candidate_grid_score(incumbent)
-    if sc[0] >= si[0] + 3 and sc[1] > si[1]:
-        return True
+    dens_c = _candidate_fill_density(challenger)
+    dens_i = _candidate_fill_density(incumbent)
+    # Wider + emptier = bisected/phantom columns (land-use 29-col lines vs
+    # clean 18-col lines_strict). Require density to stay within ~10%.
+    if sc[0] > si[0] and dens_c + 0.02 < dens_i * 0.9:
+        return False
+    # Extra columns only count when they add real cells. A looser strategy
+    # that bisects the same ruled cells (Wet in one column, its values in the
+    # next) is wider on paper but not a fuller table — and it must not replace
+    # a clean lines_strict grid.
+    if sc[0] >= si[0] + 3 and sc[1] >= si[1] * 1.35 and sc[1] > si[1]:
+        return dens_c + 0.02 >= dens_i * 0.9
     if sc[0] > si[0] and sc[1] >= max(si[1] * 2, si[1] + 20):
-        return True
+        return dens_c + 0.02 >= dens_i * 0.9
     if sc[0] == si[0] and sc[1] >= si[1] * 2 + 10:
         return True
     return False

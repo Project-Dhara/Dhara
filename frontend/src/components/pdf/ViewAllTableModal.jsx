@@ -7,7 +7,8 @@ import Button from '../ui/Button'
 import {
   computeFittedColumnLayout,
   displayTitle,
-  resolveEditorBodySpans,
+  resolveDisplayBodySpans,
+  spanDisplayValue,
 } from '../../lib/pdfReviewHelpers'
 import { ExtractedDataCell, ExtractedTableHead } from './ExtractedTableGrid'
 
@@ -28,7 +29,7 @@ export function ViewAllTableModal({
   const [mounted, setMounted] = useState(false)
   const columnCount = (columns || []).length
   const title = displayTitle(table) || 'Table preview'
-  const spans = resolveEditorBodySpans(rows, columns, cellMerges, mergesExplicit)
+  const spans = resolveDisplayBodySpans(rows, columns, cellMerges, mergesExplicit)
   const colLayout = computeFittedColumnLayout(columns, rows)
 
   useEffect(() => {
@@ -103,7 +104,6 @@ export function ViewAllTableModal({
                   {Array.from({ length: columnCount }, (_, c) => {
                     const span = spans[r]?.[c]
                     if (span == null) return null
-                    const v = row?.[c] ?? null
                     const col = columns[c]
                     const merged = span.rowSpan > 1 || span.colSpan > 1
                     const numeric = lockedCols[c]
@@ -113,14 +113,15 @@ export function ViewAllTableModal({
                         key={c}
                         rowSpan={span.rowSpan > 1 ? span.rowSpan : undefined}
                         colSpan={span.colSpan > 1 ? span.colSpan : undefined}
-                        className={`max-w-0 border border-line align-top ${dense ? 'px-1 py-1' : 'px-2 py-1.5'} ${numeric ? 'whitespace-nowrap text-center tabular-nums' : 'break-words [overflow-wrap:anywhere]'} ${merged ? 'align-middle' : ''}`}
+                        className={`max-w-0 border border-line ${dense ? 'px-1 py-1' : 'px-2 py-1.5'} ${merged ? 'align-middle text-center break-words [overflow-wrap:anywhere]' : 'align-top'} ${!merged && numeric ? 'whitespace-nowrap text-center tabular-nums' : ''} ${!merged && !numeric ? 'break-words [overflow-wrap:anywhere]' : ''}`}
                       >
                         <ExtractedDataCell
-                          value={v}
+                          value={spanDisplayValue(rows, r, c, span)}
                           sourceValue={sourceRows?.[r]?.[c]}
                           col={col}
                           locked
                           fitWidth
+                          center={merged}
                           onChange={() => {}}
                         />
                       </td>

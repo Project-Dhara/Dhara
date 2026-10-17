@@ -16,6 +16,46 @@ _COL_NUM_RE = re.compile(r"^\(\d+\)$")
 
 _BARE_INDEX_RE = re.compile(r"^\d{1,2}$")
 
+def _is_nearly_consecutive_col_index(nums: Sequence[int]) -> bool:
+    """True for 1..N with at most a small gap (PyMuPDF often drops one index)."""
+    if len(nums) < 3:
+        return False
+    if min(nums) != 1:
+        return False
+    if len(nums) != len(set(nums)):
+        return False
+    hi = max(nums)
+    present = set(nums)
+    if len(present) < max(3, int(0.75 * hi)):
+        return False
+    missing = set(range(1, hi + 1)) - present
+    return len(missing) <= max(1, hi // 10)
+
+
+def _col_index_nums_from_row(row: Sequence[Any]) -> Optional[List[int]]:
+    """Parse bare / lightly glued column-index tokens from a row."""
+    nums: List[int] = []
+    for v in row:
+        s = _cell_str(v)
+        if not s:
+            continue
+        if _COL_NUM_RE.match(s):
+            try:
+                nums.append(int(s.strip("()")))
+            except ValueError:
+                return None
+            continue
+        if _BARE_INDEX_RE.match(s):
+            nums.append(int(s))
+            continue
+        parts = s.split()
+        if len(parts) >= 2 and all(_BARE_INDEX_RE.match(p) for p in parts):
+            nums.extend(int(p) for p in parts)
+            continue
+        return None
+    return nums
+
+
 def _row_is_column_number_strip(row: Sequence[Any], n_cols: int) -> bool:
     """True for '(1)(2)(3)' or bare 1..N reference strips under headers."""
     non_empty = [v for v in row if _cell_str(v)]
@@ -24,15 +64,13 @@ def _row_is_column_number_strip(row: Sequence[Any], n_cols: int) -> bool:
     paren_hits = sum(1 for v in non_empty if _COL_NUM_RE.match(_cell_str(v)))
     if paren_hits > len(non_empty) * 0.5:
         return True
-    if len(non_empty) < max(3, int(n_cols * 0.6)):
+    nums = _col_index_nums_from_row(row)
+    if not nums or len(nums) < max(3, int(n_cols * 0.55)):
         return False
-    if not all(_BARE_INDEX_RE.match(_cell_str(v)) for v in non_empty):
-        return False
-    try:
-        nums = [int(_cell_str(v)) for v in non_empty]
-    except ValueError:
-        return False
-    return bool(nums) and nums == list(range(1, len(nums) + 1))
+    if nums == list(range(1, len(nums) + 1)):
+        return True
+    # e.g. 1,2,,4,…,13 when column 3's index cell was blank in the extract.
+    return _is_nearly_consecutive_col_index(nums)
 
 _OPEN_CODE_RE = re.compile(r"^[<>]=?\s*\d+\+?$|^\d+\+$")
 

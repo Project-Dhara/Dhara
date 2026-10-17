@@ -38,6 +38,7 @@ from app.services.extraction.pdf.utils.pymupdf import (
 )
 from app.services.extraction.pdf.confidence_validation.table_confidence import (
     dedupe_column_names,
+    sanitize_table_trailing_placeholders,
     table_dict_from_df,
 )
 
@@ -925,10 +926,15 @@ def _stamp_llm_metadata(
                     if c.get("source_file") and not normalized.get("source_file"):
                         normalized["source_file"] = c.get("source_file")
                     break
+        # Final gate: attach/restore can reintroduce dash-only ghosts. Strip
+        # them before review is derived so they never flag Needs Review.
+        sanitize_table_trailing_placeholders(normalized)
         normalized["human_review_needed"], normalized["human_review_reason"] = derive_human_review_needed(normalized)
         tables.append(normalized)
 
     tables = _recover_missing_ruled_tables(
         tables, candidates, page_num, page_text, used_candidates
     )
+    for recovered in tables:
+        sanitize_table_trailing_placeholders(recovered)
     return {"tables": tables}

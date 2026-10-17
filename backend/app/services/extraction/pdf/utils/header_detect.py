@@ -10,13 +10,19 @@ from app.services.extraction.pdf.utils.caption import (
     _COL_NUM_RE,
     _LEAF_MAX_LEN,
     _TABLE_BANNER_RE,
+    _UNIT_GROUP_RE,
     _blank,
     _cell_str,
+    _is_descriptive_in_grid_title,
     _is_leaf_header_token,
     _is_measurement_number,
     _is_numeric_cell,
+    _is_table_id_only,
     _is_year_code,
+    _looks_like_column_list_banner,
     _pad_row,
+    _row_banner_label,
+    _row_is_column_number_strip,
     _row_is_full_width_banner,
 )
 
@@ -147,6 +153,20 @@ def _row_is_subheader(
     short = sum(1 for v in non_empty if len(_cell_str(v)) <= 40)
     return short >= max(1, int(len(non_empty) * 0.7))
 
+def _row_is_header_metadata_strip(row: Sequence[Any]) -> bool:
+    """True when every non-empty cell is Name of Crop / Season / Appendix metadata."""
+    labels = [_cell_str(v) for v in row if _cell_str(v)]
+    return bool(labels) and all(_is_header_metadata_label(lab) for lab in labels)
+
+
+def _row_is_column_title_banner(row: Sequence[Any]) -> bool:
+    """Lone District / Sl.No row parked under a multi-level header — keep in resolve."""
+    if not _row_is_full_width_banner(row):
+        return False
+    label = _row_banner_label(row) or ""
+    return bool(_COLUMN_TITLE_LABEL_RE.match(label.strip()))
+
+
 def resolve_column_headers(header_matrix: List[List[Any]], n_cols: int) -> List[dict]:
     """
     Resolve multi-row headers into a full top→leaf path per column.
@@ -156,11 +176,21 @@ def resolve_column_headers(header_matrix: List[List[Any]], n_cols: int) -> List[
       header_group  – immediate parent (compat; None if single-level)
       header_path   – full hierarchy ["L1", "L2", …, leaf] (length 1..N)
     """
-    rows_in = [r for r in header_matrix if not _row_is_full_width_banner(r)]
+    # Keep lone column-title banners (District). Drop caption / section banners.
+    rows_in = [
+        r
+        for r in header_matrix
+        if (not _row_is_full_width_banner(r)) or _row_is_column_title_banner(r)
+    ]
     if not rows_in:
         rows_in = list(header_matrix)
 
+    # Prefer a structural parent row over crop/season/appendix metadata strips.
     raw_top = _pad_row(rows_in[0], n_cols) if rows_in else []
+    for r in rows_in:
+        if not _row_is_header_metadata_strip(r) and not _row_is_column_title_banner(r):
+            raw_top = _pad_row(r, n_cols)
+            break
     kinds = _parent_col_kinds(raw_top) if rows_in else []
 
     rows = _fill_header_matrix(rows_in, n_cols)
@@ -179,6 +209,8 @@ def resolve_column_headers(header_matrix: List[List[Any]], n_cols: int) -> List[
                 continue
             if _TABLE_BANNER_RE.match(lab.strip()):
                 continue
+            if _is_header_metadata_label(lab):
+                continue
             if path and path[-1].upper() == lab.upper():
                 continue
             path.append(lab)
@@ -187,14 +219,94 @@ def resolve_column_headers(header_matrix: List[List[Any]], n_cols: int) -> List[
             path = [f"Col_{i + 1}"]
 
         kind = kinds[i] if i < len(kinds) else "stub"
+        # Sl.No left-fill into a District column yields two identity titles — keep the deepest.
+        title_idxs = [
+            j for j, p in enumerate(path) if _COLUMN_TITLE_LABEL_RE.match(p.strip())
+        ]
+        if len(title_idxs) >= 2:
+            path = [path[title_idxs[-1]]]
         # Identity/stub columns must stay single-level even if a leaf token spilled under them.
-        if kind == "stub" and len(path) > 1 and path[0].upper() != path[-1].upper():
-            path = [path[0]]
+        elif kind == "stub" and len(path) > 1 and path[0].upper() != path[-1].upper():
+            # Prefer a later column-title leaf (District parked under a Sl.No rowspan).
+            if _COLUMN_TITLE_LABEL_RE.match(path[-1].strip()):
+                path = [path[-1]]
+            else:
+                path = [path[0]]
 
         name = path[-1]
         group = path[-2] if len(path) >= 2 else None
         out.append({"name": name, "header_group": group, "header_path": path})
-    return _recover_colspan_leaf_names(out, kinds)
+    out = _recover_colspan_leaf_names(out, kinds)
+    return _repair_irrigation_stack_header_paths(out)
+
+def _repair_irrigation_stack_header_paths(resolved: List[dict]) -> List[dict]:
+    """Attach orphan Exp/Productivity/Area/Error/Production leaves to Irrigated stacks.
+
+    PyMuPDF often parks ``Season`` / ``Appendix`` metadata so the 5th leaf under
+    Irrigated / Un Irrigated / Total loses its parent. Forward-fill the active
+    stack group across consecutive measure leaves (max 5 per group).
+    """
+    if not resolved:
+        return resolved
+    out = [dict(c) for c in resolved]
+    last_group: Optional[str] = None
+    stack_count = 0
+    for i, col in enumerate(out):
+        path = [str(p) for p in (col.get("header_path") or []) if str(p).strip()]
+        if not path:
+            path = [str(col.get("name") or f"Col_{i + 1}")]
+        leaf = path[-1]
+        group_labels = [
+            _normalize_irrigation_stack_group(p)
+            for p in path[:-1]
+            if _IRRIGATION_STACK_GROUP_RE.match(p)
+        ]
+        if group_labels:
+            last_group = group_labels[-1]
+            stack_count = 1 if _is_irrigation_stack_leaf(leaf) else 0
+            # Drop non-stack parents; keep Irrigated|Un Irrigated|Total + leaf.
+            if _is_irrigation_stack_leaf(leaf):
+                path = [last_group, leaf]
+            else:
+                path = [p for p in path if not _is_header_metadata_label(p)]
+                if not path:
+                    path = [leaf]
+            out[i] = {
+                "name": path[-1],
+                "header_group": path[-2] if len(path) >= 2 else None,
+                "header_path": path,
+            }
+            continue
+
+        if (
+            _is_irrigation_stack_leaf(leaf)
+            and last_group
+            and stack_count > 0
+            and stack_count < 5
+        ):
+            path = [last_group, leaf]
+            stack_count += 1
+            out[i] = {
+                "name": leaf,
+                "header_group": last_group,
+                "header_path": path,
+            }
+            continue
+
+        # Stub / non-stack column — reset so the next Irrigated block starts clean.
+        if not _is_irrigation_stack_leaf(leaf):
+            last_group = None
+            stack_count = 0
+        path = [p for p in path if not _is_header_metadata_label(p)]
+        if not path:
+            path = [leaf]
+        out[i] = {
+            "name": path[-1],
+            "header_group": path[-2] if len(path) >= 2 else None,
+            "header_path": path,
+        }
+    return out
+
 
 def _default_order_leaf_labels(n: int) -> List[str]:
     """Synthetic 1..8, >8, All… labels when a spanning group has no leaf row."""
@@ -335,6 +447,95 @@ def _row_is_leaf_header(
 
 _MAX_HEADER_ROWS = 8
 
+def _is_caption_banner_label(label: str) -> bool:
+    """Table id, title, unit, or column-list banners — not in-body section rows."""
+    s = _cell_str(label)
+    if not s:
+        return False
+    if _is_table_id_only(s) or _TABLE_BANNER_RE.match(s):
+        return True
+    if _UNIT_GROUP_RE.match(s):
+        return True
+    if _is_descriptive_in_grid_title(s):
+        return True
+    if _looks_like_column_list_banner(s):
+        return True
+    return False
+
+
+# Crop / season / appendix strips parked in the header grid — metadata, not
+# column parents (otherwise Preview shows "NAME OF CROP: PADDY" as L1).
+_HEADER_METADATA_LABEL_RE = re.compile(
+    r"(?i)^\s*(?:"
+    r"name\s+of\s+crop\b|"
+    r"season\s*:?-?|"
+    r"appendix\s*:?"
+    r")"
+)
+
+# Lone "District" / "Sl.No" under the header is a column title, not a body band.
+_COLUMN_TITLE_LABEL_RE = re.compile(
+    r"(?i)^\s*(?:"
+    r"sl\.?\s*no\.?|s\.?\s*no\.?|sno|"
+    r"district|name\s+of\s+(?:the\s+)?(?:district|block|state|panchayat)|"
+    r"block|state|particulars|indicator|crop"
+    r")\s*$"
+)
+
+_IRRIGATION_STACK_GROUP_RE = re.compile(
+    r"(?i)^\s*(?:un\s*-?\s*)?irrigated\s*$|^\s*total\s*$"
+)
+_IRRIGATION_STACK_LEAF_RE = re.compile(
+    r"(?i)(?:"
+    r"no\.?\s*of\s*exp|"
+    r"productivity|"
+    r"area\s*\(|"
+    r"sampling\s*error|"
+    r"production\s+of\s+rice"
+    r")"
+)
+
+
+def _is_header_metadata_label(label: str) -> bool:
+    """True for Name of Crop / Season / Appendix cells — keep out of header_path."""
+    return bool(_HEADER_METADATA_LABEL_RE.match(_cell_str(label)))
+
+
+def _normalize_irrigation_stack_group(label: str) -> str:
+    u = re.sub(r"\s+", " ", _cell_str(label).lower()).strip()
+    if u in {"un irrigated", "un-irrigated", "unirrigated"}:
+        return "Un Irrigated"
+    if u == "irrigated":
+        return "Irrigated"
+    if u == "total":
+        return "Total"
+    return _cell_str(label)
+
+
+def _is_irrigation_stack_leaf(label: str) -> bool:
+    return bool(_IRRIGATION_STACK_LEAF_RE.search(_cell_str(label)))
+
+
+def _row_is_section_label(row: Sequence[Any]) -> bool:
+    """Single label across an otherwise empty row (district, block group, …).
+
+    These sit in the body under the column headers. They are not captions and
+    must not be dropped or promoted into the header block.
+
+    Exception: bare column titles (``District``, ``Sl.No``) that PyMuPDF parks
+    on their own row under a multi-level header — those belong in the header.
+    Lowercase wrap continuations (``conducted due to``) are also header text.
+    """
+    if not _row_is_full_width_banner(row):
+        return False
+    label = _row_banner_label(row) or ""
+    if _COLUMN_TITLE_LABEL_RE.match(label.strip()):
+        return False
+    if label and label[0].islower():
+        return False
+    return not _is_caption_banner_label(label)
+
+
 def detect_header_rows(body: List[List[Any]], n_cols: int) -> Tuple[int, List[int]]:
     """Leading header-row count plus indices of banner / '(1)(2)(3)' rows to skip.
 
@@ -345,14 +546,19 @@ def detect_header_rows(body: List[List[Any]], n_cols: int) -> Tuple[int, List[in
     scan = body[: max(_MAX_HEADER_ROWS + 2, 10)]
     skip_rows: List[int] = []
     seen_data = False
+    seen_structure = False
     for i, row in enumerate(scan):
         if _row_is_full_width_banner(row):
-            if not seen_data:
+            label = _row_banner_label(row) or ""
+            # Leading captions are skipped. A single label after the header
+            # (e.g. THIRUVANANTHAPURAM) is a section row and stays in the body.
+            if not seen_data and (not seen_structure or _is_caption_banner_label(label)):
                 skip_rows.append(i)
             continue
         non_empty = [v for v in row if _cell_str(v)]
         if not non_empty:
             continue
+        seen_structure = True
         # Body data (year + counts, or blank-stub percentage shares) ends the
         # header-adjacent skip window.
         if (
@@ -367,17 +573,9 @@ def detect_header_rows(body: List[List[Any]], n_cols: int) -> Tuple[int, List[in
         if col_nums > len(non_empty) * 0.5:
             skip_rows.append(i)
             continue
-        # Pure 1,2,3,…,N index row (no parentheses) sitting under the header.
-        if (
-            len(non_empty) >= max(3, int(n_cols * 0.6))
-            and all(_BARE_INDEX_RE.match(_cell_str(v)) for v in non_empty)
-        ):
-            try:
-                nums = [int(_cell_str(v)) for v in non_empty]
-            except ValueError:
-                nums = []
-            if nums and nums == list(range(1, len(nums) + 1)):
-                skip_rows.append(i)
+        # Pure 1..N index row (including nearly-complete strips with one hole).
+        if _row_is_column_number_strip(row, n_cols):
+            skip_rows.append(i)
 
     header_count = 0
     root_header_row: Optional[Sequence[Any]] = None
@@ -386,6 +584,9 @@ def detect_header_rows(body: List[List[Any]], n_cols: int) -> Tuple[int, List[in
         if i in skip_rows:
             continue
         if _blank(row):
+            break
+        # District / group bands are body rows, never another header level.
+        if _row_is_section_label(row):
             break
         if levels >= _MAX_HEADER_ROWS:
             break
@@ -399,13 +600,17 @@ def detect_header_rows(body: List[List[Any]], n_cols: int) -> Tuple[int, List[in
             parent_row=root_header_row,
         ):
             header_count = i + 1
-            if root_header_row is None:
+            # Crop/season/appendix strips are header rows but make a bad parent
+            # for stub/data classification (first district row looks like a leaf).
+            if root_header_row is None and not _row_is_header_metadata_strip(row):
                 root_header_row = row
             levels += 1
             continue
 
         if header_count > 0 and _row_is_subheader(row, root_header_row):
             header_count = i + 1
+            if root_header_row is None and not _row_is_header_metadata_strip(row):
+                root_header_row = row
             levels += 1
             continue
 
@@ -425,6 +630,9 @@ def _fill_header_matrix(header_matrix: List[List[Any]], n_cols: int) -> List[Lis
     Resolve rowspan then colspan empties inside the header block.
 
     Vertical first (rowspan stubs), then horizontal (colspan group banners).
+    Crop/season/appendix metadata is kept in-place but not propagated into
+    empty cells — otherwise Appendix blocks Irrigated / rejected-due-to groups
+    from filling across their leaf columns.
     """
     rows: List[List[Any]] = [_pad_row(r, n_cols) for r in header_matrix]
     for c in range(n_cols):
@@ -432,8 +640,9 @@ def _fill_header_matrix(header_matrix: List[List[Any]], n_cols: int) -> List[Lis
         for r in range(len(rows)):
             s = _cell_str(rows[r][c])
             if s:
-                last = s
                 rows[r][c] = s
+                if not _is_header_metadata_label(s):
+                    last = s
             elif last:
                 rows[r][c] = last
             else:
@@ -445,8 +654,9 @@ def _fill_header_matrix(header_matrix: List[List[Any]], n_cols: int) -> List[Lis
         for v in row:
             s = _cell_str(v)
             if s:
-                last = s
                 out.append(s)
+                if not _is_header_metadata_label(s):
+                    last = s
             elif last:
                 out.append(last)
             else:

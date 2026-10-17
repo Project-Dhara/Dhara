@@ -11,6 +11,7 @@ from app.services.extraction.pdf.utils.caption import (
     _blank,
     _cell_str,
     _is_descriptive_in_grid_title,
+    _is_measurement_number,
     _is_numeric_cell,
     _is_table_id_only,
     _pad_row,
@@ -157,6 +158,131 @@ def split_extracted_rows_on_table_markers(
             segments.append((chunk, start, end))
     return segments or [(padded, 0, len(padded))]
 
+def extract_pymupdf_table_rows(page: Any, tab: Any) -> Optional[List[List[Any]]]:
+    """Read each ruled cell via ``get_textbox`` instead of ``tab.extract()``.
+
+    PyMuPDF's default extract often glues vertical header labels into one cell
+    (``Analysed Prior harvest…``) and parks index numbers together
+    (``4 5 6 7``). Cell-clip textboxes keep Planned / Analysed / reason leaves
+    in their own columns when the grid geometry is correct.
+    """
+    if page is None or tab is None:
+        return None
+    row_objs = getattr(tab, "rows", None) or []
+    if not row_objs:
+        return None
+    try:
+        import pymupdf as _fitz
+    except Exception:
+        return None
+
+    out: List[List[Any]] = []
+    for row_obj in row_objs:
+        cells = getattr(row_obj, "cells", None)
+        if cells is None:
+            return None
+        row: List[Any] = []
+        for cell in cells:
+            if cell is None:
+                row.append(None)
+                continue
+            try:
+                txt = page.get_textbox(_fitz.Rect(cell)).strip()
+            except Exception:
+                txt = ""
+            txt = " ".join(txt.split()) if txt else ""
+            row.append(txt or None)
+        out.append(row)
+    return out if out else None
+
+
+def _glued_numeric_token_count(rows: Optional[List[List[Any]]]) -> int:
+    """How many space-joined numeric packs appear in the leading grid band."""
+    if not rows:
+        return 0
+    n = 0
+    for row in rows[:10]:
+        for cell in row or []:
+            parts = _glued_numeric_parts(cell)
+            if parts:
+                n += len(parts)
+    return n
+
+
+def _distinct_non_numeric_labels(rows: Optional[List[List[Any]]]) -> int:
+    if not rows:
+        return 0
+    labels = set()
+    for row in rows[:8]:
+        for cell in row or []:
+            s = _cell_str(cell)
+            if s and not _is_numeric_cell(s):
+                labels.add(s.upper())
+    return len(labels)
+
+
+def prefer_cell_extracted_rows(
+    extracted: Optional[List[List[Any]]],
+    by_cells: Optional[List[List[Any]]],
+) -> List[List[Any]]:
+    """Choose cell textboxes only when they clearly beat ``tab.extract()``.
+
+    Cell clips fix vertical-header glue on non-response annexures, but can
+    scramble other grids (crumb letter stacks). Prefer cells when extract has
+    glued index/measure packs or far fewer distinct header labels.
+    """
+    if by_cells and not extracted:
+        return by_cells
+    if extracted and not by_cells:
+        return extracted
+    if not extracted and not by_cells:
+        return []
+    glued_ex = _glued_numeric_token_count(extracted)
+    glued_cells = _glued_numeric_token_count(by_cells)
+    if glued_ex > glued_cells:
+        return by_cells  # type: ignore[return-value]
+    labels_ex = _distinct_non_numeric_labels(extracted)
+    labels_cells = _distinct_non_numeric_labels(by_cells)
+    if labels_cells >= labels_ex + 3 and glued_cells <= glued_ex:
+        return by_cells  # type: ignore[return-value]
+    return extracted  # type: ignore[return-value]
+
+
+def fold_header_label_wrap_rows(rows: List[List[Any]]) -> List[List[Any]]:
+    """Merge lowercase wrap lines into the parent header cell above.
+
+    Non-response annexures split ``Experiments not`` / ``conducted due to``
+    across two ruled rows. The continuation looks like a full-width body band
+    and stops header absorption unless folded first.
+    """
+    if not rows:
+        return rows
+    n_cols = max((len(r) for r in rows), default=0)
+    if n_cols == 0:
+        return rows
+    out: List[List[Any]] = []
+    i = 0
+    while i < len(rows):
+        row = _pad_row(rows[i], n_cols)
+        if i + 1 < len(rows):
+            nxt = _pad_row(rows[i + 1], n_cols)
+            idxs = [j for j, v in enumerate(nxt) if _cell_str(v)]
+            if len(idxs) == 1:
+                j = idxs[0]
+                cont = _cell_str(nxt[j])
+                parent = _cell_str(row[j])
+                # Lowercase start marks a wrapped continuation of the cell above.
+                if cont and cont[0].islower() and parent:
+                    merged = list(row)
+                    merged[j] = f"{parent} {cont}".strip()
+                    out.append(merged)
+                    i += 2
+                    continue
+        out.append(row)
+        i += 1
+    return out
+
+
 def repair_glued_numeric_cells(rows: List[List[Any]]) -> List[List[Any]]:
     """
     Spread space-joined numbers into adjacent empty cells.
@@ -220,6 +346,147 @@ def _glued_numeric_parts(cell: Any) -> Optional[List[str]]:
     if not all(_is_numeric_cell(p) for p in parts):
         return None
     return parts
+
+
+def collapse_split_grid_columns(rows: List[List[Any]]) -> List[List[Any]]:
+    """Repair a ruled grid that split one physical column into several.
+
+    PyMuPDF's looser ``lines`` strategy bisects cells: serials and names
+    alternate across two columns, and a leaf label (Wet, Dry, Total, Male)
+    lands in its own column to the right of the values. Header detection then
+    reads body rows as extra header levels and glues Block into the name
+    column. Empty columns are dropped, shifted leaf labels move back onto
+    their value column, and adjacent columns that never share a row are merged.
+    Columns that are both filled on the same rows (real side-by-side measures,
+    or numbers already unglued into neighbours) are left alone.
+    """
+    if not rows:
+        return rows
+    n_cols = max((len(r) for r in rows), default=0)
+    if n_cols < 2:
+        return [list(r) for r in rows]
+    grid = [_pad_row(r, n_cols) for r in rows]
+
+    def _col_texts(c: int) -> List[Tuple[int, str]]:
+        found: List[Tuple[int, str]] = []
+        for i, row in enumerate(grid):
+            s = _cell_str(row[c] if c < len(row) else None)
+            if s:
+                found.append((i, s))
+        return found
+
+    keep = [c for c in range(n_cols) if _col_texts(c)]
+    if keep and len(keep) < n_cols:
+        grid = [[row[c] for c in keep] for row in grid]
+        n_cols = len(keep)
+    if n_cols < 2:
+        return grid
+
+    def _is_shifted_leaf(c: int) -> bool:
+        texts = _col_texts(c)
+        if not texts or len(texts) > 2:
+            return False
+        band = min(8, max(4, len(grid) // 4))
+        if any(i >= band for i, _s in texts):
+            return False
+        for _i, s in texts:
+            if _is_measurement_number(s) or len(s) > 32:
+                return False
+        return True
+
+    guard = 0
+    while guard < n_cols:
+        guard += 1
+        moved = False
+        c = 1
+        while c < n_cols:
+            if not _is_shifted_leaf(c):
+                c += 1
+                continue
+            texts = _col_texts(c)
+            if any(_cell_str(grid[i][c - 1]) for i, _s in texts):
+                c += 1
+                continue
+            label_rows = {i for i, _s in texts}
+            below = max(label_rows)
+            left_body = sum(
+                1 for i, row in enumerate(grid)
+                if i > below and i not in label_rows and _cell_str(row[c - 1])
+            )
+            if left_body < 2:
+                c += 1
+                continue
+            for i, s in texts:
+                grid[i][c - 1] = s
+            for row in grid:
+                del row[c]
+            n_cols -= 1
+            moved = True
+        if not moved:
+            break
+
+    guard = 0
+    while guard < n_cols:
+        guard += 1
+        merged = False
+        c = 0
+        while c < n_cols - 1:
+            a = _col_texts(c)
+            b = _col_texts(c + 1)
+            if len(a) < 2 or len(b) < 2:
+                c += 1
+                continue
+            a_rows = {i for i, _s in a}
+            b_rows = {i for i, _s in b}
+            both = a_rows & b_rows
+            either = len(a_rows | b_rows)
+            # Real neighbours are filled together. A split column alternates.
+            if either == 0 or len(both) > max(1, int(either * 0.12)):
+                c += 1
+                continue
+            # Distinct labels on the same row (Planned | Analysed) are parallel.
+            distinct_parallel = False
+            for i in both:
+                sa = _cell_str(grid[i][c])
+                sb = _cell_str(grid[i][c + 1])
+                if sa and sb and sa.upper() != sb.upper():
+                    distinct_parallel = True
+                    break
+            if distinct_parallel:
+                c += 1
+                continue
+            # Header-only / sparse neighbours of a filled measure column
+            # (Sub Total beside Analysed, or empty reason leaves) must stay.
+            band = min(8, max(4, len(grid) // 4))
+            a_hdr = [(i, s) for i, s in a if i < band]
+            b_hdr = [(i, s) for i, s in b if i < band]
+            a_body = [(i, s) for i, s in a if i >= band]
+            b_body = [(i, s) for i, s in b if i >= band]
+            hdr_labels = {s.upper() for _i, s in a_hdr + b_hdr if s}
+            if (
+                a_hdr
+                and b_hdr
+                and len(hdr_labels) >= 2
+                and not any(_is_measurement_number(s) for _i, s in a_hdr + b_hdr)
+                and len(a_body) <= 1
+                and len(b_body) <= 1
+            ):
+                c += 1
+                continue
+            if (len(a_body) >= 2 and len(b_body) <= 1 and b_hdr) or (
+                len(b_body) >= 2 and len(a_body) <= 1 and a_hdr
+            ):
+                c += 1
+                continue
+            for i in range(len(grid)):
+                grid[i][c] = _coalesce_split_cell_values(grid[i][c], grid[i][c + 1])
+            for row in grid:
+                del row[c + 1]
+            n_cols -= 1
+            merged = True
+        if not merged:
+            break
+    return grid
 
 _SEX_TOKEN_RE = re.compile(r"^[MF]$", re.I)
 
@@ -1399,9 +1666,13 @@ __all__ = [
     "_sex_tokens_from_cell",
     "_split_measure_cell_to_n",
     "coalesce_phantom_grid_columns",
+    "collapse_split_grid_columns",
     "expand_collapsed_sex_pair_rows",
+    "extract_pymupdf_table_rows",
+    "fold_header_label_wrap_rows",
     "fold_label_wrap_continuation_rows",
     "fold_orphan_parenthetical_share_rows",
+    "prefer_cell_extracted_rows",
     "repair_glued_numeric_cells",
     "repair_sex_pair_next_row_label_bleed",
     "split_extracted_rows_on_table_markers",

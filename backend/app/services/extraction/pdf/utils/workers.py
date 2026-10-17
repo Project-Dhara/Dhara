@@ -65,9 +65,17 @@ def _candidates_from_pymupdf_table(
 ) -> List[Dict[str, Any]]:
     """Build one candidate per physical table; split glued multi-TABLE grids."""
     from app.services.extraction.pdf.utils.header_utils import dataframe_from_extracted_rows, split_extracted_rows_on_table_markers
+    from app.services.extraction.pdf.utils.grid_repair import (
+        extract_pymupdf_table_rows,
+        prefer_cell_extracted_rows,
+    )
     from app.services.extraction.pdf.confidence_validation.table_confidence import looks_like_chart_candidate
 
-    rows = tab.extract()
+    # Use per-cell textboxes only when they beat extract() (vertical headers);
+    # otherwise keep extract() to avoid crumb-letter regressions.
+    extracted = tab.extract()
+    by_cells = extract_pymupdf_table_rows(page, tab) if page is not None else None
+    rows = prefer_cell_extracted_rows(extracted, by_cells)
     if not rows:
         return []
     bb = tab.bbox

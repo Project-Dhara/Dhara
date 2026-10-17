@@ -19,12 +19,13 @@ import {
   REASON_LABELS,
   TABLE_EDIT_CHANNEL,
   closeEditorWindow,
-  collectReviewReasons,
   displayTitle,
   isAiClassified,
   matchesStatusFilter,
   matchesSourceTypeFilter,
   matchesTableSearch,
+  primaryReviewReason,
+  reviewFlagSummary,
   SOURCE_TYPE_FILTERS,
   scrollElementIntoViewBelowSticky,
   tableHasMissingTitle,
@@ -660,9 +661,8 @@ export default function PdfReview({ jobId, filename, onDone }) {
     if (matchesStatusFilter(t, 'no_review', reviewed)) filterCounts.no_review += 1
     if (isAiClassified(t)) filterCounts.dev_ai_classified += 1
     else filterCounts.dev_auto_extracted += 1
-    for (const reason of collectReviewReasons(t)) {
-      if (filterCounts[reason] !== undefined) filterCounts[reason] += 1
-    }
+    const primary = primaryReviewReason(t)
+    if (primary && filterCounts[primary] !== undefined) filterCounts[primary] += 1
   }
 
   const primaryFilterOptions = [
@@ -1195,6 +1195,11 @@ export default function PdfReview({ jobId, filename, onDone }) {
             const isOpen = expanded === t.table_id
             const reviewed = reviewedIds.has(t.table_id)
             const selected = selectedIds.has(t.table_id)
+            const primaryReason = primaryReviewReason(t)
+            const flagSummary = reviewed ? '' : reviewFlagSummary(t)
+            const needsReviewBadge = Boolean(primaryReason)
+              || Boolean(t.human_review_needed)
+              || tableHasMissingTitle(t)
             return (
               <div
                 key={t.table_id}
@@ -1224,6 +1229,11 @@ export default function PdfReview({ jobId, filename, onDone }) {
                       {tableSourceSubtitle(t) ? (
                         <div className="mt-0.5 text-[11.5px] leading-snug text-ink-soft">
                           {tableSourceSubtitle(t)}
+                        </div>
+                      ) : null}
+                      {flagSummary ? (
+                        <div className="mt-1 text-[11.5px] leading-snug text-[#a65b1a]">
+                          {flagSummary}
                         </div>
                       ) : null}
                     </div>
@@ -1260,15 +1270,8 @@ export default function PdfReview({ jobId, filename, onDone }) {
                           </Badge>
                         ) : (
                           <ReviewBadge
-                            needed={
-                              Boolean(t.human_review_needed)
-                              || tableHasMissingTitle(t)
-                              || collectReviewReasons(t).size > 0
-                            }
-                            reason={
-                              t.human_review_reason
-                              || (tableHasMissingTitle(t) ? 'uncertain_title' : null)
-                            }
+                            needed={needsReviewBadge}
+                            reason={primaryReason}
                           />
                         )}
                       </div>

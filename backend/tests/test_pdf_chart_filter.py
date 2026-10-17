@@ -56,3 +56,48 @@ def test_cause_of_death_style_grid_is_not_chart():
     is_chart, reason = looks_like_chart_candidate(df)
     assert not is_chart
     assert reason == ""
+
+
+def test_line_chart_percent_label_strip_is_chart():
+    # Graph point labels misread as a 1×N table (54%, 57%, …).
+    cols = ["54%", "57%", "54% (3)", "56%", "60%", "67%", "81%", "75%", "71%", "79%"]
+    df = pd.DataFrame([["41%"] + [None] * 9], columns=cols)
+    is_chart, reason = looks_like_chart_candidate(df)
+    assert is_chart, reason
+    assert "label" in reason or "percent" in reason
+
+
+def test_bar_chart_uniquified_numeric_headers_with_fat_rects_is_chart():
+    # Bar value crumbs become 381 / 381 (2) / … after pandas uniquify.
+    cols = ["76.57", "174.82", "286.62"] + [f"381 ({i})" for i in range(2, 8)]
+    df = pd.DataFrame(
+        [
+            [".82", "28", "6", None, None, None, "37", None, None],
+            [None, None, None, None, None, None, None, None, None],
+            [None, "64", None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None],
+        ],
+        columns=cols,
+    )
+
+    class _Rect:
+        def __init__(self, x0, y0, x1, y1):
+            self.x0, self.y0, self.x1, self.y1 = x0, y0, x1, y1
+            self.width = x1 - x0
+            self.height = y1 - y0
+
+    class _Page:
+        def get_drawings(self):
+            # Tall thin bars inside the candidate bbox.
+            return [
+                {"rect": _Rect(20 + i * 30, 40, 35 + i * 30, 200)}
+                for i in range(10)
+            ]
+
+        def get_text(self, *args, **kwargs):
+            return "Area of Ginger 2023-24 (in Ha)"
+
+    is_chart, reason = looks_like_chart_candidate(
+        df, page=_Page(), bbox=[0, 0, 400, 300],
+    )
+    assert is_chart, reason

@@ -31,6 +31,7 @@ from app.services.extraction.pdf.confidence_validation.alignment import (
 from app.services.extraction.pdf.confidence_validation.table_confidence import (
     dedupe_column_names,
     strip_caption_label_prefix,
+    strip_trailing_placeholder_rows,
     title_needs_review,
 )
 
@@ -253,8 +254,11 @@ def _normalize_table(table: Dict[str, Any]) -> Dict[str, Any]:
             header_path = None
             if isinstance(raw_path, (list, tuple)):
                 header_path = [str(p).strip() for p in raw_path if str(p).strip()]
+            # Path leaf is the display name; drop pandas-style "Total (2)" when
+            # the multi-level path already has the real leaf.
+            display_name = header_path[-1] if header_path else c.get("name", "")
             col_out = {
-                "name": c.get("name", ""),
+                "name": display_name,
                 "role": c.get("role") or "unknown",
                 "concept": c.get("concept"),
                 "description": c.get("description"),
@@ -288,6 +292,10 @@ def _normalize_table(table: Dict[str, Any]) -> Dict[str, Any]:
         while len(row) < ncols:
             row.append(None)
         rows.append(row)
+
+    # LLM often pads District Total with a run of dash-only ghost rows.
+    # Trim only a trailing placeholder run; mid-table NA rows stay.
+    rows = strip_trailing_placeholder_rows(rows)
 
     columns = dedupe_column_names(columns)
 

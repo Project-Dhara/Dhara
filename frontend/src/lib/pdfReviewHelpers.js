@@ -74,6 +74,21 @@ export const REASON_ALIASES = {
 
 
 /**
+ * Display / filter priority among canonical chip ids (most actionable first).
+ * Mirrors backend REVIEW_REASONS after REASON_ALIASES folding.
+ */
+export const REVIEW_REASON_PRIORITY = [
+  'garbled_extracted_value',
+  'uncertain_extraction',
+  'conflicting_extraction',
+  'ambiguous_column',
+  'uncertain_concept',
+  'title_filled_by_ai',
+  'uncertain_title',
+]
+
+
+/**
  * Turn stored extraction-uncertainty notes into steward-facing copy.
  * Keeps already-plain notes unchanged; rewrites legacy internal codes from
  * older jobs (column_alignment_mismatch, pymupdf_*, ADDED guard, …).
@@ -493,6 +508,97 @@ export function collectReviewReasons(table) {
 }
 
 
+/** Single canonical chip id for badge + reason filters (no overlap). */
+export function primaryReviewReason(table) {
+  const reasons = collectReviewReasons(table)
+  if (!reasons.size) return null
+  for (const id of REVIEW_REASON_PRIORITY) {
+    if (reasons.has(id)) return id
+  }
+  return [...reasons][0] || null
+}
+
+
+function truncateReviewDetail(text, maxLen = 110) {
+  const s = String(text || '').replace(/\s+/g, ' ').trim()
+  if (!s) return ''
+  if (s.length <= maxLen) return s
+  return `${s.slice(0, maxLen - 1).trimEnd()}…`
+}
+
+
+/**
+ * Short steward-facing why-flagged line for the review list (not the chip label).
+ */
+export function reviewFlagSummary(table) {
+  const primary = primaryReviewReason(table)
+  if (!primary) return ''
+
+  const notes = summarizeUncertainCellNotes(table.uncertain_cells || [])
+  if (
+    notes.length
+    && (primary === 'uncertain_extraction'
+      || primary === 'conflicting_extraction'
+      || primary === 'garbled_extracted_value')
+  ) {
+    return truncateReviewDetail(notes[0])
+  }
+
+  const flaggedCols = (table.columns || []).filter(
+    (c) => c?.human_review_needed && c?.human_review_reason,
+  )
+  if (flaggedCols.length && (primary === 'ambiguous_column' || primary === 'uncertain_concept')) {
+    const names = flaggedCols
+      .map((c) => String(c.name || '').trim() || 'Column')
+      .filter(Boolean)
+    if (flaggedCols.length === 1) {
+      return truncateReviewDetail(
+        primary === 'ambiguous_column'
+          ? `Column "${names[0]}" needs a clearer role or meaning.`
+          : `Column "${names[0]}" has an uncertain concept.`,
+      )
+    }
+    return truncateReviewDetail(
+      primary === 'ambiguous_column'
+        ? `${flaggedCols.length} columns need clearer roles (${listColumnNames(names)}).`
+        : `${flaggedCols.length} columns have uncertain concepts (${listColumnNames(names)}).`,
+    )
+  }
+
+  const flaggedFields = Object.entries(table.classification || {})
+    .filter(([, f]) => f?.human_review_needed && f?.human_review_reason)
+    .map(([k]) => k)
+  if (flaggedFields.length) {
+    return truncateReviewDetail(
+      `Classification uncertain: ${listColumnNames(flaggedFields)}.`,
+    )
+  }
+
+  if (primary === 'title_filled_by_ai') {
+    return 'AI suggested this title — confirm or edit it.'
+  }
+  if (primary === 'uncertain_title') {
+    return 'Table title is missing or unusable.'
+  }
+  if (primary === 'garbled_extracted_value') {
+    return 'Some cells look corrupted or unreadable.'
+  }
+  if (primary === 'conflicting_extraction') {
+    return 'Extraction sources disagreed on some cell values.'
+  }
+  if (primary === 'uncertain_extraction') {
+    return 'Extraction needs a quick check before accepting.'
+  }
+  if (primary === 'ambiguous_column') {
+    return 'One or more columns need a clearer role or meaning.'
+  }
+  if (primary === 'uncertain_concept') {
+    return 'A column concept could not be determined confidently.'
+  }
+  return truncateReviewDetail(REASON_LABELS[primary] || '')
+}
+
+
 // DEV-ONLY: semantic_status is 'classified' for any table that went through
 // the LLM validation step (single-page, batched, or alignment-guard
 // fallback), and 'not_classified' for the deterministic no-LLM path. Lets a
@@ -521,7 +627,9 @@ export function matchesStatusFilter(table, filter, reviewed) {
   }
   if (filter === 'dev_ai_classified') return isAiClassified(table)
   if (filter === 'dev_auto_extracted') return !isAiClassified(table)
-  return collectReviewReasons(table).has(canonicalizeReviewReason(filter))
+  // Reason chips are exclusive: match the primary (badge) reason only so
+  // "Ambiguous column" does not also list tables whose badge is another reason.
+  return primaryReviewReason(table) === canonicalizeReviewReason(filter)
 }
 
 
@@ -678,6 +786,15 @@ export function columnDraftFromTable(columns) {
 }
 
 
+/** Leaf label for display/edit — prefer header_path over uniquified ``name``. */
+export function columnLeafLabel(col) {
+  const path = columnHeaderPath(col)
+  if (path.length) return path[path.length - 1]
+  const name = String(col?.name || '').trim()
+  return name || 'Column'
+}
+
+
 export function applyNameToColumnMeta(col, name) {
   const next = { ...col, name }
   const path = Array.isArray(col.header_path) && col.header_path.length
@@ -759,8 +876,30 @@ export function columnHeaderPath(col) {
 
 
 /**
+ * Parenthetical that is a unit / scale note — keep on the leaf
+ * (``Area (in Ha)``, ``Rate (per thousand)``), do not invent a parent row.
+ */
+export function isUnitOrNoteParenthetical(paren) {
+  const s = String(paren || '').trim()
+  if (!s) return true
+  const low = s.toLowerCase()
+  if (/^(?:in|per|of|as|on|at|for|by)\s+/i.test(s)) return true
+  if (/^(?:ha|hectare|hectares|acres?|%|percent|percentage|rs\.?|inr|nos?\.?|no\.?|kg|mt|tonnes?|tons?|sq\.?\s*k?m|km²?|m²?)\.?$/i.test(low)) {
+    return true
+  }
+  if (/\b(?:ha|hectare|hectares|percent|percentage|population|thousand|lakh|crore|rupees?|acre)\b/i.test(low)) {
+    return true
+  }
+  // Symbol-ish units: %, ‰, etc.
+  if (s.length <= 4 && !/[a-z]{3,}/i.test(s)) return true
+  return false
+}
+
+
+/**
  * Preview/review header path: split ``MALE (DOMICILIARY)`` into group+leaf and
  * drop redundant ``(GROUP)`` on leaves so headers stay short and readable.
+ * Does NOT split unit notes (``Area (in Ha)`` stays one leaf — matches editor).
  */
 export function columnHeaderPathForDisplay(col) {
   let path = columnHeaderPath(col).map((p) => String(p || '').trim()).filter(Boolean)
@@ -771,7 +910,15 @@ export function columnHeaderPathForDisplay(col) {
     if (m) {
       const leaf = m[1].trim()
       const group = m[2].trim()
-      if (leaf && group) path = [group, leaf]
+      // Category qualifiers only (DOMICILIARY / RURAL), never unit notes.
+      if (
+        leaf
+        && group
+        && !isUnitOrNoteParenthetical(group)
+        && /^[A-Za-z][A-Za-z0-9\s.\-/]{1,48}$/.test(group)
+      ) {
+        path = [group, leaf]
+      }
     }
   } else {
     const leaf = path[path.length - 1]
@@ -911,7 +1058,55 @@ export function isEmptyMergeCell(value) {
   if (value === null || value === undefined) return true
   const s = String(value).trim()
   if (!s) return true
+  // Pandas / JSON often leak the literal "nan" for empty numeric cells.
+  if (/^(nan|none|<na>)$/i.test(s)) return true
   return s === '—' || s === '–' || s === '-' || s === '−' || s === '‒'
+}
+
+
+/** Source / footnote stubs (* Tea Board, # Rubber Board, Note: …). */
+export function isFootnoteSourceLabel(value) {
+  const s = String(value || '').trim()
+  if (!s) return false
+  if (/^[*∗✱⁎]+/.test(s)) return true
+  if (/^#{1,3}(?:\s|$)/.test(s)) return true
+  if (/^[†‡§¶]/.test(s)) return true
+  if (/^(?:note|notes|source|sources)\b/i.test(s)) return true
+  return false
+}
+
+
+/**
+ * Value to show at a merge origin. When the span starts on an empty Sl.No.
+ * cell that absorbed a Mean/CV label from the right, pull the first non-empty
+ * cell inside the colspan.
+ */
+export function spanDisplayValue(rows, r, c, span) {
+  const row = rows?.[r]
+  const direct = row?.[c]
+  if (!isEmptyMergeCell(direct)) return direct ?? null
+  const cs = Math.max(1, Number(span?.colSpan) || 1)
+  const rs = Math.max(1, Number(span?.rowSpan) || 1)
+  for (let dr = 0; dr < rs; dr += 1) {
+    for (let dc = 0; dc < cs; dc += 1) {
+      if (dr === 0 && dc === 0) continue
+      const v = rows?.[r + dr]?.[c + dc]
+      if (!isEmptyMergeCell(v)) return v
+    }
+  }
+  return direct ?? null
+}
+
+
+/** Column index inside a span that holds the editable/non-empty value. */
+export function spanValueCol(rows, r, c, span) {
+  const row = rows?.[r]
+  if (!isEmptyMergeCell(row?.[c])) return c
+  const cs = Math.max(1, Number(span?.colSpan) || 1)
+  for (let dc = 0; dc < cs; dc += 1) {
+    if (!isEmptyMergeCell(row?.[c + dc])) return c + dc
+  }
+  return c
 }
 
 
@@ -927,13 +1122,14 @@ export function isNumericishCell(value) {
 export function isBodyLabelColumn(colIdx, columns, rows) {
   const name = String(columns?.[colIdx]?.name || '').toLowerCase()
   if (
-    /^(sl\.?\s*no\.?|s\.?\s*no\.?|sno|item|name|indicator|state|district|disease|particulars|description|category|sector|occupation|education|sex)$/i.test(
+    /^(sl\.?\s*no\.?|s\.?\s*no\.?|sno|item|name|indicator|state|district|disease|particulars|description|category|sector|occupation|education|sex|block)$/i.test(
       name,
     )
     || name.includes('name of')
     || name.includes('local body')
     || name.includes('disease')
     || name.includes('district')
+    || name.includes('panchayat')
     || name === 'sex'
   ) {
     return true
@@ -954,6 +1150,7 @@ export function isSummaryLabel(value) {
   // Exact ALL/TOTAL, or "Total (…)" / "ALL (…)" — not "All ages" / "All India".
   if (/^(all|total|overall|aggregate)$/.test(s)) return true
   if (/^grand\s*total$/.test(s)) return true
+  if (/^(?:state|district|block|india|national)\s+total$/.test(s)) return true
   if (/^(all|total)\s*[\(:]/.test(s)) return true
   return false
 }
@@ -970,8 +1167,9 @@ export function isSummaryLabel(value) {
  *  - a sibling group label changes (e.g. Item "Others" → "ALL"), or
  *  - a table-footer summary row (last row with TOTAL/ALL in Sex etc.) would
  *    otherwise absorb blank Sl. No. / District cells from the group above.
- * Measure-column rowspans (e.g. shared population) only stop at the next
- * non-empty cell — they intentionally span different stub labels.
+ * Measure-column rowspans only continue while left identity stubs are empty
+ * (true PDF rowspan continuation). A new serial/name/summary on the left ends
+ * the span so sparse crop values (empty Sesamum on a block) stay unmerged.
  */
 export function buildBodyCellSpans(rows, columns) {
   const nrows = (rows || []).length
@@ -1066,6 +1264,67 @@ export function buildBodyCellSpans(rows, columns) {
     if (!labelSet.has(c)) measureCols.push(c)
   }
 
+  // Multi-block pages (freq × 4 stacks): each stack merges independently.
+  // Prefer header_path / header_group, then "Leaf (Group)" name suffixes, then
+  // fill bare Freq/% leaves from neighbouring grouped cols, then positional
+  // Sl.No→Range→Freq→% runs so Appendix stacks still merge when meta is thin.
+  const stackLeafKind = (col) => {
+    const raw = columnLeafLabel(col).toLowerCase().replace(/\s+/g, ' ').trim()
+    const leaf = raw.replace(/\s*\([^)]*\)\s*$/, '').trim()
+    if (/^sl\.?\s*no\.?$|^s\.?\s*no\.?$|^sno$/.test(leaf)) return 'slno'
+    if (/^range$/.test(leaf)) return 'range'
+    if (/^freq\.?$|^frequency$/.test(leaf)) return 'freq'
+    if (/%/.test(leaf) && /freq/.test(leaf)) return 'pct'
+    return null
+  }
+  const groupKeys = Array.from({ length: ncols }, (_, colIdx) => {
+    const col = columns?.[colIdx] || {}
+    const path = columnHeaderPath(col)
+    if (path.length >= 2) return `p:${path.slice(0, -1).join('\u0001')}`
+    const g = columnHeaderGroup(col)
+    if (g) return `g:${g}`
+    const name = String(col.name || '')
+    const m = name.match(/^(.*?)\s*\((.+)\)\s*$/)
+    if (m && m[2].trim()) return `n:${m[2].trim()}`
+    return null
+  })
+  for (let c = 0; c < ncols; c += 1) {
+    if (groupKeys[c]) continue
+    const kind = stackLeafKind(columns?.[c])
+    if (!kind || kind === 'range' || kind === 'slno') continue
+    const left = c > 0 ? groupKeys[c - 1] : null
+    const right = c + 1 < ncols ? groupKeys[c + 1] : null
+    if (left && left === right) groupKeys[c] = left
+    else if (left && stackLeafKind(columns?.[c - 1])) groupKeys[c] = left
+    else if (right && stackLeafKind(columns?.[c + 1])) groupKeys[c] = right
+  }
+  {
+    const kinds = columns.map((col) => stackLeafKind(col))
+    let i = 0
+    let stackIdx = 0
+    while (i < ncols) {
+      if (
+        kinds[i] === 'slno'
+        && kinds[i + 1] === 'range'
+        && (kinds[i + 2] === 'freq' || kinds[i + 2] === 'pct')
+      ) {
+        const key = `s:${stackIdx}`
+        stackIdx += 1
+        const end = Math.min(ncols, i + (kinds[i + 3] === 'pct' || kinds[i + 2] === 'pct' ? 4 : 3))
+        for (let c = i; c < end; c += 1) {
+          if (!groupKeys[c]) groupKeys[c] = key
+        }
+        i = end
+        continue
+      }
+      i += 1
+    }
+  }
+  for (let c = 0; c < ncols; c += 1) {
+    if (!groupKeys[c]) groupKeys[c] = `__col_${c}`
+  }
+  const groupKeyFor = (colIdx) => groupKeys[colIdx] || `__col_${colIdx}`
+
   const isSectionBannerRow = (rowIdx) => {
     if (!measureCols.length) return false
     const measuresEmpty = measureCols.every((c) => isEmptyMergeCell(rows[rowIdx]?.[c]))
@@ -1074,6 +1333,47 @@ export function buildBodyCellSpans(rows, columns) {
       const v = rows[rowIdx]?.[c]
       return !isEmptyMergeCell(v) && !isNumericishCell(v)
     })
+  }
+
+  /**
+   * Label alone in its header-group stack with empty sibling measures
+   * (Appendix: Mean / Standard Deviation / CV beside live left-hand Freq cols).
+   * Global isSectionBannerRow misses these dual-column pages.
+   */
+  const isGroupSoleLabelRow = (rowIdx, labelColIdx) => {
+    const key = groupKeyFor(labelColIdx)
+    const groupCols = []
+    const groupMeasureCols = []
+    for (let gc = 0; gc < ncols; gc += 1) {
+      if (groupKeyFor(gc) !== key) continue
+      groupCols.push(gc)
+      if (!labelSet.has(gc)) groupMeasureCols.push(gc)
+    }
+    if (groupMeasureCols.length < 1) return false
+    if (!groupMeasureCols.every((gc) => isEmptyMergeCell(rows[rowIdx]?.[gc]))) return false
+    const filled = groupCols.filter((gc) => !isEmptyMergeCell(rows[rowIdx]?.[gc]))
+    return filled.length === 1 && filled[0] === labelColIdx
+  }
+
+  // District/block bands parked in a serial stub (Block: 1,2,… + name) must
+  // not colspan into measures — that hides the label in the scrolled editor.
+  // Pure label columns (Delhi / All India in Name) still colspan as before.
+  const isStubParkedSectionBand = (rowIdx) => {
+    let textCol = -1
+    for (let c = 0; c < ncols; c += 1) {
+      const v = rows[rowIdx]?.[c]
+      if (isEmptyMergeCell(v)) continue
+      if (isNumericishCell(v) || isSummaryLabel(v)) return false
+      if (textCol !== -1) return false
+      textCol = c
+    }
+    if (textCol < 0) return false
+    const vals = (rows || [])
+      .map((row) => row?.[textCol])
+      .filter((v) => !isEmptyMergeCell(v))
+    if (vals.length < 3) return false
+    const numeric = vals.filter((v) => isNumericishCell(v)).length
+    return numeric >= Math.max(2, Math.ceil(vals.length * 0.4))
   }
 
   // Left → right so horizontal merges (Total across Sl.No + Name) claim cells first.
@@ -1114,28 +1414,89 @@ export function buildBodyCellSpans(rows, columns) {
         if (!ok) break
         colSpan += 1
       }
-      // Section banners (Delhi / All India / District wise…) colspan into empty measure cols.
-      if (rowSpan === 1 && isSectionBannerRow(r)) {
-        while (c + colSpan < ncols && measureCols.includes(c + colSpan)) {
-          if (covered[r][c + colSpan] || !isEmptyMergeCell(rows[r]?.[c + colSpan])) break
+      // Section banners colspan into empty measure cols.
+      // - Full-width banners when every measure on the page is empty.
+      // - Same header-group stacks (Mean/SD/CV in Appendix) when only that
+      //   stack's measures are empty — dual-column pages need this.
+      // Skip stub-parked bands and footnote stubs.
+      const footnoteRow = labelCols.some((lc) => isFootnoteSourceLabel(rows[r]?.[lc]))
+      const groupBanner = isGroupSoleLabelRow(r, c)
+      let originC = c
+      if (
+        rowSpan === 1
+        && !isStubParkedSectionBand(r)
+        && !footnoteRow
+        && (isSectionBannerRow(r) || groupBanner)
+      ) {
+        const key = groupKeyFor(c)
+        const restrictGroup = groupBanner && !isSectionBannerRow(r)
+        while (c + colSpan < ncols) {
+          const nc = c + colSpan
+          if (restrictGroup && groupKeyFor(nc) !== key) break
+          if (!restrictGroup && !measureCols.includes(nc) && !labelSet.has(nc)) break
+          if (restrictGroup) {
+            // Absorb empty Sl.No. / Freq / % siblings in the stack.
+            if (covered[r][nc] || !isEmptyMergeCell(rows[r]?.[nc])) break
+          } else if (!measureCols.includes(nc) || covered[r][nc] || !isEmptyMergeCell(rows[r]?.[nc])) {
+            break
+          }
           colSpan += 1
         }
+        // Pull empty same-group cells on the left into the merge (PDF Mean
+        // spans the whole Appendix block, not Range alone).
+        if (restrictGroup) {
+          let left = 0
+          while (
+            c - left - 1 >= 0
+            && groupKeyFor(c - left - 1) === key
+            && !covered[r][c - left - 1]
+            && isEmptyMergeCell(rows[r]?.[c - left - 1])
+          ) {
+            left += 1
+          }
+          if (left > 0) {
+            originC = c - left
+            colSpan += left
+          }
+        }
       }
-      spans[r][c] = { rowSpan, colSpan }
+      // Total / ALL in Crop (or Name) with blank leading Sl. No. — PDF merges
+      // those stub label cells; rightward empty-label extend alone misses it.
+      if (rowSpan === 1 && isSummaryLabel(rows[r]?.[c])) {
+        let left = 0
+        while (
+          originC - left - 1 >= 0
+          && labelSet.has(originC - left - 1)
+          && !covered[r][originC - left - 1]
+          && isEmptyMergeCell(rows[r]?.[originC - left - 1])
+        ) {
+          left += 1
+        }
+        if (left > 0) {
+          originC -= left
+          colSpan += left
+        }
+      }
+      spans[r][originC] = { rowSpan, colSpan }
+      if (originC !== c) spans[r][c] = null
       for (let dr = 0; dr < rowSpan; dr += 1) {
         for (let dc = 0; dc < colSpan; dc += 1) {
-          if (dr === 0 && dc === 0) continue
-          covered[r + dr][c + dc] = true
-          spans[r + dr][c + dc] = null
+          const rr = r + dr
+          const cc = originC + dc
+          if (rr === r && cc === originC) continue
+          if (cc >= ncols) continue
+          covered[rr][cc] = true
+          spans[rr][cc] = null
         }
       }
       r += rowSpan
     }
   }
 
-  // Sparse measure columns (e.g. population merged across several local bodies).
-  // Do not apply left-label boundary breaks — the merge intentionally spans
-  // different stub values (MCD / NDMC / DCB under one population cell).
+  // Sparse measure columns: only merge when empties are true rowspan
+  // continuations (left Sl.No./Name stubs blank). A new block/serial/name means
+  // a real blank measure (Sesamum on a crop table), not a vertical merge.
+  // Same-header-group labels still break dual-column Appendix stacks.
   for (let c = 0; c < ncols; c += 1) {
     if (labelSet.has(c)) continue
     let empty = 0
@@ -1144,10 +1505,39 @@ export function buildBodyCellSpans(rows, columns) {
     }
     if (!(empty >= 1 && empty >= nrows * 0.12 && empty < nrows)) continue
 
+    const groupKey = groupKeyFor(c)
+    const groupCols = []
+    for (let gc = 0; gc < ncols; gc += 1) {
+      if (groupKeyFor(gc) === groupKey) groupCols.push(gc)
+    }
+    const groupLabelCols = groupCols.filter((gc) => labelSet.has(gc))
+    const groupFullyEmpty = (rowIdx) => (
+      groupCols.every((gc) => isEmptyMergeCell(rows[rowIdx]?.[gc]))
+    )
+    const groupLabelBreakAt = (startRow, rowIdx) => {
+      for (const lc of groupLabelCols) {
+        const v = rows[rowIdx]?.[lc]
+        if (isEmptyMergeCell(v)) continue
+        const startV = rows[startRow]?.[lc]
+        if (isEmptyMergeCell(startV)) return true
+        if (String(startV).trim().toLowerCase() !== String(v).trim().toLowerCase()) {
+          return true
+        }
+      }
+      return false
+    }
+
     let r = 0
     while (r < nrows) {
       if (covered[r][c]) {
         r += 1
+        continue
+      }
+      // Keep label-pass merges that start on an empty Sl.No. cell (Mean/CV
+      // pulled left across the Appendix stack).
+      const existing = spans[r][c]
+      if (existing && ((existing.colSpan || 1) > 1 || (existing.rowSpan || 1) > 1)) {
+        r += Math.max(1, existing.rowSpan || 1)
         continue
       }
       if (isEmptyMergeCell(rows[r]?.[c])) {
@@ -1157,6 +1547,17 @@ export function buildBodyCellSpans(rows, columns) {
       }
       let rowSpan = 1
       while (r + rowSpan < nrows && isEmptyMergeCell(rows[r + rowSpan]?.[c])) {
+        // Footnotes / full-width section bands.
+        if (isSectionBannerRow(r + rowSpan)) break
+        if (labelCols.some((lc) => isFootnoteSourceLabel(rows[r + rowSpan]?.[lc]))) break
+        // Spacer rows inside this stack (Total, then blanks, then Mean).
+        if (groupCols.length > 1 && groupFullyEmpty(r + rowSpan)) break
+        // Mean / Paddy / SD labels in the same stack end the measure span.
+        if (groupLabelBreakAt(r, r + rowSpan)) break
+        // New identity on the left (Sl.No. / Name / Block Total) → real blank.
+        if (leftBoundaryAt(r + rowSpan, c)) break
+        if (siblingLabelBreakAt(r, r + rowSpan, c)) break
+        if (rowHasSummaryLabel(r + rowSpan)) break
         rowSpan += 1
       }
       if (rowSpan === 1) {
@@ -1169,6 +1570,32 @@ export function buildBodyCellSpans(rows, columns) {
         spans[r + dr][c] = null
       }
       r += rowSpan
+    }
+  }
+
+  // Trailing empty measures in the same stack (Paddy value | empty %) → colspan.
+  for (let r = 0; r < nrows; r += 1) {
+    for (let c = 0; c < ncols; c += 1) {
+      if (covered[r][c] || labelSet.has(c)) continue
+      if (isEmptyMergeCell(rows[r]?.[c])) continue
+      const key = groupKeyFor(c)
+      let colSpan = 1
+      while (
+        c + colSpan < ncols
+        && groupKeyFor(c + colSpan) === key
+        && !labelSet.has(c + colSpan)
+        && !covered[r][c + colSpan]
+        && isEmptyMergeCell(rows[r]?.[c + colSpan])
+      ) {
+        colSpan += 1
+      }
+      if (colSpan === 1) continue
+      const prev = spans[r][c] || { rowSpan: 1, colSpan: 1 }
+      spans[r][c] = { rowSpan: prev.rowSpan || 1, colSpan }
+      for (let dc = 1; dc < colSpan; dc += 1) {
+        covered[r][c + dc] = true
+        spans[r][c + dc] = null
+      }
     }
   }
 
@@ -1423,16 +1850,107 @@ export function mergesFromSpans(spans) {
 
 
 /**
- * Explicit merges (non-empty list, or locked empty after Unmerge) win.
- * Otherwise auto-infer rowspans from empty cells under labels / measures.
+ * Locked merges win only when mergesExplicit is true (including an empty list
+ * after Unmerge-all). A non-empty cell_merges blob without that flag is treated
+ * as stale cache — always re-infer so preview / view / edit stay identical.
  */
 export function resolveEditorBodySpans(rows, columns, explicitMerges, mergesExplicit = false) {
   const nrows = (rows || []).length
   const ncols = (columns || []).length
-  if (mergesExplicit || (explicitMerges || []).length > 0) {
+  if (mergesExplicit) {
     return spansFromExplicitMerges(nrows, ncols, explicitMerges || [])
   }
   return buildBodyCellSpans(rows, columns)
+}
+
+
+/**
+ * Reconcile persisted merges with current auto-infer (Original extraction view).
+ *
+ * Stale "explicit" saves often lock false measure rowspans (Sesamum). If any
+ * measure rowspan disagrees with auto-infer, fall back to auto so preview /
+ * view / edit match Original. True steward merges that auto-infer also
+ * produces are kept.
+ */
+export function reconcileBodyMergesWithAutoInfer(
+  rows,
+  columns,
+  cellMerges,
+  mergesExplicit = false,
+) {
+  if (!mergesExplicit) {
+    return { cellMerges: [], mergesExplicit: false }
+  }
+  const autoMerges = mergesFromSpans(buildBodyCellSpans(rows, columns))
+  const autoKey = (m) => (
+    `${Number(m.r) || 0}:${Number(m.c) || 0}:${Math.max(1, Number(m.rowSpan) || 1)}:${Math.max(1, Number(m.colSpan) || 1)}`
+  )
+  const autoSet = new Set(autoMerges.map(autoKey))
+  let droppedStaleMeasure = false
+  const kept = []
+  for (const m of cellMerges || []) {
+    const norm = {
+      r: Number(m.r) || 0,
+      c: Number(m.c) || 0,
+      rowSpan: Math.max(1, Number(m.rowSpan) || 1),
+      colSpan: Math.max(1, Number(m.colSpan) || 1),
+    }
+    if (norm.rowSpan > 1 && !isBodyLabelColumn(norm.c, columns, rows)) {
+      if (!autoSet.has(autoKey(norm))) {
+        droppedStaleMeasure = true
+        continue
+      }
+    }
+    kept.push(norm)
+  }
+  if (droppedStaleMeasure) {
+    // Match Original extraction: full auto-infer (label banners / totals too).
+    return { cellMerges: [], mergesExplicit: false }
+  }
+  return { cellMerges: kept, mergesExplicit: true }
+}
+
+
+/**
+ * Clip a full-grid span matrix to the first ``rowLimit`` rows (preview window).
+ * Compute merges on the full table first, then clip — never infer on a slice.
+ */
+export function clipBodySpansForPreview(spans, rowLimit) {
+  const limit = Math.max(0, Number(rowLimit) || 0)
+  const out = []
+  for (let r = 0; r < limit; r += 1) {
+    const srcRow = spans?.[r] || []
+    const row = []
+    for (let c = 0; c < srcRow.length; c += 1) {
+      const span = srcRow[c]
+      if (span == null) {
+        row.push(null)
+        continue
+      }
+      const rowSpan = Math.min(Math.max(1, span.rowSpan || 1), limit - r)
+      const colSpan = Math.max(1, span.colSpan || 1)
+      row.push({ rowSpan, colSpan })
+    }
+    out.push(row)
+  }
+  return out
+}
+
+
+/**
+ * Single display path for preview / view-all / edit: resolve on the full grid,
+ * optionally clip to a preview row window.
+ */
+export function resolveDisplayBodySpans(
+  rows,
+  columns,
+  explicitMerges,
+  mergesExplicit = false,
+  rowLimit = null,
+) {
+  const full = resolveEditorBodySpans(rows, columns, explicitMerges, mergesExplicit)
+  if (rowLimit == null || rowLimit >= (rows || []).length) return full
+  return clipBodySpansForPreview(full, rowLimit)
 }
 
 
@@ -1474,7 +1992,7 @@ export function unmergeAt(rows, columns, cellMerges, mergesExplicit, r, c) {
   if (!origin || ((origin.span.rowSpan || 1) <= 1 && (origin.span.colSpan || 1) <= 1)) {
     return null
   }
-  let base = mergesExplicit || (cellMerges || []).length > 0
+  let base = mergesExplicit
     ? (cellMerges || []).map((m) => ({ ...m }))
     : mergesFromSpans(spans)
   base = base.filter((m) => {
@@ -1502,7 +2020,7 @@ export function unmergeAt(rows, columns, cellMerges, mergesExplicit, r, c) {
 
 /** Snapshot whatever merges are currently visible (explicit or auto-inferred). */
 export function materializeCellMerges(rows, columns, cellMerges, mergesExplicit) {
-  if (mergesExplicit || (cellMerges || []).length > 0) {
+  if (mergesExplicit) {
     return (cellMerges || []).map((m) => ({
       r: m.r,
       c: m.c,
@@ -1643,7 +2161,7 @@ export function columnParentPath(col) {
 
 /** Apply a parent path (above the leaf) to one column. */
 export function withParentPath(col, parents) {
-  const leaf = col?.name || columnHeaderPath(col).slice(-1)[0] || 'Column'
+  const leaf = columnLeafLabel(col)
   const clean = (parents || []).map((p) => String(p || '').trim()).filter(Boolean)
   if (!clean.length) {
     return { ...col, name: leaf, header_group: null, header_path: [leaf] }

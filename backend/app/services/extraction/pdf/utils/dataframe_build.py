@@ -8,6 +8,7 @@ from typing import Any, List, Optional, Sequence
 from app.services.extraction.pdf.utils.caption import (
     _blank,
     _cell_str,
+    _col_index_nums_from_row,
     _is_leaf_header_token,
     _is_measurement_number,
     _pad_row,
@@ -17,6 +18,8 @@ from app.services.extraction.pdf.utils.caption import (
 
 from app.services.extraction.pdf.utils.header_detect import (
     _fill_blank_leading_serial_header,
+    _row_is_header_metadata_strip,
+    _row_is_section_label,
     _row_is_subheader,
     _row_is_text_header,
     _row_looks_like_data,
@@ -29,7 +32,9 @@ from app.services.extraction.pdf.utils.header_detect import (
 from app.services.extraction.pdf.utils.grid_repair import (
     _find_sex_column,
     coalesce_phantom_grid_columns,
+    collapse_split_grid_columns,
     expand_collapsed_sex_pair_rows,
+    fold_header_label_wrap_rows,
     fold_label_wrap_continuation_rows,
     fold_orphan_parenthetical_share_rows,
     repair_glued_numeric_cells,
@@ -158,11 +163,27 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
     # the empty F stub (common with wrapped Name cells).
     padded = repair_sex_pair_next_row_label_bleed(padded, sex_col)
     padded = repair_glued_numeric_cells([_pad_row(r, n_cols) for r in padded])
+    # Looser ruled extracts bisect one cell into several columns (serials and
+    # names alternate; Wet/Dry/Total land beside their values). Collapse that
+    # before header detection, or body rows get read as extra header levels
+    # and Block is glued into the panchayat column.
+    padded = collapse_split_grid_columns([_pad_row(r, n_cols) for r in padded])
+    n_cols = max((len(r) for r in padded), default=n_cols)
+    padded = [_pad_row(r, n_cols) for r in padded]
+    # Fold ``Experiments not`` + ``conducted due to`` style wrap rows before
+    # header detection — otherwise the lowercase line looks like a section band.
+    padded = fold_header_label_wrap_rows(padded)
+    n_cols = max((len(r) for r in padded), default=n_cols)
+    padded = [_pad_row(r, n_cols) for r in padded]
     header_count, skip_rows = detect_header_rows(padded, n_cols)
 
     root = None
     for i in range(header_count):
         if i not in skip_rows and not _blank(padded[i]):
+            # Crop/season/appendix strips are not useful parent rows for
+            # stub/data classification of later body candidates.
+            if _row_is_header_metadata_strip(padded[i]):
+                continue
             root = padded[i]
             break
 
@@ -172,6 +193,10 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
         while next_i < len(padded) and next_i in skip_rows:
             next_i += 1
         if next_i >= len(padded):
+            break
+        # District / group bands stay in the body. They are a single label
+        # with empty measure cells, which otherwise looks like another header.
+        if _row_is_section_label(padded[next_i]):
             break
         if root is not None:
             leaf_part, data_part = _split_hybrid_leaf_data_row(padded[next_i], root, n_cols)
@@ -186,6 +211,8 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
             padded[next_i], continuation=True, parent_row=root
         ):
             header_count = next_i + 1
+            if root is None and not _row_is_header_metadata_strip(padded[next_i]):
+                root = padded[next_i]
             continue
         break
 
@@ -202,16 +229,17 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
     )
 
     resolved = resolve_column_headers(header_matrix, n_cols)
+    # DataFrame labels must be unique for pandas; API/editor `name` keeps the
+    # real leaf (repeated "Total" under Oil Seeds / Fibre / Plantation).
     leaf_names = _uniquify_columns([c["name"] for c in resolved])
     column_meta = []
     for i in range(n_cols):
         path = [str(p) for p in (resolved[i].get("header_path") or []) if str(p).strip()]
         if not path:
             path = [resolved[i].get("name") or leaf_names[i]]
-        # Keep original leaf labels in header_path for display (S.R.S. under
-        # Birth Rate vs Death Rate). DataFrame column names stay uniquified.
+        display_leaf = str(path[-1] if path else (resolved[i].get("name") or leaf_names[i]))
         column_meta.append({
-            "name": leaf_names[i],
+            "name": display_leaf,
             "header_group": path[-2] if len(path) >= 2 else None,
             "header_path": path,
         })
@@ -222,8 +250,21 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
         for i in range(header_count, len(padded))
         if i not in skip_rows and not _blank(padded[i])
     ]
-    # Index strips (1..N / (1)(2)(3)) are skipped for header naming but must
-    # remain visible as the first body row(s) when they sit under the headers.
+    # Index strips (1..N / (1)(2)(3)) are skipped for header naming but kept as
+    # the first body row when complete. Incomplete strips (``1,2,,4,…,13``)
+    # stay omitted — they look like data and force a destructive LLM pass.
+    def _index_strip_is_complete(row: Sequence[Any]) -> bool:
+        nums = _col_index_nums_from_row(row)
+        if not nums:
+            return False
+        if nums == list(range(1, n_cols + 1)):
+            return True
+        # Dense 1..N under every filled column (birth-order style).
+        return (
+            nums == list(range(1, len(nums) + 1))
+            and len(nums) >= max(3, int(n_cols * 0.9))
+        )
+
     leading_index: List[List[Any]] = []
     for i in range(header_count, len(padded)):
         if i not in skip_rows:
@@ -231,7 +272,8 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
         if _blank(padded[i]):
             continue
         if _row_is_column_number_strip(padded[i], n_cols):
-            leading_index.append(padded[i])
+            if _index_strip_is_complete(padded[i]):
+                leading_index.append(padded[i])
         else:
             # Non-index skip (banner) — stop; don't pull mid-table strips forward.
             break

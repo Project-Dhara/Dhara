@@ -122,9 +122,9 @@ export function TableExpandPanel({ open, children }) {
         expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
       }`}
     >
-      <div className={`min-h-0 ${clipContent ? 'overflow-hidden' : 'overflow-visible'}`}>
+      <div className={`min-h-0 min-w-0 ${clipContent ? 'overflow-hidden' : 'overflow-visible'}`}>
         <div
-          className={`origin-top transition-[opacity,transform] duration-[380ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${
+          className={`min-w-0 origin-top transition-[opacity,transform] duration-[380ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${
             expanded ? 'translate-y-0 opacity-100' : '-translate-y-1 opacity-0'
           }`}
         >

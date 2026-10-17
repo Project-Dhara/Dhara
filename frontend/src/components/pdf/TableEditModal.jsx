@@ -15,7 +15,9 @@ import {
   findMergeCovering,
   flashCovers,
   listExistingHeaderGroups,
-  resolveEditorBodySpans,
+  resolveDisplayBodySpans,
+  spanDisplayValue,
+  spanValueCol,
   selectionRect,
   tableSupportsPdfReference,
 } from '../../lib/pdfReviewHelpers'
@@ -92,7 +94,7 @@ export function TableEditModal({
   const dndRef = useRef(null)
   const headerMeta = buildEditorHeaderRows(columns)
   const existingGroups = listExistingHeaderGroups(columns)
-  const bodySpans = resolveEditorBodySpans(rows, columns, cellMerges, mergesExplicit)
+  const bodySpans = resolveDisplayBodySpans(rows, columns, cellMerges, mergesExplicit)
   const rect = selectionRect(sel)
 
   useEffect(() => {
@@ -828,7 +830,7 @@ export function TableEditModal({
                                 <AutoGrowTextarea
                                   readOnly={!canEdit}
                                   className="w-full min-w-0 border-0 bg-transparent px-0.5 py-0.5 text-[11px] font-semibold leading-snug text-ink outline-none [overflow-wrap:anywhere] break-words whitespace-pre-wrap focus:bg-white focus:ring-1 focus:ring-teal"
-                                  value={columns[seg.start]?.name || ''}
+                                  value={seg.label || columns[seg.start]?.name || ''}
                                   placeholder="Column"
                                   onChange={(next) => onRenameColumn(seg.start, next)}
                                 />
@@ -935,17 +937,20 @@ export function TableEditModal({
                           rowSpan={span.rowSpan > 1 ? span.rowSpan : undefined}
                           colSpan={span.colSpan > 1 ? span.colSpan : undefined}
                             onClick={(e) => selectCell(r, c, e.shiftKey)}
-                            className={`max-w-0 cursor-cell border px-0 py-0 align-top break-words [overflow-wrap:anywhere] ${
+                            className={`max-w-0 cursor-cell border px-0 py-0 break-words [overflow-wrap:anywhere] ${
+                              merged ? 'align-middle text-center' : 'align-top'
+                            } ${
                               selected ? cellSelectedClass : 'border-[#d8e0de]'
-                            } ${merged ? '' : ''} ${colFlashClass(c)} ${cellFlashClass(r, c)}`}
-                        >
+                            } ${colFlashClass(c)} ${cellFlashClass(r, c)}`}
+                          >
                           <ExtractedDataCell
-                            value={row[c] ?? null}
-                              sourceValue={sourceRows?.[r]?.[c]}
-                            col={columns[c]}
+                            value={spanDisplayValue(rows, r, c, span)}
+                              sourceValue={sourceRows?.[r]?.[spanValueCol(rows, r, c, span)]}
+                            col={columns[spanValueCol(rows, r, c, span)] || columns[c]}
                               locked={!canEdit}
                             fitWidth
-                            onChange={(next) => onChangeCell(r, c, next)}
+                            center={merged}
+                            onChange={(next) => onChangeCell(r, spanValueCol(rows, r, c, span), next)}
                           />
                         </td>
                       )
