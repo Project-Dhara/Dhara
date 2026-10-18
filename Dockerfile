@@ -4,6 +4,8 @@ WORKDIR /frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ .
+# Same-container FastAPI — bake localhost into Next rewrites at build time.
+ENV BACKEND_ORIGIN=http://127.0.0.1:8000
 RUN npm run build
 
 # ── Stage 2: single runtime image with both Node (frontend) and Python
