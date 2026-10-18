@@ -5,9 +5,10 @@ import { useRouter } from 'next/navigation'
 import { withAuthHeaders } from '../../lib/auth'
 import { withLlmKeyHeaders } from '../../lib/llmKey'
 import { getMetadataStandard } from '../../lib/settingsConfig'
-import { goToConsoleFiles } from '../../lib/consoleSession'
+import { beginAppendFilesMode, goToConsoleFiles } from '../../lib/consoleSession'
 import { useApp } from '../../context/AppContext'
 import PdfConsoleLayout from './PdfConsoleLayout'
+import FilesReturnChoiceDialog from '../console/FilesReturnChoiceDialog'
 import GroupingWorkspace from '../console/GroupingWorkspace'
 import PostPreviewLaterSteps from '../console/PostPreviewLaterSteps'
 import ConsoleStatusPlaceholder from '../console/ConsoleStatusPlaceholder'
@@ -20,6 +21,7 @@ import {
   matchResultToPdfSavePayload,
   pdfGroupingToMatchResult,
 } from '../../lib/postPreview'
+import { namesFromMatchResult } from '../../lib/existingDatasetNames'
 
 function pdfPipelineStorageKey(jobId) {
   return `dhara_pdf_pipeline_v1_${jobId}`
@@ -84,6 +86,7 @@ export default function PdfGrouping({ jobId }) {
   const [toast, setToast] = useState(null)
 
   const [pipelineStep, setPipelineStep] = useState(persisted?.pipelineStep ?? 3)
+  const [filesReturnOpen, setFilesReturnOpen] = useState(false)
   const [maxStepReached, setMaxStepReached] = useState(persisted?.maxStepReached ?? 3)
   const [matchResult, setMatchResult] = useState(persisted?.matchResult ?? null)
   const [metadataFilling, setMetadataFilling] = useState(false)
@@ -340,9 +343,11 @@ export default function PdfGrouping({ jobId }) {
     }
   }
 
+  const existingFilenames = namesFromMatchResult(matchResult, filename)
+
   const goToPipelineStep = (targetStep) => {
     if (targetStep === 1) {
-      goToConsoleFiles(router)
+      setFilesReturnOpen(true)
       return
     }
     if (targetStep === 2) {
@@ -373,33 +378,60 @@ export default function PdfGrouping({ jobId }) {
       + (matchResult.unmatched_tables || []).length
     : 0
 
+  const filesReturnDialog = (
+    <FilesReturnChoiceDialog
+      open={filesReturnOpen}
+      onCancel={() => setFilesReturnOpen(false)}
+      onAddMore={() => {
+        setFilesReturnOpen(false)
+        beginAppendFilesMode(router, {
+          jobId,
+          existingFilenames,
+          returnPath: `/console/review/${jobId}`,
+        })
+      }}
+      onStartOver={() => {
+        setFilesReturnOpen(false)
+        clearPdfPipeline(jobId)
+        goToConsoleFiles(router)
+      }}
+    />
+  )
+
   if (statusPage) {
     return (
-      <PdfConsoleLayout
-        jobId={jobId}
-        step={pipelineStep}
-        maxStepReached={maxStepReached}
-        onGoToStep={goToPipelineStep}
-        isStepReachable={isStepReachable}
-      >
-        <div className="rounded-xl border border-line bg-white p-5 shadow-sm sm:p-6">
-          <ConsoleStatusPlaceholder
-            key={statusPage.key}
-            title={statusPage.title}
-            subtitle={statusPage.subtitle}
-            steps={statusPage.steps}
-            work={statusPage.work || null}
-            onComplete={statusPage.after}
-          />
-        </div>
-      </PdfConsoleLayout>
+      <>
+        {filesReturnDialog}
+        <PdfConsoleLayout
+          jobId={jobId}
+          step={pipelineStep}
+          maxStepReached={maxStepReached}
+          onGoToStep={goToPipelineStep}
+          isStepReachable={isStepReachable}
+          existingFilenames={existingFilenames}
+        >
+          <div className="rounded-xl border border-line bg-white p-5 shadow-sm sm:p-6">
+            <ConsoleStatusPlaceholder
+              key={statusPage.key}
+              title={statusPage.title}
+              subtitle={statusPage.subtitle}
+              steps={statusPage.steps}
+              work={statusPage.work || null}
+              onComplete={statusPage.after}
+            />
+          </div>
+        </PdfConsoleLayout>
+      </>
     )
   }
 
   return (
-    <PdfConsoleLayout
+    <>
+      {filesReturnDialog}
+      <PdfConsoleLayout
       jobId={jobId}
       step={pipelineStep}
+      existingFilenames={existingFilenames}
       maxStepReached={maxStepReached}
       onGoToStep={goToPipelineStep}
       isStepReachable={isStepReachable}
@@ -515,5 +547,6 @@ export default function PdfGrouping({ jobId }) {
         />
       )}
     </PdfConsoleLayout>
+    </>
   )
 }

@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.ingestion.review_tables import attach_batch_meta, merge_file_result_into_batch
 from app.workers.extraction_jobs import (
+    _get_pdf_bytes,
     _get_pdf_job,
     _pdf_jobs,
     _pdf_jobs_lock,
@@ -112,8 +113,6 @@ def queue_upload_batch(
 
 
 def _load_file_bytes(file_job_id: str) -> Optional[bytes]:
-    from app.workers.extraction_jobs import _get_pdf_bytes
-
     return _get_pdf_bytes(file_job_id)
 
 
@@ -236,6 +235,173 @@ def run_upload_batch(batch_id: str) -> None:
             if status == "failed":
                 batch["error"] = message
             _save_pdf_job(batch)
+
+
+def ensure_job_is_batch(job_id: str) -> Dict[str, Any]:
+    """Promote a single-file extract job into a batch shell (same job_id).
+
+    Existing tables stay available; new files can then be appended and merged.
+    No-op when the job is already a batch.
+    """
+    from app.services.ingestion.review_tables import (
+        batch_meta_from_result,
+        result_pages_only,
+    )
+
+    with _pdf_jobs_lock:
+        job = _pdf_jobs.get(job_id) or _get_pdf_job(job_id)
+        if not job:
+            raise ValueError("Job not found")
+        if job_id not in _pdf_jobs:
+            _pdf_jobs[job_id] = job
+
+        meta = batch_meta_from_result(job.get("result"))
+        existing_files = list(meta.get("batch_files") or job.get("batch_files") or [])
+        if existing_files or (job.get("source_type") or "").lower() == "batch":
+            if existing_files and not job.get("batch_files"):
+                job["batch_files"] = existing_files
+            return job
+
+        pages = result_pages_only(job.get("result"))
+        if not pages:
+            raise ValueError("Job has no extracted tables to keep")
+
+        child_id = uuid.uuid4().hex
+        source_type = (job.get("source_type") or "pdf").lower()
+        if source_type == "batch":
+            source_type = "pdf"
+        filename = job.get("filename") or "upload"
+        child = {
+            "job_id": child_id,
+            "status": "done",
+            "stage": "done",
+            "percent": 100,
+            "message": "Complete",
+            "filename": filename,
+            "user_email": job.get("user_email"),
+            "organisation_id": job.get("organisation_id"),
+            "user_id": job.get("user_id"),
+            "source_type": source_type,
+            "created_at": job.get("created_at") or time.time(),
+            "result": pages,
+            "error": None,
+            "reviews": dict(job.get("reviews") or {}),
+            "deleted_table_ids": [],
+            "parent_batch_id": job_id,
+            "dataset_id_config": job.get("dataset_id_config"),
+        }
+        raw = _get_pdf_bytes(job_id)
+        _pdf_jobs[child_id] = child
+        _save_pdf_job(child, pdf_bytes=raw)
+
+        batch_files = [
+            _batch_file_entry(
+                file_job_id=child_id,
+                filename=filename,
+                source_type=source_type,
+                status="done",
+            )
+        ]
+        job["source_type"] = "batch"
+        job["batch_files"] = batch_files
+        job["filename"] = filename
+        job["result"] = attach_batch_meta(pages, {"batch_files": batch_files})
+        job["status"] = "done"
+        job["stage"] = "done"
+        job["percent"] = 100
+        _save_pdf_job(job)
+        return job
+
+    return _get_pdf_job(job_id) or job
+
+
+def append_files_to_batch(
+    batch_id: str,
+    files: List[Tuple[str, str, bytes]],
+    *,
+    user_email: str,
+    organisation_id: Optional[str],
+    user_id: Optional[str],
+    dataset_id_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Add new files to an existing job (promoting to batch if needed) and extract them."""
+    from app.services.ingestion.table_ids import (
+        dataset_id_config_from_job,
+        normalize_dataset_id_config,
+    )
+    from app.services.ingestion.review_tables import batch_meta_from_result
+
+    if not files:
+        raise ValueError("At least one file is required")
+
+    ensure_job_is_batch(batch_id)
+    batch = _get_pdf_job(batch_id)
+    if not batch:
+        raise ValueError("Job not found")
+
+    meta = batch_meta_from_result(batch.get("result"))
+    batch_files: List[Dict[str, Any]] = list(
+        meta.get("batch_files") or batch.get("batch_files") or []
+    )
+    if len(batch_files) + len(files) > 20:
+        raise ValueError("At most 20 files per batch")
+
+    id_cfg = normalize_dataset_id_config(
+        dataset_id_config or dataset_id_config_from_job(batch)
+    )
+    new_entries: List[Dict[str, Any]] = []
+    for filename, source_type, content in files:
+        file_job_id = uuid.uuid4().hex
+        entry = _batch_file_entry(
+            file_job_id=file_job_id,
+            filename=filename,
+            source_type=source_type,
+            status="queued",
+        )
+        new_entries.append(entry)
+        batch_files.append(entry)
+        queue_extraction_job(
+            job_id=file_job_id,
+            filename=filename,
+            user_email=user_email,
+            source_type=source_type,
+            file_bytes=content,
+            organisation_id=organisation_id,
+            user_id=user_id,
+            persist_file_bytes=True,
+            parent_batch_id=batch_id,
+            dataset_id_config=id_cfg,
+        )
+
+    # Keep the same display style as queue_upload_batch ("N files"), not a
+    # concatenated "a.xlsx; +b.pdf" label that duplicates per-file names in the UI.
+    label = (
+        batch_files[0]["filename"]
+        if len(batch_files) == 1
+        else f"{len(batch_files)} files"
+    )
+
+    with _pdf_jobs_lock:
+        batch = _pdf_jobs.get(batch_id) or _get_pdf_job(batch_id)
+        if not batch:
+            raise ValueError("Job not found")
+        pages = {
+            k: v
+            for k, v in (batch.get("result") or {}).items()
+            if k != "__batch_meta__"
+        }
+        batch["batch_files"] = batch_files
+        batch["filename"] = label
+        batch["result"] = attach_batch_meta(pages, {"batch_files": batch_files})
+        batch["status"] = "queued"
+        batch["stage"] = "queued"
+        batch["percent"] = 0
+        batch["message"] = f"Queued {len(new_entries)} additional file(s)"
+        batch["error"] = None
+        batch["dataset_id_config"] = id_cfg
+        _save_pdf_job(batch)
+
+    return {"batch_id": batch_id, "added": len(new_entries), "file_count": len(batch_files)}
 
 
 def retry_batch_file(batch_id: str, file_job_id: str) -> None:

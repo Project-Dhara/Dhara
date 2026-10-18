@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import KydsSummaryCard from '../KydsSummaryCard'
 import TableViewer from '../TableViewer'
 import SqlUpload from './SqlUpload'
@@ -11,19 +12,27 @@ import ConsoleStatusPlaceholder from './ConsoleStatusPlaceholder'
 import { INVENTORY_CRUMBS, METADATA_CRUMBS, StageSidebar } from './ConsoleStages'
 import { tableCode, tablePickerLabel } from '../../lib/postPreview'
 import { UploadChoice } from './ConsoleUploadChoice'
+import FilesReturnChoiceDialog from './FilesReturnChoiceDialog'
 import { useConsolePipeline } from './useConsolePipeline'
 import ClassifyBreadcrumb from './classify/ClassifyBreadcrumb'
 import StageSubstepBreadcrumb from './StageSubstepBreadcrumb'
 import LlmKeyRequiredBanner from '../LlmKeyRequiredBanner'
 import { useApp } from '../../context/AppContext'
+import { goToConsoleFiles } from '../../lib/consoleSession'
+import { namesFromPreviewDatasets } from '../../lib/existingDatasetNames'
 
 export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatalogue, onUploadAnother }) {
   const { keySaved } = useApp()
   const hasLlmKey = hasKey || keySaved
+  const router = useRouter()
+  const [filesReturnOpen, setFilesReturnOpen] = useState(false)
   const {
     STATUS_TRANSITIONS,
     addPendingDatasetFiles,
     addStep1MetadataFiles,
+    appendFilesMode,
+    retainedDatasetNames,
+    enterLocalAppendMode,
     applyReconcile,
     autoMatchResultRef,
     batchAllTables,
@@ -109,11 +118,38 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
       requestHarmonisation()
       return
     }
+    if (targetStep === 1 && step > 1 && (matchResult || maxStepReached >= 2 || appendFilesMode)) {
+      setFilesReturnOpen(true)
+      return
+    }
     goToStep(targetStep)
   }
 
+  const confirmAddMoreFiles = () => {
+    setFilesReturnOpen(false)
+    const jobId = matchResult?.pdf_job_id || appendFilesMode?.jobId || ''
+    const fromPreview = namesFromPreviewDatasets(previewDatasets)
+    const names = fromPreview.length
+      ? fromPreview
+      : namesFromPreviewDatasets(retainedDatasetNames || appendFilesMode?.existingFilenames || [])
+    enterLocalAppendMode({ jobId, existingFilenames: names })
+  }
+
+  const confirmStartOverFiles = () => {
+    setFilesReturnOpen(false)
+    goToConsoleFiles(router)
+  }
+
+  const appendUi = Boolean(appendFilesMode?.jobId || retainedDatasetNames.length > 0)
+
   return (
     <div className="flex flex-col gap-5">
+      <FilesReturnChoiceDialog
+        open={filesReturnOpen}
+        onCancel={() => setFilesReturnOpen(false)}
+        onAddMore={confirmAddMoreFiles}
+        onStartOver={confirmStartOverFiles}
+      />
       <StageSidebar
         stageIdx={stageIdx}
         step={step}
@@ -149,7 +185,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                   activeId={step === 2 ? 'preview' : 'files'}
                   onNavigate={(next) => {
                     if (next === 'preview') goToStepGuarded(2)
-                    else setStep(1)
+                    else goToStepGuarded(1)
                   }}
                   isReachable={(crumb) => crumb.id === 'files' || maxStepReached >= 2}
                   ariaLabel="Dataset inventory"
@@ -212,6 +248,12 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
               onMetadataFilesAdd={addStep1MetadataFiles}
               onMetadataFileRemove={removeStep1MetadataFile}
               disabled={!hasLlmKey}
+              appendMode={appendUi}
+              existingDatasetNames={
+                retainedDatasetNames.length
+                  ? retainedDatasetNames
+                  : (appendFilesMode?.existingFilenames || [])
+              }
               sqlPanel={(
                 <SqlUpload
                   onMatched={handleMatched}

@@ -34,13 +34,15 @@ import {
 } from '../../lib/pdfReviewHelpers'
 import {
   DeleteConfirmDialog,
-  LeaveProgressConfirmDialog,
   MergeConfirmDialog,
   ReviewBadge,
   ScrollToTopButton,
   TableExpandPanel,
 } from './PdfReviewAtoms'
 import { TableDetail, TableTitleDisplay } from './TableDetail'
+import FilesReturnChoiceDialog from '../console/FilesReturnChoiceDialog'
+import { beginAppendFilesMode } from '../../lib/consoleSession'
+import { namesFromReviewTables } from '../../lib/existingDatasetNames'
 
 export function PdfTableEditorPage({ jobId, tableId }) {
   const [table, setTable] = useState(null)
@@ -140,16 +142,24 @@ export default function PdfReview({ jobId, filename, onDone }) {
   const [continuePhase, setContinuePhase] = useState('persist')
   const [downloadingZip, setDownloadingZip] = useState(false)
   const [downloadingId, setDownloadingId] = useState(null)
-  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false)
+  const [filesReturnOpen, setFilesReturnOpen] = useState(false)
   const rootRef = useRef(null)
   const stickyFiltersRef = useRef(null)
   const tableCardRefs = useRef(new Map())
   const router = useRouter()
 
-  const requestLeaveToFiles = () => setLeaveConfirmOpen(true)
-  const confirmLeaveToFiles = () => {
-    setLeaveConfirmOpen(false)
+  const requestLeaveToFiles = () => setFilesReturnOpen(true)
+  const confirmStartOverFiles = () => {
+    setFilesReturnOpen(false)
     onDone?.()
+  }
+  const confirmAddMoreFiles = () => {
+    setFilesReturnOpen(false)
+    beginAppendFilesMode(router, {
+      jobId,
+      existingFilenames: namesFromReviewTables(tables, filename),
+      returnPath: `/console/review/${jobId}`,
+    })
   }
   const handleStageGoToStep = (targetStep) => {
     if (targetStep === 1) {
@@ -551,12 +561,12 @@ export default function PdfReview({ jobId, filename, onDone }) {
   if (error && !tables) {
     return (
       <PdfConsoleLayout jobId={jobId} step={2} maxStepReached={3} onGoToStep={handleStageGoToStep}>
-        {leaveConfirmOpen ? (
-          <LeaveProgressConfirmDialog
-            onCancel={() => setLeaveConfirmOpen(false)}
-            onConfirm={confirmLeaveToFiles}
-          />
-        ) : null}
+        <FilesReturnChoiceDialog
+          open={filesReturnOpen}
+          onCancel={() => setFilesReturnOpen(false)}
+          onAddMore={confirmAddMoreFiles}
+          onStartOver={confirmStartOverFiles}
+        />
         <div className="flex flex-col gap-[18px]">
           <div className="flex flex-col">
             <button
@@ -590,12 +600,12 @@ export default function PdfReview({ jobId, filename, onDone }) {
   if (!tables) {
     return (
       <PdfConsoleLayout jobId={jobId} step={2} maxStepReached={3} onGoToStep={handleStageGoToStep}>
-        {leaveConfirmOpen ? (
-          <LeaveProgressConfirmDialog
-            onCancel={() => setLeaveConfirmOpen(false)}
-            onConfirm={confirmLeaveToFiles}
-          />
-        ) : null}
+        <FilesReturnChoiceDialog
+          open={filesReturnOpen}
+          onCancel={() => setFilesReturnOpen(false)}
+          onAddMore={confirmAddMoreFiles}
+          onStartOver={confirmStartOverFiles}
+        />
         <div className="flex flex-col gap-[18px]">
           <div className="flex flex-col">
             <StageSubstepBreadcrumb
@@ -818,12 +828,12 @@ export default function PdfReview({ jobId, filename, onDone }) {
     <PdfConsoleLayout jobId={jobId} step={2} maxStepReached={3} onGoToStep={handleStageGoToStep}>
     <div ref={rootRef} className="flex flex-col gap-[18px]">
       <ScrollToTopButton scrollRootRef={rootRef} />
-      {leaveConfirmOpen ? (
-        <LeaveProgressConfirmDialog
-          onCancel={() => setLeaveConfirmOpen(false)}
-          onConfirm={confirmLeaveToFiles}
-        />
-      ) : null}
+      <FilesReturnChoiceDialog
+        open={filesReturnOpen}
+        onCancel={() => setFilesReturnOpen(false)}
+        onAddMore={confirmAddMoreFiles}
+        onStartOver={confirmStartOverFiles}
+      />
       {pendingDeleteIds && (
         <DeleteConfirmDialog
           count={pendingDeleteIds.length}

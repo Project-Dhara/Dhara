@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowRight, Info } from 'lucide-react'
+import { AlertTriangle, ArrowRight, ChevronDown, Info } from 'lucide-react'
 import { withLlmKeyHeaders } from '../../lib/llmKey'
 import { withAuthHeaders } from '../../lib/auth'
 import { CLICK_THROUGH_ENABLED } from '../../lib/clickThrough'
@@ -157,12 +157,37 @@ export default function BatchReview({
     })
     return next
   })
+  const [unfilledDropdownOpen, setUnfilledDropdownOpen] = useState(false)
+  const unfilledDropdownRef = useRef(null)
+  const autofillBannerRef = useRef(null)
+  // Jump target from the missing-required dropdown → MetadataSheetGrid.
+  const [metaFocus, setMetaFocus] = useState({ groupIndex: null, fieldKey: null, token: 0 })
+  // Shown at the top after Save & continue when required fields are still empty.
+  const [missingRequiredPrompt, setMissingRequiredPrompt] = useState(false)
 
   useEffect(() => {
     if (!toast) return undefined
     const timer = setTimeout(() => setToast(null), 6000)
     return () => clearTimeout(timer)
   }, [toast])
+
+  useEffect(() => {
+    if (!unfilledDropdownOpen) return undefined
+    const onDoc = (e) => {
+      if (unfilledDropdownRef.current && !unfilledDropdownRef.current.contains(e.target)) {
+        setUnfilledDropdownOpen(false)
+      }
+    }
+    const onKey = (e) => {
+      if (e.key === 'Escape') setUnfilledDropdownOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [unfilledDropdownOpen])
 
   // Re-attempt Stage 4 fill after the steward submits/edits KYDS (common case:
   // land on metadata → fill KYDS → fields were still empty because fill ran
@@ -406,6 +431,45 @@ export default function BatchReview({
     || Object.keys(aiFilledByGroup).filter((k) => (aiFilledByGroup[k]?.size || 0) > 0).length
   const totalAiFieldCount = Object.values(aiFilledByGroup).reduce((sum, set) => sum + (set?.size || 0), 0)
 
+  // Required catalogue sheet fields still empty (Settings → Metadata configuration).
+  const missingRequiredItems = useMemo(() => {
+    const items = []
+    groups.forEach((g, gi) => {
+      const groupLabel = String(g?.file_name || g?.metadata?.title || `Group ${gi + 1}`).trim() || `Group ${gi + 1}`
+      missingRequiredSheetFields(g?.metadata, sheetColumns).forEach((col) => {
+        items.push({
+          groupIndex: gi,
+          groupLabel,
+          fieldKey: col.key,
+          fieldLabel: col.label,
+        })
+      })
+    })
+    return items
+  }, [groups, sheetColumns])
+
+  const jumpToMissingRequiredField = useCallback((item) => {
+    setMetaFocus((prev) => ({
+      groupIndex: item.groupIndex,
+      fieldKey: item.fieldKey,
+      token: (prev.token || 0) + 1,
+    }))
+    setUnfilledDropdownOpen(false)
+  }, [])
+
+  const focusMissingRequiredAtTop = useCallback(() => {
+    setMissingRequiredPrompt(true)
+    setUnfilledDropdownOpen(true)
+    setToast(null)
+    window.requestAnimationFrame(() => {
+      autofillBannerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }, [])
+
+  useEffect(() => {
+    if (missingRequiredItems.length === 0) setMissingRequiredPrompt(false)
+  }, [missingRequiredItems.length])
+
   const autofillStatus = (() => {
     if (refilling) {
       return {
@@ -551,11 +615,7 @@ export default function BatchReview({
   const handlePush = async () => {
     const incompleteSheet = groups.findIndex((g) => missingRequiredSheetFields(g.metadata, sheetColumns).length > 0)
     if (incompleteSheet !== -1) {
-      const missing = missingRequiredSheetFields(groups[incompleteSheet].metadata, sheetColumns)
-      setToast({
-        type: 'warn',
-        message: `Required metadata fields not filled in group ${incompleteSheet + 1}: ${missing.map((c) => c.label).join(', ')}.`,
-      })
+      focusMissingRequiredAtTop()
       return
     }
     const allComplete = nmdsByGroup.every((g) => isComplete(g?.fields || emptyFields()))
@@ -567,6 +627,7 @@ export default function BatchReview({
     setStep('pushing')
     setError('')
     setToast(null)
+    setMissingRequiredPrompt(false)
 
     const finish = (ids = []) => {
       const label = groups[0]?.metadata?.title || groups[0]?.file_name || ''
@@ -709,10 +770,15 @@ export default function BatchReview({
       {error && <ErrorBanner>{error}</ErrorBanner>}
 
       {step === 'review' && autofillStatus && (
-        <div className={`rounded-lg border px-4 py-3 text-sm leading-relaxed ${autofillStatusClass}`}>
+        <div ref={autofillBannerRef} className={`rounded-lg border px-4 py-3 text-sm leading-relaxed ${autofillStatusClass}`}>
           <strong>{autofillStatus.title}</strong>
           <div className="mt-1 [overflow-wrap:anywhere]">{autofillStatus.body}</div>
-          {(keyNotConfigured || matchResult.llm_autofill_skipped_no_key || llmFilledGroupCount > 0 || noneAutoMapped) && (
+          {missingRequiredPrompt && missingRequiredItems.length > 0 && (
+            <div className="mt-2 rounded-md border border-coral/40 bg-[rgba(217,91,104,0.08)] px-3 py-2 text-[13px] font-medium text-coral">
+              Here are the missing required fields — open the list below, select each one, and fill them in respectively.
+            </div>
+          )}
+          {(keyNotConfigured || matchResult.llm_autofill_skipped_no_key || llmFilledGroupCount > 0 || noneAutoMapped || missingRequiredItems.length > 0) && (
             <div className="mt-2 flex flex-wrap gap-2 text-[12px]">
               <span className="inline-flex items-center rounded-md border border-current/20 bg-white/50 px-2 py-0.5 font-semibold">
                 {keyNotConfigured || matchResult.llm_autofill_skipped_no_key
@@ -721,10 +787,45 @@ export default function BatchReview({
                     ? `Autofill: ran (${llmFilledGroupCount} group${llmFilledGroupCount !== 1 ? 's' : ''})`
                     : 'Autofill: ran, no fields filled'}
               </span>
-              {totalAiFieldCount > 0 && (
-                <span className="inline-flex items-center rounded-md border border-teal/30 bg-white/70 px-2 py-0.5 font-semibold text-teal-deep">
-                  {totalAiFieldCount} AI-filled field{totalAiFieldCount !== 1 ? 's' : ''}
-                </span>
+              {missingRequiredItems.length > 0 && (
+                <div className="relative" ref={unfilledDropdownRef}>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded-md border border-coral/50 bg-[rgba(217,91,104,0.12)] px-2 py-0.5 font-semibold text-coral hover:border-coral hover:bg-[rgba(217,91,104,0.2)]"
+                    aria-expanded={unfilledDropdownOpen}
+                    aria-haspopup="listbox"
+                    onClick={() => setUnfilledDropdownOpen((o) => !o)}
+                  >
+                    {missingRequiredItems.length} missing · review needed
+                    <ChevronDown className={`h-3.5 w-3.5 transition-transform ${unfilledDropdownOpen ? 'rotate-180' : ''}`} aria-hidden />
+                  </button>
+                  {unfilledDropdownOpen && (
+                    <div
+                      role="listbox"
+                      className="absolute left-0 z-30 mt-1 max-h-[280px] w-[min(420px,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-coral/40 bg-white py-1 shadow-lg"
+                    >
+                      <div className="border-b border-line px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-coral">
+                        Jump to missing required field
+                      </div>
+                      {missingRequiredItems.map((item) => (
+                        <button
+                          key={`${item.groupIndex}-${item.fieldKey}`}
+                          type="button"
+                          role="option"
+                          className="flex w-full flex-col gap-0.5 px-3 py-2 text-left hover:bg-[rgba(217,91,104,0.06)]"
+                          onClick={() => jumpToMissingRequiredField(item)}
+                        >
+                          <span className="font-sans text-[12.5px] font-semibold text-ink">
+                            Group {item.groupIndex + 1}: {item.groupLabel}
+                          </span>
+                          <span className="font-sans text-[12px] font-medium text-coral">
+                            {item.fieldLabel} *
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}
@@ -764,6 +865,9 @@ export default function BatchReview({
       {step !== 'done' && (
         <MetadataSheetGrid
           columns={sheetColumns}
+          selectedGroupIndex={metaFocus.groupIndex}
+          focusFieldKey={metaFocus.fieldKey}
+          focusToken={metaFocus.token}
           rows={groups.map((g, gi) => {
             const aiKeys = aiFilledByGroup[gi] || new Set()
             const aiFilled = !keyNotConfigured && !matchResult.llm_autofill_skipped_no_key && (g.llm_filled || aiKeys.size > 0)

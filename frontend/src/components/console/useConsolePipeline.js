@@ -18,7 +18,16 @@ import { loadPersistedConsoleState, CONSOLE_STORAGE_KEY } from '../../lib/consol
 import { subscribeConsoleTableEdits } from '../../lib/consoleTableEdit'
 import { stepInfoFor } from './ConsoleUploadChoice'
 import { withinStageBack } from './ConsoleStages'
-import { isDatasetFile, uploadDatasetBatch, useSinglePdfUpload } from '../../lib/datasetUpload'
+import {
+  appendDatasetBatch,
+  isDatasetFile,
+  uploadDatasetBatch,
+  useSinglePdfUpload,
+} from '../../lib/datasetUpload'
+import {
+  clearAppendFilesMode,
+  getAppendFilesMode,
+} from '../../lib/consoleSession'
 
 export function useConsolePipeline() {
   const persisted = loadPersistedConsoleState()
@@ -34,6 +43,11 @@ export function useConsolePipeline() {
   const [pendingDatasetFiles, setPendingDatasetFiles] = useState([])
   const [pdfUploading, setPdfUploading] = useState(false)
   const [pdfError, setPdfError] = useState('')
+  const [appendFilesMode, setAppendFilesMode] = useState(() => getAppendFilesMode())
+  /** Shown on Files when returning without wiping (may be empty). */
+  const [retainedDatasetNames, setRetainedDatasetNames] = useState(
+    () => getAppendFilesMode()?.existingFilenames || [],
+  )
   // Full-page status between stages (same look as PDF processing).
   // { key, title, subtitle, steps, work?, after, msPerStep? }
   const [statusPage, setStatusPage] = useState(null)
@@ -467,6 +481,16 @@ export function useConsolePipeline() {
     setPdfError('')
     setPdfUploading(true)
     try {
+      const append = appendFilesMode || getAppendFilesMode()
+      if (append?.jobId) {
+        const data = await appendDatasetBatch(append.jobId, files)
+        const jobId = data.job_id || data.batch_id || append.jobId
+        clearAppendFilesMode()
+        setAppendFilesMode(null)
+        setPendingDatasetFiles([])
+        router.push(`/console/processing/${jobId}`)
+        return
+      }
       if (useSinglePdfUpload(files)) {
         await handlePdfFile(files[0])
         return
@@ -481,9 +505,39 @@ export function useConsolePipeline() {
   }
 
   // A substep can only be jumped to once the user has actually reached it
-  // before.
+  // before. Navigating to Files from later steps is gated by the caller
+  // (choice dialog) so we only set the step here.
   const goToStep = (targetStep) => {
     if (targetStep <= maxStepReached) setStep(targetStep)
+  }
+
+  const enterLocalAppendMode = (opts) => {
+    const names = opts.existingFilenames || []
+    setRetainedDatasetNames(names)
+    if (opts.jobId) {
+      const next = {
+        jobId: opts.jobId,
+        existingFilenames: names,
+        returnPath: opts.returnPath || null,
+      }
+      try {
+        sessionStorage.setItem('dhara_console_append_files_v1', JSON.stringify(next))
+      } catch {
+        // best-effort
+      }
+      setAppendFilesMode(next)
+    } else {
+      clearAppendFilesMode()
+      setAppendFilesMode(null)
+    }
+    setPendingDatasetFiles([])
+    setStep(1)
+  }
+
+  const cancelAppendFilesMode = () => {
+    clearAppendFilesMode()
+    setAppendFilesMode(null)
+    setRetainedDatasetNames([])
   }
 
   // ── step 2: preview ──
@@ -572,6 +626,10 @@ export function useConsolePipeline() {
     STATUS_TRANSITIONS,
     addPendingDatasetFiles,
     addStep1MetadataFiles,
+    appendFilesMode,
+    retainedDatasetNames,
+    cancelAppendFilesMode,
+    enterLocalAppendMode,
     applyReconcile,
     autoMatchResultRef,
     back,

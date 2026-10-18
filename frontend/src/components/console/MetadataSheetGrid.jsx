@@ -51,14 +51,48 @@ export default function MetadataSheetGrid({
   onChange,
   renderGroupFooter,
   renderGroupHeaderActions,
+  /** Optional controlled group index (e.g. jump from autofill unfilled list). */
+  selectedGroupIndex,
+  onSelectedGroupIndexChange,
+  /** Optional field key to scroll/highlight after selecting a group. */
+  focusFieldKey,
+  /** Bump to re-trigger scroll when jumping to the same field again. */
+  focusToken,
 }) {
   const badgeCols = columns.filter((c) => c.type === 'badge' || c.type === 'date')
   const longCols = columns.filter((c) => c.type === 'long')
 
   const [activeIndex, setActiveIndex] = useState(0)
   useEffect(() => {
+    if (typeof selectedGroupIndex === 'number' && selectedGroupIndex >= 0) {
+      setActiveIndex(selectedGroupIndex)
+    }
+  }, [selectedGroupIndex])
+  useEffect(() => {
     if (activeIndex >= rows.length) setActiveIndex(Math.max(0, rows.length - 1))
   }, [rows.length, activeIndex])
+
+  const selectGroup = (ri) => {
+    setActiveIndex(ri)
+    onSelectedGroupIndexChange?.(ri)
+  }
+
+  useEffect(() => {
+    if (!focusFieldKey || focusToken == null) return undefined
+    // Wait until the target group is the active panel before scrolling.
+    if (typeof selectedGroupIndex === 'number' && activeIndex !== selectedGroupIndex) return undefined
+    const id = `meta-field-${focusFieldKey}`
+    const timer = window.setTimeout(() => {
+      const el = document.getElementById(id)
+      if (!el) return
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el.classList.add('ring-2', 'ring-coral', 'ring-offset-2')
+      window.setTimeout(() => {
+        el.classList.remove('ring-2', 'ring-coral', 'ring-offset-2')
+      }, 1800)
+    }, 80)
+    return () => window.clearTimeout(timer)
+  }, [focusFieldKey, focusToken, activeIndex, selectedGroupIndex])
 
   const activeRow = rows[activeIndex]
   const useDropdown = rows.length > 10
@@ -100,7 +134,7 @@ export default function MetadataSheetGrid({
             <Combobox
               options={groupOptions}
               value={activeIndex}
-              onChange={(next) => setActiveIndex(Number(next))}
+              onChange={(next) => selectGroup(Number(next))}
               placeholder="Select a group"
               ariaLabel="Select metadata group"
             />
@@ -118,7 +152,7 @@ export default function MetadataSheetGrid({
                     ? 'border-teal-deep bg-teal-deep text-cream'
                     : 'border-line bg-surface text-ink-soft hover:border-teal/35 hover:bg-sage hover:text-teal-deep'
                 }`}
-                onClick={() => setActiveIndex(ri)}
+                onClick={() => selectGroup(ri)}
                 title={chipLabel}
               >
                 <span className={`inline-flex h-[18px] w-[18px] items-center justify-center rounded-full text-[10.5px] font-bold transition-colors duration-[420ms] ${ri === activeIndex ? 'bg-cream/20 text-cream' : 'bg-[#ece4d6] text-ink-soft'}`}>{ri + 1}</span>
@@ -182,6 +216,7 @@ export default function MetadataSheetGrid({
                   return (
                   <label
                     key={c.key}
+                    id={`meta-field-${c.key}`}
                     className={`flex w-full min-w-0 flex-col gap-1 rounded-[10px] border px-3 py-2 transition-colors focus-within:border-teal hover:border-[#c9bda6] ${
                       missing ? REQUIRED_EMPTY_FIELD_CLASS : 'border-line bg-[#F7F3EA]'
                     }`}
@@ -234,7 +269,7 @@ export default function MetadataSheetGrid({
                   const missing = c.required && !(row.values[c.key] || '').trim()
                   const status = fieldStatusLabel(c.key, row.values[c.key])
                   return (
-                  <label key={c.key} className="flex flex-col gap-1">
+                  <label key={c.key} id={`meta-field-${c.key}`} className="flex flex-col gap-1 rounded-lg">
                     <span className="flex items-center justify-between gap-2">
                       <span className="font-sans text-[11px] font-semibold uppercase tracking-wide text-[#8E9398]">
                         {c.label}

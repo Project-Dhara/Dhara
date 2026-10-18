@@ -5,6 +5,7 @@ import { ArrowRight, Plus, X } from 'lucide-react'
 import Button from '../ui/Button'
 import ErrorBanner from '../ui/ErrorBanner'
 import { isDatasetFile, useSinglePdfUpload } from '../../lib/datasetUpload'
+import { namesFromPreviewDatasets } from '../../lib/existingDatasetNames'
 
 export function stepInfoFor(step) {
   return [
@@ -121,6 +122,9 @@ export function UploadChoice({
   onMetadataFileRemove,
   sqlPanel,
   disabled = false,
+  /** Filenames already extracted in the current job (append mode). */
+  existingDatasetNames = [],
+  appendMode = false,
 }) {
   const datasetInputRef = useRef(null)
   const metadataInputRef = useRef(null)
@@ -132,6 +136,7 @@ export function UploadChoice({
   const singlePdfQueued = useSinglePdfUpload(datasetFiles)
   const uploadsBlocked = disabled || processing || pdfUploading
   const showStartProcessing = fileTab && hasDatasetFiles && onStartProcessing
+  const alreadyExtractedNames = namesFromPreviewDatasets(existingDatasetNames)
 
   const routeDatasetFiles = (fileList) => {
     if (uploadsBlocked) return
@@ -248,6 +253,13 @@ export function UploadChoice({
                       Save an API key in Settings before uploading PDF, XLSX, or SQL datasets.
                     </div>
                   </>
+                ) : appendMode ? (
+                  <>
+                    <div className="text-[15px] font-semibold tracking-tight text-ink">Add more dataset files</div>
+                    <div className="max-w-[280px] text-[13px] leading-snug text-ink-soft">
+                      Your current extract is kept. Add new PDF, XLSX, or CSV files, then start processing to merge them in.
+                    </div>
+                  </>
                 ) : hasDatasetFiles ? (
                   <>
                     <div className="text-[15px] font-semibold tracking-tight text-ink">Files ready</div>
@@ -264,6 +276,19 @@ export function UploadChoice({
                   </>
                 )}
               </div>
+              {appendMode && alreadyExtractedNames.length > 0 && (
+                <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
+                  <li className="text-[11px] font-semibold uppercase tracking-wide text-ink-soft">Already extracted</li>
+                  {alreadyExtractedNames.map((name) => (
+                    <li
+                      key={name}
+                      className="rounded-md border border-line bg-[#f7f3ea] px-2.5 py-1.5 font-sans text-[12.5px] text-ink-soft"
+                    >
+                      {name}
+                    </li>
+                  ))}
+                </ul>
+              )}
               {hasDatasetFiles && (
                 <DatasetFileList files={datasetFiles} onRemove={onDatasetFileRemove} />
               )}

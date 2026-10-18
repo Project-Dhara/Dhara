@@ -25,6 +25,16 @@ function appendDatasetIdConfig(fd) {
   fd.append('dataset_id_config', JSON.stringify(datasetIdConfigPayload()))
 }
 
+async function readUploadError(res) {
+  const err = await res.json().catch(() => ({}))
+  const detail = typeof err.detail === 'string'
+    ? err.detail
+    : Array.isArray(err.detail)
+      ? err.detail.map((d) => d?.msg || JSON.stringify(d)).join('; ')
+      : ''
+  return detail || `Upload failed (HTTP ${res.status})`
+}
+
 export async function uploadDatasetBatch(files) {
   const fd = new FormData()
   files.forEach((f) => fd.append('files', f))
@@ -33,14 +43,19 @@ export async function uploadDatasetBatch(files) {
     '/api/upload/batch',
     withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: fd })),
   )
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    const detail = typeof err.detail === 'string'
-      ? err.detail
-      : Array.isArray(err.detail)
-        ? err.detail.map((d) => d?.msg || JSON.stringify(d)).join('; ')
-        : ''
-    throw new Error(detail || `Upload failed (HTTP ${res.status})`)
-  }
+  if (!res.ok) throw new Error(await readUploadError(res))
+  return res.json()
+}
+
+/** Append files to an existing extract/batch job; prior tables are kept. */
+export async function appendDatasetBatch(jobId, files) {
+  const fd = new FormData()
+  files.forEach((f) => fd.append('files', f))
+  appendDatasetIdConfig(fd)
+  const res = await fetch(
+    `/api/upload/batches/${encodeURIComponent(jobId)}/files`,
+    withAuthHeaders(withLlmKeyHeaders({ method: 'POST', body: fd })),
+  )
+  if (!res.ok) throw new Error(await readUploadError(res))
   return res.json()
 }

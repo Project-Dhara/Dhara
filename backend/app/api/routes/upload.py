@@ -16,7 +16,12 @@ from app.workers.extraction_jobs import (
     _run_extraction_job,
     queue_extraction_job,
 )
-from app.workers.upload_batches import queue_upload_batch, retry_batch_file, run_upload_batch
+from app.workers.upload_batches import (
+    append_files_to_batch,
+    queue_upload_batch,
+    retry_batch_file,
+    run_upload_batch,
+)
 
 
 def _parse_dataset_id_config_form(raw: Optional[str]) -> Optional[dict]:
@@ -143,6 +148,64 @@ async def upload_batch_status(batch_id: str, user: CurrentUser = Depends(require
         if not _job_visible_to(job, user):
             raise HTTPException(404, "Batch not found")
         return _pdf_job_public(job)
+
+
+@router.post("/api/upload/batches/{batch_id}/files")
+async def upload_batch_append_files(
+    batch_id: str,
+    files: List[UploadFile] = File(...),
+    dataset_id_config: Optional[str] = Form(None),
+    user: CurrentUser = Depends(require_roles(*MUTATING_ROLES)),
+):
+    """Append files to an existing extract job; prior tables are kept and re-merged."""
+    with _pdf_jobs_lock:
+        job = _get_pdf_job(batch_id)
+        if not _job_visible_to(job, user):
+            raise HTTPException(404, "Batch not found")
+
+    if not files:
+        raise HTTPException(400, "At least one file is required")
+    if len(files) > MAX_BATCH_FILES:
+        raise HTTPException(400, f"At most {MAX_BATCH_FILES} files per batch")
+
+    prepared = []
+    total = 0
+    for upload in files:
+        filename = upload.filename or "upload"
+        try:
+            source_type = resolve_source_type(filename, None)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        if source_type == "excel" and filename.lower().endswith(".xls"):
+            raise HTTPException(400, "Legacy .xls is not supported. Re-save as .xlsx.")
+        content = await upload.read()
+        if not content:
+            raise HTTPException(400, f"{filename} is empty")
+        total += len(content)
+        if total > MAX_BATCH_BYTES:
+            raise HTTPException(400, "Total upload size exceeds batch limit")
+        prepared.append((filename, source_type, content))
+
+    id_cfg = _parse_dataset_id_config_form(dataset_id_config)
+    try:
+        info = append_files_to_batch(
+            batch_id,
+            prepared,
+            user_email=user.email,
+            organisation_id=str(user.organisation_id),
+            user_id=str(user.id),
+            dataset_id_config=id_cfg,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+    asyncio.create_task(asyncio.to_thread(run_upload_batch, batch_id))
+    return {
+        "batch_id": batch_id,
+        "job_id": batch_id,
+        "added": info.get("added", len(prepared)),
+        "file_count": info.get("file_count"),
+    }
 
 
 @router.post("/api/upload/batches/{batch_id}/retry")

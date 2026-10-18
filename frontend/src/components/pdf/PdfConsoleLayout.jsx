@@ -1,8 +1,10 @@
 'use client'
 
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ConsoleStagesShell } from '../console/ConsoleStages'
-import { goToConsoleFiles } from '../../lib/consoleSession'
+import FilesReturnChoiceDialog from '../console/FilesReturnChoiceDialog'
+import { beginAppendFilesMode, goToConsoleFiles } from '../../lib/consoleSession'
 
 /**
  * PDF pipeline stages map onto the same Console Stages numbers as Excel:
@@ -17,14 +19,21 @@ export default function PdfConsoleLayout({
   maxStepReached,
   onGoToStep = undefined,
   isStepReachable = undefined,
+  /** Filenames already in this job — used for "add more" mode. */
+  existingFilenames = [],
   children,
 }) {
   const router = useRouter()
+  const [filesReturnOpen, setFilesReturnOpen] = useState(false)
+
+  const openFilesChoice = () => setFilesReturnOpen(true)
 
   const defaultGoToStep = (targetStep) => {
     if (targetStep === 1) {
-      // Drop PDF return-path + Excel snapshots so Files is a clean start,
-      // and sidebar → Console won't bounce back to this job's preview.
+      if (jobId && maxStepReached >= 2) {
+        openFilesChoice()
+        return
+      }
       goToConsoleFiles(router)
       return
     }
@@ -38,14 +47,45 @@ export default function PdfConsoleLayout({
     }
   }
 
+  const handleGoToStep = (targetStep) => {
+    if (targetStep === 1 && onGoToStep) {
+      // Let the parent show the same choice (it owns return-path / pipeline state).
+      onGoToStep(1)
+      return
+    }
+    ;(onGoToStep || defaultGoToStep)(targetStep)
+  }
+
   return (
-    <ConsoleStagesShell
-      step={step}
-      maxStepReached={maxStepReached}
-      onGoToStep={onGoToStep || defaultGoToStep}
-      isStepReachable={isStepReachable}
-    >
-      {children}
-    </ConsoleStagesShell>
+    <>
+      <FilesReturnChoiceDialog
+        open={filesReturnOpen}
+        onCancel={() => setFilesReturnOpen(false)}
+        onAddMore={() => {
+          setFilesReturnOpen(false)
+          if (!jobId) {
+            goToConsoleFiles(router)
+            return
+          }
+          beginAppendFilesMode(router, {
+            jobId,
+            existingFilenames: existingFilenames.length ? existingFilenames : [],
+            returnPath: jobId ? `/console/review/${jobId}` : null,
+          })
+        }}
+        onStartOver={() => {
+          setFilesReturnOpen(false)
+          goToConsoleFiles(router)
+        }}
+      />
+      <ConsoleStagesShell
+        step={step}
+        maxStepReached={maxStepReached}
+        onGoToStep={handleGoToStep}
+        isStepReachable={isStepReachable}
+      >
+        {children}
+      </ConsoleStagesShell>
+    </>
   )
 }
