@@ -14,7 +14,12 @@ _HOST_CPUS = max(1, os.cpu_count() or 1)
 # ~1GB RSS headroom per PyMuPDF worker (PDF reopen + page DataFrames).
 _MB_PER_CPU_WORKER = 1024
 # Keep headroom for uvicorn / OS / LLM client so extract does not OOM the box.
-_RAM_RESERVE_MB = 1536
+# 1GB (not 1.5GB) so an 8GB laptop can still run ~3 workers — the historical
+# local default — without OOM retries on typical extract loads.
+_RAM_RESERVE_MB = 1024
+# Fraction of total RAM treated as reclaimable (file cache / inactive pages).
+# macOS vm_stat "free" understates this; 0.55 matches the macOS fallback ratio.
+_RAM_RECLAIM_FRACTION = 0.55
 # Sanity ceiling when autoscaling on very large instances (override via env).
 _DEFAULT_CPU_WORKERS_MAX = 32
 
@@ -51,6 +56,49 @@ def _read_cgroup_memory_limit_mb() -> Optional[int]:
             continue
         return max(1, nbytes // (1024 * 1024))
     return None
+
+
+def _read_cgroup_cpu_quota() -> Optional[int]:
+    """Effective CPU count from cgroup quota when present; None if unlimited/unknown.
+
+    Docker/K8s often expose host ``os.cpu_count()`` while the container is
+    capped (e.g. 2 vCPU). Prefer the quota so we do not oversubscribe.
+    """
+    # cgroup v2: "max 100000" or "150000 100000" (quota period)
+    try:
+        raw = Path("/sys/fs/cgroup/cpu.max").read_text(encoding="utf-8").strip()
+        parts = raw.split()
+        if parts and parts[0] != "max":
+            quota = int(parts[0])
+            period = int(parts[1]) if len(parts) > 1 else 100_000
+            if quota > 0 and period > 0:
+                # Round up partial CPUs so a 1.5 quota still gets 2 workers max.
+                return max(1, (quota + period - 1) // period)
+    except Exception:
+        pass
+
+    # cgroup v1
+    try:
+        quota = int(
+            Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us").read_text(encoding="utf-8").strip()
+        )
+        period = int(
+            Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us").read_text(encoding="utf-8").strip()
+        )
+        if quota > 0 and period > 0:
+            return max(1, (quota + period - 1) // period)
+    except Exception:
+        pass
+    return None
+
+
+def _effective_cpu_count() -> int:
+    """Host CPUs, capped by cgroup CPU quota when the container is limited."""
+    host = max(1, os.cpu_count() or 1)
+    quota = _read_cgroup_cpu_quota()
+    if quota is None:
+        return host
+    return max(1, min(host, quota))
 
 
 def _read_linux_meminfo_mb() -> tuple[Optional[int], Optional[int]]:
@@ -111,7 +159,7 @@ def _read_macos_mem_mb() -> tuple[Optional[int], Optional[int]]:
             // (1024 * 1024),
         )
     except Exception:
-        avail = max(1, int(total * 0.55))
+        avail = max(1, int(total * _RAM_RECLAIM_FRACTION))
     return avail, total
 
 
@@ -140,7 +188,7 @@ def _available_ram_mb() -> Optional[int]:
     # File-cache / inactive pages are reclaimable. macOS vm_stat "free" often
     # understates this and would collapse workers to 1 on an 8GB laptop.
     if total is not None:
-        reclaim_floor = max(1, int(total * 0.45))
+        reclaim_floor = max(1, int(total * _RAM_RECLAIM_FRACTION))
         if avail is None:
             avail = reclaim_floor
         else:
@@ -153,10 +201,12 @@ def _default_cpu_workers() -> int:
 
     Each worker re-opens the full PDF and holds page DataFrames. On small hosts
     (e.g. 8GB laptops) we stay conservative so extract does not OOM and retry.
-    On larger servers, workers track ``cpu_count`` and available RAM
-    (~1GB/worker after a fixed reserve) up to ``PDF_CPU_WORKERS_MAX``.
+    On larger servers / containers, workers track effective CPUs (host count
+    capped by cgroup quota) and available RAM (~1GB/worker after a 1GB
+    reserve) up to ``PDF_CPU_WORKERS_MAX``. An 8GB laptop typically gets 3
+    workers (the previous local default).
     """
-    cpus = max(1, os.cpu_count() or 1)
+    cpus = _effective_cpu_count()
     # Leave one core for the API process when the box has spare capacity.
     cpu_cap = cpus if cpus <= 2 else max(1, cpus - 1)
 
@@ -193,7 +243,8 @@ OPENAI_MODEL = "gpt-4o-mini"
 ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 # I/O-bound OpenAI calls — concurrency is not CPU-bound. Default high enough
 # that ~100+ uncertain pages finish in a few waves rather than a long queue.
-OPENAI_WORKERS = _env_int("PDF_OPENAI_WORKERS", 12)
+# Raise via PDF_OPENAI_WORKERS if the provider allows; back off on 429s.
+OPENAI_WORKERS = _env_int("PDF_OPENAI_WORKERS", 20)
 BATCH_SIZE = _env_int("PDF_LLM_BATCH_SIZE", 6)
 MAX_TOKENS_PER_PAGE = 4500
 SINGLE_PAGE_MAX_TOKENS = 7000

@@ -256,6 +256,144 @@ def looks_like_chart_candidate(
         )
     return False, ""
 
+
+# Bullet / fact-list markers that shaded highlight strips often turn into
+# 1–2 column "tables" (► sentences with numbers → garbled review flags).
+_BULLET_PREFIX_RE = re.compile(
+    r"^[\s]*(?:"
+    r"["
+    r"\u2022\u2023\u25E6\u2043\u2219\u25AA\u25CF\u25A0\u25A1"  # • ‣ ◦ ⁃ ∙ ▪ ● ■ □
+    r"\u25B6\u25B7\u25BA\u25B8\u25B9\u27A4"  # ▶ ▷ ► ▸ ▹ ➢
+    r"\u2794\u279C\u27A2\u2192\u21D2\u00BB\u203A\u27A1"  # ➔ ➜ ➢ → ⇒ » › ➡
+    r"\uf0b7\uf0a7"  # common Wingdings / icon-font bullets
+    r"]"
+    r"|[-–—*]>?"
+    r"|\>"
+    r")[\s.\)\:]*"
+)
+
+
+def _cell_looks_like_prose_sentence(text: str) -> bool:
+    """Long multi-word narrative cell (fact-list item), not a stub/code/header."""
+    s = (text or "").strip()
+    if len(s) < 40:
+        return False
+    words = re.findall(r"[A-Za-z]{2,}", s)
+    if len(words) < 5:
+        return False
+    # Prefer sentence-like rows (space density); reject compact code blocks.
+    if s.count(" ") < 4:
+        return False
+    return True
+
+
+def _strip_bullet_prefix(text: str) -> str:
+    return _BULLET_PREFIX_RE.sub("", text or "", count=1).strip()
+
+
+def looks_like_bullet_list_candidate(
+    df: pd.DataFrame,
+    *,
+    page: Any = None,
+    bbox: Optional[List[float]] = None,
+    page_text: str = "",
+) -> Tuple[bool, str]:
+    """Detect bulleted / highlighted fact lists misread as tables.
+
+    Guard-only: real statistical grids (multi-column stubs + measures, short
+    label columns, year×rate, …) return False. Shaded bullet strips with one
+    long sentence per row return True so they never reach garbled review.
+    """
+    del page, bbox, page_text  # signature matches chart helper for shared call sites
+    if df is None or getattr(df, "empty", True):
+        return False, ""
+    try:
+        cleaned = clean_dataframe_light(df)
+    except Exception:
+        cleaned = df
+    n_rows, n_cols = int(cleaned.shape[0]), int(cleaned.shape[1])
+    if n_cols > 3 or n_rows < 4:
+        return False, ""
+
+    # Collect primary text cells (leftmost non-empty per row, else join).
+    row_texts: List[str] = []
+    bullet_rows = 0
+    prose_rows = 0
+    short_numeric_rows = 0
+    for i in range(n_rows):
+        cells = [_cell_str(v) for v in cleaned.iloc[i].tolist()]
+        nonempty = [c for c in cells if c]
+        if not nonempty:
+            continue
+        # Bullet in col-0 + prose in col-1 (common 2-col false table).
+        if n_cols >= 2 and cells[0] and _BULLET_PREFIX_RE.match(cells[0]) and len(cells[0]) <= 4:
+            body = " ".join(c for c in cells[1:] if c).strip() or cells[0]
+            row_texts.append(body)
+            bullet_rows += 1
+            if _cell_looks_like_prose_sentence(_strip_bullet_prefix(body)):
+                prose_rows += 1
+            continue
+        primary = nonempty[0] if len(nonempty) == 1 else " ".join(nonempty)
+        row_texts.append(primary)
+        if _BULLET_PREFIX_RE.match(primary):
+            bullet_rows += 1
+        body = _strip_bullet_prefix(primary)
+        if _cell_looks_like_prose_sentence(body):
+            prose_rows += 1
+        # Short numeric-only rows argue for a real measure column.
+        if re.fullmatch(r"[\d,.\s%]+", body or "") and len(body) <= 12:
+            short_numeric_rows += 1
+
+    n_text = len(row_texts)
+    if n_text < 4:
+        return False, ""
+
+    prose_ratio = prose_rows / n_text
+    bullet_ratio = bullet_rows / n_text
+
+    # Real 1–2 col stub tables: many short labels / numbers, little prose.
+    if short_numeric_rows >= max(3, int(0.4 * n_text)) and prose_ratio < 0.5:
+        return False, ""
+
+    # Strong: most rows are long sentences and many carry bullet markers.
+    if prose_ratio >= 0.65 and (bullet_ratio >= 0.35 or n_cols == 1):
+        return True, (
+            f"bullet/fact list {n_rows}x{n_cols} "
+            f"(prose={prose_rows}/{n_text}, bullets={bullet_rows}/{n_text})"
+        )
+    # Softer: almost every row is a long sentence in a narrow grid (shaded
+    # highlight strips without recoverable bullet glyphs).
+    if n_cols <= 2 and prose_ratio >= 0.8 and bullet_ratio >= 0.15:
+        return True, (
+            f"prose fact list {n_rows}x{n_cols} "
+            f"(prose={prose_rows}/{n_text}, bullets={bullet_rows}/{n_text})"
+        )
+    if n_cols == 1 and prose_ratio >= 0.85:
+        return True, (
+            f"single-column prose list {n_rows}x1 "
+            f"(prose={prose_rows}/{n_text})"
+        )
+    return False, ""
+
+
+def looks_like_non_table_candidate(
+    df: pd.DataFrame,
+    *,
+    page: Any = None,
+    bbox: Optional[List[float]] = None,
+    page_text: str = "",
+) -> Tuple[bool, str]:
+    """Chart or bullet/fact-list false positive — skip both at extract time."""
+    is_chart, reason = looks_like_chart_candidate(
+        df, page=page, bbox=bbox, page_text=page_text,
+    )
+    if is_chart:
+        return True, reason
+    return looks_like_bullet_list_candidate(
+        df, page=page, bbox=bbox, page_text=page_text,
+    )
+
+
 def _cell_str(v: Any) -> str:
     if v is None:
         return ""
@@ -626,17 +764,120 @@ def _empty_column_fraction(df: pd.DataFrame) -> float:
     return empty / int(df.shape[1])
 
 
+_MASHED_HEADER_LEAF_PACK_RE = re.compile(
+    r"(?:\b1\s+2\s+3(?:\s+4)?\b|<\s*2\.5\s+2\.5|4\+\s+not\s*stated|"
+    r"not\s*stated\s+total|education\s+level\s+mother\s+father)",
+    re.I,
+)
+
+
+def _header_has_mashed_leaf_pack(df: pd.DataFrame) -> bool:
+    """True when a column title still contains glued sibling leaf labels."""
+    if df is None or getattr(df, "empty", True):
+        return False
+    meta = getattr(df, "attrs", {}).get("dhara_column_meta") or []
+    labels: List[str] = [str(c) for c in df.columns]
+    for m in meta:
+        if not isinstance(m, dict):
+            continue
+        path = m.get("header_path") or []
+        if isinstance(path, (list, tuple)):
+            labels.extend(str(p) for p in path)
+        labels.append(str(m.get("name") or ""))
+    for lab in labels:
+        s = re.sub(r"\s+", " ", str(lab or "")).strip()
+        if len(s) < 12:
+            continue
+        if _MASHED_HEADER_LEAF_PACK_RE.search(s):
+            return True
+    return False
+
+
+def _header_looks_like_promoted_data_row(df: pd.DataFrame) -> bool:
+    """True when the first body row was mistaken for headers (numeric leaves).
+
+    Classic CRS education slip: ``Illiterate | 0.36 | 0.35`` as headers while
+    ``Education level | Mother | Father`` was skipped as a jammed banner.
+    """
+    if df is None or getattr(df, "empty", True):
+        return False
+    n_rows, n_cols = int(df.shape[0]), int(df.shape[1])
+    if n_cols < 2 or n_rows < 2:
+        return False
+    cols = [_cell_str(c) for c in df.columns]
+    if not cols[0]:
+        return False
+    # Measure headers look like short decimals / percentages, not words.
+    measure_hdrs = cols[1:]
+    if not measure_hdrs:
+        return False
+    numeric_hdr = sum(
+        1
+        for c in measure_hdrs
+        if re.fullmatch(r"\d{1,3}(?:\.\d+)?%?", re.sub(r"[\s,]", "", c) or "")
+    )
+    if numeric_hdr < max(1, len(measure_hdrs)):
+        return False
+    h0 = cols[0].lower()
+    # Real stub titles should not look like a single education/occupation band.
+    if any(
+        tip in h0
+        for tip in (
+            "education",
+            "occupation",
+            "duration",
+            "age of",
+            "rural",
+            "birth order",
+            "mother",
+            "father",
+        )
+    ):
+        return False
+    body0 = [_cell_str(v) for v in df.iloc[:, 0].tolist()[:8] if _cell_str(v)]
+    if len(body0) < 2:
+        return False
+    categoryish = {
+        "illiterate",
+        "below primary",
+        "not stated",
+        "total",
+        "graduate and above",
+        "primary but below metric",
+        "metric but below graduate",
+    }
+    hits = sum(1 for v in body0 if v.strip().lower() in categoryish)
+    return h0 in categoryish or hits >= 2
+
+
 def _structural_bucket_for_df(df: pd.DataFrame) -> Tuple[str, str, Dict[str, Any]]:
     """Classify one cleaned DataFrame as high-confidence or needing LLM."""
     primary = clean_dataframe_light(df)
     info = profile_table(primary)
     info["empty_column_fraction"] = round(_empty_column_fraction(primary), 3)
     info["gappy_column_index"] = _leading_column_index_is_gappy(primary)
+    info["mashed_header_leaf_pack"] = _header_has_mashed_leaf_pack(primary)
+    info["promoted_data_header"] = _header_looks_like_promoted_data_row(primary)
 
     # Prefer the gappy-index diagnosis over sparse fill: bisected grids often
     # look sparse too after the index strip is ignored for fill-rate scoring.
     if info["gappy_column_index"]:
         return "llm", "column-number strip is gappy (phantom column split / misaligned measures)", info
+
+    # Header defects first — these are steward-visible even on small grids.
+    if info["mashed_header_leaf_pack"]:
+        return (
+            "llm",
+            "mashed multilevel headers (sibling leaf titles glued into one column name)",
+            info,
+        )
+
+    if info["promoted_data_header"]:
+        return (
+            "llm",
+            "first data row promoted to headers (numeric measure titles / missing stub labels)",
+            info,
+        )
 
     if info["n_rows"] < MIN_ROWS or info["nonempty_ratio"] < MIN_NONEMPTY_RATIO:
         return "llm", "near-empty or sparse lines_strict candidate", info
@@ -981,6 +1222,8 @@ __all__ = [
     "infer_title_from_page_text",
     "infer_title_meta_from_page_text",
     "looks_like_chart_candidate",
+    "looks_like_bullet_list_candidate",
+    "looks_like_non_table_candidate",
     "profile_table",
     "strip_caption_label_prefix",
     "table_dict_from_df",

@@ -288,6 +288,18 @@ def extract_needs_cell_clip(rows: Optional[List[List[Any]]]) -> bool:
     )
     for row in rows[:8]:
         nonempty = [_cell_str(c) for c in (row or []) if _cell_str(c)]
+        # Corner mash with a leaked leaf pack — prefer per-cell textboxes.
+        if len(nonempty) == 1:
+            s0 = nonempty[0]
+            if len(s0) >= 20 and (
+                re.search(r"\b1\s+2\s+3(?:\s+4)?\b", s0)
+                or re.search(r"<\s*\d+(?:\.\d+)?\s+\d", s0)
+                or re.search(r"\d+\+\s+not\s*stated", s0, re.I)
+                or re.search(r"not\s*stated\s+total", s0, re.I)
+                or re.search(r"\b(?:\d{1,2}\s+){5,}\d{1,2}\b", s0)
+            ):
+                return True
+            continue
         # Captions / titles are a single spanning cell — not vertical glue.
         if len(nonempty) < 2:
             continue

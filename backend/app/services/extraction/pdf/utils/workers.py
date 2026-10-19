@@ -70,7 +70,9 @@ def _candidates_from_pymupdf_table(
         extract_pymupdf_table_rows,
         prefer_cell_extracted_rows,
     )
-    from app.services.extraction.pdf.confidence_validation.table_confidence import looks_like_chart_candidate
+    from app.services.extraction.pdf.confidence_validation.table_confidence import (
+        looks_like_non_table_candidate,
+    )
 
     # tab.extract() first. Per-cell get_textbox is only used when extract()
     # already looks vertically glued — otherwise it dominates extract time.
@@ -90,11 +92,11 @@ def _candidates_from_pymupdf_table(
         if df is None or getattr(df, "empty", True):
             continue
         bbox = _bbox_for_row_slice(tab, start, end, fallback)
-        is_chart, reason = looks_like_chart_candidate(
+        is_non_table, reason = looks_like_non_table_candidate(
             df, page=page, bbox=bbox, page_text=page_text,
         )
-        if is_chart:
-            print(f"[pymupdf:{method}] page {page_num} skipped chart-like region: {reason}")
+        if is_non_table:
+            print(f"[pymupdf:{method}] page {page_num} skipped non-table region: {reason}")
             continue
         cand: Dict[str, Any] = {
             "page": page_num,

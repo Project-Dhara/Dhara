@@ -687,6 +687,31 @@ def _uniquify_columns(names: List[str]) -> List[str]:
         out.append(base if n == 1 else f"{base} ({n})")
     return out
 
+def _is_placeholder_col_name(name: Any) -> bool:
+    return bool(re.match(r"^Col_\d+$", str(name or "").strip(), re.I))
+
+
+def _set_col_header(
+    names: List[str],
+    meta: List[dict],
+    index: int,
+    label: str,
+    *,
+    header_path: Optional[List[str]] = None,
+) -> None:
+    path = [str(p) for p in (header_path or [label]) if str(p).strip()]
+    if not path:
+        path = [label]
+    names[index] = path[-1]
+    if index < len(meta):
+        meta[index] = {
+            **meta[index],
+            "name": path[-1],
+            "header_group": path[-2] if len(path) >= 2 else None,
+            "header_path": path,
+        }
+
+
 def _fill_blank_leading_serial_header(
     leaf_names: List[str],
     column_meta: List[dict],
@@ -701,7 +726,7 @@ def _fill_blank_leading_serial_header(
     if not leaf_names:
         return leaf_names, column_meta
     first = str(leaf_names[0] or "").strip()
-    if first and not re.match(r"^Col_\d+$", first, re.I):
+    if first and not _is_placeholder_col_name(first):
         return leaf_names, column_meta
     second = str(leaf_names[1] if len(leaf_names) > 1 else "").strip().lower()
     third = str(leaf_names[2] if len(leaf_names) > 2 else "").strip().lower()
@@ -719,15 +744,207 @@ def _fill_blank_leading_serial_header(
     if not (disease_name or sex_layout):
         return leaf_names, column_meta
     names = list(leaf_names)
-    names[0] = "S.No."
-    meta = list(column_meta) if column_meta else []
-    if meta and len(meta) == len(names):
-        meta[0] = {
-            **meta[0],
-            "name": "S.No.",
+    meta = [dict(m) for m in (column_meta or [])]
+    while len(meta) < len(names):
+        meta.append({"name": names[len(meta)], "header_group": None, "header_path": [names[len(meta)]]})
+    _set_col_header(names, meta, 0, "S.No.")
+    return names, meta
+
+
+def _body_col_values(body_rows: Sequence[Sequence[Any]], col: int, *, limit: int = 24) -> List[str]:
+    vals: List[str] = []
+    for row in body_rows[:limit]:
+        if col >= len(row):
+            continue
+        s = _cell_str(row[col])
+        if s:
+            vals.append(s)
+    return vals
+
+
+def _looks_like_serial_body(values: Sequence[str]) -> bool:
+    if len(values) < 3:
+        return False
+    hits = sum(1 for v in values if re.match(r"^\d{1,4}$", v.strip()))
+    return hits >= max(3, int(len(values) * 0.6))
+
+
+def _looks_like_place_name_body(values: Sequence[str]) -> bool:
+    if len(values) < 3:
+        return False
+    hits = 0
+    for v in values:
+        s = v.strip()
+        if re.match(r"^\d+(\.\d+)?%?$", s.replace(",", "")):
+            continue
+        letters = re.findall(r"[A-Za-z]", s)
+        if len(letters) >= 3 and len(s) >= 3:
+            hits += 1
+    return hits >= max(3, int(len(values) * 0.55))
+
+
+def _looks_like_rural_urban_body(values: Sequence[str]) -> bool:
+    """Require an explicit Rural/Urban token — bare Total rows are not enough."""
+    tokens = {re.sub(r"\s+", " ", v).strip().lower() for v in values}
+    rural_urban = {
+        "rural",
+        "urban",
+        "i. rural",
+        "ii. urban",
+        "rural total",
+        "urban total",
+        "i rural",
+        "ii urban",
+    }
+    return bool(tokens & rural_urban)
+
+
+def _looks_like_age_band_body(values: Sequence[str]) -> bool:
+    if len(values) < 3:
+        return False
+    pat = re.compile(
+        r"^(?:below\s*\d+|\d+\s*[-–]\s*\d+|\d+\s*\+|\d+\s*and\s*above|above\s*\d+|not\s*stated|all\s*ages?|total)$",
+        re.I,
+    )
+    hits = sum(1 for v in values if pat.match(re.sub(r"\s+", " ", v).strip()))
+    return hits >= max(3, int(len(values) * 0.55))
+
+
+def _looks_like_birth_order_leaf_name(name: str) -> bool:
+    s = re.sub(r"\s+", " ", str(name or "")).strip()
+    s = re.sub(r"\s*\(\d+\)$", "", s).strip()
+    return bool(
+        re.match(
+            r"^(?:\d+|>\s*\d+|≥\s*\d+|\d+\+|not\s*stated|ns|all)$",
+            s,
+            re.I,
+        )
+    )
+
+
+def _recover_placeholder_column_headers(
+    leaf_names: List[str],
+    column_meta: List[dict],
+    body_rows: Sequence[Sequence[Any]],
+) -> Tuple[List[str], List[dict]]:
+    """Replace ``Col_N`` stubs using body shape + Birth order grouping.
+
+    Guard-only for empty ruled-box stubs (Age of mother, Rural/Urban, S.No./
+    District). Does not rename already-meaningful headers.
+    """
+    if not leaf_names:
+        return leaf_names, column_meta
+    names = list(leaf_names)
+    meta = [dict(m) for m in (column_meta or [])]
+    while len(meta) < len(names):
+        meta.append({
+            "name": names[len(meta)],
             "header_group": None,
-            "header_path": ["S.No."],
-        }
+            "header_path": [names[len(meta)]],
+        })
+
+    col0_vals = _body_col_values(body_rows, 0)
+    col1_vals = _body_col_values(body_rows, 1) if len(names) > 1 else []
+
+    # S.No. + District / place when both leading headers are placeholders.
+    if (
+        len(names) >= 2
+        and _is_placeholder_col_name(names[0])
+        and _is_placeholder_col_name(names[1])
+        and _looks_like_serial_body(col0_vals)
+        and _looks_like_place_name_body(col1_vals)
+    ):
+        _set_col_header(names, meta, 0, "S.No.")
+        _set_col_header(names, meta, 1, "District")
+
+    # Single stub: Rural / Urban / Total rows.
+    if _is_placeholder_col_name(names[0]) and _looks_like_rural_urban_body(col0_vals):
+        _set_col_header(names, meta, 0, "Rural/ Urban")
+        # Adjacent blank stub often holds Town / place names.
+        if (
+            len(names) >= 2
+            and _is_placeholder_col_name(names[1])
+            and _looks_like_place_name_body(col1_vals)
+        ):
+            _set_col_header(names, meta, 1, "Town")
+
+    # Single stub: age-of-mother bands (Below 15, 15-19, …).
+    if _is_placeholder_col_name(names[0]) and _looks_like_age_band_body(col0_vals):
+        _set_col_header(names, meta, 0, "Age of mother")
+    # Truncated wrap stub ("mother" / "Age of") with age-band body.
+    elif (
+        re.match(r"^(?:mother|age\s+of)$", str(names[0] or "").strip(), re.I)
+        and _looks_like_age_band_body(col0_vals)
+    ):
+        _set_col_header(names, meta, 0, "Age of mother")
+
+    # Structural: trailing grand-Total must not stay under a colspan parent.
+    last_i = len(names) - 1
+    if last_i >= 1:
+        last_leaf = str(meta[last_i].get("name") or names[last_i])
+        last_path = [str(p) for p in (meta[last_i].get("header_path") or []) if str(p).strip()]
+        if re.match(r"^total(?:\s*\(\d+\))?$", last_leaf, re.I) and len(last_path) >= 2:
+            _set_col_header(names, meta, last_i, last_leaf, header_path=[last_leaf])
+
+    # Attach Birth order / Birth weight parents when stub is the row axis
+    # (legacy blank-stub recovery path; repair already parks the group).
+    stub0 = str(names[0] or "").strip().lower()
+    birth_order_stub = (
+        "age of mother" in stub0
+        or stub0 in {"mother", "age of"}
+        or "duration of marriage" in stub0
+        or ("level of education" in stub0 and "mother" in stub0)
+    )
+    birth_weight_stub = "duration of pregnancy" in stub0 or "pregnancy" in stub0
+
+    def _looks_like_weight_leaf_name(name: str) -> bool:
+        s = re.sub(r"\s+", " ", str(name or "")).strip()
+        s = re.sub(r"\s*\(\d+\)$", "", s).strip()
+        return bool(
+            re.match(
+                r"^(?:<\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*[-–]\s*\d+(?:\.\d+)?|"
+                r"\d+\+|not\s*stated|ns)$",
+                s,
+                re.I,
+            )
+        )
+
+    order_leaf_idxs = [
+        i for i, n in enumerate(names)
+        if i > 0 and _looks_like_birth_order_leaf_name(str(n))
+    ]
+    if birth_order_stub and len(order_leaf_idxs) >= 3:
+        for i in order_leaf_idxs:
+            leaf = str(meta[i].get("name") or names[i])
+            if i == last_i and re.match(r"^total(?:\s*\(\d+\))?$", leaf, re.I):
+                continue
+            path = [str(p) for p in (meta[i].get("header_path") or []) if str(p).strip()]
+            if len(path) >= 2:
+                continue
+            _set_col_header(names, meta, i, leaf, header_path=["Birth order", leaf])
+        last_leaf = str(meta[last_i].get("name") or names[last_i])
+        last_path = [str(p) for p in (meta[last_i].get("header_path") or []) if str(p).strip()]
+        if re.match(r"^total(?:\s*\(\d+\))?$", last_leaf, re.I) and len(last_path) >= 2:
+            _set_col_header(names, meta, last_i, last_leaf, header_path=[last_leaf])
+
+    weight_leaf_idxs = [
+        i for i, n in enumerate(names)
+        if i > 0 and _looks_like_weight_leaf_name(str(n))
+    ]
+    if birth_weight_stub and len(weight_leaf_idxs) >= 3:
+        for i in weight_leaf_idxs:
+            leaf = str(meta[i].get("name") or names[i])
+            if i == last_i and re.match(r"^total(?:\s*\(\d+\))?$", leaf, re.I):
+                continue
+            path = [str(p) for p in (meta[i].get("header_path") or []) if str(p).strip()]
+            if len(path) >= 2:
+                continue
+            _set_col_header(names, meta, i, leaf, header_path=["Birth weight (Kg)", leaf])
+        last_leaf = str(meta[last_i].get("name") or names[last_i])
+        last_path = [str(p) for p in (meta[last_i].get("header_path") or []) if str(p).strip()]
+        if re.match(r"^total(?:\s*\(\d+\))?$", last_leaf, re.I) and len(last_path) >= 2:
+            _set_col_header(names, meta, last_i, last_leaf, header_path=[last_leaf])
+
     return names, meta
 
 def _split_hybrid_leaf_data_row(
@@ -794,6 +1011,7 @@ def _split_hybrid_leaf_data_row(
 
 __all__ = [
     "_fill_blank_leading_serial_header",
+    "_recover_placeholder_column_headers",
     "detect_header_rows",
     "flatten_headers",
     "resolve_column_headers",

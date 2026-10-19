@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import pandas as pd
 import pymupdf
 
-from app.services.llm_prompts import CPU_WORKERS, EXTRACT_CHUNK_PAGES, TEXT_MIN_CHARS
+from app.services.llm_prompts import EXTRACT_CHUNK_PAGES, TEXT_MIN_CHARS, resolve_cpu_workers
 from app.services.extraction.pdf.utils.workers import extract_pymupdf_chunk
 
 
@@ -80,9 +80,17 @@ def chunk_list(
     return [shuffled[i:i + size] for i in range(0, len(shuffled), size)]
 
 
-def extract_all_tables(pdf_path: Path, pages: List[int], n_workers: int = CPU_WORKERS,
-                        progress_cb: Optional[Callable[[int, int], None]] = None) -> List[Dict[str, Any]]:
+def extract_all_tables(
+    pdf_path: Path,
+    pages: List[int],
+    n_workers: Optional[int] = None,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+) -> List[Dict[str, Any]]:
     """Runs extract_pymupdf_chunk over `pages` across a process pool.
+
+    Worker count defaults to ``resolve_cpu_workers()`` (CPUs × available RAM,
+    overridable via ``PDF_CPU_WORKERS``) so the same image scales on laptop
+    and server without changing extraction logic.
 
     If a worker dies (e.g. OOM-killed), ProcessPoolExecutor marks *every*
     pending/in-flight future as failed, not just the chunk that actually
@@ -93,10 +101,14 @@ def extract_all_tables(pdf_path: Path, pages: List[int], n_workers: int = CPU_WO
     total_pages = len(pages)
     all_tables: List[Dict[str, Any]] = []
     remaining = list(pages)
-    workers = max(1, n_workers)
+    workers = max(1, int(n_workers) if n_workers is not None else resolve_cpu_workers())
     attempt = 0
     max_attempts = 4
     chunk_pages = max(1, EXTRACT_CHUNK_PAGES)
+    log(
+        f"[extract] using {workers} PyMuPDF worker(s) "
+        f"(PDF_CPU_WORKERS override or autoscaled from host CPUs/RAM)"
+    )
 
     while remaining and attempt < max_attempts:
         attempt += 1
@@ -150,17 +162,17 @@ def filter_candidate_pages(pages_grouped: Dict[int, List[Dict[str, Any]]]) -> Di
 
     Drops text-only false positives (prose misread as tables) while retaining
     real grids whose lines are too light/partial for lines_strict alone.
-    Also drops chart/figure false positives (wide numeric crumb grids).
+    Also drops chart/figure and bulleted fact-list false positives.
     """
     from app.services.extraction.pdf.confidence_validation.table_confidence import (
-        looks_like_chart_candidate,
+        looks_like_non_table_candidate,
     )
 
     out: Dict[int, List[Dict[str, Any]]] = {}
     for page_num, candidates in pages_grouped.items():
         kept = [
             c for c in candidates
-            if not looks_like_chart_candidate(c.get("df"), bbox=c.get("bbox"))[0]
+            if not looks_like_non_table_candidate(c.get("df"), bbox=c.get("bbox"))[0]
         ]
         if any(
             str(c.get("method") or "") in ("pymupdf_lines_strict", "pymupdf_lines")

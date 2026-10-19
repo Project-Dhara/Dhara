@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, List, Optional, Sequence
+from typing import Any, List, Optional, Sequence, Tuple
 
 from app.services.extraction.pdf.utils.caption import (
     _blank,
@@ -17,6 +17,7 @@ from app.services.extraction.pdf.utils.caption import (
 
 from app.services.extraction.pdf.utils.header_detect import (
     _fill_blank_leading_serial_header,
+    _recover_placeholder_column_headers,
     _row_is_header_metadata_strip,
     _row_is_section_label,
     _row_is_subheader,
@@ -39,6 +40,334 @@ from app.services.extraction.pdf.utils.grid_repair import (
     repair_glued_numeric_cells,
     repair_sex_pair_next_row_label_bleed,
 )
+
+_ORDER_LEAF_TOKEN_RE = re.compile(
+    r"^(?:\d+|>\s*\d+|≥\s*\d+|\d+\+|not\s*stated|ns|total|all)$",
+    re.I,
+)
+_BAND_LEAF_TOKEN_RE = re.compile(
+    r"^(?:<\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*[-–]\s*\d+(?:\.\d+)?|\d+\+|"
+    r"not\s*stated|total|13\s*&\s*above)$",
+    re.I,
+)
+_DURATION_OF_PREFIX_RE = re.compile(r"^Duration\s+of\s+", re.I)
+_UNIT_PHRASE_RE = re.compile(
+    r"([A-Za-z][A-Za-z0-9/.\-]*(?:\s+[A-Za-z][A-Za-z0-9/.\-]*){0,4})\s*(\([^)]{1,24}\))",
+)
+# Orphan crumbs left when multi-word leaves are split across lines in the mash.
+_ORPHAN_LEAF_CRUMB_RE = re.compile(
+    r"(?i)(?<![A-Za-z])(?:\d+\s*&\s*|above|stated|not(?=\s|$))(?![A-Za-z])",
+)
+
+
+def _looks_like_order_leaf_strip(row: Sequence[Any], n_cols: int) -> bool:
+    """Leaf strip under a spanning group: short codes / bands + Not stated / Total."""
+    padded = _pad_row(row, n_cols)
+    non_empty = [_cell_str(v) for v in padded if _cell_str(v)]
+    if len(non_empty) < max(3, int(n_cols * 0.4)):
+        return False
+    if sum(1 for v in non_empty if _is_measurement_number(v)) >= 2:
+        return False
+    leafish = sum(
+        1
+        for v in non_empty
+        if _ORDER_LEAF_TOKEN_RE.match(re.sub(r"\s+", " ", v).strip())
+        or _BAND_LEAF_TOKEN_RE.match(re.sub(r"\s+", " ", v).strip())
+        or _is_leaf_header_token(v)
+    )
+    return leafish >= max(3, int(len(non_empty) * 0.55))
+
+
+def _raw_mash_text(text: Any) -> str:
+    """Keep newlines in corner-mash cells (``_cell_str`` flattens them)."""
+    if text is None:
+        return ""
+    return str(text).replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _corner_mash_text(row: Sequence[Any], n_cols: int) -> Optional[str]:
+    """Return cell-0 text when it is the only non-empty cell (corner mash)."""
+    padded = _pad_row(row, n_cols)
+    nonempty_idxs = [i for i, v in enumerate(padded) if _cell_str(v)]
+    if len(nonempty_idxs) != 1 or nonempty_idxs[0] != 0:
+        return None
+    text = _raw_mash_text(padded[0])
+    flat = re.sub(r"\s+", " ", text).strip()
+    if len(flat) < 10:
+        return None
+    if "\n" not in text and len(flat.split()) < 4 and len(flat) < 24:
+        return None
+    return text
+
+
+def _leaf_labels_from_strip(row: Sequence[Any], n_cols: int) -> List[str]:
+    padded = _pad_row(row, n_cols)
+    return [_cell_str(v) for v in padded if _cell_str(v)]
+
+
+def _looks_like_leaf_pack_fragment(text: str) -> bool:
+    """True for residual crumbs like ``1 2 3 4+`` (not prose such as ``Age of``)."""
+    toks = [t for t in re.split(r"\s+", text.strip()) if t]
+    if len(toks) < 2:
+        return False
+    codeish = sum(
+        1
+        for t in toks
+        if _ORDER_LEAF_TOKEN_RE.match(t) or _BAND_LEAF_TOKEN_RE.match(t)
+    )
+    return codeish >= max(2, int(len(toks) * 0.75))
+
+
+def _strip_leaf_labels_from_text(text: str, leaf_labels: Sequence[str]) -> str:
+    """Remove sibling leaf labels (and split crumbs) that leaked into the mash."""
+    out = re.sub(r"\n+", "\n", _raw_mash_text(text))
+    ordered = sorted((_cell_str(x) for x in leaf_labels), key=len, reverse=True)
+    for lab in ordered:
+        if not lab:
+            continue
+        esc = re.escape(lab).replace(r"\ ", r"\s+")
+        pat = re.compile(rf"(?<![\w.]){esc}(?![\w.])", re.I)
+        out = pat.sub(" ", out)
+    # Dense integer packs dumped into the corner cell (1 2 3 … 12).
+    out = re.sub(r"(?m)(?:^|\s)(?:\d{1,2}\s+){3,}\d{1,2}(?:\s|&)*(?=\s|$)", " ", out)
+    out = _ORPHAN_LEAF_CRUMB_RE.sub(" ", out)
+    lines: List[str] = []
+    for line in out.split("\n"):
+        flat = re.sub(r"\s+", " ", line).strip(" \t|&")
+        if not flat:
+            continue
+        if _looks_like_leaf_pack_fragment(flat):
+            continue
+        lines.append(flat)
+    return "\n".join(lines).strip()
+
+
+def _join_wrap_lines(lines: Sequence[str]) -> List[str]:
+    """Join lowercase / unit-only continuations onto the previous phrase."""
+    out: List[str] = []
+    for line in lines:
+        s = re.sub(r"\s+", " ", line).strip()
+        if not s:
+            continue
+        if out and (
+            s[:1].islower()
+            or re.fullmatch(r"\([^)]+\)", s)
+            or (len(s.split()) <= 2 and s[:1].islower())
+        ):
+            out[-1] = f"{out[-1]} {s}".strip()
+        else:
+            out.append(s)
+    return out
+
+
+def _normalize_header_key(s: str) -> str:
+    return re.sub(r"\s+", " ", _cell_str(s)).strip().lower()
+
+
+def _split_duration_of_interleaved(residual: str) -> Optional[Tuple[str, str]]:
+    """``Duration of <Group (unit)> <stub rest>`` → (stub, group)."""
+    flat = re.sub(r"\s+", " ", residual).strip()
+    m = _DURATION_OF_PREFIX_RE.match(flat)
+    if not m:
+        return None
+    rest = flat[m.end():].strip()
+    units = list(_UNIT_PHRASE_RE.finditer(rest))
+    if not units:
+        return None
+    first = units[0]
+    group = f"{first.group(1).strip()} {first.group(2).strip()}".strip()
+    after = rest[first.end():].strip()
+    before = rest[: first.start()].strip()
+    stub_core = " ".join(p for p in (before, after) if p).strip()
+    if not stub_core:
+        return None
+    stub = re.sub(r"\s+", " ", f"Duration of {stub_core}").strip()
+    if _normalize_header_key(stub) == _normalize_header_key(group):
+        return None
+    return stub, group
+
+
+def _split_two_capital_phrases(flat: str) -> Optional[Tuple[str, str]]:
+    """Split flattened residual on the second Title-case token start."""
+    tokens = flat.split()
+    cap_idxs = [
+        i for i, t in enumerate(tokens)
+        if t[:1].isupper() and not t.startswith("(")
+    ]
+    if len(cap_idxs) < 2:
+        return None
+    cut = cap_idxs[1]
+    if cut < 1:
+        return None
+    left = " ".join(tokens[:cut]).strip()
+    right = " ".join(tokens[cut:]).strip()
+    if not left or not right:
+        return None
+    return left, right
+
+
+def _phrases_stub_and_group(residual: str) -> Tuple[Optional[str], Optional[str]]:
+    """Split mash residual into row-stub + column-group (topic-agnostic)."""
+    if not residual:
+        return None, None
+    interleaved = _split_duration_of_interleaved(re.sub(r"\s+", " ", residual))
+    if interleaved:
+        return interleaved
+
+    raw_lines = [ln.strip() for ln in residual.split("\n") if ln.strip()]
+    phrases = _join_wrap_lines(raw_lines) if len(raw_lines) >= 2 else []
+    if len(phrases) >= 2:
+        # Reading order in jammed corners: group banner, then stub axis.
+        group, stub = phrases[0], " ".join(phrases[1:]).strip()
+        if stub and group and _normalize_header_key(stub) != _normalize_header_key(group):
+            return stub, group
+
+    flat = re.sub(r"\s+", " ", residual).strip()
+    two = _split_two_capital_phrases(flat)
+    if two:
+        group, stub = two[0], two[1]
+        if stub and group and _normalize_header_key(stub) != _normalize_header_key(group):
+            return stub, group
+    if phrases:
+        return phrases[0], None
+    return (flat or None), None
+
+
+def _split_flat_n_headers(text: str, n_cols: int) -> Optional[List[str]]:
+    """Split a flat jammed header into ``n_cols`` Title-case phrases."""
+    if n_cols < 2:
+        return None
+    flat = re.sub(r"[\n\r]+", " ", _cell_str(text))
+    flat = re.sub(r"\s+", " ", flat).strip()
+    tokens = flat.split()
+    if len(tokens) < n_cols:
+        return None
+    cap_idxs = [i for i, t in enumerate(tokens) if t[:1].isupper()]
+    if len(cap_idxs) < n_cols:
+        return None
+    starts = [0] + cap_idxs[-(n_cols - 1) :]
+    uniq: List[int] = []
+    for s in starts:
+        if not uniq or s > uniq[-1]:
+            uniq.append(s)
+    if len(uniq) != n_cols:
+        uniq = cap_idxs[:n_cols]
+        if len(uniq) != n_cols:
+            return None
+    parts: List[str] = []
+    for k, start in enumerate(uniq):
+        end = uniq[k + 1] if k + 1 < len(uniq) else len(tokens)
+        if end <= start:
+            return None
+        parts.append(" ".join(tokens[start:end]).strip())
+    if any(not p for p in parts):
+        return None
+    if sum(1 for p in parts if _is_measurement_number(p)) >= 1:
+        return None
+    return parts
+
+
+def _looks_like_data_measure_cell(v: Any) -> bool:
+    s = _cell_str(v)
+    if not s:
+        return False
+    if _is_measurement_number(s):
+        return True
+    return bool(re.fullmatch(r"\d+\.\d+", s.replace(",", "")))
+
+
+def _row_is_measure_data_row(row: Sequence[Any], n_cols: int) -> bool:
+    padded = _pad_row(row, n_cols)
+    non_empty = [_cell_str(v) for v in padded if _cell_str(v)]
+    if len(non_empty) < 2:
+        return False
+    return sum(1 for v in padded if _looks_like_data_measure_cell(v)) >= max(
+        1, n_cols - 2
+    )
+
+
+def _find_following_leaf_strip(
+    rows: List[List[Any]], start: int, n_cols: int,
+) -> Optional[int]:
+    for j in range(start + 1, min(start + 4, len(rows))):
+        if _blank(rows[j]):
+            continue
+        if _looks_like_order_leaf_strip(rows[j], n_cols) or _looks_like_birth_order_leaf_strip(
+            rows[j], n_cols
+        ):
+            return j
+        return None
+    return None
+
+
+def _row_is_jammed_multilevel_header(row: Sequence[Any], n_cols: int) -> bool:
+    """True when a corner mash sits in cell 0 (topic-agnostic shape check)."""
+    return _corner_mash_text(row, n_cols) is not None
+
+
+def repair_jammed_multilevel_header_rows(
+    rows: List[List[Any]],
+    n_cols: int,
+) -> List[List[Any]]:
+    """Unmash corner headers using leaf-strip alignment (not topic phrases).
+
+    Critical: col-0 must become the *stub residual* after leaf labels are
+    removed — never the raw mash (``stub or text0`` was the prior bug).
+    """
+    if not rows or n_cols < 2:
+        return rows
+    out = [_pad_row(r, n_cols) for r in rows]
+    for i in range(min(4, len(out))):
+        text0 = _corner_mash_text(out[i], n_cols)
+        if not text0:
+            continue
+
+        flat_parts = _split_flat_n_headers(text0, n_cols)
+        if flat_parts:
+            next_i = i + 1
+            while next_i < len(out) and _blank(out[next_i]):
+                next_i += 1
+            if next_i < len(out) and _row_is_measure_data_row(out[next_i], n_cols):
+                out[i] = flat_parts
+                break
+
+        if n_cols < 4:
+            continue
+        leaf_i = _find_following_leaf_strip(out, i, n_cols)
+        if leaf_i is None:
+            continue
+        leaf_labels = _leaf_labels_from_strip(out[leaf_i], n_cols)
+        residual = _strip_leaf_labels_from_text(text0, leaf_labels)
+        stub, group = _phrases_stub_and_group(residual)
+        if stub:
+            stub = re.sub(
+                r"\s+", " ", _strip_leaf_labels_from_text(stub, leaf_labels)
+            ).strip()
+        if group:
+            group = re.sub(
+                r"\s+", " ", _strip_leaf_labels_from_text(group, leaf_labels)
+            ).strip()
+        if not stub and residual:
+            stub = re.sub(r"\s+", " ", residual).strip()
+        if not stub and not group:
+            continue
+        rebuilt = [None] * n_cols
+        # Never fall back to the raw mash for col-0 — that was the UI bug.
+        if stub and group:
+            rebuilt[0] = stub
+            rebuilt[1] = group
+        elif stub:
+            rebuilt[0] = stub
+        else:
+            rebuilt[0] = group
+        out[i] = rebuilt
+        leaf = list(_pad_row(out[leaf_i], n_cols))
+        if _cell_str(rebuilt[0]) and not _cell_str(leaf[0]):
+            leaf[0] = None
+        out[leaf_i] = leaf
+        break
+    return out
+
 
 def _looks_like_birth_order_leaf_strip(row: Sequence[Any], n_cols: int) -> bool:
     """True for Sl.No. / age-stub / 1,2,…,>8,All header strips parked as data."""
@@ -174,6 +503,9 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
     padded = fold_header_label_wrap_rows(padded)
     n_cols = max((len(r) for r in padded), default=n_cols)
     padded = [_pad_row(r, n_cols) for r in padded]
+    # Unmash Age of mother / Birth order (+ leaf codes) jammed into cell 0.
+    padded = repair_jammed_multilevel_header_rows(padded, n_cols)
+    padded = [_pad_row(r, n_cols) for r in padded]
     header_count, skip_rows = detect_header_rows(padded, n_cols)
 
     root = None
@@ -267,6 +599,16 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
     caption = extract_in_grid_caption(padded)
     leaf_names, column_meta = _recover_stub_from_caption(
         leaf_names, column_meta, caption.get("title")
+    )
+    # Recover Col_1 / Col_2 stubs from body shape (Rural/Urban, S.No.+District,
+    # Age of mother bands) and attach Birth order parents when appropriate.
+    leaf_names, column_meta = _recover_placeholder_column_headers(
+        leaf_names, column_meta, body,
+    )
+    # Keep DataFrame labels unique after renames (Total / Total under groups).
+    leaf_names = _uniquify_columns(
+        [str((column_meta[i].get("name") if i < len(column_meta) else n) or n)
+         for i, n in enumerate(leaf_names)]
     )
 
     def _attach_caption_attrs(frame):
