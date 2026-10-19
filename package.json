@@ -1,0 +1,13 @@
+{
+  "name": "dhara",
+  "private": true,
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "description": "Root proxies — the Next.js app lives in frontend/",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "start": "npm --prefix frontend run start",
+    "ci:frontend": "npm --prefix frontend ci"
+  }
+}
