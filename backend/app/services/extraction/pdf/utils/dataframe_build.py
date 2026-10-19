@@ -8,10 +8,13 @@ from typing import Any, List, Optional, Sequence, Tuple
 from app.services.extraction.pdf.utils.caption import (
     _blank,
     _cell_str,
+    _is_descriptive_in_grid_title,
     _is_leaf_header_token,
     _is_measurement_number,
+    _is_table_id_only,
     _pad_row,
     _row_is_column_number_strip,
+    _row_is_full_width_banner,
     extract_in_grid_caption,
 )
 
@@ -60,21 +63,45 @@ _ORPHAN_LEAF_CRUMB_RE = re.compile(
 )
 
 
+def _is_order_band_or_short_leaf(v: str) -> bool:
+    """True for birth-order / band codes and short leaves (Wet, Male), not axis titles."""
+    flat = re.sub(r"\s+", " ", _cell_str(v)).strip()
+    if not flat:
+        return False
+    if _ORDER_LEAF_TOKEN_RE.match(flat) or _BAND_LEAF_TOKEN_RE.match(flat):
+        return True
+    # ``_is_leaf_header_token`` accepts any short text (Crop, Area (Ha), …).
+    # Order strips only use very short leaf words under a spanning group.
+    if len(flat) > 12 or len(flat.split()) > 2:
+        return False
+    return bool(_is_leaf_header_token(v))
+
+
 def _looks_like_order_leaf_strip(row: Sequence[Any], n_cols: int) -> bool:
-    """Leaf strip under a spanning group: short codes / bands + Not stated / Total."""
+    """Leaf strip under a spanning group: short codes / bands + Not stated / Total.
+
+    Reject real column-header rows (Sl.No. | Crop | Area (Ha) | …) and
+    parent/group headers (Block | Panchayat | Autumn | …). Those must not
+    drive jammed-caption unmash of the table title banner.
+    """
     padded = _pad_row(row, n_cols)
     non_empty = [_cell_str(v) for v in padded if _cell_str(v)]
     if len(non_empty) < max(3, int(n_cols * 0.4)):
         return False
     if sum(1 for v in non_empty if _is_measurement_number(v)) >= 2:
         return False
-    leafish = sum(
-        1
-        for v in non_empty
-        if _ORDER_LEAF_TOKEN_RE.match(re.sub(r"\s+", " ", v).strip())
-        or _BAND_LEAF_TOKEN_RE.match(re.sub(r"\s+", " ", v).strip())
-        or _is_leaf_header_token(v)
-    )
+    # Unit-bearing headers (Area (Ha), Production (Tonnes)) are measure columns.
+    if any(re.search(r"\([^)]{1,20}\)", v) for v in non_empty):
+        return False
+    # Long non-code labels are stub/group headers, not birth-order leaves.
+    for v in non_empty:
+        flat = re.sub(r"\s+", " ", v).strip()
+        if len(flat) <= 24:
+            continue
+        if _is_order_band_or_short_leaf(v):
+            continue
+        return False
+    leafish = sum(1 for v in non_empty if _is_order_band_or_short_leaf(v))
     return leafish >= max(3, int(len(non_empty) * 0.55))
 
 
@@ -313,6 +340,10 @@ def repair_jammed_multilevel_header_rows(
 
     Critical: col-0 must become the *stub residual* after leaf labels are
     removed — never the raw mash (``stub or text0`` was the prior bug).
+
+    Parent/group header rows (Block | Panchayat | Autumn | …) are not treated
+    as leaf strips, so descriptive title banners above them are left intact
+    instead of being split into fake column headers.
     """
     if not rows or n_cols < 2:
         return rows
@@ -321,6 +352,25 @@ def repair_jammed_multilevel_header_rows(
         text0 = _corner_mash_text(out[i], n_cols)
         if not text0:
             continue
+
+        # Full-width TABLE-id / descriptive title above real column headers
+        # (Sl.No. | Crop | …) must stay a caption — not be split into stub+group.
+        # Still allow unmash when the next row is measure data or a true
+        # order/band leaf strip (birth-order / education jam cases).
+        if _row_is_full_width_banner(out[i]) and (
+            _is_table_id_only(text0) or _is_descriptive_in_grid_title(text0)
+        ):
+            next_i = i + 1
+            while next_i < len(out) and _blank(out[next_i]):
+                next_i += 1
+            if next_i < len(out):
+                nxt = out[next_i]
+                if not (
+                    _row_is_measure_data_row(nxt, n_cols)
+                    or _looks_like_order_leaf_strip(nxt, n_cols)
+                    or _looks_like_birth_order_leaf_strip(nxt, n_cols)
+                ):
+                    continue
 
         flat_parts = _split_flat_n_headers(text0, n_cols)
         if flat_parts:

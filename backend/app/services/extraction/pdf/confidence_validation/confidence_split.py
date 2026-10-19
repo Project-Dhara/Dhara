@@ -22,6 +22,58 @@ from app.services.extraction.pdf.utils.pymupdf import (
     dedupe_candidates_by_bbox,
     log,
 )
+from app.services.llm_prompts import resolve_cpu_workers
+
+
+def _split_pages_chunk(
+    items: List[Tuple[int, List[Dict[str, Any]]]],
+    page_text: Dict[int, str],
+    outline_index: Dict[int, List[str]],
+    pdf_path: Optional[str],
+) -> Tuple[Dict[int, Dict[str, Any]], Dict[int, List[Dict[str, Any]]], Dict[str, int]]:
+    """Classify one chunk of pages. Each thread opens its own PDF (PyMuPDF is not
+    thread-safe on a shared Document). Same decisions as the sequential path.
+    """
+    high_results: Dict[int, Dict[str, Any]] = {}
+    llm_pages: Dict[int, List[Dict[str, Any]]] = {}
+    reason_counts: Dict[str, int] = {}
+
+    doc = None
+    if pdf_path and Path(pdf_path).is_file():
+        doc = pymupdf.open(pdf_path)
+    try:
+        for page_num, candidates in items:
+            # Collapse lines_strict/lines/text clones of the same bbox before
+            # classifying or sending to the LLM (avoids mix-and-match).
+            candidates = dedupe_candidates_by_bbox(candidates)
+            bucket, reason, _info = classify_page(candidates)
+            if bucket == "high":
+                page_blocks = (
+                    extract_page_text_blocks(doc, page_num) if doc is not None else None
+                )
+                tables = _ruled_tables_from_candidates(
+                    candidates,
+                    page_num=page_num,
+                    page_text=page_text.get(page_num, ""),
+                    page_blocks=page_blocks,
+                    outline_sections=outline_index.get(page_num, []),
+                )
+                high_results[page_num] = {"tables": tables}
+            else:
+                # Drop text-strategy clones before LLM — ruled grids are enough
+                # and smaller prompts complete much faster on large PDFs.
+                ruled = [
+                    c for c in candidates
+                    if str(c.get("method") or "").startswith("pymupdf_lines")
+                    or c.get("method") in ("excel_grid", "csv_grid")
+                ]
+                llm_pages[page_num] = ruled or candidates
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+    finally:
+        if doc is not None:
+            doc.close()
+    return high_results, llm_pages, reason_counts
+
 
 def split_by_confidence(
     pages_grouped: Dict[int, List[Dict[str, Any]]],
@@ -46,47 +98,40 @@ def split_by_confidence(
     llm_pages: Dict[int, List[Dict[str, Any]]] = {}
     reason_counts: Dict[str, int] = {}
 
-    doc = None
-    if pdf_path and Path(pdf_path).is_file():
-        doc = pymupdf.open(pdf_path)
-    page_blocks_cache: Dict[int, List[Dict[str, float]]] = {}
     items = list(pages_grouped.items())
     total = len(items)
+    if not items:
+        return high_results, llm_pages, reason_counts
 
-    try:
-        for idx, (page_num, candidates) in enumerate(items, start=1):
-            # Collapse lines_strict/lines/text clones of the same bbox before
-            # classifying or sending to the LLM (avoids mix-and-match).
-            candidates = dedupe_candidates_by_bbox(candidates)
-            bucket, reason, _info = classify_page(candidates)
-            if bucket == "high":
-                if doc is not None and page_num not in page_blocks_cache:
-                    page_blocks_cache[page_num] = extract_page_text_blocks(doc, page_num)
-                page_blocks = page_blocks_cache.get(page_num)
-                outline_sections = outline_index.get(page_num, [])
-                tables = _ruled_tables_from_candidates(
-                    candidates,
-                    page_num=page_num,
-                    page_text=page_text.get(page_num, ""),
-                    page_blocks=page_blocks,
-                    outline_sections=outline_sections,
-                )
-                high_results[page_num] = {"tables": tables}
-            else:
-                # Drop text-strategy clones before LLM — ruled grids are enough
-                # and smaller prompts complete much faster on large PDFs.
-                ruled = [
-                    c for c in candidates
-                    if str(c.get("method") or "").startswith("pymupdf_lines")
-                    or c.get("method") in ("excel_grid", "csv_grid")
-                ]
-                llm_pages[page_num] = ruled or candidates
-                reason_counts[reason] = reason_counts.get(reason, 0) + 1
-            if progress_cb and (idx == total or idx % 10 == 0):
-                progress_cb(idx, total)
-    finally:
-        if doc is not None:
-            doc.close()
+    pdf_path_str = str(pdf_path) if pdf_path and Path(pdf_path).is_file() else None
+    n_workers = min(resolve_cpu_workers(), total)
+    if n_workers <= 1:
+        hr, lp, rc = _split_pages_chunk(items, page_text, outline_index, pdf_path_str)
+        if progress_cb:
+            progress_cb(total, total)
+        return hr, lp, rc
+
+    # Round-robin chunks so each worker gets a balanced mix of page costs.
+    chunks: List[List[Tuple[int, List[Dict[str, Any]]]]] = [[] for _ in range(n_workers)]
+    for i, item in enumerate(items):
+        chunks[i % n_workers].append(item)
+    chunks = [c for c in chunks if c]
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=len(chunks)) as pool:
+        futures = [
+            pool.submit(_split_pages_chunk, chunk, page_text, outline_index, pdf_path_str)
+            for chunk in chunks
+        ]
+        for future in as_completed(futures):
+            hr, lp, rc = future.result()
+            high_results.update(hr)
+            llm_pages.update(lp)
+            for reason, count in rc.items():
+                reason_counts[reason] = reason_counts.get(reason, 0) + count
+            done += len(hr) + len(lp)
+            if progress_cb:
+                progress_cb(min(done, total), total)
 
     return high_results, llm_pages, reason_counts
 

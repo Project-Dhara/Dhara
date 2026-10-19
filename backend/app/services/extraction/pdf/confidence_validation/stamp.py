@@ -560,8 +560,8 @@ def _stamp_header_meta_on_column(col: Dict[str, Any], m: Dict[str, Any]) -> None
 
 
 def _column_from_candidate_meta(m: Dict[str, Any], fallback_name: str = "") -> Dict[str, Any]:
-    path = _header_path_from_meta(m, fallback_name or str(m.get("name") or "Col"))
-    leaf = path[-1] if path else (fallback_name or "Col")
+    path = _header_path_from_meta(m, fallback_name or str(m.get("name") or ""))
+    leaf = path[-1] if path else (fallback_name or "")
     return {
         "name": leaf,
         "header_group": path[-2] if len(path) >= 2 else None,

@@ -194,8 +194,9 @@ def resolve_column_headers(header_matrix: List[List[Any]], n_cols: int) -> List[
 
     rows = _fill_header_matrix(rows_in, n_cols)
     if not rows:
+        # Empty headers stay blank — never invent Col_1 / Col_2 labels.
         return [
-            {"name": f"Col_{i + 1}", "header_group": None, "header_path": [f"Col_{i + 1}"]}
+            {"name": "", "header_group": None, "header_path": [""]}
             for i in range(n_cols)
         ]
 
@@ -215,7 +216,7 @@ def resolve_column_headers(header_matrix: List[List[Any]], n_cols: int) -> List[
             path.append(lab)
 
         if not path:
-            path = [f"Col_{i + 1}"]
+            path = [""]
 
         kind = kinds[i] if i < len(kinds) else "stub"
         # Sl.No left-fill into a District column yields two identity titles — keep the deepest.
@@ -253,7 +254,7 @@ def _repair_irrigation_stack_header_paths(resolved: List[dict]) -> List[dict]:
     for i, col in enumerate(out):
         path = [str(p) for p in (col.get("header_path") or []) if str(p).strip()]
         if not path:
-            path = [str(col.get("name") or f"Col_{i + 1}")]
+            path = [str(col.get("name") or "")]
         leaf = path[-1]
         group_labels = [
             _normalize_irrigation_stack_group(p)
@@ -625,6 +626,16 @@ def detect_header_rows(body: List[List[Any]], n_cols: int) -> Tuple[int, List[in
 
     return header_count, skip_rows
 
+def _is_explicit_empty_header_cell(v: Any) -> bool:
+    """True for intentional blank header cells (``''``), not merge holes (``None``).
+
+    PyMuPDF uses ``None`` for colspan/rowspan continuations and ``''`` when a
+    bordered cell is present but empty (e.g. the blank stub between Particulars
+    and the first year group). Only ``None`` may be filled from a neighbour.
+    """
+    return isinstance(v, str) and not str(v).strip()
+
+
 def _fill_header_matrix(header_matrix: List[List[Any]], n_cols: int) -> List[List[str]]:
     """
     Resolve rowspan then colspan empties inside the header block.
@@ -633,11 +644,23 @@ def _fill_header_matrix(header_matrix: List[List[Any]], n_cols: int) -> List[Lis
     Crop/season/appendix metadata is kept in-place but not propagated into
     empty cells — otherwise Appendix blocks Irrigated / rejected-due-to groups
     from filling across their leaf columns.
+
+    Explicit blank cells (``''``) are never filled — they are real empty title
+    cells, not merge continuations. ``None`` still receives rowspan/colspan fill.
     """
     rows: List[List[Any]] = [_pad_row(r, n_cols) for r in header_matrix]
+    explicit_empty = [
+        [_is_explicit_empty_header_cell(rows[r][c]) for c in range(n_cols)]
+        for r in range(len(rows))
+    ]
     for c in range(n_cols):
         last = ""
         for r in range(len(rows)):
+            if explicit_empty[r][c]:
+                rows[r][c] = ""
+                # Do not carry a label through an intentional blank in this column.
+                last = ""
+                continue
             s = _cell_str(rows[r][c])
             if s:
                 rows[r][c] = s
@@ -648,10 +671,15 @@ def _fill_header_matrix(header_matrix: List[List[Any]], n_cols: int) -> List[Lis
             else:
                 rows[r][c] = ""
     filled: List[List[str]] = []
-    for row in rows:
+    for r, row in enumerate(rows):
         out: List[str] = []
         last = ""
-        for v in row:
+        for c, v in enumerate(row):
+            if explicit_empty[r][c]:
+                out.append("")
+                # Stop colspan propagation across an intentional blank column.
+                last = ""
+                continue
             s = _cell_str(v)
             if s:
                 out.append(s)
@@ -677,18 +705,31 @@ def flatten_headers(header_matrix: List[List[Any]], n_cols: int) -> List[str]:
     return names
 
 def _uniquify_columns(names: List[str]) -> List[str]:
-    """Ensure DataFrame column labels are unique (append ' (2)', ' (3)', …)."""
+    """Ensure DataFrame column labels are unique (append ' (2)', ' (3)', …).
+
+    Blank / missing headers stay blank. Extra blank columns are uniquified with
+    zero-width spaces so pandas stays happy without inventing ``Col_N`` labels.
+    """
     seen: Dict[str, int] = {}
     out: List[str] = []
     for raw in names:
-        base = str(raw or "").strip() or "Col"
+        base = str(raw if raw is not None else "").strip("\u200b").strip()
+        if base == "":
+            n = seen.get("", 0)
+            seen[""] = n + 1
+            out.append("\u200b" * n if n else "")
+            continue
         n = seen.get(base, 0) + 1
         seen[base] = n
         out.append(base if n == 1 else f"{base} ({n})")
     return out
 
 def _is_placeholder_col_name(name: Any) -> bool:
-    return bool(re.match(r"^Col_\d+$", str(name or "").strip(), re.I))
+    """True for blank headers and legacy ``Col_N`` stubs."""
+    s = str(name or "").replace("\u200b", "").strip()
+    if not s:
+        return True
+    return bool(re.match(r"^Col_\d+$", s, re.I))
 
 
 def _set_col_header(

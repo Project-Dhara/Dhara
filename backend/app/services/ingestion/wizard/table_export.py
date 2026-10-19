@@ -27,13 +27,14 @@ _BANNER_ROOT_RE = re.compile(
 def _column_names(table: dict) -> list[str]:
     columns = table.get("columns") or []
     names: list[str] = []
-    for i, col in enumerate(columns):
+    for col in columns:
         if isinstance(col, str):
-            names.append(col or f"Col_{i + 1}")
+            # Keep blank headers blank — never invent Col_N placeholders.
+            names.append(col if col is not None else "")
         elif isinstance(col, dict):
-            names.append(str(col.get("name") or f"Col_{i + 1}"))
+            names.append(str(col.get("name") or ""))
         else:
-            names.append(f"Col_{i + 1}")
+            names.append("")
     return names
 
 

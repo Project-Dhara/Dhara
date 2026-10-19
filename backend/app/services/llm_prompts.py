@@ -234,9 +234,21 @@ TEXT_MIN_CHARS = 20
 # Resolved at import for callers/logging; extract path re-resolves at run time
 # so server instances pick up current cgroup/RAM without a code change.
 CPU_WORKERS = resolve_cpu_workers()
+
+
+def _default_extract_chunk_pages() -> int:
+    """Pages per process-pool task.
+
+    On ≤2-CPU hosts (this class of instance), smaller chunks keep both workers
+    fed when page costs vary — same algorithms, better wall-clock utilization.
+    Larger hosts keep 8 to limit process/PDF-reopen overhead.
+    """
+    return 4 if _effective_cpu_count() <= 2 else 8
+
+
 # Pages per process-pool task. Smaller chunks → more frequent progress updates
 # and less work lost when a worker is OOM-killed.
-EXTRACT_CHUNK_PAGES = _env_int("PDF_EXTRACT_CHUNK_PAGES", 8)
+EXTRACT_CHUNK_PAGES = _env_int("PDF_EXTRACT_CHUNK_PAGES", _default_extract_chunk_pages())
 
 # ── LLM API (PDF validation + catalogue extractor) ───────────────────────────
 OPENAI_MODEL = "gpt-4o-mini"

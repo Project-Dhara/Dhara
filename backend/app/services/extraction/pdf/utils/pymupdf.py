@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -20,7 +20,7 @@ import pandas as pd
 import pymupdf
 
 from app.services.llm_prompts import EXTRACT_CHUNK_PAGES, TEXT_MIN_CHARS, resolve_cpu_workers
-from app.services.extraction.pdf.utils.workers import extract_pymupdf_chunk
+from app.services.extraction.pdf.utils.workers import extract_pymupdf_chunk, init_extract_worker
 
 
 def log(msg: str) -> None:
@@ -117,7 +117,10 @@ def extract_all_tables(
             break
 
         pool_broke = False
-        with ProcessPoolExecutor(max_workers=workers) as pool:
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            initializer=init_extract_worker,
+        ) as pool:
             futures = {pool.submit(extract_pymupdf_chunk, str(pdf_path), chunk): chunk for chunk in chunks}
             for future in as_completed(futures):
                 chunk = futures[future]
@@ -633,22 +636,26 @@ def run_pdf_extraction(
     text_pages, page_text = classify_pages(pdf_path)
     progress("classify", 10, f"{len(text_pages)} text-bearing page(s) found")
 
-    progress("extract", 10, f"Extracting tables from {len(text_pages)} page(s)")
-    all_tables = extract_all_tables(
-        pdf_path,
-        text_pages,
-        progress_cb=lambda done, total: progress(
-            "extract", 10 + int(35 * done / total), f"Extracted {done}/{total} page(s)"
-        ),
-    )
-    progress("extract", 42, f"{len(all_tables)} table candidate(s) found — filtering & merging")
-
-    pages_grouped = filter_candidate_pages(group_by_page(all_tables))
-    pages_grouped = resolve_dual_column_pages(pdf_path, pages_grouped, page_text)
+    # Outline only needs the path/TOC — overlap with extract (independent work).
     from app.services.extraction.pdf.confidence_validation.table_confidence import (
         build_pdf_outline_index,
     )
-    progress("extract", 44, "Building document outline index")
-    outline_index = build_pdf_outline_index(pdf_path)
+
+    progress("extract", 10, f"Extracting tables from {len(text_pages)} page(s)")
+    with ThreadPoolExecutor(max_workers=1) as outline_pool:
+        outline_future = outline_pool.submit(build_pdf_outline_index, pdf_path)
+        all_tables = extract_all_tables(
+            pdf_path,
+            text_pages,
+            progress_cb=lambda done, total: progress(
+                "extract", 10 + int(35 * done / total), f"Extracted {done}/{total} page(s)"
+            ),
+        )
+        progress("extract", 42, f"{len(all_tables)} table candidate(s) found — filtering & merging")
+
+        pages_grouped = filter_candidate_pages(group_by_page(all_tables))
+        pages_grouped = resolve_dual_column_pages(pdf_path, pages_grouped, page_text)
+        progress("extract", 44, "Building document outline index")
+        outline_index = outline_future.result()
     progress("extract", 45, f"{len(pages_grouped)} page(s) with ruled table candidates")
     return pages_grouped, page_text, outline_index

@@ -110,56 +110,95 @@ def _page_num_for_table(table: Mapping[str, Any], page_key: Any) -> Optional[int
             return None
 
 
+def _render_snapshot_jobs(
+    pdf_bytes: bytes,
+    jobs: List[Tuple[str, int, Any]],
+) -> Dict[str, bytes]:
+    """Render a list of (table_id, page_num, bbox) jobs with one open Document."""
+    import pymupdf
+
+    out: Dict[str, bytes] = {}
+    if not jobs:
+        return out
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        for table_id, page_num, bbox in jobs:
+            if page_num < 1 or page_num > doc.page_count:
+                continue
+            try:
+                page = doc[page_num - 1]
+                clip = None
+                if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+                    x0, y0, x1, y1 = (
+                        float(bbox[0]),
+                        float(bbox[1]),
+                        float(bbox[2]),
+                        float(bbox[3]),
+                    )
+                    pad = _SNAPSHOT_PAD
+                    clip = pymupdf.Rect(
+                        max(0, x0 - pad),
+                        max(0, y0 - pad),
+                        min(page.rect.x1, x1 + pad),
+                        min(page.rect.y1, y1 + pad),
+                    )
+                pix = page.get_pixmap(clip=clip, dpi=_SNAPSHOT_DPI, alpha=False)
+                out[table_id] = pix.tobytes("png")
+            except Exception as e:
+                logger.warning(
+                    "could not render snapshot for table %s: %s", table_id, e
+                )
+    finally:
+        doc.close()
+    return out
+
+
 def build_snapshots_for_result(
     pdf_bytes: bytes, result: Optional[Dict[Any, Any]]
 ) -> Dict[str, bytes]:
-    """Render a PNG crop for every table in an extraction result."""
+    """Render a PNG crop for every table in an extraction result.
+
+    Same DPI/quality as before; on multi-core hosts work is split across a
+    small thread pool (each thread opens its own Document).
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     from app.services.ingestion.review_tables import result_pages_only
+    from app.services.llm_prompts import resolve_cpu_workers
 
     pages = result_pages_only(result)
     if not pdf_bytes or not pages:
         return {}
 
-    import pymupdf
+    jobs: List[Tuple[str, int, Any]] = []
+    for page_key, page_data in pages.items():
+        tables = (page_data or {}).get("tables") or []
+        for idx, table in enumerate(tables):
+            table_id = str((table or {}).get("table_id") or f"{page_key}-{idx}")
+            page_num = _page_num_for_table(table or {}, page_key)
+            if page_num is None:
+                continue
+            jobs.append((table_id, page_num, (table or {}).get("bbox")))
+
+    if not jobs:
+        return {}
+
+    n_workers = min(resolve_cpu_workers(), len(jobs))
+    if n_workers <= 1:
+        return _render_snapshot_jobs(pdf_bytes, jobs)
+
+    chunks: List[List[Tuple[str, int, Any]]] = [[] for _ in range(n_workers)]
+    for i, job in enumerate(jobs):
+        chunks[i % n_workers].append(job)
+    chunks = [c for c in chunks if c]
 
     out: Dict[str, bytes] = {}
-    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
-    try:
-        for page_key, page_data in pages.items():
-            tables = (page_data or {}).get("tables") or []
-            for idx, table in enumerate(tables):
-                table_id = str((table or {}).get("table_id") or f"{page_key}-{idx}")
-                page_num = _page_num_for_table(table or {}, page_key)
-                if page_num is None:
-                    continue
-                if page_num < 1 or page_num > doc.page_count:
-                    continue
-                try:
-                    page = doc[page_num - 1]
-                    bbox = (table or {}).get("bbox")
-                    clip = None
-                    if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
-                        x0, y0, x1, y1 = (
-                            float(bbox[0]),
-                            float(bbox[1]),
-                            float(bbox[2]),
-                            float(bbox[3]),
-                        )
-                        pad = _SNAPSHOT_PAD
-                        clip = pymupdf.Rect(
-                            max(0, x0 - pad),
-                            max(0, y0 - pad),
-                            min(page.rect.x1, x1 + pad),
-                            min(page.rect.y1, y1 + pad),
-                        )
-                    pix = page.get_pixmap(clip=clip, dpi=_SNAPSHOT_DPI, alpha=False)
-                    out[table_id] = pix.tobytes("png")
-                except Exception as e:
-                    logger.warning(
-                        "could not render snapshot for table %s: %s", table_id, e
-                    )
-    finally:
-        doc.close()
+    with ThreadPoolExecutor(max_workers=len(chunks)) as pool:
+        futures = [
+            pool.submit(_render_snapshot_jobs, pdf_bytes, chunk) for chunk in chunks
+        ]
+        for future in as_completed(futures):
+            out.update(future.result())
     return out
 
 

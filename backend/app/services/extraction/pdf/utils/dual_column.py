@@ -133,20 +133,19 @@ def _resolve_column_names(
     header_cells: Sequence[Optional[str]],
     df_columns: Any,
 ) -> List[str]:
-    """Infer column names from a header row or existing DataFrame columns."""
+    """Infer column names from a header row or existing DataFrame columns.
+
+    Empty cells stay empty — never rewritten to ``Col_N`` placeholders.
+    """
     cells = list(header_cells[:ncol])
     if _row_looks_like_real_column_header(cells):
-        return [
-            (str(c).strip() if c else "") or f"Col_{i + 1}" for i, c in enumerate(cells)
-        ]
+        return [(str(c).strip() if c else "") for c in cells]
 
     from_pandas = [_cell_str(c) for c in list(df_columns)[:ncol]]
     if from_pandas and _row_looks_like_real_column_header(from_pandas):
-        return [
-            (str(c).strip() if c else "") or f"Col_{i + 1}" for i, c in enumerate(from_pandas)
-        ]
+        return [(str(c).strip() if c else "") for c in from_pandas]
 
-    return [f"Col_{i + 1}" for i in range(ncol)]
+    return ["" for _ in range(ncol)]
 
 
 def _trend_column_index(col_names: List[str]) -> Optional[int]:
@@ -166,7 +165,7 @@ def coerce_dual_stack_half_df(df: Any) -> Any:
     PyMuPDF often promotes the wrong row to column headers (section banner vs true
     header vs first data row). When the current columns do not look like real
     headers, treat them as the first body row. Column names are taken from the
-    grid when possible, otherwise ``Col_1`` … ``Col_n``.
+    grid when possible; blank cells stay blank (no ``Col_N`` placeholders).
     """
     import pandas as pd
 

@@ -73,6 +73,13 @@ def _strip_uniquify_header_suffix(name: str) -> str:
     return re.sub(r"\s*\(\d+\)\s*$", "", s).strip()
 
 
+def _header_looks_year_label(name: str) -> bool:
+    """True for calendar-year column labels (2018, 2023) — not chart crumbs."""
+    s = _strip_uniquify_header_suffix(name)
+    compact = re.sub(r"[\s,]", "", s)
+    return bool(re.fullmatch(r"(?:19|20)\d{2}", compact))
+
+
 def _header_looks_numeric_fragment(name: str) -> bool:
     s = _strip_uniquify_header_suffix(name)
     if not s:
@@ -80,6 +87,9 @@ def _header_looks_numeric_fragment(name: str) -> bool:
     compact = re.sub(r"[\s,]", "", s)
     if not compact:
         return True
+    # Year columns on statistical tables are structural, not chart value crumbs.
+    if _header_looks_year_label(s):
+        return False
     # Point labels from line/bar charts: 54%, 76.57, 381, Col_12 crumbs.
     if re.fullmatch(r"\d{1,3}%", compact):
         return True
@@ -163,6 +173,7 @@ def looks_like_chart_candidate(
     n_rows, n_cols = cleaned.shape
 
     cols = [_cell_str(c) for c in cleaned.columns]
+    year_hdr = sum(1 for c in cols if _header_looks_year_label(c))
     numeric_hdr = sum(1 for c in cols if _header_looks_numeric_fragment(c))
     percent_hdr = sum(
         1 for c in cols
@@ -173,6 +184,8 @@ def looks_like_chart_candidate(
         for c in cols
         if c and not _header_looks_numeric_fragment(c) and re.search(r"[A-Za-z]{3,}", c)
     )
+    # Years + named stubs count as structured headers (District×year pivots).
+    struct_hdr = text_hdr + year_hdr
     # Body fill — chart extractions are mostly empty under value-label headers.
     try:
         total = max(1, n_rows * n_cols)
@@ -189,9 +202,9 @@ def looks_like_chart_candidate(
     if n_cols < 8 and n_rows >= 3:
         # Compact grids are almost never chart false-positives. Highlighted
         # cells / decorative fills inside real statement tables (Cause of
-        # Death, Sl. No., Male/Female, …) create many "fat" rects — keep those
-        # when ≥2 text headers are present. Skip drawings entirely in that case.
-        if text_hdr >= 2:
+        # Death, District×year, …) create many "fat" rects — keep those when
+        # ≥2 structured headers exist or the body is densely filled.
+        if struct_hdr >= 2 or body_fill >= 0.7:
             return False, ""
         fat = _count_fat_rects_in_bbox(page, bbox)
         if fat >= 8:
@@ -202,13 +215,18 @@ def looks_like_chart_candidate(
         (n_cols >= 20 and n_rows <= 10)
         or (n_cols >= 12 and n_cols >= max(12, int(n_rows * 5)))
     )
-    header_smoke = text_hdr <= max(1, n_cols // 20) and numeric_hdr >= max(3, n_cols // 5)
+    header_smoke = struct_hdr <= max(1, n_cols // 20) and numeric_hdr >= max(3, n_cols // 5)
+
+    # Dense multi-year / named pivot tables: shaded cells look like "bars" but
+    # the grid is fully populated with typed headers — not a chart.
+    if body_fill >= 0.6 and struct_hdr >= 2:
+        return False, ""
 
     # Line-chart point labels: one short row of 54%/57%/… crumbs, empty body.
     if (
         n_rows <= 3
         and n_cols >= 6
-        and text_hdr <= 1
+        and struct_hdr <= 1
         and numeric_hdr >= max(4, int(n_cols * 0.55))
         and body_fill <= 0.35
     ):
@@ -216,7 +234,7 @@ def looks_like_chart_candidate(
             f"chart value-label strip {n_rows}x{n_cols} "
             f"(numeric headers {numeric_hdr}/{n_cols}, fill={body_fill:.2f})"
         )
-    if percent_hdr >= max(4, int(n_cols * 0.5)) and text_hdr <= 1 and n_rows <= 4:
+    if percent_hdr >= max(4, int(n_cols * 0.5)) and struct_hdr <= 1 and n_rows <= 4:
         return True, f"percent point-label grid ({percent_hdr}/{n_cols} % headers)"
 
     if wide_sparse and header_smoke:
@@ -225,27 +243,33 @@ def looks_like_chart_candidate(
             f"(numeric headers {numeric_hdr}/{n_cols}, text headers {text_hdr})"
         )
     # Real wide statistical tables (many named columns) never need drawing scans.
-    if text_hdr >= 2 and not wide_sparse:
+    if struct_hdr >= 2 and not wide_sparse:
         return False, ""
     # Bar charts often land as ~8–11 cols of numeric crumbs (not "wide_sparse").
     crumb_grid = (
         n_cols >= 8
-        and text_hdr <= 1
+        and struct_hdr <= 1
         and numeric_hdr >= max(4, int(n_cols * 0.55))
         and body_fill <= 0.55
     )
-    if not (wide_sparse or header_smoke or crumb_grid or (n_cols >= 10 and text_hdr <= 1)):
+    if not (wide_sparse or header_smoke or crumb_grid or (n_cols >= 10 and struct_hdr <= 1)):
         return False, ""
 
     fat = _count_fat_rects_in_bbox(page, bbox)
     caption_local = _local_chart_caption(page, bbox)
-    if fat >= 6 and (wide_sparse or header_smoke or crumb_grid or caption_local):
+    # Fat filled rects only confirm a chart when the body is sparse — otherwise
+    # they are almost always shaded table cells (header bands, zebra rows).
+    if (
+        fat >= 6
+        and body_fill <= 0.55
+        and (wide_sparse or header_smoke or crumb_grid or caption_local)
+    ):
         return True, f"chart bars in region (fat_rects={fat})"
-    if crumb_grid and fat >= 4:
+    if crumb_grid and fat >= 4 and body_fill <= 0.55:
         return True, f"numeric-crumb grid with filled bars (fat_rects={fat})"
     if caption_local and (wide_sparse or header_smoke or crumb_grid or fat >= 3):
         return True, "Graph/Chart caption over non-tabular region"
-    if caption_local and n_cols >= 8 and text_hdr <= 1:
+    if caption_local and n_cols >= 8 and struct_hdr <= 1:
         return True, "Graph/Chart caption with label-less wide grid"
     if page_text and _CHART_CAPTION_RE.search(page_text) and wide_sparse and header_smoke:
         return True, "page Graph/Chart caption with chart-like grid"

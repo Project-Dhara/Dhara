@@ -32,9 +32,27 @@ to enable): text-only pages are filtered out later, and text clones on ruled
 pages mainly inflate LLM prompts on large PDFs.
 """
 
+import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pymupdf
+
+
+def init_extract_worker() -> None:
+    """Process-pool initializer: pin BLAS/OpenMP to 1 thread per worker.
+
+    On small hosts (e.g. 2 CPUs) two PyMuPDF workers each spawning multi-threaded
+    numeric libs oversubscribe the cores and slow extract. Quality-identical —
+    same algorithms, one software thread of compute per process.
+    """
+    for key in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+    ):
+        os.environ[key] = "1"
 
 
 def _bbox_for_row_slice(
@@ -152,7 +170,8 @@ def extract_pymupdf_chunk(pdf_path: str, pages: List[int]) -> List[Dict[str, Any
     and text clones on ruled pages mainly bloat LLM prompts. Opt back in with
     PDF_EXTRACT_TEXT_STRATEGY=1.
     """
-    import os
+    # Defense in depth if the pool was created without initializer.
+    init_extract_worker()
 
     results: List[Dict[str, Any]] = []
     if not pages:

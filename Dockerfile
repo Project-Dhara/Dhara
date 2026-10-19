@@ -1,12 +1,11 @@
-# ── Stage 1: Build the Next.js frontend ────────────────────────────────────
+# ── Stage 1: Install frontend deps (dev server at runtime) ─────────────────
 FROM node:20-slim AS frontend
 WORKDIR /frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ .
-# Same-container FastAPI — bake localhost into Next rewrites at build time.
+# Same-container FastAPI — Next rewrites use BACKEND_ORIGIN.
 ENV BACKEND_ORIGIN=http://127.0.0.1:8000
-RUN npm run build
 
 # ── Stage 2: single runtime image with both Node (frontend) and Python
 #    (backend) -- Next.js needs its own long-lived server process now (it's
@@ -27,8 +26,7 @@ RUN python3 -m venv /opt/venv \
 ENV PATH="/opt/venv/bin:${PATH}"
 COPY backend/ ./backend/
 
-# Frontend (built) -- copy the whole app dir (standalone Next output isn't
-# used here to keep this simple; `next start` needs node_modules + .next).
+# Frontend source + node_modules — runtime uses `npm run dev` (see start.sh).
 COPY --from=frontend /frontend /app/frontend
 
 ENV BACKEND_PORT=8000

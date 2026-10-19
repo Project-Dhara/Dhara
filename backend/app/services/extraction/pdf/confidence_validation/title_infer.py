@@ -365,12 +365,30 @@ _SCOPE_SUBTITLE_RE = re.compile(
     re.I,
 )
 
+# Glossary / category-definition prose above a TABLE id (not the table title).
+# e.g. "Annual crops: Sugarcane, banana, plantain, pineapple, betel leaves etc."
+_NARRATIVE_GLOSSARY_TITLE_RE = re.compile(
+    r"(?i)^(?:annual|seasonal|perennial|other)?\s*crops?\s*:"
+    r"|:\s*[^:]{8,}\betc\.?\s*$"
+)
+
+
+def _is_narrative_glossary_line(title: str) -> bool:
+    """True for definitional lists that sit near TABLE ids but are not captions."""
+    s = _normalize_title_line(title)
+    if not s:
+        return False
+    return bool(_NARRATIVE_GLOSSARY_TITLE_RE.search(s))
+
+
 def _is_weak_inferred_title(title: str, columns: Optional[List[str]] = None) -> bool:
     """Reject column-header crumbs (TOTAL, MALE) and bare TABLE ids as titles."""
     s = _normalize_title_line(title)
     if not s:
         return True
     if _is_caption_id_only(s):
+        return True
+    if _is_narrative_glossary_line(s):
         return True
     low = s.lower().rstrip(".")
     if low in _WEAK_TITLE_TOKENS:
@@ -545,15 +563,21 @@ def _descriptive_line_near_caption_id(
     id_index: int,
     col_names: List[str],
 ) -> Optional[str]:
-    """Prefer the strongest caption near the TABLE id; append scope subtitle."""
+    """Prefer the strongest caption near the TABLE id; append scope subtitle.
+
+    When both sides exist, prefer the line *after* the TABLE id (the usual
+    printed caption). A higher-scoring prose line above the id (glossary
+    sentences, crop-category definitions) must not beat a real caption below.
+    """
     after = _descriptive_line_after_caption_id(lines, id_index, col_names)
     before = _descriptive_line_before_caption_id(lines, id_index, col_names)
     if after and before:
-        title = (
-            after
-            if _caption_candidate_score(after) >= _caption_candidate_score(before)
-            else before
-        )
+        # Prefer below-id caption unless the above line scores clearly better
+        # (e.g. full title above, short stub below).
+        if _caption_candidate_score(before) > _caption_candidate_score(after) + 30:
+            title = before
+        else:
+            title = after
     else:
         title = after or before
     if not title:
