@@ -15,7 +15,9 @@ import ConsoleStatusPlaceholder from '../console/ConsoleStatusPlaceholder'
 import StageSubstepBreadcrumb from '../console/StageSubstepBreadcrumb'
 import { METADATA_CRUMBS } from '../console/ConsoleStages'
 import ErrorBanner from '../ui/ErrorBanner'
-import { STATUS_TRANSITIONS } from '../../lib/consoleStatusTransitions'
+import KydsSummaryCard from '../KydsSummaryCard'
+import { STATUS_TRANSITIONS, groupingToMetadataTransition } from '../../lib/consoleStatusTransitions'
+import { fetchMineKydsFilled } from '../../lib/kydsFilled'
 import {
   fillGroupMetadataForMatchResult,
   matchResultToPdfSavePayload,
@@ -321,8 +323,9 @@ export default function PdfGrouping({ jobId }) {
       }
     }
 
+    const hasKyds = await fetchMineKydsFilled()
     setStatusPage({
-      ...STATUS_TRANSITIONS.groupingToMetadata,
+      ...groupingToMetadataTransition(hasKyds),
       key: 'groupingToMetadata',
       work: trackedFillWork,
       after: () => {
@@ -438,24 +441,29 @@ export default function PdfGrouping({ jobId }) {
     >
       {pipelineStep === 3 && (
         <div className="flex flex-col gap-[18px]">
-          <div className="min-w-0">
-            <StageSubstepBreadcrumb
-              crumbs={METADATA_CRUMBS}
-              activeId="grouping"
-              onNavigate={(next) => {
-                if (next === 'metadata') goToPipelineStep(4)
-              }}
-              isReachable={(crumb) => crumb.id === 'grouping' || maxStepReached >= 4}
-              ariaLabel="Metadata workspace"
-              size="page"
-            />
-            <div className="mt-1.5 text-[13px] font-medium text-ink">
-              {filename || 'PDF report'}
-              <span className="font-normal text-ink-soft">
-                {' '}
-                · {tableCount} table(s)
-                {method ? ` · ${method}` : ''}
-              </span>
+          <div className="flex items-start justify-between gap-6">
+            <div className="min-w-0">
+              <StageSubstepBreadcrumb
+                crumbs={METADATA_CRUMBS}
+                activeId="grouping"
+                onNavigate={(next) => {
+                  if (next === 'metadata') goToPipelineStep(4)
+                }}
+                isReachable={(crumb) => crumb.id === 'grouping' || maxStepReached >= 4}
+                ariaLabel="Metadata workspace"
+                size="page"
+              />
+              <div className="mt-1.5 text-[13px] font-medium text-ink">
+                {filename || 'PDF report'}
+                <span className="font-normal text-ink-soft">
+                  {' '}
+                  · {tableCount} table(s)
+                  {method ? ` · ${method}` : ''}
+                </span>
+              </div>
+            </div>
+            <div className="flex flex-none flex-shrink-0 flex-wrap items-center justify-end gap-2.5">
+              <KydsSummaryCard variant="corner" />
             </div>
           </div>
 

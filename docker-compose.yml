@@ -1,6 +1,6 @@
-# Full stack: Postgres + FastAPI + Next.js (production).
+# Full stack: Postgres + FastAPI + Next.js (production build).
 #   docker compose up -d --build
-# Frontend image: npm run build (Dockerfile) + npm run start (CMD).
+# Frontend image runs `npm run build` then `npm run start`.
 # Combined single-container prod image on host :80 (Cloudflare):
 #   docker compose --profile prod up -d --build app postgres
 services:
@@ -95,9 +95,6 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-    # Production: image runs `npm run build` at build time and `npm run start`
-    # at runtime (see frontend/Dockerfile). No bind mounts — they would overwrite
-    # the baked .next and force a rebuild/dev server at container start.
 
   app:
     profiles: ["prod"]

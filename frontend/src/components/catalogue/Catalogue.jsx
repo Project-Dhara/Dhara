@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Copy, Download, FileText, Loader2, Plug, Tags, Terminal } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Check, ChevronDown, Copy, Download, FileText, Loader2, Plug, Tags, Terminal } from 'lucide-react'
 import { getToken, withAuthHeaders } from '../../lib/auth'
 import { publicApiDatasetsUrl, publicMcpUrl } from '../../lib/publicUrls'
 
@@ -15,8 +15,122 @@ const TOOL_DESCS = {
 const TABS = ['summary', 'metadata', 'api', 'mcp']
 const TAB_ICONS = { summary: FileText, metadata: Tags, api: Terminal, mcp: Plug }
 
-function labelFacet(key) {
-  return String(key).replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+/** Conventional catalogue list sorts — replaces the long classification-facet filter. */
+const SORT_OPTIONS = [
+  { value: 'recent', label: 'Recently updated' },
+  { value: 'oldest', label: 'Oldest first' },
+  { value: 'tables_desc', label: 'Most tables' },
+  { value: 'tables_asc', label: 'Fewest tables' },
+  { value: 'rows_desc', label: 'Most rows' },
+  { value: 'rows_asc', label: 'Fewest rows' },
+  { value: 'title_asc', label: 'Title A–Z' },
+  { value: 'title_desc', label: 'Title Z–A' },
+]
+const DEFAULT_SORT = 'recent'
+
+function updatedAtMs(r) {
+  const raw = r?.last_updated
+  if (!raw) return 0
+  const t = Date.parse(String(raw))
+  return Number.isFinite(t) ? t : 0
+}
+
+function compareGroups(a, b, sort) {
+  switch (sort) {
+    case 'oldest':
+      return updatedAtMs(a) - updatedAtMs(b) || String(a.id).localeCompare(String(b.id))
+    case 'tables_desc':
+      return (b.table_count ?? 0) - (a.table_count ?? 0) || String(a.title).localeCompare(String(b.title))
+    case 'tables_asc':
+      return (a.table_count ?? 0) - (b.table_count ?? 0) || String(a.title).localeCompare(String(b.title))
+    case 'rows_desc':
+      return (b.row_count ?? 0) - (a.row_count ?? 0) || String(a.title).localeCompare(String(b.title))
+    case 'rows_asc':
+      return (a.row_count ?? 0) - (b.row_count ?? 0) || String(a.title).localeCompare(String(b.title))
+    case 'title_asc':
+      return String(a.title || '').localeCompare(String(b.title || ''), undefined, { sensitivity: 'base' })
+    case 'title_desc':
+      return String(b.title || '').localeCompare(String(a.title || ''), undefined, { sensitivity: 'base' })
+    case 'recent':
+    default:
+      return updatedAtMs(b) - updatedAtMs(a) || String(b.id).localeCompare(String(a.id))
+  }
+}
+
+/** Custom menu so the list always opens below the trigger (native select may flip up). */
+function SortMenu({ value, onChange, options }) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef(null)
+  const selected = options.find((o) => o.value === value) || options[0]
+
+  useEffect(() => {
+    if (!open) return undefined
+    const onDoc = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false)
+    }
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <div ref={rootRef} className="relative flex-none">
+      <button
+        type="button"
+        className="flex h-11 items-center gap-2 rounded-xl border border-line bg-surface pl-3 pr-2.5 text-sm text-ink transition-shadow hover:border-teal/50 focus:border-teal focus:shadow-focus-ring focus:outline-none"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Sort releases"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="whitespace-nowrap text-[12px] font-semibold uppercase tracking-wide text-[#8E9398]">Sort</span>
+        <span className="min-w-[7.5rem] text-left">{selected?.label}</span>
+        <ChevronDown
+          className={`h-4 w-4 flex-none text-ink-soft transition-transform ${open ? 'rotate-180' : ''}`}
+          strokeWidth={2}
+          aria-hidden
+        />
+      </button>
+      {open && (
+        <ul
+          role="listbox"
+          aria-label="Sort releases"
+          className="absolute left-0 top-full z-30 mt-1.5 min-w-full overflow-hidden rounded-xl border border-line bg-white py-1 shadow-md"
+        >
+          {options.map((o) => {
+            const active = o.value === value
+            return (
+              <li key={o.value} role="option" aria-selected={active}>
+                <button
+                  type="button"
+                  className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors ${
+                    active ? 'bg-sage font-semibold text-teal-deep' : 'text-ink hover:bg-cream'
+                  }`}
+                  onClick={() => {
+                    onChange(o.value)
+                    setOpen(false)
+                  }}
+                >
+                  <Check
+                    className={`h-3.5 w-3.5 flex-none ${active ? 'opacity-100' : 'opacity-0'}`}
+                    strokeWidth={2.5}
+                    aria-hidden
+                  />
+                  {o.label}
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
 }
 
 function isEmptyMeta(v) {
@@ -117,10 +231,11 @@ async function downloadGroupZip(metadataId, title, setDownloading) {
 
 export default function Catalogue({ hasKey, onGoSettings }) {
   const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState('all')
+  const [sort, setSort] = useState(DEFAULT_SORT)
   const [selId, setSelId] = useState(null)
   const [tab, setTab] = useState('summary')
-  const [summaryChip, setSummaryChip] = useState('ai')
+  /** Inside Metadata: NMDS concepts vs catalogue sheet fields. */
+  const [metadataSubTab, setMetadataSubTab] = useState('nmds')
   const [mcpOpen, setMcpOpen] = useState(false)
   const [copied, setCopied] = useState(null)
   const listScrollRef = useRef(null)
@@ -157,20 +272,11 @@ export default function Catalogue({ hasKey, onGoSettings }) {
     return () => { cancelled = true }
   }, [])
 
-  const facetOptions = useMemo(() => {
-    const keys = new Set()
-    groups.forEach((d) => (d.facets || []).forEach((f) => keys.add(f)))
-    return [
-      { value: 'all', label: 'All facets' },
-      ...[...keys].sort().map((k) => ({ value: k, label: labelFacet(k) })),
-    ]
-  }, [groups])
-
   const q = query.trim().toLowerCase()
-  const list = groups.filter((r) =>
-    (filter === 'all' || (r.facets || []).includes(filter)) &&
-    (!q || groupSearchText(r).includes(q))
-  )
+  const list = groups
+    .filter((r) => !q || groupSearchText(r).includes(q))
+    .slice()
+    .sort((a, b) => compareGroups(a, b, sort))
   const sel = list.find((r) => r.id === selId) || list[0]
   const access = (sel?.access || 'Public').toLowerCase()
   const keywords = sel ? keywordChips(sel) : []
@@ -221,7 +327,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
         </div>
       )}
 
-      <div className="flex items-center gap-2.5">
+      <div className="relative z-20 flex items-center gap-2.5">
         <input
           className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-surface px-3.5 font-sans text-[15px] text-ink transition-shadow focus:border-teal focus:shadow-focus-ring focus:outline-none"
           type="text"
@@ -229,9 +335,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search by release id, dataset id, title, geography…"
         />
-        <select className="h-11 rounded-xl border border-line bg-surface px-2.5 text-sm text-ink transition-shadow focus:border-teal focus:shadow-focus-ring focus:outline-none" value={filter} onChange={(e) => setFilter(e.target.value)}>
-          {facetOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
+        <SortMenu value={sort} onChange={setSort} options={SORT_OPTIONS} />
       </div>
 
       <div className="flex flex-1 min-h-0 items-stretch gap-4 overflow-hidden">
@@ -240,8 +344,13 @@ export default function Catalogue({ hasKey, onGoSettings }) {
             <span>
               {loading ? 'Loading…' : `${list.length} release${list.length !== 1 ? 's' : ''}`}
             </span>
-            {(query || filter !== 'all') && (
-              <span className="cursor-pointer text-[12.5px] font-semibold text-teal" onClick={() => { setQuery(''); setFilter('all') }}>Clear filter</span>
+            {(query || sort !== DEFAULT_SORT) && (
+              <span
+                className="cursor-pointer text-[12.5px] font-semibold text-teal"
+                onClick={() => { setQuery(''); setSort(DEFAULT_SORT) }}
+              >
+                Reset
+              </span>
             )}
           </div>
           <div ref={listScrollRef} className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-0.5">
@@ -254,7 +363,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
                     ? 'border-teal bg-sage shadow-[inset_0_0_0_1px_#176B6B]'
                     : 'border-line bg-white hover:-translate-y-px hover:border-teal hover:bg-cream hover:shadow-sm'
                 }`}
-                onClick={() => { setSelId(d.id); setTab('summary'); setSummaryChip('ai') }}
+                onClick={() => { setSelId(d.id); setTab('summary'); setMetadataSubTab('nmds') }}
               >
                 <div className="flex items-center gap-2">
                   <span className="h-1.5 w-1.5 rounded-full bg-green" />
@@ -364,139 +473,109 @@ export default function Catalogue({ hasKey, onGoSettings }) {
 
             <div key={tab} className="dhara-tab-panel flex flex-col gap-3.5 px-[22px] pb-[22px] pt-[18px]" role="tabpanel">
               {tab === 'summary' && (
-                <div className="flex flex-col gap-3">
-                  {(sel.tables || []).length > 0 && (
-                    <div className="flex flex-col gap-2 rounded-lg border border-line bg-white px-3.5 py-3">
-                      <div className={metaCardLabelClass}>Datasets in this release</div>
-                      <ul className="m-0 list-none space-y-1.5 p-0">
-                        {(sel.tables || []).map((t) => {
-                          const dsId = tableDatasetId(t)
-                          return (
-                            <li key={dsId || t.title} className="flex items-baseline justify-between gap-3 text-[13px]">
-                              <div className="min-w-0 flex-1">
-                                <div className="truncate font-medium text-ink">{t.title}</div>
-                                {dsId && (
-                                  <div className="truncate font-mono text-[11px] text-[#8E9398]" title={dsId}>
-                                    Dataset ID · {dsId}
-                                  </div>
-                                )}
-                              </div>
-                              <span className="flex-none tabular-nums text-[11.5px] text-[#8E9398]">
-                                {Number(t.row_count || 0).toLocaleString()} rows
-                              </span>
-                            </li>
-                          )
-                        })}
-                      </ul>
-                    </div>
-                  )}
-                  <div className="flex items-stretch gap-2" role="tablist" aria-label="Summary type">
+                <div className={`dhara-tab-panel ${metaCardClass} col-span-2`}>
+                  <div className={metaCardLabelClass}>AI summary</div>
+                  <div className="text-[15px] leading-relaxed text-ink [text-wrap:pretty]">{sel.summary}</div>
+                  {!hasKey && (
                     <button
-                      type="button"
-                      className={`dhara-tab flex h-8 flex-1 items-center justify-center rounded-full border font-sans text-[12.5px] font-semibold ${
-                        summaryChip === 'ai'
-                          ? 'border-teal-deep bg-teal-deep text-cream'
-                          : 'border-line bg-white text-ink-soft hover:border-teal/35 hover:bg-sage hover:text-teal-deep'
-                      }`}
-                      onClick={() => setSummaryChip('ai')}
+                      className="mt-2 flex h-9 items-center self-start rounded-full border border-teal bg-white px-3.5 text-[13px] font-semibold text-teal transition-colors hover:bg-sage"
+                      onClick={onGoSettings}
                     >
-                      AI summary
+                      Add model key
                     </button>
-                    <button
-                      type="button"
-                      className={`dhara-tab flex h-8 flex-1 items-center justify-center rounded-full border font-sans text-[12.5px] font-semibold ${
-                        summaryChip === 'nmds'
-                          ? 'border-teal-deep bg-teal-deep text-cream'
-                          : 'border-line bg-white text-ink-soft hover:border-teal/35 hover:bg-sage hover:text-teal-deep'
-                      }`}
-                      onClick={() => setSummaryChip('nmds')}
-                    >
-                      {sel.metadata_standard === 'sdg' ? 'SDG concept summary' : 'Concept summary'}
-                    </button>
-                  </div>
-                  {summaryChip === 'ai' ? (
-                    <div key="ai-summary" className={`dhara-tab-panel ${metaCardClass} col-span-2`}>
-                      <div className={metaCardLabelClass}>Narrative</div>
-                      <div className="text-[15px] leading-relaxed text-ink [text-wrap:pretty]">{sel.summary}</div>
-                      {!hasKey && (
-                        <button
-                          className="mt-2 flex h-9 items-center self-start rounded-full border border-teal bg-white px-3.5 text-[13px] font-semibold text-teal transition-colors hover:bg-sage"
-                          onClick={onGoSettings}
-                        >
-                          Add model key
-                        </button>
-                      )}
-                    </div>
-                  ) : (sel.nmds_concepts || []).length === 0 ? (
-                    <div key="concept-empty" className={`dhara-tab-panel ${metaCardClass} col-span-2`}>
-                      <div className={metaCardLabelClass}>Concept metadata</div>
-                      <div className="text-[15px] leading-relaxed text-ink-soft [text-wrap:pretty]">
-                        No concept details were saved with this release.
-                      </div>
-                    </div>
-                  ) : (
-                    <div key="concept-list" className="dhara-tab-panel flex max-h-[420px] flex-col gap-2.5 overflow-auto pr-0.5">
-                      {(sel.nmds_concepts || []).map((row) => (
-                        <div className={`${metaCardClass} col-span-2`} key={`${row.item_no}-${row.concept}-${row.code || ''}`}>
-                          <div className="flex flex-wrap items-baseline gap-2 text-[13px] font-semibold text-ink">
-                            {row.item_no ? <span className="text-[11.5px] font-semibold tabular-nums text-teal">{row.item_no}</span> : null}
-                            {row.concept}
-                            {row.code ? <span className="text-[11.5px] font-medium text-[#8E9398]">({row.code})</span> : null}
-                          </div>
-                          <div className="whitespace-pre-wrap text-sm leading-relaxed text-ink">{row.details}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {keywords.length > 0 && (
-                    <div className="flex flex-col gap-2 rounded-lg border border-line bg-white px-3.5 py-3">
-                      <div className={metaCardLabelClass}>Tags</div>
-                      <div className={tagListClass}>
-                        {keywords.map((t) => <span className={tagChipClass} key={t}>{t}</span>)}
-                      </div>
-                    </div>
                   )}
                 </div>
               )}
 
               {tab === 'metadata' && (
                 <div className="flex flex-col gap-3.5">
-                  <div className="flex flex-wrap items-center gap-2.5">
-                    <span className={`rounded-full px-2.5 py-[3px] text-[11.5px] font-semibold ${access === 'restricted' ? 'bg-[rgba(217,91,104,0.16)] text-[#8c3540]' : 'bg-sage text-[#3d5230]'}`}>{sel.access || 'Public'}</span>
+                  <div className="flex items-stretch gap-2" role="tablist" aria-label="Metadata type">
+                    <button
+                      type="button"
+                      className={`dhara-tab flex h-8 flex-1 items-center justify-center rounded-full border font-sans text-[12.5px] font-semibold ${
+                        metadataSubTab === 'nmds'
+                          ? 'border-teal-deep bg-teal-deep text-cream'
+                          : 'border-line bg-white text-ink-soft hover:border-teal/35 hover:bg-sage hover:text-teal-deep'
+                      }`}
+                      onClick={() => setMetadataSubTab('nmds')}
+                    >
+                      NMDS
+                    </button>
+                    <button
+                      type="button"
+                      className={`dhara-tab flex h-8 flex-1 items-center justify-center rounded-full border font-sans text-[12.5px] font-semibold ${
+                        metadataSubTab === 'catalogue'
+                          ? 'border-teal-deep bg-teal-deep text-cream'
+                          : 'border-line bg-white text-ink-soft hover:border-teal/35 hover:bg-sage hover:text-teal-deep'
+                      }`}
+                      onClick={() => setMetadataSubTab('catalogue')}
+                    >
+                      Catalogue
+                    </button>
                   </div>
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <MetaCard label="Title" value={sel.title} wide />
-                    <MetaCard label="Release id" value={sel.metadata_id || sel.id} wide />
-                    <MetaCard label="Tables" value={String(tableCount)} />
-                    <MetaCard label="Rows" value={sel.rows} />
-                    <MetaCard label="Geography" value={sel.geo} />
-                    <MetaCard label="Frequency" value={sel.freq} />
-                    <MetaCard label="Time period" value={sel.time_period} />
-                    <MetaCard label="Data source" value={sel.source} />
-                    <MetaCard label="Theme" value={sel.theme} />
-                    <MetaCard label="Product" value={sel.product} />
-                  </div>
-                  {Object.keys(sel.classifications || {}).length > 0 && (
-                    <div className="flex flex-col gap-2 rounded-lg border border-line bg-white px-3.5 py-3">
-                      <div className={metaCardLabelClass}>Classification columns</div>
-                      <div className={tagListClass}>
-                        {Object.keys(sel.classifications).map((name) => (
-                          <span className={tagChipClass} key={name}>{name}</span>
+
+                  {metadataSubTab === 'nmds' ? (
+                    (sel.nmds_concepts || []).length === 0 ? (
+                      <div key="nmds-empty" className={`dhara-tab-panel ${metaCardClass} col-span-2`}>
+                        <div className={metaCardLabelClass}>NMDS</div>
+                        <div className="text-[15px] leading-relaxed text-ink-soft [text-wrap:pretty]">
+                          No NMDS concepts were saved with this release.
+                        </div>
+                      </div>
+                    ) : (
+                      <div key="nmds-list" className="dhara-tab-panel flex max-h-[420px] flex-col gap-2.5 overflow-auto pr-0.5">
+                        {(sel.nmds_concepts || []).map((row) => (
+                          <div className={`${metaCardClass} col-span-2`} key={`${row.item_no}-${row.concept}-${row.code || ''}`}>
+                            <div className="flex flex-wrap items-baseline gap-2 text-[13px] font-semibold text-ink">
+                              {row.item_no ? <span className="text-[11.5px] font-semibold tabular-nums text-teal">{row.item_no}</span> : null}
+                              {row.concept}
+                              {row.code ? <span className="text-[11.5px] font-medium text-[#8E9398]">({row.code})</span> : null}
+                            </div>
+                            <div className="whitespace-pre-wrap text-sm leading-relaxed text-ink">{row.details}</div>
+                          </div>
                         ))}
                       </div>
-                      <p className="m-0 text-[12.5px] text-ink-soft">
-                        Download appends Code and Definition columns next to these fields in every table.
-                      </p>
-                    </div>
-                  )}
-                  {keywords.length > 0 && (
-                    <div className="flex flex-col gap-2 rounded-lg border border-line bg-white px-3.5 py-3">
-                      <div className={metaCardLabelClass}>Keywords</div>
-                      <div className={tagListClass}>
-                        {keywords.map((t) => (
-                          <span className={tagChipClass} key={t}>{t}</span>
-                        ))}
+                    )
+                  ) : (
+                    <div key="catalogue-fields" className="dhara-tab-panel flex flex-col gap-3.5">
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <span className={`rounded-full px-2.5 py-[3px] text-[11.5px] font-semibold ${access === 'restricted' ? 'bg-[rgba(217,91,104,0.16)] text-[#8c3540]' : 'bg-sage text-[#3d5230]'}`}>{sel.access || 'Public'}</span>
                       </div>
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <MetaCard label="Title" value={sel.title} wide />
+                        <MetaCard label="Release id" value={sel.metadata_id || sel.id} wide />
+                        <MetaCard label="Tables" value={String(tableCount)} />
+                        <MetaCard label="Rows" value={sel.rows} />
+                        <MetaCard label="Geography" value={sel.geo} />
+                        <MetaCard label="Frequency" value={sel.freq} />
+                        <MetaCard label="Time period" value={sel.time_period} />
+                        <MetaCard label="Data source" value={sel.source} />
+                        <MetaCard label="Theme" value={sel.theme} />
+                        <MetaCard label="Product" value={sel.product} />
+                      </div>
+                      {Object.keys(sel.classifications || {}).length > 0 && (
+                        <div className="flex flex-col gap-2 rounded-lg border border-line bg-white px-3.5 py-3">
+                          <div className={metaCardLabelClass}>Classification columns</div>
+                          <div className={tagListClass}>
+                            {Object.keys(sel.classifications).map((name) => (
+                              <span className={tagChipClass} key={name}>{name}</span>
+                            ))}
+                          </div>
+                          <p className="m-0 text-[12.5px] text-ink-soft">
+                            Download appends Code and Definition columns next to these fields in every table.
+                          </p>
+                        </div>
+                      )}
+                      {keywords.length > 0 && (
+                        <div className="flex flex-col gap-2 rounded-lg border border-line bg-white px-3.5 py-3">
+                          <div className={metaCardLabelClass}>Keywords</div>
+                          <div className={tagListClass}>
+                            {keywords.map((t) => (
+                              <span className={tagChipClass} key={t}>{t}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

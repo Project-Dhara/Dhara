@@ -5,6 +5,7 @@ import KydsModal from './KydsModal'
 import Button from './ui/Button'
 import { withAuthHeaders } from '../lib/auth'
 import { notifyKydsChanged, onKydsChanged } from '../lib/kydsEvents'
+import { isKydsFilled } from '../lib/kydsFilled'
 
 // Shows the caller's own KYDS entry (if any). Create uses POST /api/kyds;
 // edit uses PATCH /api/kyds/{id} so the same row is updated.
@@ -12,9 +13,9 @@ import { notifyKydsChanged, onKydsChanged } from '../lib/kydsEvents'
 // (mode pick, preview, grouping) is showing, so it stays visible even after
 // "Change files" or a stage-nav jump straight to the preview.
 // `variant="corner"` renders a compact, top-right-corner form of this same
-// widget -- a "Create KYDS" button when the caller skipped the initial form,
-// or a small pill (name + Edit) once an entry exists -- for pages that show
-// the KYDS state alongside their header instead of as a full-width card.
+// widget -- a "Fill KYDS" button when nothing is filled yet, or a small pill
+// (name + Edit) once any field has a value -- for pages that show the KYDS
+// state alongside their header instead of as a full-width card.
 export default function KydsSummaryCard({ variant = 'card' }) {
   const [kydsEntry, setKydsEntry] = useState(null)
   const [kydsLoading, setKydsLoading] = useState(true)
@@ -72,16 +73,35 @@ export default function KydsSummaryCard({ variant = 'card' }) {
     return null
   }
 
-  if (!kydsEntry) {
+  const filled = isKydsFilled(kydsEntry?.responses)
+  const fillModalOpen = creatingKyds || editingKyds
+
+  // No row, or a row whose responses are all blank → same Fill KYDS CTA.
+  // Opening the modal still PATCHes an existing empty row when present.
+  if (!filled) {
     if (variant !== 'corner') return null
+    const openFill = () => {
+      if (kydsEntry?.id) setEditingKyds(true)
+      else setCreatingKyds(true)
+    }
     return (
       <>
-        <Button variant="secondary" size="sm" onClick={() => setCreatingKyds(true)}>
-          + Create KYDS
+        <Button
+          variant="secondary"
+          size="md"
+          className="h-11 border-teal/40 bg-sage px-6 text-[15.5px] text-teal-deep hover:border-teal hover:bg-[#dce9d2] hover:text-teal-deep"
+          onClick={openFill}
+        >
+          Fill KYDS
         </Button>
-        {creatingKyds && (
+        {fillModalOpen && (
           <KydsModal
-            onSkip={() => setCreatingKyds(false)}
+            editing={Boolean(kydsEntry?.id) && editingKyds}
+            initialForm={kydsEntry?.responses || null}
+            onSkip={() => {
+              setCreatingKyds(false)
+              setEditingKyds(false)
+            }}
             onSave={saveKydsEdit}
           />
         )}

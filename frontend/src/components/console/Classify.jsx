@@ -7,10 +7,7 @@ import { useRouter } from 'next/navigation'
 import { withAuthHeaders } from '../../lib/auth'
 import { withLlmKeyHeaders } from '../../lib/llmKey'
 import { useApp } from '../../context/AppContext'
-import { STATISTICS_OPTIONS } from '../../lib/settingsConfig'
 import {
-  delhiProductForTheme,
-  initialTaxonomy,
   isOccupationColumn,
   rowMapped,
   cloneCodeRows,
@@ -72,7 +69,6 @@ export default function Classify({
   const [saving, setSaving] = useState(false)
   const [openRule, setOpenRule] = useState(null)
   const [ruleState, setRuleState] = useState({}) // harmonise entry id -> 'skip' | undefined
-  const [taxonomy, setTaxonomy] = useState(initialTaxonomy)
   const [aliasVerified, setAliasVerified] = useState({})
   const [harmRows, setHarmRows] = useState({})
   const [harmDirty, setHarmDirty] = useState({})
@@ -358,10 +354,10 @@ export default function Classify({
           } else if (raw && typeof raw === 'object' && String(raw.definition || '').trim()) {
             definition = String(raw.definition)
           }
-          // On Fill with AI: copy value → code (no AI). Definition comes from AI above.
+          // Fill with AI only writes definitions. Code stays manual except when
+          // Suggest NCO codes auto-fills a high-confidence NCO digit code.
           return {
             ...row,
-            code: value,
             definition: definition ?? '',
           }
         })
@@ -831,55 +827,23 @@ export default function Classify({
       )}
 
       {onHarmonisationPage && showClassifyBody && (
-        <>
-          <HarmonisePanel
-            classifiedColumns={classifiedColumns}
-            columnCodes={columnCodes}
-            harmoniseClubs={harmoniseClubs}
-            harmRows={harmRows}
-            savedCodes={savedCodes}
-            openRule={openRule}
-            onSelectEntry={selectHarmoniseEntry}
-            ruleState={ruleState}
-            onToggleSkip={toggleHarmoniseSkip}
-            aliasVerified={aliasVerified}
-            harmDirty={harmDirty}
-            ncoMatchesByCol={ncoMatchesByCol}
-            onVerifyAndSave={verifyAndSaveHarmoniseEntry}
-            onSaveChanges={persistHarmoniseEntry}
-            onFieldChange={setHarmField}
-          />
-
-          <div className={`${cardClass} flex flex-col gap-4 p-[22px]`}>
-            <div className="text-[15px] font-semibold text-ink">Catalogue placement</div>
-            <div className="grid grid-cols-3 gap-3.5">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[13px] font-semibold text-ink">Sector</label>
-                <select className="h-10 rounded-md border border-line bg-white px-2.5 text-sm text-ink" value={taxonomy.sector} onChange={(e) => setTaxonomy((p) => ({ ...p, sector: e.target.value }))}>
-                  {['Demography', 'Labour and Employment', 'Health', 'Agriculture'].map((o) => <option key={o}>{o}</option>)}
-                </select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[13px] font-semibold text-ink">Theme</label>
-                <select className="h-10 rounded-md border border-line bg-white px-2.5 text-sm text-ink" value={taxonomy.theme} onChange={(e) => {
-                  const theme = e.target.value
-                  setTaxonomy((p) => ({ ...p, theme, product: delhiProductForTheme(theme) }))
-                }}>
-                  {STATISTICS_OPTIONS.map((o) => <option key={o}>{o}</option>)}
-                </select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[13px] font-semibold text-ink">Data product</label>
-                <select className="h-10 rounded-md border border-line bg-white px-2.5 text-sm text-ink" value={taxonomy.product} onChange={(e) => setTaxonomy((p) => ({ ...p, product: e.target.value }))}>
-                  {STATISTICS_OPTIONS.map((o) => {
-                    const product = delhiProductForTheme(o)
-                    return <option key={product}>{product}</option>
-                  })}
-                </select>
-              </div>
-            </div>
-          </div>
-        </>
+        <HarmonisePanel
+          classifiedColumns={classifiedColumns}
+          columnCodes={columnCodes}
+          harmoniseClubs={harmoniseClubs}
+          harmRows={harmRows}
+          savedCodes={savedCodes}
+          openRule={openRule}
+          onSelectEntry={selectHarmoniseEntry}
+          ruleState={ruleState}
+          onToggleSkip={toggleHarmoniseSkip}
+          aliasVerified={aliasVerified}
+          harmDirty={harmDirty}
+          ncoMatchesByCol={ncoMatchesByCol}
+          onVerifyAndSave={verifyAndSaveHarmoniseEntry}
+          onSaveChanges={persistHarmoniseEntry}
+          onFieldChange={setHarmField}
+        />
       )}
 
       <div className="flex items-center justify-between gap-3.5">
@@ -912,7 +876,7 @@ export default function Classify({
                 ? publishError
                 : classReady
                   ? 'Catalogue already saved — continue to the publication confirmation.'
-                  : 'You can continue anytime. Incomplete codes or harmonisation will ask for confirmation.'}
+                  : ''}
             </span>
             <Button className="flex-none" disabled={publishing} onClick={publishRelease}>
               {publishing ? 'Continuing…' : (

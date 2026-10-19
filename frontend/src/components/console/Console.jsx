@@ -18,7 +18,11 @@ import ClassifyBreadcrumb from './classify/ClassifyBreadcrumb'
 import StageSubstepBreadcrumb from './StageSubstepBreadcrumb'
 import LlmKeyRequiredBanner from '../LlmKeyRequiredBanner'
 import { useApp } from '../../context/AppContext'
-import { goToConsoleFiles } from '../../lib/consoleSession'
+import {
+  goToConsoleFiles,
+  leaveAppendFilesToPdfStep,
+  pdfPipelineMaxStepReached,
+} from '../../lib/consoleSession'
 import { namesFromPreviewDatasets } from '../../lib/existingDatasetNames'
 
 export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatalogue, onUploadAnother }) {
@@ -32,6 +36,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
     addStep1MetadataFiles,
     appendFilesMode,
     retainedDatasetNames,
+    cancelAppendFilesMode,
     enterLocalAppendMode,
     applyReconcile,
     autoMatchResultRef,
@@ -113,9 +118,45 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
     else if (classificationComplete) setStep(6)
   }
 
+  const appendReturnPath = appendFilesMode?.returnPath || null
+  const appendJobId = appendFilesMode?.jobId || ''
+  // PDF "add more" clears console state, so local maxStepReached is ~1 — use
+  // the PDF pipeline max (and at least Preview) so stages stay clickable.
+  const appendPdfMax = appendReturnPath && appendJobId
+    ? Math.max(pdfPipelineMaxStepReached(appendJobId), 3)
+    : 0
+  const effectiveMaxStep = Math.max(maxStepReached, appendPdfMax)
+
+  const leaveAppendMode = (targetStep) => {
+    const jobId = appendJobId
+    const returnPath = appendReturnPath
+    const hadMatch = Boolean(matchResult)
+    const max = maxStepReached
+    cancelAppendFilesMode()
+    if (returnPath && jobId) {
+      leaveAppendFilesToPdfStep(router, {
+        jobId,
+        targetStep,
+        returnPath,
+      })
+      return
+    }
+    if (hadMatch && max >= 2) {
+      const dest = targetStep != null && targetStep >= 2 && targetStep <= max
+        ? targetStep
+        : 2
+      setStep(dest)
+    }
+  }
+
   const goToStepGuarded = (targetStep) => {
     if (targetStep === 6) {
       requestHarmonisation()
+      return
+    }
+    // Abandoning append without uploading — return to the prior pipeline stage.
+    if (appendUi && targetStep !== 1 && (appendReturnPath || (matchResult && maxStepReached >= 2))) {
+      leaveAppendMode(targetStep)
       return
     }
     if (targetStep === 1 && step > 1 && (matchResult || maxStepReached >= 2 || appendFilesMode)) {
@@ -141,6 +182,11 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
   }
 
   const appendUi = Boolean(appendFilesMode?.jobId || retainedDatasetNames.length > 0)
+  const cancelAppendLabel = appendReturnPath?.includes('/grouping/')
+    ? 'Back to grouping'
+    : appendReturnPath || (matchResult && maxStepReached >= 2)
+      ? 'Back to preview'
+      : 'Cancel'
 
   return (
     <div className="flex flex-col gap-5">
@@ -153,13 +199,13 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
       <StageSidebar
         stageIdx={stageIdx}
         step={step}
-        maxStepReached={maxStepReached}
+        maxStepReached={effectiveMaxStep}
         expandedStage={expandedStage}
         setExpandedStage={setExpandedStage}
         goToStep={goToStepGuarded}
         isStepReachable={(s) => {
           if (s === 6) return classificationComplete
-          return s <= maxStepReached
+          return s <= effectiveMaxStep
         }}
       />
 
@@ -187,7 +233,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                     if (next === 'preview') goToStepGuarded(2)
                     else goToStepGuarded(1)
                   }}
-                  isReachable={(crumb) => crumb.id === 'files' || maxStepReached >= 2}
+                  isReachable={(crumb) => crumb.id === 'files' || effectiveMaxStep >= 2}
                   ariaLabel="Dataset inventory"
                   size="page"
                 />
@@ -199,7 +245,7 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                     if (next === 'metadata') goToStepGuarded(4)
                     else setStep(3)
                   }}
-                  isReachable={(crumb) => crumb.id === 'grouping' || maxStepReached >= 4}
+                  isReachable={(crumb) => crumb.id === 'grouping' || effectiveMaxStep >= 4}
                   ariaLabel="Metadata workspace"
                   size="page"
                 />
@@ -249,6 +295,8 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
               onMetadataFileRemove={removeStep1MetadataFile}
               disabled={!hasLlmKey}
               appendMode={appendUi}
+              onCancelAppend={appendUi ? () => leaveAppendMode() : undefined}
+              cancelAppendLabel={cancelAppendLabel}
               existingDatasetNames={
                 retainedDatasetNames.length
                   ? retainedDatasetNames

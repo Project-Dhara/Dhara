@@ -9,6 +9,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.catalogue.summary import catalogue_display_summary
+
 _MAX_PAGE = 500
 _DEFAULT_PAGE = 100
 _SAFE_COLUMN = re.compile(r"^[A-Za-z0-9 _.\-/()]{1,120}$")
@@ -190,7 +192,8 @@ def _shape_group_row(row: dict, tables: list) -> dict:
     geo = row.get("geography") or "—"
     freq = row.get("frequency") or "—"
     source = row.get("data_source") or "—"
-    summary = (row.get("description") or "").strip() or title
+    # Prefer a crisp blurb from metadata + tables; reject dumped/OCR gibberish.
+    summary = catalogue_display_summary(row, tables) or title
     table_count = len(tables)
     row_count = sum(int(t.get("row_count") or 0) for t in tables)
     tags: list[str] = []

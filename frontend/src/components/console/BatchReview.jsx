@@ -189,9 +189,8 @@ export default function BatchReview({
     }
   }, [unfilledDropdownOpen])
 
-  // Re-attempt Stage 4 fill after the steward submits/edits KYDS (common case:
-  // land on metadata → fill KYDS → fields were still empty because fill ran
-  // before KYDS existed).
+  // KYDS is optional. Saving or editing it re-runs Stage 4 so the new
+  // dataset context can be picked up; autofill does not wait for an entry.
   useEffect(() => onKydsChanged(() => {
     autofillAttemptTokenRef.current = ''
     setAutofillKick((n) => n + 1)
@@ -250,8 +249,6 @@ export default function BatchReview({
       const llmCount = Number(filled.matchResult.autofill_llm_filled_count) || 0
       if (filled.matchResult.llm_autofill_skipped_no_key) {
         setToast({ type: 'warn', message: filled.toast || 'LLM key not configured — autofill did not run.' })
-      } else if (filled.matchResult.kyds_missing) {
-        setToast({ type: 'warn', message: filled.toast || 'Know Your Dataset is missing — fill KYDS, then retry autofill.' })
       } else if (filled.toast) {
         setToast({ type: llmCount > 0 ? 'success' : 'warn', message: filled.toast })
       } else if (llmCount > 0) {
@@ -270,14 +267,14 @@ export default function BatchReview({
 
   // Auto-run Stage 4 fill when the steward has a key and groups are still
   // empty — including after they add a key or save KYDS (not only the old
-  // "skipped_no_key" path). Skip when continue-to-metadata already ran fill
-  // for this group set (autofill_attempted) unless a kick bumps retry.
+  // "skipped_no_key" path). A missing KYDS entry does not block this.
+  // Skip when continue-to-metadata already ran fill for this group set
+  // (autofill_attempted) unless a kick bumps retry.
   useEffect(() => {
     if (!hasLlmKey || !onMatchResultChange || !groupsNeedAiFill || refilling) return
     const token = [
       hasLlmKey ? 'key' : 'nokey',
       matchResult?.llm_autofill_skipped_no_key ? 'skipped' : 'ok',
-      matchResult?.kyds_missing ? 'nokyds' : 'kyds',
       `kick:${autofillKick}`,
       `groups:${(matchResult?.groups || []).length}`,
     ].join('|')
@@ -285,7 +282,7 @@ export default function BatchReview({
 
     // Stage 4 already completed (success, empty, or per-group errors) during
     // the grouping → metadata transition. Don't immediately re-call the LLM
-    // for the same outcome. Still auto-run when key/KYDS blockers clear, or
+    // for the same outcome. Still auto-run when the key blocker clears, or
     // when kick advances (KYDS save / Retry button).
     const alreadyAttempted = Boolean(matchResult?.autofill_attempted)
       && !matchResult?.llm_autofill_skipped_no_key
@@ -303,7 +300,6 @@ export default function BatchReview({
     groupsNeedAiFill,
     refilling,
     matchResult?.llm_autofill_skipped_no_key,
-    matchResult?.kyds_missing,
     matchResult?.autofill_attempted,
     matchResult?.groups,
     autofillKick,
@@ -426,7 +422,7 @@ export default function BatchReview({
   // Partial autofill success should keep the review framing for filled groups.
   // Prefer live client key state over a stale backend flag from when fill ran.
   const keyNotConfigured = !hasLlmKey
-  const showFillInHeading = keyNotConfigured || matchResult.llm_autofill_skipped_no_key || matchResult.kyds_missing || noneAutoMapped
+  const showFillInHeading = keyNotConfigured || matchResult.llm_autofill_skipped_no_key || noneAutoMapped
   const llmFilledGroupCount = Number(matchResult.autofill_llm_filled_count)
     || Object.keys(aiFilledByGroup).filter((k) => (aiFilledByGroup[k]?.size || 0) > 0).length
   const totalAiFieldCount = Object.values(aiFilledByGroup).reduce((sum, set) => sum + (set?.size || 0), 0)
@@ -485,13 +481,6 @@ export default function BatchReview({
         body: keyNotConfigured
           ? 'LLM key not configured — no fields were AI-filled. Set an API key in Settings, or fill every field below by hand.'
           : 'Previous auto-fill was skipped because no LLM key was set. Retry with your saved key, or fill the fields below by hand.',
-      }
-    }
-    if (matchResult.kyds_missing) {
-      return {
-        tone: 'warn',
-        title: 'AI autofill did not run',
-        body: 'Know Your Dataset is missing — fill KYDS first for better auto-mapping, or enter fields below by hand.',
       }
     }
     if (autofillErrors.length > 0 && llmFilledGroupCount > 0) {
@@ -854,9 +843,6 @@ export default function BatchReview({
               >
                 {refilling ? 'Auto-filling…' : 'Run AI autofill'}
               </Button>
-              {matchResult.kyds_missing && (
-                <span className="text-[13px] opacity-90">If this fails, fill Know Your Dataset first, then click again.</span>
-              )}
             </div>
           )}
         </div>

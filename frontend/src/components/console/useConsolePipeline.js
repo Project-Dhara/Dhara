@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { STATUS_TRANSITIONS } from '../../lib/consoleStatusTransitions'
+import { STATUS_TRANSITIONS, groupingToMetadataTransition } from '../../lib/consoleStatusTransitions'
+import { fetchMineKydsFilled } from '../../lib/kydsFilled'
 import { withAuthHeaders } from '../../lib/auth'
 import { withLlmKeyHeaders } from '../../lib/llmKey'
 import { getMetadataStandard } from '../../lib/settingsConfig'
@@ -232,8 +233,9 @@ export function useConsolePipeline() {
       }
     }
 
+    const hasKyds = await fetchMineKydsFilled()
     setStatusPage({
-      ...STATUS_TRANSITIONS.groupingToMetadata,
+      ...groupingToMetadataTransition(hasKyds),
       key: 'groupingToMetadata',
       work: fillWork,
       after: () => {

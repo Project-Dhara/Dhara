@@ -270,6 +270,97 @@ export function MergeConfirmDialog({ count, onCancel, onConfirm, merging }) {
 }
 
 
+export function KeepSelectedConfirmDialog({
+  keepCount,
+  dropCount,
+  onCancel,
+  onConfirm,
+  keeping,
+}) {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+
+  if (!mounted) return null
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[1100] flex items-center justify-center bg-[rgba(16,64,63,0.52)] p-5"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="keep-tables-title"
+      aria-describedby="keep-tables-body"
+      onClick={onCancel}
+    >
+      <div
+        className="flex w-full max-w-[440px] flex-col gap-3.5 rounded-xl border border-line bg-white p-5 shadow-[0_16px_40px_rgba(16,64,63,0.18)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div id="keep-tables-title" className="text-[16px] font-bold text-ink">
+          Use {keepCount === 1 ? 'this table' : `${keepCount} tables`} for the pipeline?
+        </div>
+        <p id="keep-tables-body" className="text-[13px] leading-snug text-ink-soft">
+          All tables stay visible. Selected ones are highlighted and moved to the top.
+          {dropCount > 0
+            ? ` The other ${dropCount} table${dropCount === 1 ? '' : 's'} stay in the list but will not continue unless you add them later.`
+            : ' You can change this selection any time before Continue.'}
+        </p>
+        <div className="flex items-center justify-end gap-2.5">
+          <Button variant="secondary" size="sm" onClick={onCancel} disabled={keeping}>Cancel</Button>
+          <Button variant="primary" size="sm" loading={keeping} onClick={onConfirm}>
+            Use selected
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+
+export function ContinueAfterSelectionDialog({
+  count,
+  onCancel,
+  onConfirm,
+  continuing,
+}) {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+
+  if (!mounted) return null
+  const tableWord = count === 1 ? 'table' : 'tables'
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[1100] flex items-center justify-center bg-[rgba(16,64,63,0.52)] p-5"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="continue-selection-title"
+      aria-describedby="continue-selection-body"
+      onClick={onCancel}
+    >
+      <div
+        className="flex w-full max-w-[440px] flex-col gap-3.5 rounded-xl border border-line bg-white p-5 shadow-[0_16px_40px_rgba(16,64,63,0.18)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div id="continue-selection-title" className="text-[16px] font-bold text-ink">
+          Continue with {count} {tableWord}?
+        </div>
+        <p id="continue-selection-body" className="text-[13px] leading-snug text-ink-soft">
+          You selected {count} {tableWord}. Only {count === 1 ? 'this table' : 'these tables'} will
+          be considered in grouping and later steps. Unselected tables remain on this preview but
+          will not proceed.
+        </p>
+        <div className="flex items-center justify-end gap-2.5">
+          <Button variant="secondary" size="sm" onClick={onCancel} disabled={continuing}>Cancel</Button>
+          <Button variant="primary" size="sm" loading={continuing} onClick={onConfirm} className="inline-flex items-center gap-1.5">
+            Continue
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+
 export function CollapsibleSection({ label, open, onToggle, hint, children }) {
   return (
     <div className="flex flex-col">

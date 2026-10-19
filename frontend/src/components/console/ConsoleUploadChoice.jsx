@@ -37,7 +37,7 @@ export function stepInfoFor(step) {
     },
     {
       title: 'Harmonisation',
-      purpose: 'Verify clubbed values and set catalogue placement.',
+      purpose: 'Verify clubbed values across related tables.',
       next: 'Next: publish this release.',
     },
     {
@@ -125,6 +125,9 @@ export function UploadChoice({
   /** Filenames already extracted in the current job (append mode). */
   existingDatasetNames = [],
   appendMode = false,
+  /** Leave append mode without uploading (restore prior stage). */
+  onCancelAppend = undefined,
+  cancelAppendLabel = 'Back to preview',
 }) {
   const datasetInputRef = useRef(null)
   const metadataInputRef = useRef(null)
@@ -335,21 +338,28 @@ export function UploadChoice({
           </div>
         </div>
       </div>
-      {showStartProcessing && (
+      {(showStartProcessing || (appendMode && onCancelAppend)) && (
         <div className="flex flex-wrap items-center gap-3">
-          <Button
-            disabled={uploadsBlocked}
-            onClick={() => !uploadsBlocked && onStartProcessing?.()}
-          >
-            {processing && (
-              <span className="mr-1.5 inline-block h-[13px] w-[13px] animate-spin rounded-full border-2 border-white/50 border-t-white" />
-            )}
-            <span className="inline-flex items-center gap-1.5">
-              {processing ? 'Processing…' : 'Start processing'}
-              {!processing && <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />}
-            </span>
-          </Button>
-          {!processing && (
+          {showStartProcessing && (
+            <Button
+              disabled={uploadsBlocked}
+              onClick={() => !uploadsBlocked && onStartProcessing?.()}
+            >
+              {processing && (
+                <span className="mr-1.5 inline-block h-[13px] w-[13px] animate-spin rounded-full border-2 border-white/50 border-t-white" />
+              )}
+              <span className="inline-flex items-center gap-1.5">
+                {processing ? 'Processing…' : 'Start processing'}
+                {!processing && <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />}
+              </span>
+            </Button>
+          )}
+          {appendMode && onCancelAppend && !processing && (
+            <Button variant="secondary" onClick={onCancelAppend}>
+              {cancelAppendLabel}
+            </Button>
+          )}
+          {showStartProcessing && !processing && (
             <span className="text-xs text-ink-soft">
               {singlePdfQueued
                 ? '1 PDF'

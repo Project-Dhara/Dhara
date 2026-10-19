@@ -271,7 +271,8 @@ def _normalize_code_entry(entry):
             value = code
             code = ""
         # Identity placeholders only when still unfilled (no definition yet).
-        # After Fill with AI, code === value with a definition is intentional.
+        # Code may equal value when the steward typed it; Fill with AI no longer
+        # copies value → code (only NCO matching auto-fills codes).
         if (
             code not in (None, "")
             and value not in (None, "")

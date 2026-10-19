@@ -27,13 +27,13 @@ up: ## Start Postgres, backend (:8000), and frontend (:80)
 	@test -f backend/.env || { cp backend/.env.example backend/.env && echo "Created backend/.env from .env.example (set JWT_SECRET for non-dev use)"; }
 	# Retry once: Docker+systemd cgroup setup can fail transiently with
 	# "Message recipient disconnected from message bus without replying".
-	@$(COMPOSE) up -d --build || { \
+	@$(COMPOSE) up -d || { \
 		echo "Compose up failed; retrying..."; \
 		sleep 2; \
 		$(COMPOSE) start 2>/dev/null || { \
 			echo "Removing stale fixed-name containers (if any)..."; \
 			docker rm -f dhara-postgres dhara-backend dhara-frontend dhara-app 2>/dev/null || true; \
-			$(COMPOSE) up -d --build; \
+			$(COMPOSE) up -d; \
 		}; \
 	}
 	@echo ""

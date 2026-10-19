@@ -7,6 +7,7 @@ import Publish from './Publish'
 import ClassifyBreadcrumb from './classify/ClassifyBreadcrumb'
 import StageSubstepBreadcrumb from './StageSubstepBreadcrumb'
 import { METADATA_CRUMBS } from './ConsoleStages'
+import KydsSummaryCard from '../KydsSummaryCard'
 
 /**
  * Shared metadata → classify → harmonise → publish steps (Excel reference flow).
@@ -56,17 +57,22 @@ export default function PostPreviewLaterSteps({
       {(metadataStarted || step === 4) && matchResult && (
         <div style={{ display: step === 4 ? (showMetadataHeading ? 'flex' : 'contents') : 'none' }} className={showMetadataHeading ? 'flex-col gap-[18px]' : undefined}>
           {showMetadataHeading && step === 4 && (
-            <div className="min-w-0">
-              <StageSubstepBreadcrumb
-                crumbs={METADATA_CRUMBS}
-                activeId="metadata"
-                onNavigate={(next) => {
-                  if (next === 'grouping') onBackToGrouping?.()
-                }}
-                isReachable={(crumb) => crumb.id === 'grouping' || crumb.id === 'metadata'}
-                ariaLabel="Metadata workspace"
-                size="page"
-              />
+            <div className="flex items-start justify-between gap-6">
+              <div className="min-w-0">
+                <StageSubstepBreadcrumb
+                  crumbs={METADATA_CRUMBS}
+                  activeId="metadata"
+                  onNavigate={(next) => {
+                    if (next === 'grouping') onBackToGrouping?.()
+                  }}
+                  isReachable={(crumb) => crumb.id === 'grouping' || crumb.id === 'metadata'}
+                  ariaLabel="Metadata workspace"
+                  size="page"
+                />
+              </div>
+              <div className="flex flex-none flex-shrink-0 flex-wrap items-center justify-end gap-2.5">
+                <KydsSummaryCard variant="corner" />
+              </div>
             </div>
           )}
           <BatchReview

@@ -47,3 +47,17 @@ export const STATUS_TRANSITIONS = {
     ],
   },
 }
+
+/** Status copy for grouping → metadata; fill step depends on whether KYDS is filled. */
+export function groupingToMetadataTransition(hasKyds = true) {
+  const base = STATUS_TRANSITIONS.groupingToMetadata
+  const fillLabel = hasKyds
+    ? 'Auto-filling metadata from Know Your Dataset'
+    : 'Auto-filling metadata with AI'
+  return {
+    ...base,
+    steps: base.steps.map((step) => (
+      step.key === 'fill' ? { ...step, label: fillLabel } : step
+    )),
+  }
+}

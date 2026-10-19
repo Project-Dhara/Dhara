@@ -318,9 +318,7 @@ export async function fillGroupMetadataForMatchResult(matchResult, {
   const filledCount = Number(data.autofill_filled_count) || 0
   const llmFilledCount = Number(data.autofill_llm_filled_count) || Object.keys(aiFilledFieldsByGroup).length
   let toast = null
-  if (data.kyds_missing) {
-    toast = 'Fill in Know Your Dataset first so metadata can be auto-mapped — or fill fields manually on the next step.'
-  } else if (data.llm_autofill_skipped_no_key) {
+  if (data.llm_autofill_skipped_no_key) {
     toast = 'Add an LLM API key in Settings to auto-fill metadata, or fill fields manually on the next step.'
   } else if (autofillErrors.length > 0) {
     const sample = autofillErrors[0]?.group || autofillErrors[0]?.error || 'unknown'

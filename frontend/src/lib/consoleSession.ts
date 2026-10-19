@@ -160,3 +160,42 @@ export function getAppendFilesMode(): AppendFilesMode | null {
     return null
   }
 }
+
+/** Highest stage reached for a PDF job (session). Defaults to Preview (2). */
+export function pdfPipelineMaxStepReached(jobId: string | null | undefined): number {
+  if (!jobId) return 0
+  try {
+    const raw = sessionStorage.getItem(`dhara_pdf_pipeline_v1_${jobId}`)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      const n = Number(parsed?.maxStepReached)
+      if (Number.isFinite(n) && n >= 1) return n
+    }
+  } catch {
+    // best-effort
+  }
+  // Append mode is entered from review/grouping — Preview is always valid.
+  return 2
+}
+
+/**
+ * Leave "add more files" and open a PDF pipeline stage for the same job.
+ * Stage 2 → review; 3+ → grouping (later steps live on that page).
+ */
+export function leaveAppendFilesToPdfStep(
+  router: { push: (href: string) => void },
+  opts: { jobId: string; targetStep?: number; returnPath?: string | null },
+) {
+  clearAppendFilesMode()
+  const jobId = opts.jobId
+  const target = opts.targetStep
+  if (target == null || target <= 1) {
+    router.push(opts.returnPath || `/console/review/${jobId}`)
+    return
+  }
+  if (target === 2) {
+    router.push(`/console/review/${jobId}`)
+    return
+  }
+  router.push(`/console/grouping/${jobId}`)
+}

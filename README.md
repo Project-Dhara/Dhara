@@ -94,13 +94,12 @@ make prod        # combined app image on :80
 make clean       # stop and delete volumes (incl. DB)
 ```
 
-If the frontend container fails with missing packages after a `package.json`
-change (named volume `frontend_node_modules`), reinstall inside the container
-or reset that volume:
+After frontend code or dependency changes, rebuild the image so `npm run build`
+picks them up:
 
 ```bash
-docker compose exec frontend npm ci
-# or: docker compose down && docker volume rm dhara-poc_frontend_node_modules && make up
+make build && make up
+# or: docker compose up -d --build frontend
 ```
 
 ## Setup (host backend/frontend + Docker Postgres)
@@ -173,7 +172,8 @@ uvicorn main:app --reload --port 8000
 ```bash
 cd frontend
 npm install   # or npm ci
-npm run dev   # http://localhost:3000 — /api proxied to :8000
+npm run build
+npm run start   # http://localhost:3000 — /api proxied to :8000
 ```
 
 Schema is created on first catalogue/KYDS API use (`init_schema`). Verify:

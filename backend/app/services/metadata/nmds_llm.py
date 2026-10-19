@@ -39,26 +39,40 @@ Rules:
 
 * Use Excel / source-table facts as the primary source for information about the actual data.
 * Use KYDS context to understand the dataset's purpose, collection method, granularity, frequency, format, and notes.
-* Do not invent or guess information. If a value cannot be determined, return `null`.
-* Prefer explicit evidence in the facts over inference.
-* Do not contradict explicit KYDS information.
-* Generate concise, catalogue-ready values.
-* `key_statistics` MUST be a short plain-text summary for catalogue display
-  (2–6 bullets or short sentences). Highlight a few headline figures only
-  (e.g. top categories, weights, notable highs/lows, or period-end values).
-  Do NOT return JSON, do NOT return an array/object of table rows, and do NOT
-  dump `sample_rows` or full month-by-month grids into this field.
+* Prefer explicit evidence in the facts over inference. Do not contradict explicit KYDS information.
+* Generate concise, catalogue-ready values. Stewards must not be left with blank core fields.
+* REQUIRED whenever table/Excel facts or KYDS give any usable signal (do NOT return null for these):
+  - `product` — the dataset/product the source represents (not a file format). Use title /
+    KYDS dataset_name / sheet context when needed.
+  - `description` — the catalogue AI summary. Write 1–2 short sentences (about 40–70 words,
+    never more than ~80 words). State what the release covers using ONLY:
+    group/table titles, product/category, geography, frequency, time period, and the main
+    measures implied by column names. Be crisp and precise — no filler, no marketing tone.
+    FORBIDDEN in `description`: sample cell values, row dumps, JSON/markdown tables,
+    bullet lists, key:value grids, OCR noise, filenames, or inventing figures not in the
+    metadata fields. Put figures in `key_statistics` instead. Never leave blank when a
+    table title or columns exist.
+  - `key_statistics` — short plain-text summary for catalogue display (2–6 bullets or short
+    sentences). Highlight a few headline figures from sample_rows / periods only.
+    Do NOT return JSON, do NOT return an array/object of table rows, and do NOT dump
+    full month-by-month grids into this field.
+  - `remarks` — caveats, coverage notes, or KYDS notes. If nothing specific is available,
+    write one short neutral note (e.g. definitions and coverage follow the source tables).
+* Other fields (`category`, `geography`, `frequency`, `time_period`) should be filled when
+  evidence supports them; otherwise null is allowed.
 * `last_updated` and `future_release` must be `null` unless explicitly supported by the inputs.
-* `product` should identify the dataset/product represented by the source, not the file format.
-* For `data_source`, prefer KYDS `department` (`dataset_context.department`) — the holding department/ministry. Never use a workbook filename, sheet name, table id, path-like string, or other Excel file evidence for `data_source`. Different groups may have different agency Sources when supported by the inputs, but filename is never a valid Source.
-* `remarks` should contain relevant caveats, limitations, or contextual notes supported by the inputs.
-* When `excel_facts.source_kind` is `"tables"` (e.g. SQL extract), treat table titles, column names, and sample rows as the workbook evidence.
+* For `data_source`, prefer KYDS `department` (`dataset_context.department`) — the holding
+  department/ministry. Never use a workbook filename, sheet name, table id, path-like string,
+  or other Excel file evidence for `data_source`. Different groups may have different agency
+  Sources when supported by the inputs, but filename is never a valid Source.
+* When `excel_facts.source_kind` is `"tables"` (e.g. SQL / PDF extract), treat table titles,
+  column names, and sample rows as the workbook evidence.
 
 Return ONLY a single valid JSON object for the fields listed above.
 Do not wrap it in markdown fences. Do not add commentary before or after the JSON.
 Use double quotes for all keys and string values. Use null (not None) for unknown fields.
 Escape any double quotes that appear inside string values.
-"""  # TODO: prompt to be added
+"""
 
     kyds_llm = prepare_kyds_for_llm(kyds)
     user_content = {"excel_facts": excel_facts, "dataset_context": kyds_llm}

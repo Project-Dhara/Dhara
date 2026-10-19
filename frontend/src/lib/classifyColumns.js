@@ -1,8 +1,6 @@
 // Pure (no-React) helpers for Classify.jsx: collapsing/aliasing classification
-// columns across metadata groups, code-row shape helpers, and the initial
-// catalogue-placement taxonomy. Extracted verbatim from Classify.jsx so the
-// component file holds only UI/state — no logic here changed.
-import { STATISTICS_OPTIONS, getDatasetIdConfig } from './settingsConfig'
+// columns across metadata groups and code-row shape helpers. Extracted from
+// Classify.jsx so the component file holds only UI/state.
 
 // The classified columns (name/concept/note + code list) come from the real
 // metadata-excel classification sheets, fetched by Classify.jsx — see
@@ -10,19 +8,6 @@ import { STATISTICS_OPTIONS, getDatasetIdConfig } from './settingsConfig'
 // backend/metadata/metadata_excel.py::parse_classifications. Code and
 // definition are editable (a steward may want to rename/annotate them);
 // value is what was actually found in the source data, so it stays fixed.
-
-export function delhiProductForTheme(theme) {
-  return `Delhi ${theme}`
-}
-
-export function initialTaxonomy() {
-  const theme = getDatasetIdConfig().statistics || STATISTICS_OPTIONS[0]
-  return {
-    sector: 'Demography',
-    theme,
-    product: delhiProductForTheme(theme),
-  }
-}
 
 export function isOccupationColumn(name) {
   return /occupat/i.test(name || '')

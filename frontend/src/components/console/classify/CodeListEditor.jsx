@@ -75,7 +75,7 @@ export default function CodeListEditor({
             className="h-8 rounded-md border-0 bg-teal px-3 text-[12.5px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]"
             disabled={fillAiLoading || !codes.length}
             onClick={onFillAi}
-            title="Fill codes and definitions for this column"
+            title="Fill definitions for this column (codes stay manual unless NCO matching fills them)"
           >
             {fillAiLoading ? 'Filling…' : 'Fill with AI'}
           </button>

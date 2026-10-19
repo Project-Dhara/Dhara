@@ -555,6 +555,10 @@ async def pdf_persist_approved(
     Optional JSON body `{ "tables": [ { table_id, title, rows, columns, … } ] }`
     overlays the in-memory job reviews so Preview edits that haven't been
     PATCHed yet (or failed silently) still reach grouping.
+
+    Optional `approved_table_ids: string[]` limits which tables are written for
+    grouping. Preview can keep showing every table; only the listed IDs proceed.
+    When omitted, every job table is persisted (previous behaviour).
     """
     from app.db import pdf_store
     from app.services.grouping import pdf_grouping
@@ -605,6 +609,13 @@ async def pdf_persist_approved(
                 reviews[tid] = {**reviews.get(tid, {}), **patch}
             job["reviews"] = reviews
             _save_pdf_job(job)
+
+        raw_approved = body.get("approved_table_ids")
+        if isinstance(raw_approved, list) and raw_approved:
+            allowed = {str(tid) for tid in raw_approved if tid}
+            tables = [t for t in tables if str(t.get("table_id") or "") in allowed]
+            if not tables:
+                raise HTTPException(400, "No approved tables matched this job")
 
     with session_scope() as session:
         persisted = pdf_store.persist_approved_tables(

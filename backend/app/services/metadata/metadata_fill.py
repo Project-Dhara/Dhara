@@ -6,6 +6,11 @@ import os
 import re
 from typing import Any, Optional
 
+from app.services.catalogue.summary import (
+    crisp_catalogue_description,
+    is_usable_catalogue_description,
+    synthesize_catalogue_summary,
+)
 from app.services.ingestion.wizard.extractor import TableExtractor
 from app.services.metadata.metadata_llm import (
     METADATA_FIELDS,
@@ -21,6 +26,28 @@ from app.services.metadata.metadata_llm import (
 # Cap concurrent Stage 4 LLM calls the same way Excel extraction does —
 # enough to cut wall time across many groups without thrashing rate limits.
 _STAGE4_MAX_WORKERS = 5
+
+# Catalogue fields Stage 4 must try to fill when blank. Optional date fields
+# stay nullable without blocking or forcing another LLM pass forever.
+_PRIORITY_FILL_FIELDS = (
+    "product",
+    "category",
+    "geography",
+    "frequency",
+    "time_period",
+    "description",
+    "key_statistics",
+    "remarks",
+)
+
+_EMPTY_PLACEHOLDERS = frozenset({"-", "—", "–", "n/a", "na", "none", "null"})
+
+
+def _is_blank(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return True
+    return text.lower() in _EMPTY_PLACEHOLDERS
 
 
 def _group_metadata_is_empty(metadata: Optional[dict], fields: Optional[list] = None) -> bool:
@@ -237,6 +264,160 @@ def _stringify_sdg_metadata_values(metadata: dict) -> dict:
     return _stringify_field_values(metadata, SDG_METADATA_FIELDS)
 
 
+def _merge_metadata_into_empty(prior: dict, llm_meta: dict) -> dict:
+    """Keep non-empty workbook/steward values; fill only blank fields from the LLM."""
+    merged = dict(prior or {})
+    for field in METADATA_FIELDS:
+        if not _is_blank(merged.get(field)):
+            continue
+        incoming = llm_meta.get(field) if isinstance(llm_meta, dict) else None
+        if not _is_blank(incoming):
+            merged[field] = incoming
+    return merged
+
+
+def _facts_table_snippets(facts: Optional[dict]) -> list[dict]:
+    snippets: list[dict] = []
+    if not isinstance(facts, dict):
+        return snippets
+    for sheet in facts.get("sheets") or []:
+        if not isinstance(sheet, dict):
+            continue
+        for tbl in sheet.get("tables") or []:
+            if isinstance(tbl, dict):
+                snippets.append(tbl)
+    return snippets
+
+
+def _fallback_key_statistics(facts: Optional[dict]) -> Optional[str]:
+    """Build a short bullet summary from sample rows when the LLM left the field blank."""
+    lines: list[str] = []
+    for tbl in _facts_table_snippets(facts)[:3]:
+        title = str(tbl.get("title_context") or tbl.get("table_name") or "").strip()
+        sample = tbl.get("sample_rows") or []
+        if not isinstance(sample, list) or not sample:
+            continue
+        first = sample[0]
+        if not isinstance(first, dict):
+            continue
+        parts = []
+        for key, val in list(first.items())[:5]:
+            if val is None or str(val).strip() == "":
+                continue
+            parts.append(f"{key}: {val}")
+        if not parts:
+            continue
+        prefix = f"{title}: " if title else ""
+        lines.append("• " + prefix + "; ".join(parts))
+        if len(lines) >= 4:
+            break
+    return "\n".join(lines) if lines else None
+
+
+def _table_titles_for_summary(
+    facts: Optional[dict],
+    group: Optional[dict] = None,
+) -> list[str]:
+    titles: list[str] = []
+    for tbl in _facts_table_snippets(facts):
+        name = str(tbl.get("title_context") or tbl.get("table_name") or "").strip()
+        if name and name.lower() not in _EMPTY_PLACEHOLDERS and name not in titles:
+            titles.append(name)
+        if len(titles) >= 6:
+            return titles
+    if isinstance(group, dict):
+        for mt in group.get("matched_tables") or []:
+            table = mt.get("table") if isinstance(mt, dict) else None
+            if not isinstance(table, dict):
+                continue
+            name = str(table.get("title") or table.get("table_name") or "").strip()
+            if name and name.lower() not in _EMPTY_PLACEHOLDERS and name not in titles:
+                titles.append(name)
+            if len(titles) >= 6:
+                break
+    return titles
+
+
+def _fallback_description(
+    *,
+    title: str,
+    meta: Optional[dict] = None,
+    kyds: Optional[dict],
+    facts: Optional[dict],
+    group: Optional[dict] = None,
+) -> Optional[str]:
+    """Crisp summary from KYDS (if usable) or structured metadata + table titles.
+
+    Never copies raw extracted table ``description`` text — that is often OCR noise.
+    """
+    kyds = kyds if isinstance(kyds, dict) else {}
+    meta = meta if isinstance(meta, dict) else {}
+    kyds_desc = str(kyds.get("description") or "").strip()
+    if is_usable_catalogue_description(kyds_desc):
+        return crisp_catalogue_description(kyds_desc)
+
+    titles = _table_titles_for_summary(facts, group)
+    return synthesize_catalogue_summary(
+        title=title,
+        product=str(meta.get("product") or kyds.get("datasetName") or ""),
+        category=str(meta.get("category") or ""),
+        geography=str(meta.get("geography") or ""),
+        frequency=str(meta.get("frequency") or ""),
+        time_period=str(meta.get("time_period") or ""),
+        table_titles=titles,
+        table_count=len(titles),
+    )
+
+
+def _apply_catalogue_fallbacks(
+    meta: dict,
+    *,
+    group: dict,
+    facts: Optional[dict],
+    kyds: Optional[dict],
+) -> dict:
+    """Ensure product / description / key_statistics / remarks are not left blank."""
+    out = dict(meta or {})
+    kyds = kyds if isinstance(kyds, dict) else {}
+    title = str(
+        out.get("title")
+        or group.get("file_name")
+        or group.get("name")
+        or ""
+    ).strip()
+
+    if _is_blank(out.get("product")):
+        product = str(kyds.get("datasetName") or "").strip()
+        if not product or product.lower() in _EMPTY_PLACEHOLDERS:
+            product = title
+        if product:
+            out["product"] = product
+
+    # Replace blank OR unusable (gibberish / dump) descriptions with a crisp blurb.
+    if not is_usable_catalogue_description(out.get("description")):
+        desc = _fallback_description(
+            title=title, meta=out, kyds=kyds, facts=facts, group=group,
+        )
+        if desc:
+            out["description"] = desc
+    else:
+        out["description"] = crisp_catalogue_description(str(out.get("description")))
+
+    if _is_blank(out.get("key_statistics")):
+        stats = _fallback_key_statistics(facts)
+        if stats:
+            out["key_statistics"] = stats
+
+    if _is_blank(out.get("remarks")):
+        notes = str(kyds.get("notes") or "").strip()
+        if notes and notes.lower() not in _EMPTY_PLACEHOLDERS:
+            out["remarks"] = notes
+        else:
+            out["remarks"] = "Definitions and coverage follow the source tables."
+
+    return out
+
+
 def _fill_empty_group_metadata(
     groups: list,
     dataset_bytes_by_filename: dict,
@@ -260,7 +441,9 @@ def _fill_empty_group_metadata(
       - already-extracted in-memory tables (SQL / any source without workbook bytes)
         via extract_facts_from_tables.
     KYDS responses come from Postgres via ``app.db.repositories.kyds``
-    (``get_latest_responses``).
+    (``get_latest_responses``). They are optional context for the model:
+    a missing entry does not skip autofill. Table and workbook facts are
+    still enough to fill catalogue fields.
 
     `extractor` supplies the LLM call, built from the caller's own Settings
     key/provider (see `deps._extractor_for`) rather than a server-side env var.
@@ -269,12 +452,9 @@ def _fill_empty_group_metadata(
     as `{group, error}` so the UI can explain why fields are still empty and
     let the user fill them in manually.
     """
-    if not kyds_responses:
-        # Still report a missing LLM key so the metadata UI can prompt for it
-        # even when KYDS is absent (KYDS-missing is a separate client flag).
-        if getattr(extractor, "skip_llm", False):
-            return True, []
-        return False, []
+    # Empty KYDS still flows through source cleanup and the LLM. Callers
+    # keep reporting `kyds_missing` separately so the form can be offered.
+    kyds_responses = kyds_responses or {}
 
     use_sdg = str(standard or "nmds").lower() == "sdg"
 
@@ -297,20 +477,19 @@ def _fill_empty_group_metadata(
         return _group_metadata_is_empty(g.get("metadata"), METADATA_FIELDS)
 
     def _needs_llm_fill(g: dict) -> bool:
-        """True when catalogue fields besides title/Source are still blank.
+        """True when any priority catalogue field is still blank.
 
         Grouping stamps a title, and KYDS (or a filename) may already occupy
         Source. Neither of those should block Stage 4 when a Settings key is
-        present. Groups that already carry workbook values (Product,
-        Description, and so on) stay untouched.
+        present. Existing non-empty workbook values are kept; the LLM only
+        fills empty priority fields (product, description, key_statistics, …).
         """
         if not _group_tables(g):
             return False
         if use_sdg:
             return _is_empty(g)
         meta = g.get("metadata") or {}
-        others = [f for f in METADATA_FIELDS if f not in ("title", "data_source")]
-        return not any(str(meta.get(f) or "").strip() for f in others)
+        return any(_is_blank(meta.get(f)) for f in _PRIORITY_FILL_FIELDS)
 
     # Decide before KYDS source injection as well as after a previous pass
     # that only wrote Source. Either way, Source alone must not skip the LLM.
@@ -381,10 +560,15 @@ def _fill_empty_group_metadata(
                     f for f in SDG_METADATA_FIELDS if str(sdg_meta.get(f) or "").strip()
                 ]
             else:
+                prior = dict(g.get("metadata") or {})
                 llm_output = generate_metadata_with_llm(
                     facts, kyds=kyds_responses, complete_fn=extractor._complete,
                 )
-                meta = _stringify_metadata_values(parse_llm_metadata_output(llm_output))
+                llm_meta = _stringify_metadata_values(parse_llm_metadata_output(llm_output))
+                meta = _merge_metadata_into_empty(prior, llm_meta)
+                meta = _apply_catalogue_fallbacks(
+                    meta, group=g, facts=facts, kyds=kyds_responses,
+                )
                 known = _known_filenames_for_group(g, facts)
                 meta["data_source"] = _resolve_data_source(
                     meta.get("data_source"), kyds_responses, known,
@@ -392,7 +576,8 @@ def _fill_empty_group_metadata(
                 g["metadata"] = meta
                 g["_llm_filled"] = True
                 g["_llm_filled_fields"] = [
-                    f for f in METADATA_FIELDS if str(meta.get(f) or "").strip()
+                    f for f in METADATA_FIELDS
+                    if not _is_blank(meta.get(f)) and _is_blank(prior.get(f))
                 ]
             # Keep a display name when the client sent PDF-style groups.
             if not g.get("file_name") and g.get("name"):

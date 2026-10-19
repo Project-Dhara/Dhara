@@ -93,7 +93,7 @@ export default function ColumnChipGrid({
             className="h-8 flex-none rounded-md border-0 bg-teal px-3 text-[12.5px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]"
             disabled={fillAiBusy || !canFillAll}
             onClick={onFillAllAi}
-            title="Fill codes and definitions for every classified column"
+            title="Fill definitions for every classified column (codes stay manual unless NCO matching fills them)"
           >
             {fillAllAiLoading ? 'Filling all…' : 'Fill all with AI'}
           </button>

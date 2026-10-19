@@ -122,12 +122,16 @@ export default function HarmonisePanel({
         <div className="min-w-0 flex-1">
           <h2 className="m-0 text-[15px] font-semibold tracking-tight text-ink">Harmonisation</h2>
           <p className="m-0 mt-1 text-[12.5px] leading-snug text-ink-soft">
-            {mappedLists}/{classifiedColumns.length} columns mapped
-            {harmoniseClubs.length > 0 && pendingCount > 0
-              ? ` · ${pendingCount} left to review`
-              : harmoniseClubs.length > 0
-                ? ' · all clubs reviewed'
-                : ''}
+            {harmoniseClubs.length === 0
+              ? 'Nothing to harmonise'
+              : (
+                <>
+                  {mappedLists}/{classifiedColumns.length} columns mapped
+                  {pendingCount > 0
+                    ? ` · ${pendingCount} left to review`
+                    : ' · all clubs reviewed'}
+                </>
+              )}
           </p>
         </div>
         {verifiableClubs.length > 0 && (
@@ -139,7 +143,7 @@ export default function HarmonisePanel({
 
       {harmoniseClubs.length === 0 && (
         <div className="px-6 py-10 text-center text-[13px] text-ink-soft">
-          Nothing left to harmonise — all classification columns are covered above.
+          No values to harmonise — all classification columns are covered above.
         </div>
       )}
 

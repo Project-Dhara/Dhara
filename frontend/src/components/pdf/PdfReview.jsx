@@ -33,7 +33,9 @@ import {
   tableSourceSubtitle,
 } from '../../lib/pdfReviewHelpers'
 import {
+  ContinueAfterSelectionDialog,
   DeleteConfirmDialog,
+  KeepSelectedConfirmDialog,
   MergeConfirmDialog,
   ReviewBadge,
   ScrollToTopButton,
@@ -126,13 +128,18 @@ export default function PdfReview({ jobId, filename, onDone }) {
   const [tableSearch, setTableSearch] = useState('')
   const [tablePage, setTablePage] = useState(0)
   const [selectedIds, setSelectedIds] = useState(() => new Set())
-  // null | 'delete' | 'download' | 'merge' — same checkbox UI, different confirm action
+  // null | 'keep' | 'delete' | 'download' | 'merge' — same checkbox UI, different confirm action
   const [selectMode, setSelectMode] = useState(null)
   const [pendingDeleteIds, setPendingDeleteIds] = useState(null)
   const [pendingMergeIds, setPendingMergeIds] = useState(null)
+  const [pendingKeepIds, setPendingKeepIds] = useState(null)
   const [deleting, setDeleting] = useState(false)
   const [merging, setMerging] = useState(false)
   const [continuing, setContinuing] = useState(false)
+  // Soft pipeline selection: tables stay visible; only these IDs continue.
+  // null = no filter (every table proceeds, previous behaviour).
+  const [pipelineSelectedIds, setPipelineSelectedIds] = useState(null)
+  const [continueWarnOpen, setContinueWarnOpen] = useState(false)
   // AI search over the existing list — null match set means regular text search.
   const [aiSearching, setAiSearching] = useState(false)
   const [aiMatchIds, setAiMatchIds] = useState(null)
@@ -264,7 +271,17 @@ export default function PdfReview({ jobId, filename, onDone }) {
     }
   }
 
+  const requestContinueToGrouping = () => {
+    if (continuing) return
+    if (pipelineSelectedIds?.size) {
+      setContinueWarnOpen(true)
+      return
+    }
+    void continueToGrouping()
+  }
+
   const continueToGrouping = async () => {
+    setContinueWarnOpen(false)
     setContinuing(true)
     setContinuePhase('persist')
     setError('')
@@ -277,14 +294,19 @@ export default function PdfReview({ jobId, filename, onDone }) {
       } catch {
         /* best-effort */
       }
+      const approvedIds = pipelineSelectedIds?.size ? [...pipelineSelectedIds] : null
+      const tablesForContinue = approvedIds
+        ? (tables || []).filter((t) => approvedIds.includes(t.table_id))
+        : (tables || [])
       const res = await fetch(
         `/api/pdf/jobs/${jobId}/persist-approved`,
         withLlmKeyHeaders(withAuthHeaders({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           // Preview state is source of truth for titles / reviews at Continue.
+          // approved_table_ids (when set) limits which tables enter grouping.
           body: JSON.stringify({
-            tables: (tables || []).map((t) => ({
+            tables: tablesForContinue.map((t) => ({
               table_id: t.table_id,
               title: t.title ?? null,
               rows: t.rows,
@@ -294,6 +316,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
               human_review_reason: t.human_review_reason,
               semantic_status: t.semantic_status,
             })),
+            ...(approvedIds ? { approved_table_ids: approvedIds } : {}),
           }),
         })),
       )
@@ -398,43 +421,57 @@ export default function PdfReview({ jobId, filename, onDone }) {
     setReviewedIds((prev) => new Set(prev).add(tableId))
   }
 
+  const removeTablesByIds = async (ids) => {
+    if (!ids?.length) return
+    const res = await fetch(`/api/pdf/jobs/${jobId}/tables/delete`, withAuthHeaders({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ table_ids: ids }),
+    }))
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || 'Could not remove tables')
+    }
+    const idSet = new Set(ids)
+    setTables((prev) => prev.filter((t) => !idSet.has(t.table_id)))
+    setReviewedIds((prev) => {
+      const next = new Set(prev)
+      ids.forEach((id) => next.delete(id))
+      return next
+    })
+    setPipelineSelectedIds((prev) => {
+      if (!prev?.size) return prev
+      const next = new Set([...prev].filter((id) => !idSet.has(id)))
+      return next.size ? next : null
+    })
+    setAiMatchIds((prev) => (prev ? prev.filter((id) => !idSet.has(id)) : prev))
+    if (expanded && idSet.has(expanded)) setExpanded(null)
+    setSelectedIds(new Set())
+    setSelectMode(null)
+  }
+
   const confirmDelete = async () => {
     if (!pendingDeleteIds?.length) return
     setDeleting(true)
     const ids = [...pendingDeleteIds]
     try {
-      const res = await fetch(`/api/pdf/jobs/${jobId}/tables/delete`, withAuthHeaders({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ table_ids: ids }),
-      }))
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.detail || 'Could not delete tables')
-      }
-      const idSet = new Set(ids)
-      setTables((prev) => prev.filter((t) => !idSet.has(t.table_id)))
-      setSelectedIds((prev) => {
-        const next = new Set(prev)
-        ids.forEach((id) => next.delete(id))
-        return next
-      })
-      setReviewedIds((prev) => {
-        const next = new Set(prev)
-        ids.forEach((id) => next.delete(id))
-        return next
-      })
-      setAiMatchIds((prev) => (prev ? prev.filter((id) => !idSet.has(id)) : prev))
-      if (expanded && idSet.has(expanded)) setExpanded(null)
+      await removeTablesByIds(ids)
       setPendingDeleteIds(null)
-      setSelectedIds(new Set())
-      setSelectMode(null)
     } catch (e) {
       setError(e.message || 'Could not delete tables')
       setPendingDeleteIds(null)
     } finally {
       setDeleting(false)
     }
+  }
+
+  const confirmKeepSelected = () => {
+    if (!pendingKeepIds?.length) return
+    setPipelineSelectedIds(new Set(pendingKeepIds))
+    setPendingKeepIds(null)
+    setSelectedIds(new Set())
+    setSelectMode(null)
+    setTablePage(0)
   }
 
   const clearAiSearch = ({ keepSelectMode = false } = {}) => {
@@ -553,7 +590,13 @@ export default function PdfReview({ jobId, filename, onDone }) {
 
   const enterSelectMode = (mode) => {
     setSelectMode(mode)
-    setSelectedIds(new Set())
+    // Re-open Select with the current pipeline picks pre-checked so the
+    // steward can add more without starting from scratch.
+    setSelectedIds(
+      mode === 'keep' && pipelineSelectedIds?.size
+        ? new Set(pipelineSelectedIds)
+        : new Set(),
+    )
     setExpanded(null)
     setTablePage(0)
   }
@@ -740,6 +783,14 @@ export default function PdfReview({ jobId, filename, onDone }) {
       filteredTables = filteredTables.filter((t) => tableHeaderKey(t) === key)
     }
   }
+  // Pipeline selection: keep every table visible, but float selected ones to the top.
+  if (pipelineSelectedIds?.size) {
+    filteredTables = [...filteredTables].sort((a, b) => {
+      const aSel = pipelineSelectedIds.has(a.table_id) ? 0 : 1
+      const bSel = pipelineSelectedIds.has(b.table_id) ? 0 : 1
+      return aSel - bSel
+    })
+  }
   const TABLES_PER_PAGE = 25
   const filteredCount = filteredTables.length
   const pageCount = Math.max(1, Math.ceil(filteredCount / TABLES_PER_PAGE) || 1)
@@ -848,6 +899,23 @@ export default function PdfReview({ jobId, filename, onDone }) {
           onCancel={() => !merging && setPendingMergeIds(null)}
           onConfirm={confirmMerge}
           merging={merging}
+        />
+      )}
+      {pendingKeepIds && (
+        <KeepSelectedConfirmDialog
+          keepCount={pendingKeepIds.length}
+          dropCount={Math.max(0, (tables?.length || 0) - pendingKeepIds.length)}
+          onCancel={() => setPendingKeepIds(null)}
+          onConfirm={confirmKeepSelected}
+          keeping={false}
+        />
+      )}
+      {continueWarnOpen && (
+        <ContinueAfterSelectionDialog
+          count={pipelineSelectedIds?.size || 0}
+          onCancel={() => !continuing && setContinueWarnOpen(false)}
+          onConfirm={() => { void continueToGrouping() }}
+          continuing={continuing}
         />
       )}
 
@@ -1027,6 +1095,15 @@ export default function PdfReview({ jobId, filename, onDone }) {
                 <Button
                   variant="secondary"
                   size="sm"
+                  disabled={tables.length === 0}
+                  onClick={() => enterSelectMode('keep')}
+                  title="Choose which tables continue to grouping and later steps"
+                >
+                  {pipelineSelectedIds?.size ? `Select (${pipelineSelectedIds.size})` : 'Select'}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
                   disabled={tables.length < 2}
                   onClick={() => enterSelectMode('merge')}
                   title="Merge tables that flow into multiple pages"
@@ -1121,7 +1198,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
               <label className="flex cursor-pointer items-center gap-2 text-[13px] font-semibold text-ink">
                 <input
                   type="checkbox"
-                  className="h-3.5 w-3.5 accent-teal"
+                  className="h-4 w-4 rounded-md accent-teal"
                   checked={allFilteredSelected}
                   disabled={filteredIds.length === 0}
                   onChange={toggleSelectAllFiltered}
@@ -1130,13 +1207,19 @@ export default function PdfReview({ jobId, filename, onDone }) {
               </label>
               <span className="text-[12.5px] text-ink-soft">
                 {selectedCount === 0
-                  ? (selectMode === 'merge' ? 'Select a table — then only matching headers stay listed' : 'None selected')
+                  ? (selectMode === 'merge'
+                    ? 'Select a table — then only matching headers stay listed'
+                    : selectMode === 'keep'
+                      ? 'Select the tables that should continue in the pipeline'
+                      : 'None selected')
                   : `${selectedCount} selected`}
                 {selectMode === 'download'
                   ? ' · download as ZIP'
                   : selectMode === 'merge'
                     ? ' · merge same-header tables'
-                    : ' · delete'}
+                    : selectMode === 'keep'
+                      ? ' · for grouping (all tables stay listed)'
+                      : ' · delete'}
               </span>
               <div className="ml-auto flex flex-wrap items-center gap-2">
                 <Button variant="secondary" size="sm" onClick={exitSelectMode} disabled={downloadingZip || merging}>
@@ -1161,6 +1244,30 @@ export default function PdfReview({ jobId, filename, onDone }) {
                   >
                     Merge selected{selectedCount >= 2 ? ` (${selectedCount})` : ''}
                   </Button>
+                ) : selectMode === 'keep' ? (
+                  <>
+                    {pipelineSelectedIds?.size ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setPipelineSelectedIds(null)
+                          setSelectedIds(new Set())
+                          setSelectMode(null)
+                        }}
+                      >
+                        Clear selection
+                      </Button>
+                    ) : null}
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      disabled={selectedCount === 0}
+                      onClick={() => setPendingKeepIds([...selectedIds])}
+                    >
+                      Use selected{selectedCount ? ` (${selectedCount})` : ''}
+                    </Button>
+                  </>
                 ) : (
                   <>
                     <Button
@@ -1205,6 +1312,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
             const isOpen = expanded === t.table_id
             const reviewed = reviewedIds.has(t.table_id)
             const selected = selectedIds.has(t.table_id)
+            const inPipeline = Boolean(pipelineSelectedIds?.has(t.table_id))
             const primaryReason = primaryReviewReason(t)
             const flagSummary = reviewed ? '' : reviewFlagSummary(t)
             const needsReviewBadge = Boolean(primaryReason)
@@ -1217,13 +1325,21 @@ export default function PdfReview({ jobId, filename, onDone }) {
                   if (node) tableCardRefs.current.set(t.table_id, node)
                   else tableCardRefs.current.delete(t.table_id)
                 }}
-                className={`overflow-hidden rounded-2xl border bg-surface transition-[border-color] duration-300 ease-out ${isOpen ? 'border-teal' : selectMode && selected ? 'border-teal/50' : 'border-line'}`}
+                className={`overflow-hidden rounded-2xl border transition-[border-color,background-color] duration-300 ease-out ${
+                  isOpen
+                    ? 'border-teal bg-surface'
+                    : inPipeline
+                      ? 'border-teal/55 bg-sage/50'
+                      : selectMode && selected
+                        ? 'border-teal/50 bg-surface'
+                        : 'border-line bg-surface'
+                }`}
               >
                 <div className="flex items-center gap-2.5 px-3.5 py-2.5 hover:bg-cream">
                   {selectMode && (
                     <input
                       type="checkbox"
-                      className="h-3.5 w-3.5 flex-none accent-teal"
+                      className="h-4 w-4 flex-none rounded-md accent-teal"
                       checked={selected}
                       aria-label={`Select ${displayTitle(t) || `page ${t.page} table`}`}
                       onChange={() => toggleSelected(t.table_id)}
@@ -1235,7 +1351,16 @@ export default function PdfReview({ jobId, filename, onDone }) {
                     onClick={() => setExpanded(isOpen ? null : t.table_id)}
                   >
                     <div className="min-w-0 flex-1">
-                      <TableTitleDisplay table={t} />
+                      <div className="flex min-w-0 items-center gap-2">
+                        <div className="min-w-0 flex-1">
+                          <TableTitleDisplay table={t} />
+                        </div>
+                        {inPipeline ? (
+                          <span className="flex-none rounded-md border border-teal/35 bg-sage px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-teal-deep">
+                            Selected
+                          </span>
+                        ) : null}
+                      </div>
                       {tableSourceSubtitle(t) ? (
                         <div className="mt-0.5 text-[11.5px] leading-snug text-ink-soft">
                           {tableSourceSubtitle(t)}
@@ -1316,7 +1441,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
       </div>
 
       <div className="flex items-center justify-end gap-4">
-        <Button variant="primary" disabled={continuing} onClick={continueToGrouping} className="inline-flex items-center gap-1.5">
+        <Button variant="primary" disabled={continuing} onClick={requestContinueToGrouping} className="inline-flex items-center gap-1.5">
           {continuing ? 'Saving…' : (
             <>
               Continue

@@ -1,8 +1,13 @@
 """Unit tests for catalogue group shaping and table code/definition append."""
 from __future__ import annotations
 
+from app.db.repositories.catalogue import _shape_group_row
 from app.services.catalogue.group_export import append_code_definition_columns
-from app.services.catalogue.query import _shape_group_row
+from app.services.catalogue.summary import (
+    catalogue_display_summary,
+    is_usable_catalogue_description,
+    synthesize_catalogue_summary,
+)
 
 
 def test_shape_group_row_includes_tables():
@@ -10,7 +15,7 @@ def test_shape_group_row_includes_tables():
         {
             "metadata_id": "META-1",
             "title": "Vital statistics release",
-            "description": "Group narrative",
+            "description": "Group narrative covering births in Delhi.",
             "product": "SDA",
             "category": "Vital",
             "geography": "Delhi",
@@ -41,6 +46,41 @@ def test_shape_group_row_includes_tables():
     assert "ds_1" in shaped["keywords"]
     assert "Occupation" in shaped["classifications"]
     assert shaped["nmds_concepts"][0]["concept"] == "Geography"
+    assert shaped["summary"] == "Group narrative covering births in Delhi."
+
+
+def test_catalogue_summary_rejects_gibberish_and_synthesizes():
+    assert not is_usable_catalogue_description(
+        "Age: 0-1; Count: 10; Age: 1-2; Count: 12; Age: 2-3; Count: 8; "
+        "Age: 3-4; Count: 9; Age: 4-5; Count: 11"
+    )
+    assert not is_usable_catalogue_description('{"title": "x", "rows": [1,2,3]}')
+    blurb = synthesize_catalogue_summary(
+        title="Vital statistics",
+        category="Health",
+        geography="Delhi",
+        frequency="Annual",
+        time_period="2023",
+        table_titles=["Live births", "Still births"],
+    )
+    assert "Vital statistics" in blurb
+    assert "Delhi" in blurb
+    assert "Live births" in blurb
+    assert len(blurb) < 400
+
+    display = catalogue_display_summary(
+        {
+            "title": "Vital statistics",
+            "description": "ColA: 1 | ColB: 2 | ColC: 3 | ColD: 4",
+            "category": "Health",
+            "geography": "Delhi",
+            "frequency": "Annual",
+            "time_period": "2023",
+        },
+        tables=[{"title": "Live births"}, {"title": "Still births"}],
+    )
+    assert "Delhi" in display
+    assert "|" not in display
 
 
 def test_append_code_definition_after_classified_column():
