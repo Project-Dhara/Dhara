@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.services.ingestion.review_tables import attach_batch_meta, merge_file_result_into_batch
 from app.workers.extraction_jobs import (
@@ -21,7 +22,122 @@ from app.workers.extraction_jobs import (
 
 logger = logging.getLogger(__name__)
 
-MAX_BATCH_FILE_CONCURRENCY = 2
+# Large tabular PDF reports (vital statistics / CRS-style) — adaptive scheduling
+# uses these thresholds only for concurrency, never for extraction quality.
+_HEAVY_PDF_PAGES = 80
+_HEAVY_PDF_BYTES = 4 * 1024 * 1024
+_VERY_HEAVY_PDF_PAGES = 150
+_LOW_RAM_MB_FOR_PARALLEL_HEAVY = 3500
+
+
+def _pdf_page_count_quick(file_bytes: bytes) -> int:
+    """Cheap page count for scheduling (does not run table extraction)."""
+    if not file_bytes:
+        return 0
+    try:
+        import fitz
+
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        try:
+            return int(doc.page_count or 0)
+        finally:
+            doc.close()
+    except Exception:
+        return 0
+
+
+def _is_heavy_pdf(source_type: str, *, page_count: int = 0, size_bytes: int = 0) -> bool:
+    if (source_type or "").lower() != "pdf":
+        return False
+    if page_count >= _HEAVY_PDF_PAGES:
+        return True
+    if size_bytes >= _HEAVY_PDF_BYTES:
+        return True
+    return False
+
+
+def _is_very_heavy_pdf(*, page_count: int = 0, size_bytes: int = 0) -> bool:
+    if page_count >= _VERY_HEAVY_PDF_PAGES:
+        return True
+    # ~6MB+ multi-hundred-page scans/reports without a page probe.
+    if size_bytes >= 6 * 1024 * 1024 and page_count == 0:
+        return True
+    return False
+
+
+def _base_batch_file_concurrency() -> int:
+    """Host-sized default; env ``PDF_BATCH_FILE_CONCURRENCY`` always wins."""
+    raw = (os.environ.get("PDF_BATCH_FILE_CONCURRENCY") or "").strip()
+    if raw:
+        try:
+            return max(1, min(8, int(raw)))
+        except ValueError:
+            pass
+    cpus = max(1, os.cpu_count() or 1)
+    if cpus <= 2:
+        return 2
+    return min(3, max(2, cpus - 1))
+
+
+def resolve_batch_file_concurrency(
+    files: Optional[Sequence[Dict[str, Any]]] = None,
+) -> int:
+    """How many files extract at once.
+
+    Keeps multi-file parallelism, but adapts for batches of large multi-page
+    PDFs so many heavy reports do not OOM the host. Extraction algorithms are
+    unchanged — this only chooses the thread-pool size.
+
+    Override absolute cap with ``PDF_BATCH_FILE_CONCURRENCY``.
+    LLM fan-out across files is capped separately (global API semaphore).
+    """
+    base = _base_batch_file_concurrency()
+    # Explicit env means "always use this many" — no adaptive shrink.
+    if (os.environ.get("PDF_BATCH_FILE_CONCURRENCY") or "").strip():
+        return base
+    if not files:
+        return base
+
+    pending = [f for f in files if (f.get("status") or "") not in ("done",)]
+    if not pending:
+        return base
+
+    heavy = 0
+    very_heavy = 0
+    for f in pending:
+        st = str(f.get("source_type") or "")
+        pages = int(f.get("page_count") or 0)
+        size = int(f.get("size_bytes") or 0)
+        if _is_heavy_pdf(st, page_count=pages, size_bytes=size):
+            heavy += 1
+        if st.lower() == "pdf" and _is_very_heavy_pdf(page_count=pages, size_bytes=size):
+            very_heavy += 1
+
+    # Prefer parallelism (typically 2). Only shrink when several very large
+    # reports would thrash a memory-tight box.
+    if very_heavy >= 2:
+        try:
+            from app.services.llm_prompts import _available_ram_mb
+
+            avail = _available_ram_mb()
+        except Exception:
+            avail = None
+        if avail is not None and avail < _LOW_RAM_MB_FOR_PARALLEL_HEAVY:
+            logger.info(
+                "batch concurrency: %s very-heavy PDFs and low RAM (%s MB) → 1",
+                very_heavy,
+                avail,
+            )
+            return 1
+        return min(base, 2)
+
+    if heavy >= 1:
+        return min(base, 2)
+
+    return base
+
+
+MAX_BATCH_FILE_CONCURRENCY = _base_batch_file_concurrency()
 
 
 def _batch_file_entry(
@@ -31,6 +147,8 @@ def _batch_file_entry(
     source_type: str,
     status: str = "queued",
     error: Optional[str] = None,
+    size_bytes: int = 0,
+    page_count: int = 0,
 ) -> Dict[str, Any]:
     return {
         "file_job_id": file_job_id,
@@ -38,6 +156,8 @@ def _batch_file_entry(
         "source_type": source_type,
         "status": status,
         "error": error,
+        "size_bytes": int(size_bytes or 0),
+        "page_count": int(page_count or 0),
     }
 
 
@@ -74,7 +194,19 @@ def queue_upload_batch(
     batch_files = []
     for filename, source_type, content in files:
         file_job_id = uuid.uuid4().hex
-        batch_files.append(_batch_file_entry(file_job_id=file_job_id, filename=filename, source_type=source_type))
+        size_bytes = len(content or b"")
+        page_count = (
+            _pdf_page_count_quick(content) if (source_type or "").lower() == "pdf" else 0
+        )
+        batch_files.append(
+            _batch_file_entry(
+                file_job_id=file_job_id,
+                filename=filename,
+                source_type=source_type,
+                size_bytes=size_bytes,
+                page_count=page_count,
+            )
+        )
         queue_extraction_job(
             job_id=file_job_id,
             filename=filename,
@@ -212,7 +344,14 @@ def run_upload_batch(batch_id: str) -> None:
         _save_pdf_job(batch)
 
     pending = [(i, f) for i, f in enumerate(files) if f.get("status") not in ("done",)]
-    with ThreadPoolExecutor(max_workers=MAX_BATCH_FILE_CONCURRENCY) as pool:
+    workers = resolve_batch_file_concurrency([f for _, f in pending])
+    logger.info(
+        "upload batch %s: %s file(s), concurrency=%s",
+        batch_id,
+        len(pending),
+        workers,
+    )
+    with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(process_one, f, i) for i, f in pending]
         for fut in as_completed(futures):
             try:
@@ -352,11 +491,17 @@ def append_files_to_batch(
     new_entries: List[Dict[str, Any]] = []
     for filename, source_type, content in files:
         file_job_id = uuid.uuid4().hex
+        size_bytes = len(content or b"")
+        page_count = (
+            _pdf_page_count_quick(content) if (source_type or "").lower() == "pdf" else 0
+        )
         entry = _batch_file_entry(
             file_job_id=file_job_id,
             filename=filename,
             source_type=source_type,
             status="queued",
+            size_bytes=size_bytes,
+            page_count=page_count,
         )
         new_entries.append(entry)
         batch_files.append(entry)

@@ -57,11 +57,17 @@ def run_post_extraction_validation(
             f"Scored {done}/{total} unit(s)",
         ),
     )
+    soft_n = sum(n for k, n in (reason_counts or {}).items() if str(k).startswith("soft_accept:"))
     progress(
         "classify_confidence",
         55,
-        f"{len(high_results)} unit(s) auto-accepted, {len(llm_pages)} unit(s) need AI validation",
+        f"{len(high_results)} unit(s) auto-accepted"
+        + (f" ({soft_n} with review flag)" if soft_n else "")
+        + f", {len(llm_pages)} unit(s) need AI validation",
     )
+    if reason_counts and llm_pages:
+        top = sorted(reason_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+        log("  confidence reasons (top): " + ", ".join(f"{k}={v}" for k, v in top))
 
     validated_by_page: Dict[int, Dict[str, Any]] = dict(high_results)
     if llm_pages:

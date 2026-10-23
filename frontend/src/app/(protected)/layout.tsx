@@ -7,6 +7,7 @@ import KydsModal from '../../components/KydsModal'
 import { useApp } from '../../context/AppContext'
 import { withAuthHeaders } from '../../lib/auth'
 import { notifyKydsChanged } from '../../lib/kydsEvents'
+import { markKydsSavedThisSession, resetMineKyds } from '../../lib/kydsFilled'
 import { getConsoleReturnPath, rememberConsoleReturnPath } from '../../lib/consoleSession'
 
 function screenForPathname(pathname: string) {
@@ -67,7 +68,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     >
       {showKyds && (
         <KydsModal
-          onSkip={() => setShowKyds(false)}
+          onSkip={() => {
+            setShowKyds(false)
+            // Skipping must not leave a previous upload's KYDS as "mine".
+            void resetMineKyds()
+          }}
           onSave={async (form: unknown) => {
             const res = await fetch('/api/kyds', withAuthHeaders({
               method: 'POST',
@@ -78,6 +83,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
               const err = await res.json().catch(() => ({}))
               throw new Error(err.detail || 'Could not save KYDS entry — please try again.')
             }
+            markKydsSavedThisSession()
             setShowKyds(false)
             notifyKydsChanged()
           }}

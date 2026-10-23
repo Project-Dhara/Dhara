@@ -1550,31 +1550,9 @@ export function buildBodyCellSpans(rows, columns) {
     }
   }
 
-  // Trailing empty measures in the same stack (Paddy value | empty %) → colspan.
-  for (let r = 0; r < nrows; r += 1) {
-    for (let c = 0; c < ncols; c += 1) {
-      if (covered[r][c] || labelSet.has(c)) continue
-      if (isEmptyMergeCell(rows[r]?.[c])) continue
-      const key = groupKeyFor(c)
-      let colSpan = 1
-      while (
-        c + colSpan < ncols
-        && groupKeyFor(c + colSpan) === key
-        && !labelSet.has(c + colSpan)
-        && !covered[r][c + colSpan]
-        && isEmptyMergeCell(rows[r]?.[c + colSpan])
-      ) {
-        colSpan += 1
-      }
-      if (colSpan === 1) continue
-      const prev = spans[r][c] || { rowSpan: 1, colSpan: 1 }
-      spans[r][c] = { rowSpan: prev.rowSpan || 1, colSpan }
-      for (let dc = 1; dc < colSpan; dc += 1) {
-        covered[r][c + dc] = true
-        spans[r][c + dc] = null
-      }
-    }
-  }
+  // Do not colspan a filled measure into the next empty sibling. Leaves under
+  // one group (Total | Adjusted, Freq | %) are separate cells; a blank is a
+  // missing value. Spanning centered the number under the wrong header.
 
   for (let r = 0; r < nrows; r += 1) {
     for (let c = 0; c < ncols; c += 1) {

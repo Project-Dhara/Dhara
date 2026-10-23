@@ -95,6 +95,14 @@ def test_cell_clip_gate_ignores_captions_but_catches_glue():
     assert extract_needs_cell_clip(glued_leaves)
     glued_index = [["1", "2", "3 4 5 6", "7", "8", "9", "10", "11", "12", "13"]]
     assert extract_needs_cell_clip(glued_index)
+    # One value per line is a row stack, not columns smashed together.
+    stacked = [[
+        "Months",
+        "167\n268\n306",
+        "79\n105\n132",
+        "246\n373\n438",
+    ]]
+    assert not extract_needs_cell_clip(stacked)
 
 
 def test_fold_merges_conducted_due_to_wrap():

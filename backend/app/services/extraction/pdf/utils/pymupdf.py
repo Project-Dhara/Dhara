@@ -150,18 +150,27 @@ def filter_candidate_pages(pages_grouped: Dict[int, List[Dict[str, Any]]]) -> Di
 
     Drops text-only false positives (prose misread as tables) while retaining
     real grids whose lines are too light/partial for lines_strict alone.
-    Also drops chart/figure false positives (wide numeric crumb grids).
+    Also drops chart/figure false positives (wide numeric crumb grids),
+    Highlights-style bullet lists, and contents / list-of-tables / index pages.
     """
     from app.services.extraction.pdf.confidence_validation.table_confidence import (
+        looks_like_bullet_list_candidate,
         looks_like_chart_candidate,
+        looks_like_toc_or_index_candidate,
     )
 
     out: Dict[int, List[Dict[str, Any]]] = {}
     for page_num, candidates in pages_grouped.items():
-        kept = [
-            c for c in candidates
-            if not looks_like_chart_candidate(c.get("df"), bbox=c.get("bbox"))[0]
-        ]
+        kept = []
+        for c in candidates:
+            df = c.get("df")
+            if looks_like_chart_candidate(df, bbox=c.get("bbox"))[0]:
+                continue
+            if looks_like_bullet_list_candidate(df)[0]:
+                continue
+            if looks_like_toc_or_index_candidate(df)[0]:
+                continue
+            kept.append(c)
         if any(
             str(c.get("method") or "") in ("pymupdf_lines_strict", "pymupdf_lines")
             for c in kept

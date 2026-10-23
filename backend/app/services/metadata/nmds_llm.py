@@ -60,6 +60,13 @@ Rules:
     write one short neutral note (e.g. definitions and coverage follow the source tables).
 * Other fields (`category`, `geography`, `frequency`, `time_period`) should be filled when
   evidence supports them; otherwise null is allowed.
+* `geography` is the geographic coverage of the table, written once:
+  - Name each distinct place (Delhi Cantt, MCD, NDMC) and area type (Urban, Rural) a single time.
+  - Use normal case for words (Urban, not both URBAN and Urban). Keep short agency acronyms (MCD, NDMC).
+  - Do not repeat a column header or level label as a place (Region, Geography, District, State, Area, Zone).
+  - If a cell lists several places separated by commas, treat that as one set of places.
+    Do not emit that same set again in another order.
+  - Do not paste every raw cell. A short coverage line is enough, e.g. "Urban, Rural, Delhi Cantt, MCD, NDMC".
 * `last_updated` and `future_release` must be `null` unless explicitly supported by the inputs.
 * For `data_source`, prefer KYDS `department` (`dataset_context.department`) — the holding
   department/ministry. Never use a workbook filename, sheet name, table id, path-like string,

@@ -26,6 +26,7 @@ from app.services.extraction.pdf.utils.header_detect import (
     _uniquify_columns,
     detect_header_rows,
     resolve_column_headers,
+    unpack_packed_span_header_leaves,
 )
 
 from app.services.extraction.pdf.utils.grid_repair import (
@@ -172,6 +173,11 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
     # Fold ``Experiments not`` + ``conducted due to`` style wrap rows before
     # header detection — otherwise the lowercase line looks like a section band.
     padded = fold_header_label_wrap_rows(padded)
+    n_cols = max((len(r) for r in padded), default=n_cols)
+    padded = [_pad_row(r, n_cols) for r in padded]
+    # Spread "GROUP\\nMALE FEMALE TOTAL" across the blank colspan before
+    # header detection, so leaves are not repeated as one column name.
+    padded = unpack_packed_span_header_leaves(padded)
     n_cols = max((len(r) for r in padded), default=n_cols)
     padded = [_pad_row(r, n_cols) for r in padded]
     header_count, skip_rows = detect_header_rows(padded, n_cols)

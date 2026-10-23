@@ -192,6 +192,9 @@ def resolve_column_headers(header_matrix: List[List[Any]], n_cols: int) -> List[
             break
     kinds = _parent_col_kinds(raw_top) if rows_in else []
 
+    # Original text, before rowspan/colspan fill. A leaf that repeats its parent
+    # ("Total" under Total) is real; the same word copied into an empty cell is not.
+    original_rows = [_pad_row(r, n_cols) for r in rows_in]
     rows = _fill_header_matrix(rows_in, n_cols)
     if not rows:
         return [
@@ -202,7 +205,7 @@ def resolve_column_headers(header_matrix: List[List[Any]], n_cols: int) -> List[
     out: List[dict] = []
     for i in range(n_cols):
         path: List[str] = []
-        for row in rows:
+        for r_i, row in enumerate(rows):
             lab = row[i] if i < len(row) else ""
             if not lab:
                 continue
@@ -210,7 +213,12 @@ def resolve_column_headers(header_matrix: List[List[Any]], n_cols: int) -> List[
                 continue
             if _is_header_metadata_label(lab):
                 continue
-            if path and path[-1].upper() == lab.upper():
+            orig = ""
+            if r_i < len(original_rows) and i < len(original_rows[r_i]):
+                orig = _cell_str(original_rows[r_i][i])
+            # Skip only a fill-down/fill-across copy. A printed leaf that
+            # matches its parent (Total under Total) stays on the path.
+            if path and path[-1].upper() == lab.upper() and not orig:
                 continue
             path.append(lab)
 
@@ -535,6 +543,108 @@ def _row_is_section_label(row: Sequence[Any]) -> bool:
     return not _is_caption_banner_label(label)
 
 
+# Closed-class words that continue a wrapped title ("of the", "but below").
+# They are not column leaves, so a span is not split on them.
+_HEADER_GLUE_RE = re.compile(
+    r"(?i)^(of|the|and|or|but|by|in|on|for|to|a|an|with|under|over|than|not|per|from|as|at|into)$"
+)
+
+
+def _is_packed_leaf_token(token: str) -> bool:
+    """Short column leaf of any vocabulary, not a word that glues a title together.
+
+    Matches structurally: Male, F, Rural, SC, 0-14, 1ST, Q1, Yes. Rejects
+    "of" / "the" / "but" so a wrapped phrase is not sliced into fake columns.
+    """
+    s = (token or "").strip()
+    if not s or len(s) > 16 or _HEADER_GLUE_RE.match(s):
+        return False
+    return _is_leaf_header_token(s)
+
+
+def _parent_and_leaves(raw: Any, span: int) -> Optional[Tuple[str, List[str]]]:
+    """Return (parent, leaves) when a group title and its leaf run share one cell.
+
+    The line break is the signal: the last line holds exactly `span` short
+    labels (``LIVE BIRTHS\\nMALE FEMALE TOTAL``, ``SECTOR\\nSC ST OTHERS``).
+    A single-line phrase is never sliced, so ``Sl. No`` or ``Other Reasons``
+    sitting over a blank neighbor stays one column. A wrap whose last line
+    is not `span` tokens (``AGE NOT\\nSTATED``, ``Grand\\nTotal``) stays intact.
+    """
+    if span < 2 or raw is None:
+        return None
+    text = str(raw).replace("|", "\n")
+    if "\n" not in text and "\r" not in text:
+        return None
+    lines = [re.sub(r"\s+", " ", ln).strip() for ln in re.split(r"[\n\r]+", text) if ln.strip()]
+    if len(lines) < 2:
+        return None
+    leaves = lines[-1].split()
+    parent = " ".join(lines[:-1]).strip()
+    if parent and len(leaves) == span and all(_is_packed_leaf_token(t) for t in leaves):
+        return parent, leaves
+    return None
+
+
+def unpack_packed_span_header_leaves(rows: List[List[Any]]) -> List[List[Any]]:
+    """Spread a group title plus N leaf labels across an N-column blank span.
+
+    PyMuPDF often stores the group and its leaves in the first cell
+    (``LIVE BIRTHS\\nMALE FEMALE TOTAL``, ``SECTOR\\nSC ST OTHERS``) and leaves
+    the rest of the colspan empty. Forward-fill would then copy that whole
+    string onto every column. The leaf run is whatever short labels sit on the
+    last line and match the span width — not a fixed word list and not a
+    particular file. Data rows and single-line phrases are left unchanged.
+    """
+    if not rows:
+        return rows
+    n_cols = max((len(r) for r in rows), default=0)
+    if n_cols == 0:
+        return rows
+    # Only the leading band. Body measure packs are handled elsewhere.
+    limit = min(len(rows), 8)
+    out: List[List[Any]] = []
+    for idx, row in enumerate(rows):
+        padded = _pad_row(row, n_cols)
+        if idx >= limit:
+            out.append(padded)
+            continue
+        nonempty = [_cell_str(c) for c in padded if _cell_str(c)]
+        numericish = sum(1 for c in nonempty if _is_numeric_cell(c) or _is_measurement_number(c))
+        if nonempty and numericish >= max(2, int(len(nonempty) * 0.5)):
+            out.append(padded)
+            continue
+        new_row = list(padded)
+        leaf_row: List[Any] = [None] * n_cols
+        inserted = False
+        j = 0
+        while j < n_cols:
+            raw = padded[j]
+            if not _cell_str(raw):
+                j += 1
+                continue
+            k = j + 1
+            while k < n_cols and not _cell_str(padded[k]):
+                k += 1
+            span = k - j
+            split = _parent_and_leaves(raw, span)
+            if split is not None:
+                parent, leaves = split
+                if parent:
+                    new_row[j] = parent
+                    for t_i, tok in enumerate(leaves):
+                        leaf_row[j + t_i] = tok
+                    inserted = True
+                else:
+                    for t_i, tok in enumerate(leaves):
+                        new_row[j + t_i] = tok
+            j = k
+        out.append(new_row)
+        if inserted:
+            out.append(leaf_row)
+    return out
+
+
 def detect_header_rows(body: List[List[Any]], n_cols: int) -> Tuple[int, List[int]]:
     """Leading header-row count plus indices of banner / '(1)(2)(3)' rows to skip.
 
@@ -586,8 +696,20 @@ def detect_header_rows(body: List[List[Any]], n_cols: int) -> Tuple[int, List[in
         if _blank(row):
             break
         # District / group bands are body rows, never another header level.
+        # A one-cell group band followed by a short leaf row (order codes,
+        # sex, age bands, categories) is still a header. The leaf test is
+        # structural, so the same rule applies to any file with that shape.
         if _row_is_section_label(row):
-            break
+            nxt_i = i + 1
+            while nxt_i < len(scan) and _blank(scan[nxt_i]):
+                nxt_i += 1
+            nxt = scan[nxt_i] if nxt_i < len(scan) else None
+            if not (
+                nxt is not None
+                and _row_is_leaf_header(nxt)
+                and not _row_looks_like_data(nxt, None)
+            ):
+                break
         if levels >= _MAX_HEADER_ROWS:
             break
         if header_count > 0 and _row_looks_like_data(row, root_header_row):

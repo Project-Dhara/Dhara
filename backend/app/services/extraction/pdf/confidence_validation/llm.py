@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -12,6 +13,12 @@ import openai
 import pandas as pd
 import pymupdf
 
+from app.services.extraction.pdf.confidence_validation.confidence_split import df_to_text
+from app.services.extraction.pdf.confidence_validation.stamp import _stamp_llm_metadata
+from app.services.extraction.pdf.utils.pymupdf import (
+    dedupe_candidates_by_bbox,
+    log,
+)
 from app.services.llm_prompts import (
     BATCH_SIZE,
     BATCH_VALIDATION_MAX_TOKENS_CAP,
@@ -25,13 +32,23 @@ from app.services.llm_prompts import (
     SINGLE_PAGE_MAX_TOKENS,
     pdf_batch_validation_user_prompt,
     pdf_single_page_validation_user_prompt,
+    resolve_openai_workers,
 )
-from app.services.extraction.pdf.confidence_validation.confidence_split import df_to_text
-from app.services.extraction.pdf.confidence_validation.stamp import _stamp_llm_metadata
-from app.services.extraction.pdf.utils.pymupdf import (
-    dedupe_candidates_by_bbox,
-    log,
-)
+
+# Cap in-flight LLM HTTP calls across all files in a batch (quality unchanged;
+# only limits parallel API fan-out when two extracts validate together).
+_llm_api_sem_lock = threading.Lock()
+_llm_api_sem: Optional[threading.BoundedSemaphore] = None
+
+
+def _llm_api_semaphore() -> threading.BoundedSemaphore:
+    global _llm_api_sem
+    with _llm_api_sem_lock:
+        if _llm_api_sem is None:
+            n = max(1, resolve_openai_workers())
+            _llm_api_sem = threading.BoundedSemaphore(n)
+        return _llm_api_sem
+
 
 
 def _prompt_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -103,13 +120,14 @@ def build_validation_prompt(page_num: int, candidates: List[Dict[str, Any]], tex
 
 def validate_page(client: openai.OpenAI, page_num: int, candidates: List[Dict[str, Any]], text: str) -> Dict[str, Any]:
     prompt = build_validation_prompt(page_num, candidates, text)
-    resp = client.chat.completions.create(
-        model=OPENAI_MODEL,
-        response_format={"type": "json_object"},
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=SINGLE_PAGE_MAX_TOKENS,
-        temperature=LLM_VALIDATION_TEMPERATURE,
-    )
+    with _llm_api_semaphore():
+        resp = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            response_format={"type": "json_object"},
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=SINGLE_PAGE_MAX_TOKENS,
+            temperature=LLM_VALIDATION_TEMPERATURE,
+        )
     text_out = resp.choices[0].message.content
     try:
         return json.loads(text_out)
@@ -189,15 +207,16 @@ def build_batch_validation_prompt(pages: List[int], pages_grouped: Dict[int, Lis
 def validate_batch(client: openai.OpenAI, pages: List[int], pages_grouped: Dict[int, List[Dict[str, Any]]],
                     page_text: Dict[int, str]) -> Dict[int, Dict[str, Any]]:
     prompt = build_batch_validation_prompt(pages, pages_grouped, page_text)
-    resp = client.chat.completions.create(
-        model=OPENAI_MODEL,
-        response_format={"type": "json_object"},
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=min(
-            BATCH_VALIDATION_MAX_TOKENS_CAP, MAX_TOKENS_PER_PAGE * len(pages)
-        ),
-        temperature=LLM_VALIDATION_TEMPERATURE,
-    )
+    with _llm_api_semaphore():
+        resp = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            response_format={"type": "json_object"},
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=min(
+                BATCH_VALIDATION_MAX_TOKENS_CAP, MAX_TOKENS_PER_PAGE * len(pages)
+            ),
+            temperature=LLM_VALIDATION_TEMPERATURE,
+        )
     text_out = resp.choices[0].message.content
     try:
         parsed = json.loads(text_out)

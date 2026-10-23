@@ -191,10 +191,25 @@ EXTRACT_CHUNK_PAGES = _env_int("PDF_EXTRACT_CHUNK_PAGES", 8)
 # ── LLM API (PDF validation + catalogue extractor) ───────────────────────────
 OPENAI_MODEL = "gpt-4o-mini"
 ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
-# I/O-bound OpenAI calls — concurrency is not CPU-bound. Default high enough
-# that ~100+ uncertain pages finish in a few waves rather than a long queue.
-OPENAI_WORKERS = _env_int("PDF_OPENAI_WORKERS", 12)
-BATCH_SIZE = _env_int("PDF_LLM_BATCH_SIZE", 6)
+
+
+def resolve_openai_workers() -> int:
+    """Concurrent LLM validation calls (I/O-bound).
+
+    Higher = fewer waves for uncertain pages. Quality unchanged (temperature 0).
+    Cross-file batches share one global semaphore at this size so two files
+    do not open 2× this many API calls at once.
+    """
+    raw = (os.environ.get("PDF_OPENAI_WORKERS") or "").strip()
+    if raw:
+        return max(1, _env_int("PDF_OPENAI_WORKERS", 12))
+    return 12
+
+
+# I/O-bound OpenAI calls — concurrency is not CPU-bound.
+OPENAI_WORKERS = resolve_openai_workers()
+# Larger batches → fewer LLM round-trips for remaining hard pages (same prompts).
+BATCH_SIZE = _env_int("PDF_LLM_BATCH_SIZE", 10)
 MAX_TOKENS_PER_PAGE = 4500
 SINGLE_PAGE_MAX_TOKENS = 7000
 RAW_TEXT_CHARS_PER_PAGE_BATCHED = 1200

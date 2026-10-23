@@ -23,6 +23,22 @@ from app.services.extraction.pdf.utils.pymupdf import (
     log,
 )
 
+# Soft structural reasons: ruled grids are still usable. Auto-accept with a
+# steward review flag instead of the expensive LLM validate step. Hard reasons
+# (gappy index, glued measures, sparse/empty grids, true misalignment) still
+# go to AI. Typical large CRS / vital-stats PDFs hit placeholder headers and
+# empty measure columns on most pages — that was flooding validate with 100+ units.
+_SOFT_LLM_REASON_MARKERS = (
+    "placeholder column header",
+    "many empty columns",
+)
+
+
+def _is_soft_llm_reason(reason: str) -> bool:
+    text = (reason or "").lower()
+    return any(marker in text for marker in _SOFT_LLM_REASON_MARKERS)
+
+
 def split_by_confidence(
     pages_grouped: Dict[int, List[Dict[str, Any]]],
     page_text: Optional[Dict[int, str]] = None,
@@ -59,11 +75,12 @@ def split_by_confidence(
             # classifying or sending to the LLM (avoids mix-and-match).
             candidates = dedupe_candidates_by_bbox(candidates)
             bucket, reason, _info = classify_page(candidates)
+            if doc is not None and page_num not in page_blocks_cache:
+                page_blocks_cache[page_num] = extract_page_text_blocks(doc, page_num)
+            page_blocks = page_blocks_cache.get(page_num)
+            outline_sections = outline_index.get(page_num, [])
+
             if bucket == "high":
-                if doc is not None and page_num not in page_blocks_cache:
-                    page_blocks_cache[page_num] = extract_page_text_blocks(doc, page_num)
-                page_blocks = page_blocks_cache.get(page_num)
-                outline_sections = outline_index.get(page_num, [])
                 tables = _ruled_tables_from_candidates(
                     candidates,
                     page_num=page_num,
@@ -80,7 +97,24 @@ def split_by_confidence(
                     if str(c.get("method") or "").startswith("pymupdf_lines")
                     or c.get("method") in ("excel_grid", "csv_grid")
                 ]
-                llm_pages[page_num] = ruled or candidates
+                llm_cands = ruled or candidates
+                # Soft fails: keep the ruled extract, skip AI, flag for review.
+                if _is_soft_llm_reason(reason) and llm_cands:
+                    tables = _ruled_tables_from_candidates(
+                        llm_cands,
+                        page_num=page_num,
+                        page_text=page_text.get(page_num, ""),
+                        page_blocks=page_blocks,
+                        outline_sections=outline_sections,
+                        force_review=True,
+                        review_reason="uncertain_extraction",
+                    )
+                    if tables:
+                        high_results[page_num] = {"tables": tables}
+                        soft_key = f"soft_accept:{reason.split('(')[0].strip()}"
+                        reason_counts[soft_key] = reason_counts.get(soft_key, 0) + 1
+                        continue
+                llm_pages[page_num] = llm_cands
                 reason_counts[reason] = reason_counts.get(reason, 0) + 1
             if progress_cb and (idx == total or idx % 10 == 0):
                 progress_cb(idx, total)

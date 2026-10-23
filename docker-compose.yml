@@ -1,6 +1,6 @@
-# Full stack: Postgres + FastAPI + Next.js (production build).
-#   docker compose up -d --build
-# Frontend image runs `npm run build` then `npm run start`.
+# Full stack: Postgres + FastAPI + Next.js dev server.
+#   docker compose up -d
+# Frontend runs `npm run dev` (hot reload). Source is bind-mounted.
 # Combined single-container prod image on host :80 (Cloudflare):
 #   docker compose --profile prod up -d --build app postgres
 services:
@@ -48,6 +48,9 @@ services:
       # Must win over backend/.env (which uses localhost for host-run backends).
       DATABASE_URL: postgresql://dhara:dhara_local_password@postgres:5432/dhara
       ENABLE_GCS: "false"
+      # PyMuPDF/glibc keep freed arenas. On this 8GB host that RSS never
+      # comes back, and the kernel OOM-kills the API.
+      MALLOC_ARENA_MAX: "2"
     env_file:
       - path: backend/.env
         required: false
@@ -67,6 +70,11 @@ services:
       start_period: 20s
     volumes:
       - ./backend:/backend
+    # No --reload. The reloader is the process that owns port 8000; when the
+    # kernel OOM-kills the worker, the reloader stays up and accepts TCP but
+    # never answers. Sign-in then hangs. Without --reload the server is PID 1,
+    # so that kill exits the container and `restart: unless-stopped` brings
+    # the API back. Code changes need a container restart.
     command:
       [
         "uvicorn",
@@ -75,7 +83,6 @@ services:
         "0.0.0.0",
         "--port",
         "8000",
-        "--reload",
       ]
 
   frontend:
@@ -92,9 +99,18 @@ services:
       - "80:3000"
     environment:
       BACKEND_ORIGIN: http://backend:8000
+      # Bind mounts often miss inotify events inside Docker.
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
     depends_on:
       backend:
         condition: service_healthy
+    # Dev: live source from the host. node_modules stays in a volume so the
+    # bind mount does not hide the image install. `npm run dev` is the CMD.
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    command: ["npm", "run", "dev"]
 
   app:
     profiles: ["prod"]
@@ -136,3 +152,4 @@ services:
 
 volumes:
   dhara_pg_data:
+  frontend_node_modules:

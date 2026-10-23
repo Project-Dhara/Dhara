@@ -114,8 +114,7 @@ Frontend:
 ```bash
 cd frontend
 npm ci
-npm run build
-npm run start   # proxies /api to :8000
+npm run dev   # proxies /api to :8000
 ```
 
 Provision a user if signup is disabled:

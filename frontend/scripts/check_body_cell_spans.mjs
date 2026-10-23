@@ -114,6 +114,33 @@ for (const r of [0, 3, 5, 6]) {
 }
 assert((freqSpans[1][13]?.colSpan || 1) === 1, 'Paddy label stays unmerged')
 assert(freqSpans[1][14] && !isNaN(Number(freqRows[1][14])), 'Paddy value stays in Freq column')
+assert((freqSpans[1][14]?.colSpan || 1) === 1, 'Paddy value must not swallow the empty % cell')
+
+// Mid-year Total and Adjusted are sibling measures. A blank Adjusted cell
+// must stay blank; the total must not colspan into it.
+const midYearCols = [
+  { name: 'Sl. No.', header_path: ['Sl. No.'] },
+  { name: 'LOCAL BODY', header_path: ['LOCAL BODY'] },
+  { name: 'Population -2011', header_path: ['Population -2011'] },
+  { name: 'No. of Registration Unit', header_path: ['No. of Registration Unit'] },
+  { name: 'No. of monthly Returns Due', header_path: ['No. of monthly Returns Due'] },
+  { name: 'Total', header_path: ['Estimated Mid Year Population (2013)', 'Total'] },
+  {
+    name: 'Adjusted for Incomplete Receipts or Returns',
+    header_path: ['Estimated Mid Year Population (2013)', 'Adjusted for Incomplete Receipts or Returns'],
+  },
+]
+const midYearRows = [
+  ['1', '2', '3', '4', '5', '7', '8'],
+  ['1', 'MCD(U)', '16000745', '10', '120', null, null],
+  ['5', 'MCD (R)', '419042', '2', '24', null, null],
+  [null, 'TOTAL', '16787941', '14', '168', '17558535', null],
+]
+const midSpans = buildBodyCellSpans(midYearRows, midYearCols)
+const totalRow = midYearRows.length - 1
+assert((midSpans[totalRow][5]?.colSpan || 1) === 1, 'mid-year total must not merge into Adjusted')
+assert(midSpans[totalRow][6] && (midSpans[totalRow][6].colSpan || 1) === 1, 'Adjusted cell stays present')
+assert(midYearRows[totalRow][5] === '17558535', 'value stays in the Total column')
 
 // Preview must not invent a parent row from ``Leaf (note)`` — match view/edit.
 const unitCol = { name: 'Area (in Ha)', header_path: ['Area (in Ha)'] }

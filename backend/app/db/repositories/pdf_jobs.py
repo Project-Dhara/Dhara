@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy import delete, func, or_, select, text, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from app.db.models.pdf import (
     PdfJob,
@@ -155,7 +155,7 @@ def get_for_user(
     user_email: str,
     organisation_id: uuid.UUID | None = None,
 ) -> PdfJob | None:
-    stmt = select(PdfJob).where(
+    stmt = select(PdfJob).options(defer(PdfJob.pdf_bytes)).where(
         PdfJob.job_id == job_id,
         PdfJob.user_email == user_email,
     )
@@ -175,7 +175,7 @@ def list_for_user(
     user_email: str,
     organisation_id: uuid.UUID | None = None,
 ) -> list[PdfJob]:
-    stmt = select(PdfJob).where(PdfJob.user_email == user_email)
+    stmt = select(PdfJob).options(defer(PdfJob.pdf_bytes)).where(PdfJob.user_email == user_email)
     if organisation_id is not None:
         stmt = stmt.where(
             or_(
@@ -195,7 +195,11 @@ def upsert_job(
     filename: Optional[str],
     status: str = "done",
 ) -> None:
-    existing = session.get(PdfJob, job_id)
+    existing = session.scalar(
+        select(PdfJob)
+        .options(defer(PdfJob.pdf_bytes))
+        .where(PdfJob.job_id == job_id)
+    )
     if existing is None:
         session.add(
             PdfJob(
@@ -233,7 +237,13 @@ def save_working_job(
     org_raw = job.get("organisation_id")
     org_id = uuid.UUID(str(org_raw)) if org_raw else None
 
-    existing = session.get(PdfJob, job_id)
+    # Defer the PDF blob. Progress saves must not pull every stored file
+    # into the API process; assigning pdf_bytes below still issues the UPDATE.
+    existing = session.scalar(
+        select(PdfJob)
+        .options(defer(PdfJob.pdf_bytes))
+        .where(PdfJob.job_id == job_id)
+    )
     if existing is None:
         existing = PdfJob(job_id=job_id, user_email=job.get("user_email") or "")
         session.add(existing)
@@ -261,13 +271,18 @@ def save_working_job(
 
 
 def load_working_job(session: Session, job_id: str) -> Optional[dict]:
-    job = session.get(PdfJob, job_id)
+    job = session.scalar(
+        select(PdfJob)
+        .options(defer(PdfJob.pdf_bytes))
+        .where(PdfJob.job_id == job_id)
+    )
     return _row_to_working_job(job) if job else None
 
 
 def list_working_jobs(session: Session, user_email: str) -> list[dict]:
     stmt = (
         select(PdfJob)
+        .options(defer(PdfJob.pdf_bytes))
         .where(PdfJob.user_email == user_email)
         .order_by(
             func.coalesce(
@@ -280,10 +295,10 @@ def list_working_jobs(session: Session, user_email: str) -> list[dict]:
 
 
 def get_pdf_bytes(session: Session, job_id: str) -> Optional[bytes]:
-    job = session.get(PdfJob, job_id)
-    if not job or job.pdf_bytes is None:
+    value = session.scalar(select(PdfJob.pdf_bytes).where(PdfJob.job_id == job_id))
+    if value is None:
         return None
-    return bytes(job.pdf_bytes)
+    return bytes(value)
 
 
 def get_table_snapshot(
@@ -348,10 +363,12 @@ def set_pipeline_step(session: Session, job_id: str, step: int) -> None:
 
 
 def get_pipeline_step(session: Session, job_id: str) -> Optional[int]:
-    job = session.get(PdfJob, job_id)
-    if not job or job.pipeline_step is None:
+    value = session.scalar(
+        select(PdfJob.pipeline_step).where(PdfJob.job_id == job_id)
+    )
+    if value is None:
         return None
-    return int(job.pipeline_step)
+    return int(value)
 
 
 def persist_approved_tables(
@@ -450,7 +467,11 @@ def list_active_tables(session: Session, job_id: str) -> list[dict]:
 
 
 def get_job(session: Session, job_id: str) -> Optional[dict]:
-    job = session.get(PdfJob, job_id)
+    job = session.scalar(
+        select(PdfJob)
+        .options(defer(PdfJob.pdf_bytes))
+        .where(PdfJob.job_id == job_id)
+    )
     if not job:
         return None
     return {

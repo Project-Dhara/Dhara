@@ -42,6 +42,86 @@ _PRIORITY_FILL_FIELDS = (
 
 _EMPTY_PLACEHOLDERS = frozenset({"-", "—", "–", "n/a", "na", "none", "null"})
 
+# Bare level names that show up as a column header or a repeated label, not a place.
+_GEO_LEVEL_LABELS = frozenset({
+    "region", "geography", "geo", "area", "location", "place",
+    "district", "state", "zone", "ward", "block", "circle",
+    "division", "country", "city", "town", "village", "taluka",
+    "mandal", "panchayat", "county", "department",
+    "total", "grand total", "all", "overall",
+})
+_GEO_TITLE_WORDS = {"urban": "Urban", "rural": "Rural"}
+_GEO_SPLIT_RE = re.compile(r"[\n;|/]+|,")
+
+
+def _prefer_geo_spelling(spellings: list[str]) -> str:
+    """Keep one spelling: title-case Urban/Rural, keep short acronyms, else mixed case."""
+    def rank(text: str) -> tuple:
+        folded = text.casefold()
+        if folded in _GEO_TITLE_WORDS:
+            titled = text == _GEO_TITLE_WORDS[folded]
+            return (2 if titled else 1, -len(text))
+        letters = [c for c in text if c.isalpha()]
+        all_caps = bool(letters) and all(c.isupper() for c in letters)
+        if all_caps and " " not in text and len(text) <= 5:
+            return (4, -len(text))
+        if any(c.islower() for c in letters) and any(c.isupper() for c in letters):
+            return (3, -len(text))
+        return (0, -len(text))
+
+    best = max(spellings, key=rank)
+    folded = best.casefold()
+    if folded in _GEO_TITLE_WORDS:
+        return _GEO_TITLE_WORDS[folded]
+    return best
+
+
+def normalize_catalogue_geography(value: Any) -> Optional[str]:
+    """Turn a dumped geography autofill into one coverage list.
+
+    Cell dumps repeat case variants (URBAN / Urban), the column header
+    (Region), and the same comma-separated places in different orders.
+    Split those lists, drop labels that are not places, and keep each
+    remaining name once.
+    """
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        value = value.get("value") or value.get("name") or ""
+    if isinstance(value, (list, tuple)):
+        chunks = []
+        for item in value:
+            if isinstance(item, dict):
+                chunks.append(str(item.get("value") or item.get("name") or ""))
+            elif item is not None:
+                chunks.append(str(item))
+        text = ", ".join(part.strip() for part in chunks if str(part).strip())
+    else:
+        text = str(value).strip()
+    if not text or text.casefold() in _EMPTY_PLACEHOLDERS:
+        return None
+
+    spellings: dict[str, list[str]] = {}
+    order: list[str] = []
+    for part in _GEO_SPLIT_RE.split(text):
+        token = re.sub(r"\s+", " ", part).strip(" \t\"'`")
+        if not token or token.casefold() in _EMPTY_PLACEHOLDERS:
+            continue
+        if token.casefold() in _GEO_LEVEL_LABELS:
+            continue
+        if re.fullmatch(r"[-+]?\d+(?:[.,]\d+)?", token):
+            continue
+        key = token.casefold()
+        if key not in spellings:
+            spellings[key] = []
+            order.append(key)
+        if token not in spellings[key]:
+            spellings[key].append(token)
+
+    if not order:
+        return None
+    return ", ".join(_prefer_geo_spelling(spellings[key]) for key in order)
+
 
 def _is_blank(value: Any) -> bool:
     text = str(value or "").strip()
@@ -255,9 +335,12 @@ def _stringify_metadata_values(metadata: dict) -> dict:
     """Normalize every field to a plain string for text inputs/textareas.
 
     ``key_statistics`` is specially formatted as readable bullets when the LLM
-    returns structured JSON instead of prose.
+    returns structured JSON instead of prose. ``geography`` is collapsed to
+    distinct place and area-type names so cell dumps do not land in the field.
     """
-    return _stringify_field_values(metadata, METADATA_FIELDS)
+    out = _stringify_field_values(metadata, METADATA_FIELDS)
+    out["geography"] = normalize_catalogue_geography(metadata.get("geography"))
+    return out
 
 
 def _stringify_sdg_metadata_values(metadata: dict) -> dict:
@@ -566,6 +649,9 @@ def _fill_empty_group_metadata(
                 )
                 llm_meta = _stringify_metadata_values(parse_llm_metadata_output(llm_output))
                 meta = _merge_metadata_into_empty(prior, llm_meta)
+                # Prior autofill may already have stored the raw cell dump.
+                # Collapse it even when the field is no longer blank.
+                meta["geography"] = normalize_catalogue_geography(meta.get("geography"))
                 meta = _apply_catalogue_fallbacks(
                     meta, group=g, facts=facts, kyds=kyds_responses,
                 )

@@ -102,8 +102,32 @@ def _pdf_job_public(job: Dict[str, Any]) -> Dict[str, Any]:
     meta = batch_meta_from_result(job.get("result"))
     batch_files = job.get("batch_files") or meta.get("batch_files")
     if batch_files:
-        public["batch_files"] = batch_files
+        enriched = []
+        lead_running = None
+        for f in batch_files:
+            entry = dict(f)
+            if entry.get("status") == "running":
+                child = _pdf_jobs.get(entry.get("file_job_id") or "")
+                if child is None and entry.get("file_job_id"):
+                    child = _get_pdf_job(entry["file_job_id"])
+                if child:
+                    entry["stage"] = child.get("stage")
+                    entry["percent"] = child.get("percent")
+                    entry["message"] = child.get("message")
+                    if lead_running is None:
+                        lead_running = entry
+            enriched.append(entry)
+        public["batch_files"] = enriched
         public["is_batch"] = True
+        # Drive the processing stepper from an active child so batch UI
+        # reflects real pipeline stages (not a stuck parent "extract").
+        if public.get("status") == "running" and lead_running:
+            if lead_running.get("stage"):
+                public["stage"] = lead_running["stage"]
+            if lead_running.get("percent") is not None:
+                public["percent"] = lead_running["percent"]
+            if lead_running.get("message"):
+                public["message"] = lead_running["message"]
     status = job.get("status")
     if status in ("done", "completed_with_errors") and job.get("result") is not None:
         tables = _pdf_tables_from_job(job)

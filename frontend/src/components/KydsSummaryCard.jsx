@@ -5,7 +5,12 @@ import KydsModal from './KydsModal'
 import Button from './ui/Button'
 import { withAuthHeaders } from '../lib/auth'
 import { notifyKydsChanged, onKydsChanged } from '../lib/kydsEvents'
-import { isKydsFilled } from '../lib/kydsFilled'
+import {
+  isKydsFilled,
+  markKydsSavedThisSession,
+  resetMineKyds,
+  wasKydsSavedThisSession,
+} from '../lib/kydsFilled'
 
 // Shows the caller's own KYDS entry (if any). Create uses POST /api/kyds;
 // edit uses PATCH /api/kyds/{id} so the same row is updated.
@@ -24,21 +29,28 @@ export default function KydsSummaryCard({ variant = 'card' }) {
 
   useEffect(() => {
     let cancelled = false
-    const load = () => {
-      fetch('/api/kyds/mine', withAuthHeaders())
-        .then((r) => (r.ok ? r.json() : { entry: null }))
-        .then((data) => {
-          if (!cancelled) setKydsEntry(data.entry || null)
-        })
-        .catch(() => {
+    const load = async () => {
+      try {
+        const res = await fetch('/api/kyds/mine', withAuthHeaders())
+        const data = res.ok ? await res.json() : { entry: null }
+        const entry = data.entry || null
+        // A prior upload's KYDS must not appear (or seed metadata) until this
+        // browser session actually saves KYDS again.
+        if (!wasKydsSavedThisSession() && isKydsFilled(entry?.responses)) {
+          await resetMineKyds()
           if (!cancelled) setKydsEntry(null)
-        })
-        .finally(() => {
-          if (!cancelled) setKydsLoading(false)
-        })
+        } else if (!cancelled) {
+          // Keep a blank row (id only) so Fill can PATCH; hide stale filled rows.
+          setKydsEntry(wasKydsSavedThisSession() || !isKydsFilled(entry?.responses) ? entry : null)
+        }
+      } catch {
+        if (!cancelled) setKydsEntry(null)
+      } finally {
+        if (!cancelled) setKydsLoading(false)
+      }
     }
     load()
-    const off = onKydsChanged(load)
+    const off = onKydsChanged(() => { void load() })
     return () => {
       cancelled = true
       off()
@@ -60,6 +72,7 @@ export default function KydsSummaryCard({ variant = 'card' }) {
     }
     const data = await res.json()
     const id = editingExisting ? kydsEntry.id : data.id
+    markKydsSavedThisSession()
     setKydsEntry({ id, responses: form, ...(data.entry || {}) })
     setEditingKyds(false)
     setCreatingKyds(false)

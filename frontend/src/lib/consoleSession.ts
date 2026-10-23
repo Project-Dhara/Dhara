@@ -1,3 +1,5 @@
+import { resetMineKyds } from './kydsFilled'
+
 const CONSOLE_RETURN_PATH_KEY = 'dhara_console_return_path'
 const APPEND_FILES_KEY = 'dhara_console_append_files_v1'
 
@@ -83,6 +85,8 @@ export function clearConsoleSession() {
 /** Leave a PDF (or finished) job and open a fresh Files screen. */
 export function goToConsoleFiles(router: { push: (href: string) => void }) {
   clearConsoleSession()
+  // Drop any prior upload's KYDS so Preview/Files don't show a stale dataset name.
+  void resetMineKyds()
   rememberConsoleReturnPath('/console')
   router.push('/console')
 }

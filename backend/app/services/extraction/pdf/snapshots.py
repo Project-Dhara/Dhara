@@ -3,12 +3,16 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 _SNAPSHOT_DPI = 144
 _SNAPSHOT_PAD = 8.0
+# Review can request many crops at once. Each render opens the source PDF
+# in this same API process, so keep only a couple in flight.
+_RENDER_SLOTS = threading.Semaphore(2)
 # Batch review table ids look like ``__f0__12-0`` (file index + local page-index id).
 _BATCH_TABLE_NS = re.compile(r"^__f(\d+)__(.+)$")
 
@@ -240,9 +244,10 @@ def get_or_create_table_snapshot(
         )
 
     try:
-        png = render_table_snapshot_png(
-            pdf_bytes, page_num=page_num, bbox=bbox
-        )
+        with _RENDER_SLOTS:
+            png = render_table_snapshot_png(
+                pdf_bytes, page_num=page_num, bbox=bbox
+            )
     except Exception as e:
         return None, f"Could not render snapshot: {e}"
 

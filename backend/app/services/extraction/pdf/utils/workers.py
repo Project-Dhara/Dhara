@@ -70,7 +70,11 @@ def _candidates_from_pymupdf_table(
         extract_pymupdf_table_rows,
         prefer_cell_extracted_rows,
     )
-    from app.services.extraction.pdf.confidence_validation.table_confidence import looks_like_chart_candidate
+    from app.services.extraction.pdf.confidence_validation.table_confidence import (
+        looks_like_bullet_list_candidate,
+        looks_like_chart_candidate,
+        looks_like_toc_or_index_candidate,
+    )
 
     # tab.extract() first. Per-cell get_textbox is only used when extract()
     # already looks vertically glued — otherwise it dominates extract time.
@@ -95,6 +99,14 @@ def _candidates_from_pymupdf_table(
         )
         if is_chart:
             print(f"[pymupdf:{method}] page {page_num} skipped chart-like region: {reason}")
+            continue
+        is_bullets, bullet_reason = looks_like_bullet_list_candidate(df)
+        if is_bullets:
+            print(f"[pymupdf:{method}] page {page_num} skipped bullet/prose list: {bullet_reason}")
+            continue
+        is_toc, toc_reason = looks_like_toc_or_index_candidate(df, page_text=page_text)
+        if is_toc:
+            print(f"[pymupdf:{method}] page {page_num} skipped contents/index: {toc_reason}")
             continue
         cand: Dict[str, Any] = {
             "page": page_num,

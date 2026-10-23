@@ -29,7 +29,14 @@ type BatchFile = {
   source_type: string
   status: string
   error?: string | null
+  stage?: string
+  percent?: number
+  message?: string
 }
+
+const STAGE_LABEL: Record<string, string> = Object.fromEntries(
+  STAGES.map((s) => [s.key, s.label]),
+)
 
 type Job = {
   status: string
@@ -123,20 +130,36 @@ export default function PdfProcessingPage() {
         <ProcessingStepper steps={buildSteps(job, sawValidateRef.current)} />
         {job?.is_batch && job.batch_files?.length ? (
           <ul className="flex flex-col gap-2 rounded-lg border border-line bg-white p-4 text-[13px]">
-            {job.batch_files.map((f) => (
-              <li key={f.file_job_id} className="flex flex-wrap items-center justify-between gap-2">
-                <span className="min-w-0 truncate font-medium text-ink">{f.filename}</span>
-                <span className={`text-[12px] font-semibold uppercase tracking-wide ${
-                  f.status === 'done'
-                    ? 'text-green'
-                    : f.status === 'error'
-                      ? 'text-coral'
-                      : 'text-ink-soft'
-                }`}>
-                  {f.status === 'running' ? 'Processing…' : f.status}
-                </span>
-              </li>
-            ))}
+            {job.batch_files.map((f) => {
+              const stageHint = f.status === 'running' && f.stage
+                ? (STAGE_LABEL[f.stage] || f.message || f.stage)
+                : null
+              const pct = typeof f.percent === 'number' ? Math.max(0, Math.min(100, f.percent)) : null
+              return (
+                <li key={f.file_job_id} className="flex flex-col gap-1">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="min-w-0 truncate font-medium text-ink">{f.filename}</span>
+                    <span className={`text-[12px] font-semibold uppercase tracking-wide ${
+                      f.status === 'done'
+                        ? 'text-green'
+                        : f.status === 'error'
+                          ? 'text-coral'
+                          : 'text-ink-soft'
+                    }`}>
+                      {f.status === 'running'
+                        ? (pct != null ? `${pct}%` : 'Processing…')
+                        : f.status}
+                    </span>
+                  </div>
+                  {stageHint ? (
+                    <div className="truncate text-[11.5px] text-ink-soft">{stageHint}</div>
+                  ) : null}
+                  {f.status === 'error' && f.error ? (
+                    <div className="text-[11.5px] text-coral">{f.error}</div>
+                  ) : null}
+                </li>
+              )
+            })}
           </ul>
         ) : null}
       </div>

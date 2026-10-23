@@ -423,8 +423,23 @@ def repair_glued_numeric_cells(rows: List[List[Any]]) -> List[List[Any]]:
     return out
 
 def _glued_numeric_parts(cell: Any) -> Optional[List[str]]:
-    s = _cell_str(cell)
-    if not s or " " not in s:
+    """Space-joined numbers in one line that belong in neighbouring columns.
+
+    A cell of ``167\\n268\\n306`` is a vertical stack (one value per data row).
+    ``_cell_str`` flattens those newlines, so it must not be treated as
+    horizontal glue — that sent the grid to per-cell textboxes and collapsed
+    Rural/Urban/Total headers.
+    """
+    if cell is None:
+        return None
+    raw = str(cell).replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not raw or raw.lower() in {"nan", "none", "<na>"}:
+        return None
+    lines = [ln.strip() for ln in raw.split("\n") if ln.strip()]
+    if len(lines) != 1:
+        return None
+    s = lines[0]
+    if " " not in s:
         return None
     parts = s.split()
     if len(parts) < 2:

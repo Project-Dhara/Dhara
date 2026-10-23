@@ -58,11 +58,17 @@ export function withAuthHeaders(init: RequestInit = {}): RequestInit {
 
 // POST /api/login. Throws with a human-readable message on failure.
 export async function login(email: string, password: string) {
-  const res = await fetch('/api/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  })
+  let res: Response
+  try {
+    res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+      signal: AbortSignal.timeout(20_000),
+    })
+  } catch {
+    throw new Error('The server is not responding. Wait a moment and try again.')
+  }
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
     throw new Error(data.detail || 'Sign in failed')

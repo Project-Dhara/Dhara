@@ -256,6 +256,346 @@ def looks_like_chart_candidate(
         )
     return False, ""
 
+
+# Bullet / arrow glyphs and list markers that pymupdf parks in their own column
+# when Highlights / Key findings pages are misread as 2-column tables.
+_BULLET_GLYPH_RE = re.compile(
+    r"^["
+    r"\u25b6\u25b7\u25b8\u25ba\u25cf\u25cb\u2022\u00b7\u25aa\u25a0"
+    r"\u25b2\u25bc\u25c6\u25c7\u25ba\u25c0\u2192\u2794\u279c\uf0b7"
+    r"\*·•►▶→\-–—]"
+    r"{1,3}$"
+)
+
+
+def _looks_like_prose_sentence(text: str) -> bool:
+    """Long narrative cell (Highlights bullets), not a short stub/label."""
+    s = (text or "").strip()
+    if len(s) < 60:
+        return False
+    words = s.split()
+    if len(words) < 9:
+        return False
+    # Prefer sentence-like text over wrapped header labels.
+    letters = sum(1 for ch in s if ch.isalpha())
+    if letters < 40:
+        return False
+    return True
+
+
+def looks_like_bullet_list_candidate(df: pd.DataFrame) -> Tuple[bool, str]:
+    """Detect Highlights / key-findings bullet pages misread as tables.
+
+    Typical false positive: 1–2 columns where each row is a long sentence
+    (optionally with a bullet/arrow glyph in a narrow first column). Real
+    statistical tables usually have a substantial share of numeric measure
+    cells, so those are left alone.
+    """
+    if df is None or getattr(df, "empty", True):
+        return False, ""
+    try:
+        cleaned = clean_dataframe_light(df)
+    except Exception:
+        cleaned = df
+    if cleaned is None or getattr(cleaned, "empty", True):
+        return False, ""
+
+    n_rows, n_cols = int(cleaned.shape[0]), int(cleaned.shape[1])
+    if n_rows < 3 or n_cols > 3:
+        return False, ""
+
+    prose_rows = 0
+    bulletish_rows = 0
+    nonempty_cells = 0
+    numeric_cells = 0
+
+    for i in range(n_rows):
+        cells = [_cell_str(v) for v in cleaned.iloc[i].tolist()]
+        nonempty = [c for c in cells if c]
+        if not nonempty:
+            continue
+        for c in nonempty:
+            nonempty_cells += 1
+            if _is_numeric_cell(c):
+                numeric_cells += 1
+
+        longest = max(nonempty, key=len)
+        if not _looks_like_prose_sentence(longest):
+            continue
+        prose_rows += 1
+
+        if n_cols == 1:
+            bulletish_rows += 1
+            continue
+        # Glyph / empty stub in one cell, long sentence in another.
+        others = [c for c in nonempty if c is not longest]
+        if not others:
+            bulletish_rows += 1
+            continue
+        stub = min(others, key=len)
+        if (
+            len(stub) <= 2
+            or _BULLET_GLYPH_RE.match(stub)
+            or stub.lower() in {"o", "•", "·"}
+        ):
+            bulletish_rows += 1
+
+    if prose_rows < max(3, int(n_rows * 0.55)):
+        return False, ""
+
+    numeric_frac = numeric_cells / max(1, nonempty_cells)
+    # Cause-of-death / indicator tables often have long labels + numbers.
+    if numeric_frac >= 0.22:
+        return False, ""
+
+    if bulletish_rows >= max(2, int(prose_rows * 0.5)) or (
+        n_cols <= 2 and prose_rows >= max(4, int(n_rows * 0.65))
+    ):
+        return True, (
+            f"bullet/prose list ({prose_rows}/{n_rows} long sentences, "
+            f"numeric_frac={numeric_frac:.2f})"
+        )
+    return False, ""
+
+
+# Whole-line headings only. "Price Index" / "SDG Index" must not match.
+_TOC_HEADING_LINE_RE = re.compile(
+    r"^\s*(?:table\s+of\s+contents|list\s+of\s+(?:tables|figures|charts|annexures)|contents)\s*$",
+    re.I,
+)
+_TOC_INDEX_LINE_RE = re.compile(
+    r"^\s*index(?:\s+of\s+(?:tables|figures|contents))?\s*$",
+    re.I,
+)
+_TOC_PHRASE_RE = re.compile(
+    r"\b(?:table\s+of\s+contents|list\s+of\s+(?:tables|figures|charts))\b",
+    re.I,
+)
+_TOC_COL_NAME_RE = re.compile(
+    r"^(?:contents?|table\s+of\s+contents|list\s+of\s+tables|chapters?)$",
+    re.I,
+)
+_PAGE_COL_NAME_RE = re.compile(
+    r"^(?:pages?|page\s*no\.?|page\s*number|p\.?\s*no\.?|pg\.?|pp\.?)$",
+    re.I,
+)
+_PAGE_LOCATOR_RE = re.compile(
+    r"^(?:p\.?\s*)?(?:\d{1,3}|[ivxlcdm]{1,8})(?:\s*[-–—]\s*(?:\d{1,3}|[ivxlcdm]{1,8}))?$",
+    re.I,
+)
+_ROMAN_PAGE_RE = re.compile(r"^[ivxlcdm]{1,8}$", re.I)
+_DOTTED_LEADER_RE = re.compile(
+    r"\.{2,}\s*(?:\d{1,3}|[ivxlcdm]{1,8})\s*$",
+    re.I,
+)
+_STAT_MEASURE_RE = re.compile(
+    r"^-?\d+\.\d+%?$|^\d{1,3}%$|^\d{4,}$",
+)
+
+
+def _toc_heading_line(text: str) -> bool:
+    """True for a contents/index title line, not a sentence that mentions one."""
+    s = re.sub(r"\s+", " ", (text or "")).strip().rstrip(".")
+    if not s or len(s) > 48:
+        return False
+    if _TOC_HEADING_LINE_RE.match(s) or _TOC_INDEX_LINE_RE.match(s):
+        return True
+    return len(s.split()) <= 4 and bool(_TOC_PHRASE_RE.search(s))
+
+
+def _is_page_locator_token(text: str) -> bool:
+    s = re.sub(r"\s+", " ", (text or "")).strip().rstrip(".")
+    if not s or len(s) > 16:
+        return False
+    return bool(_PAGE_LOCATOR_RE.match(s))
+
+
+def _page_locator_int(text: str) -> Optional[int]:
+    s = re.sub(r"\s+", " ", (text or "")).strip()
+    m = re.match(r"^(?:p\.?\s*)?(\d{1,3})\b", s, flags=re.I)
+    if not m:
+        return None
+    return int(m.group(1))
+
+
+def _is_stat_measure_token(text: str) -> bool:
+    """Decimals, percents, or 4+ digit counts — not a page number."""
+    s = (text or "").strip().replace(",", "").replace(" ", "")
+    if not s:
+        return False
+    return bool(_STAT_MEASURE_RE.match(s))
+
+
+def _is_consecutive_serial(nums: List[int]) -> bool:
+    if len(nums) < 3:
+        return False
+    diffs = [b - a for a, b in zip(nums, nums[1:])]
+    return sum(1 for d in diffs if d == 1) >= max(2, int(len(diffs) * 0.7))
+
+
+def _is_irregular_page_run(nums: List[int]) -> bool:
+    """TOC page numbers jump (1, 15, 22). Constant steps (10, 20, 30) do not."""
+    if len(nums) < 3:
+        return False
+    if _is_consecutive_serial(nums):
+        return False
+    diffs = [b - a for a, b in zip(nums, nums[1:])]
+    if len(set(diffs)) <= 1:
+        return False
+    return True
+
+
+def _mostly_nondecreasing(nums: List[int]) -> bool:
+    """Contents lists move forward. Scores and counts bounce backward."""
+    if len(nums) < 3:
+        return False
+    diffs = [b - a for a, b in zip(nums, nums[1:])]
+    # A repeated page (diff 0) is fine. A real step backward is not a contents list.
+    return all(d >= 0 for d in diffs)
+
+
+def _looks_like_section_title(text: str) -> bool:
+    s = (text or "").strip()
+    if not s or _is_page_locator_token(s) or _is_stat_measure_token(s):
+        return False
+    if _toc_heading_line(s) or _PAGE_COL_NAME_RE.match(s):
+        return False
+    words = s.split()
+    letters = sum(1 for ch in s if ch.isalpha())
+    if len(words) >= 2 and letters >= 8:
+        return True
+    # Single long label ("Introduction"), not a short stub ("North", "Male").
+    return len(words) == 1 and letters >= 10 and not any(ch.isdigit() for ch in s)
+
+
+def _page_text_has_toc_heading(page_text: str) -> bool:
+    if not page_text:
+        return False
+    lines = [ln.strip() for ln in str(page_text).splitlines() if ln.strip()][:15]
+    return any(_toc_heading_line(ln) for ln in lines)
+
+
+def looks_like_toc_or_index_candidate(
+    df: pd.DataFrame,
+    page_text: str = "",
+) -> Tuple[bool, str]:
+    """Detect contents / list-of-tables / index pages misread as data tables.
+
+    Drops locator grids (section title + page number, optional serial) and
+    dotted-leader lists. Statistical tables stay: any decimal, percent, or
+    large-count column, or three-plus numeric columns (sex-by-district, price
+    index, small count crosstabs).
+    """
+    if df is None or getattr(df, "empty", True):
+        return False, ""
+    try:
+        cleaned = clean_dataframe_light(df)
+    except Exception:
+        cleaned = df
+    if cleaned is None or getattr(cleaned, "empty", True):
+        return False, ""
+
+    n_rows, n_cols = int(cleaned.shape[0]), int(cleaned.shape[1])
+    if n_rows < 4 or n_cols < 1 or n_cols > 5:
+        return False, ""
+
+    col_names = [_cell_str(c) for c in cleaned.columns]
+    # Bare "Index" is a measure name (price / SDG index). Only "Index of tables"
+    # counts as a contents column.
+    named_toc = any(
+        (
+            _toc_heading_line(name)
+            and not _TOC_INDEX_LINE_RE.match(name)
+        )
+        or bool(_TOC_COL_NAME_RE.match(name))
+        or bool(re.match(r"^\s*index\s+of\s+(?:tables|figures|contents)\s*$", name, re.I))
+        for name in col_names
+    )
+    named_page = any(bool(_PAGE_COL_NAME_RE.match(name)) for name in col_names)
+
+    headerish_rows = 0
+    for i in range(min(2, n_rows)):
+        head_cells = [_cell_str(v) for v in cleaned.iloc[i].tolist()]
+        if any(
+            _toc_heading_line(c) or bool(_PAGE_COL_NAME_RE.match(c)) or bool(_TOC_COL_NAME_RE.match(c))
+            for c in head_cells
+            if c
+        ):
+            headerish_rows += 1
+    heading = (
+        named_toc
+        or named_page
+        or headerish_rows > 0
+        or _page_text_has_toc_heading(page_text)
+    )
+
+    measure_cols = 0
+    numeric_cols = 0
+    section_cols = 0
+    locator_cols = 0
+
+    for col_i in range(n_cols):
+        cells = [_cell_str(v) for v in cleaned.iloc[:, col_i].tolist()]
+        nonempty = [c for c in cells if c]
+        if len(nonempty) < 3:
+            continue
+        name = col_names[col_i] if col_i < len(col_names) else ""
+        n = len(nonempty)
+        if sum(1 for c in nonempty if _is_stat_measure_token(c)) / n >= 0.22:
+            measure_cols += 1
+        if sum(1 for c in nonempty if _is_numeric_cell(c)) / n >= 0.55:
+            numeric_cols += 1
+        if sum(1 for c in nonempty if _looks_like_section_title(c)) / n >= 0.55:
+            section_cols += 1
+
+        locator_hits = [c for c in nonempty if _is_page_locator_token(c)]
+        locator_frac = len(locator_hits) / n
+        if locator_frac < 0.65:
+            continue
+        ints = [v for v in (_page_locator_int(c) for c in locator_hits) if v is not None]
+        roman_frac = sum(1 for c in locator_hits if _ROMAN_PAGE_RE.match(c)) / max(1, len(locator_hits))
+        named_this_page = bool(_PAGE_COL_NAME_RE.match(name))
+        # Unlabelled small integers that bounce (district counts) are not pages.
+        # A forward jump (1, 15, 22) is a contents list. An explicit Page/Contents
+        # heading also accepts an alphabetical index whose pages jump backward.
+        forward_pages = _is_irregular_page_run(ints) and _mostly_nondecreasing(ints)
+        if named_this_page or roman_frac >= 0.5 or forward_pages or (
+            heading and not _is_consecutive_serial(ints)
+        ):
+            locator_cols += 1
+
+    if measure_cols >= 1 or numeric_cols >= 3:
+        return False, ""
+
+    dotted_rows = 0
+    for i in range(n_rows):
+        cells = [_cell_str(v) for v in cleaned.iloc[i].tolist()]
+        nonempty = [c for c in cells if c]
+        if not nonempty:
+            continue
+        blob = " ".join(nonempty)
+        if _DOTTED_LEADER_RE.search(blob):
+            dotted_rows += 1
+
+    if dotted_rows >= max(3, int(n_rows * 0.45)):
+        return True, (
+            f"contents/index dotted leaders ({dotted_rows}/{n_rows} rows)"
+        )
+
+    if locator_cols >= 1 and section_cols >= 1:
+        return True, (
+            f"contents/index grid ({section_cols} title col, {locator_cols} page col)"
+        )
+
+    if heading and locator_cols >= 1:
+        return True, "contents/index heading with page-number column"
+
+    if (named_toc or headerish_rows > 0) and section_cols >= 1 and numeric_cols <= 2:
+        return True, "contents/index heading with section titles"
+
+    return False, ""
+
+
 def _cell_str(v: Any) -> str:
     if v is None:
         return ""
@@ -980,7 +1320,9 @@ __all__ = [
     "extract_page_text_blocks",
     "infer_title_from_page_text",
     "infer_title_meta_from_page_text",
+    "looks_like_bullet_list_candidate",
     "looks_like_chart_candidate",
+    "looks_like_toc_or_index_candidate",
     "profile_table",
     "strip_caption_label_prefix",
     "table_dict_from_df",
