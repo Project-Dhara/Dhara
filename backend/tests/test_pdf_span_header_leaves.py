@@ -44,6 +44,43 @@ def _order_leaf_raw():
     ]
 
 
+def test_wrapped_group_title_keeps_births_deaths_leaves():
+    """A wrapped banner is the parent; Births/Deaths on the next row are the leaves.
+
+    The last line of the wrap has one word per spanned column, which used to be
+    read as the leaf labels and dropped the real Births/Deaths row.
+    """
+    df = dataframe_from_extracted_rows([
+        [
+            "Year",
+            "Registered Under Civil\nRegistration System",
+            None,
+            "Estimated under Sample\nRegistration Scheme",
+            None,
+            "Level of Registration",
+            None,
+        ],
+        [None, "Births", "Deaths", "Births", "Deaths", "Births", "Deaths"],
+        ["2000", "317376", "79858", "273258", "68651", "116", "116"],
+        ["2010", "359463", "124353", "NA", "NA", "NA", "NA"],
+    ])
+    paths = [m.get("header_path") for m in (df.attrs.get("dhara_column_meta") or [])]
+    assert paths == [
+        ["Year"],
+        ["Registered Under Civil Registration System", "Births"],
+        ["Registered Under Civil Registration System", "Deaths"],
+        ["Estimated under Sample Registration Scheme", "Births"],
+        ["Estimated under Sample Registration Scheme", "Deaths"],
+        ["Level of Registration", "Births"],
+        ["Level of Registration", "Deaths"],
+    ]
+    assert list(df.columns)[:3] == ["Year", "Births", "Deaths"]
+    assert [str(v) for v in df.iloc[0]] == [
+        "2000", "317376", "79858", "273258", "68651", "116", "116",
+    ]
+    assert str(df.iloc[1, 3]) == "NA"
+
+
 def test_packed_sex_leaves_become_header_paths():
     df = dataframe_from_extracted_rows(_vital_stats_header_raw())
     meta = list(df.attrs.get("dhara_column_meta") or [])
@@ -182,3 +219,57 @@ def test_estimated_population_group_stays_aligned():
     assert [str(v) for v in df.iloc[1]] == ["1", "MCD(U)", "12478500", "137", "1644", "0", "NA", "None"]
     assert str(df.iloc[-1, 1]) == "TOTAL"
     assert str(df.iloc[-1, 6]) == "15279000"
+
+
+def test_llm_group_banners_rebuild_births_deaths_grid():
+    """LLM kept the spanning banners and the first two numbers. Restore leaves."""
+    from app.services.extraction.pdf.confidence_validation.alignment import (
+        _apply_column_alignment_guard,
+    )
+
+    df = dataframe_from_extracted_rows([
+        [
+            "Year",
+            "Registered Under Civil\nRegistration System",
+            None,
+            "Estimated under Sample\nRegistration Scheme",
+            None,
+            "Level of Registration",
+            None,
+        ],
+        [None, "Births", "Deaths", "Births", "Deaths", "Births", "Deaths"],
+        ["2000", "317376", "79858", "273258", "68651", "116", "116"],
+        ["2010", "359463", "124353", "NA", "NA", "NA", "NA"],
+    ])
+    other = dataframe_from_extracted_rows([
+        ["S.No.", "Items", "2009-10", "2010-11"],
+        ["1", "Printing", "100", "200"],
+        ["2", "Publicity", "10", "20"],
+    ])
+    table = {
+        "columns": [
+            {"name": "Year"},
+            {"name": "Registered Under Civil Registration System"},
+            {"name": "Estimated under Sample Registration System"},
+        ],
+        "rows": [
+            ["2000", "317376", "79858"],
+            ["2010", "359463", "124353"],
+        ],
+    }
+    out = _apply_column_alignment_guard(
+        table,
+        [
+            {"method": "pymupdf_lines_strict", "df": other},
+            {"method": "pymupdf_lines_strict", "df": df},
+        ],
+        used_candidates=set(),
+    )
+    paths = [c.get("header_path") for c in out["columns"]]
+    assert paths[1] == ["Registered Under Civil Registration System", "Births"]
+    assert paths[2] == ["Registered Under Civil Registration System", "Deaths"]
+    assert paths[3][0].startswith("Estimated under Sample")
+    assert paths[3][-1] == "Births"
+    assert paths[5] == ["Level of Registration", "Births"]
+    assert out["rows"][0][1:7] == ["317376", "79858", "273258", "68651", "116", "116"]
+    assert out["rows"][1][3] == "NA"

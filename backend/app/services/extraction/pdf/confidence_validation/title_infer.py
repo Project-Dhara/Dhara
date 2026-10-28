@@ -50,7 +50,8 @@ _CAPTION_LABEL_PREFIX_RE = re.compile(
     r"TABLE|TAB\.?|STATEMENT|ANNEX(?:URE)?|SCHEDULE|EXHIBIT|APPENDIX|"
     r"FIG(?:URE)?|CHART|BOX"
     r")\b\s*"
-    r"(?:[\w]+(?:[./\-][\w]+)*)?\s*"
+    r"(?:[\w]+(?:[./\-][\w]+)*)?"
+    r"\.?\s*"
     r"[:\-–—]\s*",
     re.I,
 )
@@ -131,6 +132,118 @@ def _line_mentions_column(line: str, col_name: str) -> bool:
     if not low or not cue or len(cue) < 2:
         return False
     return bool(re.search(rf"(?<![a-z0-9]){re.escape(cue)}(?![a-z0-9])", low))
+
+# Full caption-kind words. A shorter token that is only a prefix ("Statem")
+# is a clipped "Statement", not a title.
+_CAPTION_KIND_STEMS = (
+    "statement",
+    "annexure",
+    "schedule",
+    "exhibit",
+    "appendix",
+    "figure",
+    "table",
+)
+# Complete words that happen to be prefixes of a caption kind.
+_CAPTION_KIND_ALLOW = frozenset({
+    "state", "annex", "figure", "chart", "table", "box",
+})
+# Short titles that stop on one of these are unfinished fragments ("AGE NOT").
+_DANGLING_TITLE_WORDS = frozenset({
+    "not", "of", "by", "and", "the", "for", "to", "with", "from",
+    "or", "per", "than", "nor", "but",
+})
+
+
+def _title_word_tokens(title: str) -> List[str]:
+    tokens = []
+    for word in (title or "").split():
+        tok = re.sub(r"^[^A-Za-z0-9]+|[^A-Za-z0-9]+$", "", word)
+        if tok:
+            tokens.append(tok)
+    return tokens
+
+
+# Body sentences that sit above a table. A caption does not quote a percent,
+# and it does not stop on "were" / "the" / "&".
+_NARRATIVE_CUE_RE = re.compile(
+    r"(?:"
+    r"\d+(?:\.\d+)?\s*%"
+    r"|accounted\s+for"
+    r"|devoted\s+to"
+    r"|this\s+section"
+    r"|in\s*case\s+of"
+    r"|out\s+of\s+(?:them|which|these)"
+    r"|comes\s+to"
+    r")",
+    re.I,
+)
+_NARRATIVE_END_RE = re.compile(
+    r"(?:&\s*|\b(?:and|or|the|a|an|of|for|to|in|on|with|by|from|under|"
+    r"were|was|is|are|be|been|that|which|their|its)\s*)$",
+    re.I,
+)
+
+
+def title_is_narrative(title: Optional[str]) -> bool:
+    """True when a line is a prose sentence, not a table caption.
+
+    Covers running text such as "accounted for 77.44%" and section intros
+    that wrap before the sentence finishes ("registered under the").
+    """
+    s = _normalize_title_line(title or "")
+    if not s:
+        return False
+    if _NARRATIVE_CUE_RE.search(s):
+        return True
+    words = s.split()
+    if len(words) >= 6 and _NARRATIVE_END_RE.search(s):
+        return True
+    return False
+
+
+def title_is_misleading(
+    title: Optional[str],
+    columns: Optional[Sequence[Any]] = None,
+) -> bool:
+    """True when a candidate caption is a fragment, not a table title.
+
+    Covers clipped caption words ("Statem" from Statement) and cut-off
+    headers ("AGE NOT" from AGE NOT STATED), including when the rest of
+    the phrase is a column name.
+    """
+    s = _normalize_title_line(title or "")
+    if not s:
+        return False
+    if title_is_narrative(s):
+        return True
+    for tok in _title_word_tokens(s):
+        low = tok.lower()
+        if len(low) < 4 or low in _CAPTION_KIND_ALLOW:
+            continue
+        for stem in _CAPTION_KIND_STEMS:
+            if stem.startswith(low) and low != stem:
+                return True
+    words = s.split()
+    if 1 <= len(words) <= 4 and len(s) <= 48:
+        last = re.sub(r"[^A-Za-z]", "", words[-1]).lower()
+        if last in _DANGLING_TITLE_WORDS:
+            return True
+    low = s.lower()
+    if len(low) <= 24 and columns:
+        for raw in columns:
+            bits: List[Any] = [raw]
+            if isinstance(raw, dict):
+                bits = [raw.get("name")]
+                path = raw.get("header_path") or []
+                if isinstance(path, (list, tuple)):
+                    bits.extend(path)
+            for bit in bits:
+                col = _normalize_title_line(str(bit or "")).lower()
+                if col and col.startswith(low) and col != low:
+                    return True
+    return False
+
 
 def title_looks_like_gibberish(title: Optional[str]) -> bool:
     """True for corrupted / nonsense titles that must never be shown as captions.
@@ -243,7 +356,24 @@ def collapse_doubled_pdf_glyphs(text: str) -> str:
         else:
             out.append(c)
             i += 1
-    return "".join(out)
+    # Digits and punctuation are doubled the same way ("22..11..::" → "2.1.:").
+    # Letter pairs are already collapsed above; do the rest only after the
+    # letter-pair gate has passed, so "2001" and "All Ages" stay intact.
+    collapsed: list[str] = []
+    i = 0
+    while i < len(out):
+        c = out[i]
+        if (
+            not c.isalpha()
+            and i + 1 < len(out)
+            and out[i + 1] == c
+        ):
+            collapsed.append(c)
+            i += 2
+        else:
+            collapsed.append(c)
+            i += 1
+    return "".join(collapsed)
 
 def _normalize_title_line(line: str) -> str:
     return re.sub(r"\s+", " ", collapse_doubled_pdf_glyphs((line or "").strip()))
@@ -291,6 +421,8 @@ def _is_usable_inferred_title(title: str, columns: Optional[List[str]] = None) -
     """
     s = _normalize_title_line(title)
     if not s or len(s) < 4:
+        return False
+    if title_is_misleading(s, columns):
         return False
     if _is_chrome_title_line(s):
         return False
@@ -623,6 +755,34 @@ def build_pdf_outline_index(pdf_path: Union[str, Path]) -> Dict[int, List[str]]:
 
     return outline_index_from_toc(toc, n_pages)
 
+def _merge_same_line_blocks(blocks: List[Dict[str, float]]) -> List[Dict[str, float]]:
+    """Join fragments of one painted line, then collapse doubled glyphs.
+
+    Fake-bold captions are often two overlapping runs ("SSttaatteem" +
+    "meenntt  22..22..::  DDiissttrriibbuuttiioonn…"). Collapsing each run
+    alone yields "Statem" and a leftover "ment 2.2.: …", so the sentence
+    above the table wins. Adjacent runs on the same baseline are one line.
+    """
+    ordered = sorted(blocks, key=lambda b: (round(float(b["y0"]), 1), float(b["x0"])))
+    merged: List[Dict[str, float]] = []
+    for block in ordered:
+        if merged:
+            prev = merged[-1]
+            same_row = abs(float(block["y0"]) - float(prev["y0"])) <= 1.5
+            gap = float(block["x0"]) - float(prev["x1"])
+            if same_row and gap <= 12:
+                prev["text"] = str(prev["text"]) + str(block["text"])
+                prev["x0"] = min(float(prev["x0"]), float(block["x0"]))
+                prev["x1"] = max(float(prev["x1"]), float(block["x1"]))
+                prev["y0"] = min(float(prev["y0"]), float(block["y0"]))
+                prev["y1"] = max(float(prev["y1"]), float(block["y1"]))
+                continue
+        merged.append(dict(block))
+    for block in merged:
+        block["text"] = _normalize_title_line(str(block["text"]))
+    return [b for b in merged if b["text"]]
+
+
 def extract_page_text_blocks(doc: Any, page_num: int) -> List[Dict[str, float]]:
     """
     Positioned text lines from one PDF page. Each block:
@@ -642,8 +802,8 @@ def extract_page_text_blocks(doc: Any, page_num: int) -> List[Dict[str, float]]:
             continue
         for line in block.get("lines") or []:
             spans = line.get("spans") or []
-            text = _normalize_title_line("".join(str(s.get("text") or "") for s in spans))
-            if not text:
+            text = "".join(str(s.get("text") or "") for s in spans)
+            if not text.strip():
                 continue
             bbox = line.get("bbox") or block.get("bbox")
             if not bbox or len(bbox) < 4:
@@ -655,7 +815,7 @@ def extract_page_text_blocks(doc: Any, page_num: int) -> List[Dict[str, float]]:
                 "x1": float(bbox[2]),
                 "y1": float(bbox[3]),
             })
-    return blocks_out
+    return _merge_same_line_blocks(blocks_out)
 
 def _horizontal_overlap(a0: float, a1: float, b0: float, b1: float) -> float:
     return max(0.0, min(a1, b1) - max(a0, b0))
@@ -812,7 +972,7 @@ def _title_from_page_lines(
 def _looks_like_heading(line: str) -> bool:
     """Heuristic: short Title Case / ALL CAPS / few words, not a sentence."""
     s = _normalize_title_line(line)
-    if _is_context_meta_line(s) or _is_chrome_title_line(s):
+    if _is_context_meta_line(s) or _is_chrome_title_line(s) or title_is_narrative(s):
         return False
     # Truncated wrap from a column header (e.g. "Direc-") is not a heading.
     if re.search(r"[–—\-]$", s):
@@ -916,6 +1076,7 @@ __all__ = [
     "infer_title_meta_from_page_text",
     "outline_index_from_toc",
     "strip_caption_label_prefix",
+    "title_is_misleading",
     "title_looks_like_gibberish",
     "title_needs_review",
 ]

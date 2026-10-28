@@ -1648,9 +1648,58 @@ function titleLooksLikeOpaqueFilename(title) {
 }
 
 
+const CAPTION_KIND_STEMS = ['statement', 'annexure', 'schedule', 'exhibit', 'appendix', 'figure', 'table']
+const CAPTION_KIND_ALLOW = new Set(['state', 'annex', 'figure', 'chart', 'table', 'box'])
+const DANGLING_TITLE_WORDS = new Set([
+  'not', 'of', 'by', 'and', 'the', 'for', 'to', 'with', 'from', 'or', 'per', 'than',
+])
+
+const NARRATIVE_CUE_RE = /\d+(?:\.\d+)?\s*%|accounted\s+for|devoted\s+to|this\s+section|in\s*case\s+of|out\s+of\s+(?:them|which|these)|comes\s+to/i
+const NARRATIVE_END_RE = /(?:&\s*|\b(?:and|or|the|a|an|of|for|to|in|on|with|by|from|under|were|was|is|are|be|been|that|which|their|its)\s*)$/i
+
+/** Running text above a table ("accounted for 77.44%", "registered under the"). */
+export function titleIsNarrative(title) {
+  const s = String(title || '').trim().replace(/\s+/g, ' ')
+  if (!s) return false
+  if (NARRATIVE_CUE_RE.test(s)) return true
+  const words = s.split(/\s+/)
+  return words.length >= 6 && NARRATIVE_END_RE.test(s)
+}
+
+/** Clipped captions ("Statem") and cut-off headers ("AGE NOT") are not titles. */
+export function titleIsMisleading(title, columns) {
+  const s = String(title || '').trim().replace(/\s+/g, ' ')
+  if (!s) return false
+  const tokens = s.split(/\s+/).map((word) => word.replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, '')).filter(Boolean)
+  for (const tok of tokens) {
+    const low = tok.toLowerCase()
+    if (low.length < 4 || CAPTION_KIND_ALLOW.has(low)) continue
+    if (CAPTION_KIND_STEMS.some((stem) => stem.startsWith(low) && stem !== low)) return true
+  }
+  const words = s.split(/\s+/)
+  if (words.length >= 1 && words.length <= 4 && s.length <= 48) {
+    const last = words[words.length - 1].replace(/[^a-z]/gi, '').toLowerCase()
+    if (DANGLING_TITLE_WORDS.has(last)) return true
+  }
+  if (titleIsNarrative(s)) return true
+  const low = s.toLowerCase()
+  if (low.length <= 24) {
+    const names = (columns || [])
+      .flatMap((c) => {
+        if (c && typeof c === 'object') return [c.name, ...(c.header_path || [])]
+        return [c]
+      })
+      .map((name) => String(name || '').trim().toLowerCase().replace(/\s+/g, ' '))
+      .filter(Boolean)
+    if (names.some((col) => col.startsWith(low) && col !== low)) return true
+  }
+  return false
+}
+
 export function isUsableTableTitle(title, columns) {
   const t = stripCaptionLabelPrefix(String(title || '').trim())
   if (!t || t.length < 4) return false
+  if (titleIsMisleading(t, columns) || titleIsMisleading(title, columns)) return false
   // Truncated PDF wrap leftovers like "Direc-"
   if (/[–—-]$/.test(t)) return false
   // Joined header rows — not a real table title
@@ -1742,7 +1791,7 @@ export function titleForEdit(table) {
   // Titles are a single logical line; soft-wrap in the UI, never hard breaks.
   t = t.replace(/[\r\n]+/g, ' ').replace(/[ \t]{2,}/g, ' ').trim()
   if (!t || isBareTableIdLabel(t)) return ''
-  if (isUsableTableTitle(t, table?.columns)) return t
+  if (!isUsableTableTitle(t, table?.columns)) return ''
   return t
 }
 

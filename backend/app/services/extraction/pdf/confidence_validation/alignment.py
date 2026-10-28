@@ -835,6 +835,102 @@ def _uncertain_note_is_alignment_mismatch(note: Any) -> bool:
     return any(m in s for m in markers)
 
 
+def _header_norm_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+
+
+def _candidate_header_groups(df: pd.DataFrame) -> Tuple[List[str], List[str]]:
+    """Single-column labels, and parents that span two or more leaves."""
+    meta = list(getattr(df, "attrs", {}).get("dhara_column_meta") or [])
+    if not meta or len(meta) != int(df.shape[1]):
+        return [], []
+    singles: List[str] = []
+    parents: List[str] = []
+    i = 0
+    while i < len(meta):
+        path = [str(p).strip() for p in (meta[i].get("header_path") or []) if str(p).strip()]
+        if len(path) < 2:
+            singles.append(path[0] if path else str(meta[i].get("name") or ""))
+            i += 1
+            continue
+        parent = " ".join(path[:-1])
+        j = i + 1
+        while j < len(meta):
+            nxt = [str(p).strip() for p in (meta[j].get("header_path") or []) if str(p).strip()]
+            if len(nxt) < 2 or " ".join(nxt[:-1]).lower() != parent.lower():
+                break
+            j += 1
+        if j > i + 1:
+            parents.append(parent)
+        else:
+            singles.append(path[-1])
+        i = j
+    return singles, parents
+
+
+def _first_column_overlap(table: Dict[str, Any], df: pd.DataFrame) -> float:
+    """Share of LLM first-column labels that also appear in the ruled grid."""
+    seen = set()
+    for row in table.get("rows") or []:
+        if isinstance(row, list) and row:
+            label = str(row[0] or "").strip().lower()
+            if label and label not in {"none", "nan", "null"}:
+                seen.add(label)
+    if not seen or int(df.shape[1]) < 1:
+        return 0.0
+    cand = set()
+    for value in df.iloc[:, 0].tolist():
+        label = str(value or "").strip().lower()
+        if label and label not in {"none", "nan", "null"}:
+            cand.add(label)
+    if not cand:
+        return 0.0
+    return len(seen & cand) / len(seen)
+
+
+def _collapsed_group_header_candidate(
+    table: Dict[str, Any],
+    candidates: Optional[List[Dict[str, Any]]],
+) -> Optional[Dict[str, Any]]:
+    """Ruled grid whose spanning parents were used as the LLM column names.
+
+    ``Year | Registered… | Estimated…`` over a grid that is actually
+    Year + Births/Deaths under each of those banners. Same first-column
+    labels (the years) keep this from adopting a different table on the page.
+    """
+    columns = table.get("columns") or []
+    llm_keys = [_header_norm_key(c.get("name")) for c in columns]
+    llm_keys = [k for k in llm_keys if k]
+    if len(llm_keys) < 2 or not candidates:
+        return None
+    best: Optional[Dict[str, Any]] = None
+    best_score = 0
+    for cand in candidates:
+        if str(cand.get("method") or "") not in ("pymupdf_lines_strict", "pymupdf_lines"):
+            continue
+        df = cand.get("df")
+        if df is None or getattr(df, "empty", True):
+            continue
+        if int(df.shape[1]) < len(llm_keys) + 2:
+            continue
+        singles, parents = _candidate_header_groups(df)
+        if not parents:
+            continue
+        parent_keys = {_header_norm_key(p) for p in parents}
+        single_keys = {_header_norm_key(s) for s in singles}
+        matched_parents = [k for k in llm_keys if k in parent_keys]
+        explained = sum(1 for k in llm_keys if k in parent_keys or k in single_keys)
+        if len(matched_parents) < 1 or explained < max(2, int(len(llm_keys) * 0.6)):
+            continue
+        if _first_column_overlap(table, df) < 0.5:
+            continue
+        score = explained * 10 + (2 if cand.get("method") == "pymupdf_lines_strict" else 0)
+        if score > best_score:
+            best_score = score
+            best = cand
+    return best
+
+
 def _apply_column_alignment_guard(
     table: Dict[str, Any],
     candidates: Optional[List[Dict[str, Any]]] = None,
@@ -866,6 +962,18 @@ def _apply_column_alignment_guard(
     # 7-col season table to an unrelated 15-col table on the same page causes
     # false "too few columns" / wrong rebuilds.
     row_cand = _same_width_ruled_candidate(table, matched_cand, wide_cand)
+    collapsed_cand = _collapsed_group_header_candidate(table, candidates)
+    if collapsed_cand is not None:
+        issues.append({
+            "col_index": -1,
+            "name": "(table structure)",
+            "kind": "structure",
+            "pattern": "collapsed_group_headers",
+            "detail": (
+                f"Too few columns ({len(columns)} vs ~{int(collapsed_cand['df'].shape[1])} "
+                "in the PDF grid) — multi-level headers may have been collapsed."
+            ),
+        })
     if structure_cand is not None:
         cand_ncols = int(structure_cand["df"].shape[1])
         llm_ncols = len(columns)
@@ -999,11 +1107,22 @@ def _apply_column_alignment_guard(
     fallback_used = False
     if (severe or has_blank_measure) and candidates:
         cand, cand_idx = matched_cand, matched_idx
+        # Spanning banners used as the only headers: rebuild that same grid,
+        # not whichever ruled table on the page happens to be widest.
+        if collapsed_cand is not None:
+            cand = collapsed_cand
+            cand_idx = None
+            if candidates:
+                for i, c in enumerate(candidates):
+                    if c is cand:
+                        cand_idx = i
+                        break
         # Collapsed headers / dropped stubs / sparse bodies need the widest
         # ruled grid. Same-width missing-row repairs must keep the matched
         # table — never steal an unrelated wider grid from the same page.
-        needs_wide = _structure_issue_needs_wide_grid(issues) or (
-            has_blank_measure and row_cand is None
+        needs_wide = collapsed_cand is None and (
+            _structure_issue_needs_wide_grid(issues)
+            or (has_blank_measure and row_cand is None)
         )
         if needs_wide and wide_cand is not None:
             cand = wide_cand

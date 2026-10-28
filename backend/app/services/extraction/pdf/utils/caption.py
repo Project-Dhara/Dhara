@@ -334,6 +334,12 @@ def _is_descriptive_in_grid_title(label: str) -> bool:
     s = _cell_str(label)
     if not s:
         return False
+    from app.services.extraction.pdf.confidence_validation.title_infer import (
+        title_is_misleading,
+    )
+
+    if title_is_misleading(s):
+        return False
     if _is_table_id_only(s):
         return False
     if _UNIT_GROUP_RE.match(s):
@@ -375,6 +381,12 @@ def _is_in_grid_subtitle(label: str) -> bool:
     """
     s = _cell_str(label)
     if not s:
+        return False
+    from app.services.extraction.pdf.confidence_validation.title_infer import (
+        title_is_misleading,
+    )
+
+    if title_is_misleading(s):
         return False
     if _is_table_id_only(s) or _UNIT_GROUP_RE.match(s):
         return False

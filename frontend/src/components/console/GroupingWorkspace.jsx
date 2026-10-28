@@ -7,6 +7,7 @@ import Button from '../ui/Button'
 import Combobox from '../ui/Combobox'
 import ErrorBanner from '../ui/ErrorBanner'
 import Toast from '../ui/Toast'
+import { displayTitle } from '../../lib/pdfReviewHelpers'
 import {
   allTablesFromMatchResult,
   createMatchGroup,
@@ -218,7 +219,7 @@ function AddGroupModal({ tables, onCreate, onClose, allowEmpty = false }) {
                             {t.table_id || t.id}
                           </td>
                           <td className="min-w-0 py-2.5 pr-3 align-top leading-snug break-words text-ink">
-                            {t.title || '—'}
+                            {displayTitle(t) || '—'}
                           </td>
                         </tr>
                       )
@@ -359,7 +360,7 @@ function TablesPanel({
                   <td className={`break-all ${isLast ? '' : 'border-b border-line'} px-3 py-2.5 align-top font-bold text-teal`}>
                     {displayTableId(row.table, preferTableId)}
                   </td>
-                  <td className={`${isLast ? '' : 'border-b border-line'} px-3 py-2.5 align-top`}>{row.table.title || '—'}</td>
+                  <td className={`${isLast ? '' : 'border-b border-line'} px-3 py-2.5 align-top`}>{displayTitle(row.table) || '—'}</td>
                   {editEnabled && (
                     <td className={`${isLast ? '' : 'border-b border-line'} px-3 py-2 align-top`}>
                       <Combobox

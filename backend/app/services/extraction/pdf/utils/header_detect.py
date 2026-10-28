@@ -586,6 +586,45 @@ def _parent_and_leaves(raw: Any, span: int) -> Optional[Tuple[str, List[str]]]:
     return None
 
 
+def _later_row_already_labels_span(
+    rows: List[List[Any]],
+    idx: int,
+    start: int,
+    span: int,
+    n_cols: int,
+) -> bool:
+    """True when a later header row already names each column in this span.
+
+    A wrapped group title (``Registered Under Civil`` / ``Registration System``)
+    has one phrase split across lines. Packed leaves (``MALE FEMALE TOTAL``)
+    do not: the columns under that span are still blank until this step.
+    A column-number strip between the title and the body is not a leaf row.
+    """
+    look = idx + 1
+    while look < len(rows) and look <= idx + 3:
+        nxt = _pad_row(rows[look], n_cols)
+        if _blank(nxt) or _row_is_column_number_strip(nxt, n_cols):
+            look += 1
+            continue
+        break
+    else:
+        return False
+    nxt = _pad_row(rows[look], n_cols)
+    labels = [
+        _cell_str(nxt[start + t]) if start + t < len(nxt) else ""
+        for t in range(span)
+    ]
+    if any(not lab for lab in labels):
+        return False
+    if any(_is_measurement_number(lab) for lab in labels):
+        return False
+    # A body row of counts (10, 4, 1) is not a leaf header. Word labels
+    # such as Births / Deaths are.
+    if all(_is_numeric_cell(lab) for lab in labels):
+        return False
+    return all(_is_leaf_header_token(lab) for lab in labels)
+
+
 def unpack_packed_span_header_leaves(rows: List[List[Any]]) -> List[List[Any]]:
     """Spread a group title plus N leaf labels across an N-column blank span.
 
@@ -628,6 +667,10 @@ def unpack_packed_span_header_leaves(rows: List[List[Any]]) -> List[List[Any]]:
                 k += 1
             span = k - j
             split = _parent_and_leaves(raw, span)
+            if split is not None and _later_row_already_labels_span(
+                rows, idx, j, span, n_cols
+            ):
+                split = None
             if split is not None:
                 parent, leaves = split
                 if parent:

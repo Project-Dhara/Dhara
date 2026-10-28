@@ -42,6 +42,7 @@ from app.services.extraction.pdf.confidence_validation.title_infer import (
     infer_title_from_page_text,
     infer_title_meta_from_page_text,
     strip_caption_label_prefix,
+    title_is_misleading,
     title_needs_review,
 )
 
@@ -1246,9 +1247,19 @@ def table_dict_from_df(
         in_grid_banner_id = None
     # In-grid banners (TABLE id row + descriptive title row inside the ruled
     # border) beat page-text / outline heuristics — those look above the bbox.
-    # But spanning column-group headers ("LEVELS OF LITERACY") must not win.
+    # Spanning column-group headers and clipped fragments ("Statem", "AGE NOT")
+    # must not win over a real Statement / Table caption elsewhere on the page.
     banner_from_page: Optional[str] = None
-    if in_grid_title and not _is_column_group_banner(in_grid_title):
+
+    def _caption_ok(text: Optional[str]) -> bool:
+        if not text or _is_column_group_banner(text):
+            return False
+        if title_is_misleading(text, columns):
+            return False
+        shown = strip_caption_label_prefix(text) or text
+        return not title_is_misleading(shown, columns)
+
+    if _caption_ok(in_grid_title):
         title, title_source = strip_caption_label_prefix(in_grid_title), "heuristic_in_grid_banner"
     else:
         title, title_source, banner_from_page = infer_title_meta_from_page_text(
@@ -1261,6 +1272,9 @@ def table_dict_from_df(
         )
     if title:
         title = strip_caption_label_prefix(title)
+    if title and title_is_misleading(title, columns):
+        title = None
+        title_source = "cleared_misleading"
     needs_title = title_needs_review(title, columns)
     empty_field = {"value": None, "human_review_needed": False, "human_review_reason": None}
     result = {
