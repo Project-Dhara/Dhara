@@ -67,7 +67,9 @@ def upsert_nco_aliases(conn, aliases: list, source: str = "steward") -> int:
             level = str(a.get("level") or "").strip().lower()
             code = str(a.get("code") or "").strip()
             title = a.get("title")
-            if not norm or not code or level not in ("division", "subdivision", "group", "family"):
+            if not norm or not code or level not in (
+                "division", "subdivision", "group", "family", "occupation",
+            ):
                 continue
             if is_non_occupation_aggregate(raw):
                 continue

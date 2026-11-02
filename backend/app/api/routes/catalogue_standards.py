@@ -28,6 +28,7 @@ from app.services.catalogue.query import (
     list_catalogue_groups as query_catalogue_groups,
 )
 from app.services.classification.classifications import (
+    _is_occupation_name,
     get_definition_facts,
     get_metadata_group_classifications,
     get_recent_classification_columns,
@@ -72,7 +73,6 @@ async def fill_definitions(
     Occupation columns are skipped by default (NCO matching owns those).
     Pass allow_occupation=true when no classification standard is selected and
     the steward chooses Fill with AI as a fallback."""
-    import re as _re
     from app.services.metadata.metadata_llm import fill_classification_definitions
 
     data = await request.json()
@@ -92,7 +92,7 @@ async def fill_definitions(
                 name = (col.get("name") or "").strip()
                 if not name:
                     continue
-                if not allow_occupation and _re.search(r"occupat", name, _re.I):
+                if not allow_occupation and _is_occupation_name(name):
                     continue
                 values = [str(v) for v in (col.get("values") or []) if v is not None and str(v).strip()]
                 if not values:
@@ -204,9 +204,11 @@ async def match_nco(
     user_email: str = Depends(require_user_email),
     db: Session = Depends(get_db),
 ):
-    """Suggest the coarsest fitting NCO 2015 level (division, subdivision, or family).
-    Does not return specific .xxxx job codes. Dynamic: alias → embed/fuzzy → LLM.
-    Codes come from the classification standard selected in Settings."""
+    """Match occupation labels to NCO 2015 occupation codes from the selected standard.
+
+    Local hybrid retrieval scores the whole list. The chat model is used only
+    for a few ambiguous rows, and only to choose among retrieved codes.
+    """
     from app.services.classification import nco_matching as _nco
     data = await request.json()
     values = data.get("values") or []
@@ -217,12 +219,18 @@ async def match_nco(
         s = str(v).strip() if v is not None else ""
         if s and s not in unique:
             unique.append(s)
+    context = data.get("context") if isinstance(data.get("context"), dict) else None
     extractor = _extractor_for(request, user_email, db=db)
 
     def _run():
         with session_scope() as session:
             ensure_classification_standard_loaded(dbapi_connection(session))
-            return _nco.match_occupations(dbapi_connection(session), unique, extractor=extractor)
+            return _nco.match_occupations(
+                dbapi_connection(session),
+                unique,
+                extractor=extractor,
+                context=context,
+            )
 
     matches = await asyncio.to_thread(_run)
     return {"matches": matches, "llm_used": not extractor.skip_llm}

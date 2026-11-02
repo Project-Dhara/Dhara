@@ -9,8 +9,15 @@
 // definition are editable (a steward may want to rename/annotate them);
 // value is what was actually found in the source data, so it stays fixed.
 
+const OCCUPATION_ID_TOKENS = new Set(['id', 'code', 'number', 'no', 'num', 'key'])
+
+/** Occupation and job columns are classified with NCO, not as a generic code list. */
 export function isOccupationColumn(name) {
-  return /occupat/i.test(name || '')
+  const raw = String(name || '')
+  if (/occupat/i.test(raw)) return true
+  const tokens = raw.toLowerCase().split(/[^a-z]+/).filter(Boolean)
+  if (!tokens.includes('job') && !tokens.includes('jobs')) return false
+  return !tokens.some((token) => OCCUPATION_ID_TOKENS.has(token))
 }
 
 export function rowMapped(row) {

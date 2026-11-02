@@ -186,3 +186,27 @@ def test_free_text_contents_column_skipped_even_without_toc_shape():
         ],
     }
     assert _classifications_from_table_data([table]) == {}
+
+
+def test_job_column_is_an_occupation_column():
+    from app.services.classification.classifications import _is_occupation_name
+
+    assert _is_occupation_name("Job")
+    assert _is_occupation_name("Jobs")
+    assert _is_occupation_name("Job Title")
+    assert _is_occupation_name("Occupation")
+    assert not _is_occupation_name("Job ID")
+    assert not _is_occupation_name("Sector")
+
+
+def test_keeps_code_list_with_more_than_80_values():
+    """A long category list is still a classification dimension."""
+    labels = [f"Occupation {i}" for i in range(120)]
+    table = {
+        "title": "Workers by occupation",
+        "columns": ["Occupation"],
+        "rows": [{"Occupation": label} for label in labels],
+    }
+    dims = _classifications_from_table_data([table])
+    assert "Occupation" in dims
+    assert len(dims["Occupation"]) == 120

@@ -3,6 +3,7 @@
 import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
+import NcoHierarchy from './NcoHierarchy'
 
 /** Modal preview of NCO 2015 suggestions for the active occupation column. */
 export default function NcoSuggestPanel({
@@ -38,7 +39,7 @@ export default function NcoSuggestPanel({
         if (e.target === e.currentTarget) onClose?.()
       }}
     >
-      <div className="flex max-h-[min(640px,88vh)] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-surface shadow-dhara">
+      <div className="flex max-h-[min(720px,88vh)] w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-surface shadow-dhara">
         <div className="flex items-start justify-between gap-3 border-b border-line px-5 py-4">
           <div className="min-w-0">
             <h2 id="nco-preview-title" className="m-0 text-[16px] font-bold text-ink">
@@ -117,6 +118,7 @@ export default function NcoSuggestPanel({
                           <div className="text-[13px] font-semibold leading-snug text-ink break-words">
                             {m ? m.title : '—'}
                           </div>
+                          <NcoHierarchy match={m} />
                           {m && (
                             <div className="mt-0.5 text-[11.5px] leading-snug text-ink-soft">
                               {m.confidence} confidence

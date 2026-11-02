@@ -174,8 +174,6 @@ def _should_keep_classification_column(name: str, values: list, n_non_empty: int
         return False
     if _looks_like_non_classification_column_name(name):
         return False
-    if len(values) > 80:
-        return False
     if _values_look_like_free_text(values, n_non_empty):
         return False
     return True
@@ -490,7 +488,7 @@ def _normalize_classification_values(vals) -> list:
 
 
 def _classifications_from_table_data(tables):
-    """Treat low-cardinality non-numeric columns as classification dimensions.
+    """Treat non-numeric columns as classification dimensions.
 
     Used for Excel without a classifications workbook and for SQL extracts,
     where there is no metadata-excel code list.
@@ -536,8 +534,6 @@ def _classifications_from_table_data(tables):
                     continue
                 seen.add(key)
                 values.append({"code": "", "value": s, "definition": None})
-                if len(values) > 80:
-                    break
             if not _should_keep_classification_column(col, values, n_non_empty):
                 continue
             name = re.sub(r"\s+", "_", str(col).strip()) or str(col)
@@ -579,8 +575,18 @@ def _classification_value_key(entries):
     return tuple(sorted(vals))
 
 
+_OCCUPATION_ID_TOKENS = frozenset({"id", "code", "number", "no", "num", "key"})
+
+
 def _is_occupation_name(name):
-    return bool(re.search(r"occupat", name or "", re.I))
+    """Occupation and job columns are owned by NCO matching."""
+    text = name or ""
+    if re.search(r"occupat", text, re.I):
+        return True
+    tokens = re.findall(r"[a-z]+", text.lower())
+    if "job" not in tokens and "jobs" not in tokens:
+        return False
+    return not any(tok in _OCCUPATION_ID_TOKENS for tok in tokens)
 
 
 def _expand_alias_names(classifications, names, codes):
