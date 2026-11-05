@@ -1,6 +1,9 @@
 """FastAPI dependencies for authentication and authorization."""
 from __future__ import annotations
 
+import hashlib
+import threading
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Optional, Tuple
@@ -20,6 +23,12 @@ bearer_scheme = HTTPBearer(
     auto_error=False, bearerFormat="JWT", scheme_name="BearerAuth"
 )
 
+# Short-lived cache so rapid UI clicks don't re-query user + membership every time.
+_AUTH_CACHE_TTL_SEC = 30.0
+_AUTH_CACHE_MAX = 512
+_auth_cache_lock = threading.Lock()
+_auth_cache: dict[str, tuple[float, "CurrentUser"]] = {}
+
 
 @dataclass(frozen=True)
 class CurrentUser:
@@ -31,6 +40,39 @@ class CurrentUser:
     dept: str | None = None
 
 
+def _auth_cache_key(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _auth_cache_get(token: str) -> Optional["CurrentUser"]:
+    key = _auth_cache_key(token)
+    now = time.monotonic()
+    with _auth_cache_lock:
+        hit = _auth_cache.get(key)
+        if not hit:
+            return None
+        expires_at, user = hit
+        if expires_at <= now:
+            _auth_cache.pop(key, None)
+            return None
+        return user
+
+
+def _auth_cache_set(token: str, user: CurrentUser) -> None:
+    key = _auth_cache_key(token)
+    expires_at = time.monotonic() + _AUTH_CACHE_TTL_SEC
+    with _auth_cache_lock:
+        if len(_auth_cache) >= _AUTH_CACHE_MAX:
+            # Drop expired / oldest-ish entries cheaply.
+            now = time.monotonic()
+            stale = [k for k, (exp, _) in _auth_cache.items() if exp <= now]
+            for k in stale:
+                _auth_cache.pop(k, None)
+            if len(_auth_cache) >= _AUTH_CACHE_MAX:
+                _auth_cache.clear()
+        _auth_cache[key] = (expires_at, user)
+
+
 def require_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     db: Session = Depends(get_db),
@@ -39,8 +81,14 @@ def require_user(
     token = (credentials.credentials if credentials else "") or ""
     if not token.strip():
         raise HTTPException(401, "Missing bearer token")
+    token = token.strip()
+
+    cached = _auth_cache_get(token)
+    if cached is not None:
+        return cached
+
     try:
-        user_id = security.decode_token(token.strip())
+        user_id = security.decode_token(token)
     except jwt.PyJWTError as e:
         raise HTTPException(401, f"Invalid or expired token: {e}") from e
 
@@ -48,7 +96,7 @@ def require_user(
     if not user:
         raise HTTPException(401, "Account not found — please sign in again")
     membership = org_repo.ensure_membership(db, user)
-    return CurrentUser(
+    current = CurrentUser(
         id=user.id,
         email=user.email,
         organisation_id=membership.organisation_id,
@@ -56,6 +104,8 @@ def require_user(
         name=user.name,
         dept=user.dept,
     )
+    _auth_cache_set(token, current)
+    return current
 
 
 def require_user_email(

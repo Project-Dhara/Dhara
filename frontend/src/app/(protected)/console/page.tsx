@@ -9,14 +9,20 @@ import { goToConsoleFiles } from '../../../lib/consoleSession'
 // splitting it into real per-step routes is future work. This route just
 // supplies the same navigation callbacks it used to get as plain props.
 export default function ConsolePage() {
-  const { keySaved } = useApp()
+  const { keySaved, invalidateDashboard, invalidateCatalogue } = useApp()
   const router = useRouter()
   return (
     <Console
       hasKey={keySaved}
       onGoSettings={() => router.push('/settings')}
-      onGoDashboard={() => router.push('/dashboard')}
-      onGoCatalogue={() => router.push('/catalogue')}
+      onGoDashboard={() => {
+        invalidateDashboard()
+        router.push('/dashboard')
+      }}
+      onGoCatalogue={() => {
+        invalidateCatalogue()
+        router.push('/catalogue')
+      }}
       onUploadAnother={() => {
         goToConsoleFiles(router)
       }}

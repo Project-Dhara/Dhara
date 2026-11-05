@@ -23,6 +23,16 @@ from app.api.dependencies import (
     resolve_llm_credentials,
 )
 from app.db.session import session_scope
+from app.schemas.pdf import (
+    AiSearchRequest,
+    GroupingProposeRequest,
+    GroupingSaveRequest,
+    PersistApprovedRequest,
+    ReviewTablePatch,
+    TableIdsRequest,
+)
+from app.services.jobs.enqueue import dispatch_extraction
+from app.services.jobs.pdf_review import persist_approved_and_group
 from app.workers.extraction_jobs import (
     _get_pdf_job,
     _hydrate_user_pdf_jobs,
@@ -33,10 +43,9 @@ from app.workers.extraction_jobs import (
     _pdf_table_header_key,
     _pdf_table_sort_key,
     _pdf_tables_from_job,
-    _run_extraction_job,
     _save_pdf_job,
+    cancel_extraction_job,
     job_extraction_complete,
-    queue_extraction_job,
 )
 from app.services.ingestion.wizard.table_export import safe_download_stem, table_to_excel_bytes
 
@@ -85,7 +94,7 @@ async def pdf_upload(
 
     # Worker decrypts the caller's stored llm_api_keys row at run time.
     # Optional — without a key, PDF extraction falls back to heuristics.
-    queue_extraction_job(
+    return dispatch_extraction(
         job_id=job_id,
         filename=file.filename,
         user_email=user.email,
@@ -95,9 +104,6 @@ async def pdf_upload(
         user_id=str(user.id),
         dataset_id_config=id_cfg,
     )
-
-    asyncio.create_task(asyncio.to_thread(_run_extraction_job, job_id, content, "pdf"))
-    return {"job_id": job_id, "source_type": "pdf"}
 
 
 @router.get("/api/pdf/jobs", include_in_schema=False)
@@ -124,6 +130,19 @@ async def pdf_job_status(job_id: str, user: CurrentUser = Depends(require_user))
         return _pdf_job_public(job)
 
 
+@router.post("/api/pdf/jobs/{job_id}/cancel")
+async def pdf_job_cancel(job_id: str, user: CurrentUser = Depends(require_user)):
+    """Cancel a queued/running extraction so Start over can abandon the job."""
+    with _pdf_jobs_lock:
+        job = _get_pdf_job(job_id)
+        if not _job_visible_to(job, user):
+            raise HTTPException(404, "Job not found")
+    cancelled = await asyncio.to_thread(cancel_extraction_job, job_id)
+    if cancelled is None:
+        raise HTTPException(404, "Job not found")
+    return {"ok": True, "job": cancelled}
+
+
 @router.get("/api/pdf/jobs/{job_id}/result")
 async def pdf_job_result(job_id: str, user: CurrentUser = Depends(require_user)):
     """Flattens the pipeline's page-keyed output into one list of tables for
@@ -144,12 +163,15 @@ async def pdf_job_result(job_id: str, user: CurrentUser = Depends(require_user))
 
 
 @router.patch("/api/pdf/jobs/{job_id}/tables/{table_id}")
-async def pdf_review_table(job_id: str, table_id: str, request: Request, user_email: str = Depends(require_user_email)):
+async def pdf_review_table(
+    job_id: str,
+    table_id: str,
+    body: ReviewTablePatch,
+    user_email: str = Depends(require_user_email),
+):
     """Saves a reviewer's edits to one table (classification, columns, rows,
     structure). Merged onto the original table when /result is next fetched."""
-    payload = await request.json()
-    if not isinstance(payload, dict):
-        raise HTTPException(400, "Body must be a JSON object")
+    payload = body.model_dump()
     with _pdf_jobs_lock:
         job = _get_pdf_job(job_id)
         if not job or job.get("user_email") != user_email:
@@ -224,12 +246,15 @@ async def pdf_table_snapshot(job_id: str, table_id: str, user_email: str = Depen
 
 
 @router.post("/api/pdf/jobs/{job_id}/tables/delete")
-async def pdf_delete_tables(job_id: str, request: Request, user_email: str = Depends(require_user_email)):
+async def pdf_delete_tables(
+    job_id: str,
+    body: TableIdsRequest,
+    user_email: str = Depends(require_user_email),
+):
     """Soft-deletes one or more extracted tables from a finished job.
     table_id values stay stable (page-index), so deletions are recorded in
     deleted_table_ids rather than reshuffling the result payload."""
-    payload = await request.json()
-    table_ids = payload.get("table_ids") if isinstance(payload, dict) else None
+    table_ids = body.table_ids
     if not isinstance(table_ids, list) or not table_ids:
         raise HTTPException(400, "Body must include a non-empty table_ids array")
     ids = [str(tid) for tid in table_ids if tid is not None and str(tid).strip()]
@@ -257,6 +282,7 @@ async def pdf_delete_tables(job_id: str, request: Request, user_email: str = Dep
 async def pdf_ai_search_tables(
     job_id: str,
     request: Request,
+    body: AiSearchRequest = AiSearchRequest(),
     user_email: str = Depends(require_user_email),
     db: Session = Depends(get_db),
 ):
@@ -267,13 +293,8 @@ async def pdf_ai_search_tables(
     """
     from app.services.extraction.pdf.suggest_search import suggest_tables_from_prompt
 
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    if not isinstance(body, dict):
-        body = {}
-    prompt = str(body.get("prompt") or body.get("query") or "").strip()
+    data = body.model_dump()
+    prompt = str(data.get("prompt") or data.get("query") or "").strip()
     if not prompt:
         raise HTTPException(400, "prompt is required")
 
@@ -320,14 +341,17 @@ async def pdf_ai_search_tables(
 
 
 @router.post("/api/pdf/jobs/{job_id}/tables/merge")
-async def pdf_merge_tables(job_id: str, request: Request, user_email: str = Depends(require_user_email)):
+async def pdf_merge_tables(
+    job_id: str,
+    body: TableIdsRequest,
+    user_email: str = Depends(require_user_email),
+):
     """
     Concatenate rows from 2+ Preview tables that share the same column headers
     (cross-page continuations of one logical table). Keeps the earliest table
     as survivor, soft-deletes the rest. Does not change extraction prompts.
     """
-    payload = await request.json()
-    table_ids = payload.get("table_ids") if isinstance(payload, dict) else None
+    table_ids = body.table_ids
     if not isinstance(table_ids, list) or len(table_ids) < 2:
         raise HTTPException(400, "Body must include table_ids with at least 2 ids")
     ids = [str(tid) for tid in table_ids if tid is not None and str(tid).strip()]
@@ -505,16 +529,13 @@ async def pdf_download_tables_zip(job_id: str, user_email: str = Depends(require
 
 @router.post("/api/pdf/jobs/{job_id}/tables/download-zip")
 async def pdf_download_tables_zip_selected(
-    job_id: str, request: Request, user_email: str = Depends(require_user_email)
+    job_id: str,
+    body: TableIdsRequest = TableIdsRequest(),
+    user_email: str = Depends(require_user_email),
 ):
     """Download selected tables as a ZIP. Body: { table_ids: string[] }.
     If table_ids is omitted or empty, downloads all non-deleted tables."""
-    body = {}
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    raw_ids = body.get("table_ids") if isinstance(body, dict) else None
+    raw_ids = body.table_ids
     id_filter = None
     if isinstance(raw_ids, list) and raw_ids:
         id_filter = {str(tid) for tid in raw_ids if tid is not None and str(tid).strip()}
@@ -545,6 +566,7 @@ async def pdf_download_tables_zip_selected(
 async def pdf_persist_approved(
     job_id: str,
     request: Request,
+    body: PersistApprovedRequest = PersistApprovedRequest(),
     user_email: str = Depends(require_user_email),
     db: Session = Depends(get_db),
 ):
@@ -560,81 +582,15 @@ async def pdf_persist_approved(
     grouping. Preview can keep showing every table; only the listed IDs proceed.
     When omitted, every job table is persisted (previous behaviour).
     """
-    from app.db import pdf_store
-    from app.services.grouping import pdf_grouping
-
     api_key, _provider = resolve_llm_credentials(request, user_email, db=db)
-    body = {}
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    if not isinstance(body, dict):
-        body = {}
-
-    with _pdf_jobs_lock:
-        job = _get_pdf_job(job_id)
-        if not job or job.get("user_email") != user_email:
-            raise HTTPException(404, "Job not found")
-        if not job_extraction_complete(job["status"]):
-            raise HTTPException(409, f"Job not finished yet (status={job['status']})")
-        tables = _pdf_tables_from_job(job)
-        filename = job.get("filename")
-
-        # Overlay client Preview state (titles etc.) onto job tables + reviews.
-        client_tables = body.get("tables")
-        if isinstance(client_tables, list) and client_tables:
-            by_id = {
-                str(t.get("table_id")): t
-                for t in client_tables
-                if isinstance(t, dict) and t.get("table_id")
-            }
-            overlay_keys = (
-                "title",
-                "rows",
-                "columns",
-                "classification",
-                "human_review_needed",
-                "human_review_reason",
-                "semantic_status",
-            )
-            reviews = dict(job.get("reviews") or {})
-            for t in tables:
-                tid = str(t.get("table_id") or "")
-                override = by_id.get(tid)
-                if not override:
-                    continue
-                patch = {k: override[k] for k in overlay_keys if k in override}
-                t.update(patch)
-                reviews[tid] = {**reviews.get(tid, {}), **patch}
-            job["reviews"] = reviews
-            _save_pdf_job(job)
-
-        raw_approved = body.get("approved_table_ids")
-        if isinstance(raw_approved, list) and raw_approved:
-            allowed = {str(tid) for tid in raw_approved if tid}
-            tables = [t for t in tables if str(t.get("table_id") or "") in allowed]
-            if not tables:
-                raise HTTPException(400, "No approved tables matched this job")
-
-    with session_scope() as session:
-        persisted = pdf_store.persist_approved_tables(
-            session,
-            job_id=job_id,
-            user_email=user_email,
-            filename=filename,
-            tables=tables,
-        )
-        proposal = pdf_grouping.propose_groups(
-            session, job_id, api_key=api_key, reindex=True
-        )
-        grouping = pdf_grouping.apply_proposal_to_db(session, job_id, proposal)
-        return {
-            "ok": True,
-            "job_id": job_id,
-            "table_count": len(persisted),
-            "grouping": grouping,
-        }
+    data = body.model_dump()
+    return persist_approved_and_group(
+        job_id=job_id,
+        user_email=user_email,
+        api_key=api_key,
+        tables_overlay=data.get("tables"),
+        approved_table_ids=data.get("approved_table_ids"),
+    )
 
 
 @router.get("/api/pdf/jobs/{job_id}/grouping")
@@ -665,6 +621,7 @@ async def pdf_get_grouping(job_id: str, user_email: str = Depends(require_user_e
 async def pdf_propose_grouping(
     job_id: str,
     request: Request,
+    body: GroupingProposeRequest = GroupingProposeRequest(),
     user_email: str = Depends(require_user_email),
     db: Session = Depends(get_db),
 ):
@@ -673,12 +630,7 @@ async def pdf_propose_grouping(
     from app.services.grouping import pdf_grouping
 
     api_key, _provider = resolve_llm_credentials(request, user_email, db=db)
-    body = {}
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    reindex = bool(body.get("reindex")) if isinstance(body, dict) else False
+    reindex = bool(body.reindex)
 
     with session_scope() as session:
         job_row = pdf_store.get_job(session, job_id)
@@ -692,14 +644,15 @@ async def pdf_propose_grouping(
 
 
 @router.put("/api/pdf/jobs/{job_id}/grouping")
-async def pdf_save_grouping(job_id: str, request: Request, user_email: str = Depends(require_user_email)):
+async def pdf_save_grouping(
+    job_id: str,
+    body: GroupingSaveRequest,
+    user_email: str = Depends(require_user_email),
+):
     """Persist human-edited groups. Body: { groups: [{ name, table_ids: [uuid...] }] }."""
     from app.db import pdf_store
 
-    payload = await request.json()
-    if not isinstance(payload, dict):
-        raise HTTPException(400, "Body must be a JSON object")
-    groups_in = payload.get("groups")
+    groups_in = body.groups
     if not isinstance(groups_in, list):
         raise HTTPException(400, "groups must be an array")
 

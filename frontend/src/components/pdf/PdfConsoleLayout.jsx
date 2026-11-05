@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { ConsoleStagesShell } from '../console/ConsoleStages'
 import FilesReturnChoiceDialog from '../console/FilesReturnChoiceDialog'
 import { beginAppendFilesMode, goToConsoleFiles } from '../../lib/consoleSession'
+import { withAuthHeaders } from '../../lib/auth'
 
 /**
  * PDF pipeline stages map onto the same Console Stages numbers as Excel:
@@ -21,16 +22,32 @@ export default function PdfConsoleLayout({
   isStepReachable = undefined,
   /** Filenames already in this job — used for "add more" mode. */
   existingFilenames = [],
+  /**
+   * When true (processing page), clicking Files while a job is active opens
+   * the append / start-over dialog even though maxStepReached is still 1.
+   */
+  askBeforeLeaveFiles = false,
+  /** Where "add more" should return after upload (processing/review/…). */
+  filesReturnPath = null,
+  /** Dialog copy override for in-flight extraction. */
+  filesReturnTitle = undefined,
+  filesReturnBody = undefined,
+  /** Cancel the active job when the user chooses Start over. */
+  cancelJobOnStartOver = false,
   children,
 }) {
   const router = useRouter()
   const [filesReturnOpen, setFilesReturnOpen] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
 
   const openFilesChoice = () => setFilesReturnOpen(true)
 
+  const defaultReturnPath = filesReturnPath
+    || (jobId ? `/console/review/${jobId}` : null)
+
   const defaultGoToStep = (targetStep) => {
     if (targetStep === 1) {
-      if (jobId && maxStepReached >= 2) {
+      if (jobId && (maxStepReached >= 2 || askBeforeLeaveFiles)) {
         openFilesChoice()
         return
       }
@@ -56,27 +73,52 @@ export default function PdfConsoleLayout({
     ;(onGoToStep || defaultGoToStep)(targetStep)
   }
 
+  const confirmAddMore = () => {
+    setFilesReturnOpen(false)
+    if (!jobId) {
+      goToConsoleFiles(router)
+      return
+    }
+    beginAppendFilesMode(router, {
+      jobId,
+      existingFilenames: existingFilenames.length ? existingFilenames : [],
+      returnPath: defaultReturnPath,
+    })
+  }
+
+  const confirmStartOver = async () => {
+    if (cancelling) return
+    setCancelling(true)
+    try {
+      if (cancelJobOnStartOver && jobId) {
+        try {
+          await fetch(
+            `/api/pdf/jobs/${encodeURIComponent(jobId)}/cancel`,
+            withAuthHeaders({ method: 'POST' }),
+          )
+        } catch {
+          // Best-effort — still leave Files so the user is not stuck.
+        }
+      }
+      setFilesReturnOpen(false)
+      goToConsoleFiles(router)
+    } finally {
+      setCancelling(false)
+    }
+  }
+
   return (
     <>
       <FilesReturnChoiceDialog
         open={filesReturnOpen}
-        onCancel={() => setFilesReturnOpen(false)}
-        onAddMore={() => {
-          setFilesReturnOpen(false)
-          if (!jobId) {
-            goToConsoleFiles(router)
-            return
-          }
-          beginAppendFilesMode(router, {
-            jobId,
-            existingFilenames: existingFilenames.length ? existingFilenames : [],
-            returnPath: jobId ? `/console/review/${jobId}` : null,
-          })
+        title={filesReturnTitle}
+        body={filesReturnBody}
+        startOverBusy={cancelling}
+        onCancel={() => {
+          if (!cancelling) setFilesReturnOpen(false)
         }}
-        onStartOver={() => {
-          setFilesReturnOpen(false)
-          goToConsoleFiles(router)
-        }}
+        onAddMore={confirmAddMore}
+        onStartOver={confirmStartOver}
       />
       <ConsoleStagesShell
         step={step}

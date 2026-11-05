@@ -20,6 +20,7 @@ from app.core.permissions import MUTATING_ROLES, READ_ROLES, require_roles
 from app.db.repositories import kyds as kyds_repo
 from app.db.repositories import pdf_jobs as pdf_jobs_repo
 from app.db.session import dbapi_connection, session_scope
+from app.schemas.catalogue import ClassificationColumnUpdateRequest
 from app.services.catalogue.group_export import build_group_download_zip
 from app.services.catalogue.query import (
     get_catalogue_group as query_catalogue_group,
@@ -164,13 +165,16 @@ async def get_recent_classifications(user_email: str = Depends(require_user_emai
 
 
 @router.patch("/api/catalogue/metadata-groups/{metadata_id}/classifications")
-async def update_classification_column(metadata_id: str, request: Request, user_email: str = Depends(require_user_email)):
+async def update_classification_column(
+    metadata_id: str,
+    body: ClassificationColumnUpdateRequest,
+    user_email: str = Depends(require_user_email),
+):
     """Persist edited code/definition rows for one classification column,
     or several alias columns that share the same categorical values."""
-    data = await request.json()
-    column_name = data.get("column_name")
-    column_names = data.get("column_names")
-    codes = data.get("codes")
+    column_name = body.column_name
+    column_names = body.column_names
+    codes = body.codes
     if codes is None or (not column_name and not column_names):
         raise HTTPException(400, "column_name (or column_names) and codes are required")
 
@@ -182,7 +186,7 @@ async def update_classification_column(metadata_id: str, request: Request, user_
                 column_name,
                 codes,
                 column_names=column_names,
-                expand_aliases=data.get("expand_aliases", True),
+                expand_aliases=body.expand_aliases,
             )
 
     ok = await asyncio.to_thread(_run)

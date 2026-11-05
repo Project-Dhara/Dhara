@@ -4,13 +4,20 @@ import asyncio
 import uuid
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.dependencies import CurrentUser, require_user
 from app.db.repositories import pdf_jobs as pdf_jobs_repo
 from app.db.session import session_scope
+from app.schemas.jobs import PipelineStepRequest
 from app.services.catalogue.dashboard import list_dashboard
-from app.workers.extraction_jobs import _get_pdf_job, _hydrate_user_pdf_jobs, _pdf_job_public, _pdf_jobs, _pdf_jobs_lock
+from app.workers.extraction_jobs import (
+    _IN_FLIGHT_STATUSES,
+    _TERMINAL_STATUSES,
+    _get_pdf_job,
+    _pdf_jobs,
+    _pdf_jobs_lock,
+)
 
 router = APIRouter()
 
@@ -69,7 +76,10 @@ def _pdf_dashboard_row(
             "href": f"/console/processing/{job_id}",
             "pipeline_step": 1,
         }
-    if status == "error":
+    if status == "cancelled":
+        # Abandoned via Start over — keep out of the Dashboard list.
+        return None
+    if status in ("error", "failed"):
         return {
             **base,
             "readiness_pct": max(5, min(percent, 20)),
@@ -153,18 +163,12 @@ def _pdf_dashboard_row(
 
 @router.patch("/api/pdf/jobs/{job_id}/pipeline", tags=["PDF"])
 async def pdf_set_pipeline_step(
-    job_id: str, request: Request, user: CurrentUser = Depends(require_user)
+    job_id: str,
+    body: PipelineStepRequest,
+    user: CurrentUser = Depends(require_user),
 ):
     """Persist console pipeline step for dashboard readiness (steps 3–6)."""
-    body = await request.json()
-    if not isinstance(body, dict):
-        raise HTTPException(400, "Body must be a JSON object")
-    try:
-        step = int(body.get("step"))
-    except (TypeError, ValueError):
-        raise HTTPException(400, "step must be an integer 1–6")
-    if step < 1 or step > 6:
-        raise HTTPException(400, "step must be an integer 1–6")
+    step = body.step
 
     user_email = user.email
     org_id = str(user.organisation_id)
@@ -216,6 +220,10 @@ async def get_dashboard(user: CurrentUser = Depends(require_user)):
     PDF jobs are always listed (filename + resume link). Catalogue groups are
     included only for Excel/SQL (or when the user has no PDF uploads), so a
     single PDF is not exploded into many table/group rows.
+
+    Uses summary job rows (no full ``result`` JSON hydrate). Live in-memory
+    jobs overlay status/percent for in-flight uploads; Console/Review still
+    load full payloads on demand.
     """
     user_email = user.email
     org_id = str(user.organisation_id)
@@ -224,64 +232,92 @@ async def get_dashboard(user: CurrentUser = Depends(require_user)):
     def _run():
         with session_scope() as session:
             base = list_dashboard(session, user_email)
-            jobs = pdf_jobs_repo.list_for_user(
+            summaries = pdf_jobs_repo.list_dashboard_job_summaries(
                 session, user_email=user_email, organisation_id=org_uuid
             )
-            pdf_db = {
-                j.job_id: {
-                    "job_id": j.job_id,
-                    "filename": j.filename,
-                    "status": j.status,
-                    "grouping_status": j.grouping_status,
-                    "pipeline_step": j.pipeline_step,
-                    "created_at": j.created_at,
-                    "updated_at": j.updated_at,
-                    "organisation_id": j.organisation_id,
-                }
-                for j in jobs
-            }
-        return base, pdf_db
+        return base, summaries
 
-    base, pdf_db = await asyncio.to_thread(_run)
+    base, summaries = await asyncio.to_thread(_run)
+    pdf_db = {s["job_id"]: s for s in summaries if s.get("job_id")}
 
+    # Overlay live in-memory progress without hydrating every Postgres result.
+    # Never let a stale API-process "queued"/"running" cache override a terminal
+    # DB row written by the background worker.
     with _pdf_jobs_lock:
-        _hydrate_user_pdf_jobs(user_email)
-        json_jobs = [
-            _pdf_job_public(j)
-            for j in _pdf_jobs.values()
-            if _job_visible_to_org(j, user_email, org_id)
-        ]
+        for job in _pdf_jobs.values():
+            if not _job_visible_to_org(job, user_email, org_id):
+                continue
+            jid = job.get("job_id")
+            if not jid:
+                continue
+            existing = pdf_db.get(jid) or {}
+            mem_status = str(job.get("status") or "")
+            db_status = str(existing.get("status") or "")
+            if db_status in _TERMINAL_STATUSES and mem_status in _IN_FLIGHT_STATUSES:
+                continue
+            if mem_status in _IN_FLIGHT_STATUSES and db_status in _IN_FLIGHT_STATUSES:
+                mem_pct = int(job.get("percent") or 0)
+                db_pct = int(existing.get("percent") or 0)
+                use_mem = mem_pct >= db_pct
+            else:
+                use_mem = bool(mem_status)
+            if not use_mem and existing:
+                continue
+            pdf_db[jid] = {
+                **existing,
+                "job_id": jid,
+                "filename": job.get("filename") or existing.get("filename"),
+                "status": (mem_status if use_mem else db_status) or "queued",
+                "percent": int(
+                    job.get("percent")
+                    if use_mem and job.get("percent") is not None
+                    else existing.get("percent")
+                    or 0
+                ),
+                "grouping_status": existing.get("grouping_status")
+                if existing.get("grouping_status") is not None
+                else job.get("grouping_status"),
+                "pipeline_step": existing.get("pipeline_step")
+                if existing.get("pipeline_step") is not None
+                else job.get("pipeline_step"),
+                "created_at": existing.get("created_at") or job.get("created_at"),
+                "updated_at": existing.get("updated_at") or job.get("created_at"),
+                "organisation_id": existing.get("organisation_id")
+                or job.get("organisation_id"),
+                "table_count": int(
+                    existing.get("table_count")
+                    if existing.get("table_count") is not None
+                    else job.get("table_count")
+                    or 0
+                ),
+                "needs_review_count": int(
+                    existing.get("needs_review_count")
+                    if existing.get("needs_review_count") is not None
+                    else job.get("needs_review_count")
+                    or 0
+                ),
+            }
 
-    seen = set()
     pdf_rows = []
-    for job in json_jobs:
-        jid = job.get("job_id")
-        if not jid:
-            continue
-        seen.add(jid)
-        db = pdf_db.get(jid) or {}
-        step = db.get("pipeline_step")
-        if step is None:
-            step = job.get("pipeline_step")
-        row = _pdf_dashboard_row(job, db.get("grouping_status"), step)
-        if row:
-            pdf_rows.append(row)
-
     for jid, db in pdf_db.items():
-        if jid in seen:
+        if str(db.get("status") or "") == "cancelled":
             continue
-        row = _pdf_dashboard_row({
-            "job_id": jid,
-            "filename": db.get("filename"),
-            "status": db.get("status") or "done",
-            "percent": 100,
-            "created_at": db.get("updated_at") or db.get("created_at"),
-            "needs_review_count": 0,
-            "pipeline_step": db.get("pipeline_step"),
-        }, db.get("grouping_status"), db.get("pipeline_step"))
+        row = _pdf_dashboard_row(
+            {
+                "job_id": jid,
+                "filename": db.get("filename"),
+                "status": db.get("status") or "done",
+                "percent": int(db.get("percent") or 0),
+                "created_at": db.get("updated_at") or db.get("created_at"),
+                "table_count": int(db.get("table_count") or 0),
+                "needs_review_count": int(db.get("needs_review_count") or 0),
+                "pipeline_step": db.get("pipeline_step"),
+            },
+            db.get("grouping_status"),
+            db.get("pipeline_step"),
+        )
         if row:
             pdf_rows.append(row)
-
     catalogue_rows = list(base.get("rows") or [])
     if pdf_rows:
         # PDF uploads already cover that file end-to-end. Keep catalogue rows

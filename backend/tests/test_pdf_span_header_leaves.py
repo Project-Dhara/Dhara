@@ -149,6 +149,35 @@ def test_birth_order_leaf_row_is_header_not_body():
     assert not any(str(v).upper() == "1ST" for v in df.iloc[:, 1].tolist())
 
 
+def test_vertical_merge_labels_are_not_repeated_in_path():
+    """Excel/PDF rowspan expands YEAR into every header row — path keeps one label."""
+    df = dataframe_from_extracted_rows([
+        ["YEAR", "TOTAL BIRTHS", "RURAL", "RURAL", None, None, "URBAN", "URBAN", None, None],
+        ["YEAR", "TOTAL BIRTHS", "RURAL", "DOMICILIARY", None, None, "URBAN", "DOMICILIARY", None, None],
+        [
+            "YEAR",
+            "TOTAL BIRTHS",
+            "INSTITUTIONAL",
+            "PHYSICIAN, NURSE, TRAINED MID- WIFE",
+            "UNTRAINED MID-WIFE",
+            "OTHERS",
+            "INSTITUTIONAL",
+            "PHYSICIAN, NURSE, TRAINED MID- WIFE",
+            "UNTRAINED MID-WIFE",
+            "OTHERS",
+        ],
+        ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
+        ["1991", "272020", "2028", "1831", "22791", "68", "146393", "21803", "76464", "642"],
+    ])
+    paths = [m.get("header_path") for m in (df.attrs.get("dhara_column_meta") or [])]
+    assert paths[0] == ["YEAR"]
+    assert paths[1] == ["TOTAL BIRTHS"]
+    assert paths[2] == ["RURAL", "INSTITUTIONAL"]
+    assert paths[3][0] == "RURAL" and paths[3][1] == "DOMICILIARY"
+    assert paths[6] == ["URBAN", "INSTITUTIONAL"]
+    assert "YEAR" not in (paths[0][1:] if len(paths[0]) > 1 else [])
+
+
 def test_month_sex_groups_keep_index_row_and_all_measures():
     """Rural/Urban/Total with a repeated Total leaf, plus a stacked month column."""
     df = dataframe_from_extracted_rows([
@@ -180,7 +209,7 @@ def test_month_sex_groups_keep_index_row_and_all_measures():
         ["Urban", "Total"],
         ["Total", "Male"],
         ["Total", "Female"],
-        ["Total", "Total"],
+        ["Total"],
     ]
     assert [str(v) for v in df.iloc[0]] == ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
     assert [str(v) for v in df.iloc[1]] == [

@@ -18,13 +18,14 @@ DHARA runs as:
 
 ## Topology options
 
-### A. Three containers (dev / on-prem)
+### A. Three containers (on-prem)
 
 ```text
 postgres (:5432) · backend (:8000) · frontend (:80 → 3000)
 ```
 
-`make up` / `docker compose up -d --build`
+`make up` / `docker compose up -d --build`  
+Frontend image: `npm run build` then `npm run start` (not `next dev`).
 
 ### B. Combined app image (prod-shaped)
 

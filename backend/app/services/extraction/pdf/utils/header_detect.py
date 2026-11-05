@@ -192,9 +192,6 @@ def resolve_column_headers(header_matrix: List[List[Any]], n_cols: int) -> List[
             break
     kinds = _parent_col_kinds(raw_top) if rows_in else []
 
-    # Original text, before rowspan/colspan fill. A leaf that repeats its parent
-    # ("Total" under Total) is real; the same word copied into an empty cell is not.
-    original_rows = [_pad_row(r, n_cols) for r in rows_in]
     rows = _fill_header_matrix(rows_in, n_cols)
     if not rows:
         return [
@@ -205,7 +202,7 @@ def resolve_column_headers(header_matrix: List[List[Any]], n_cols: int) -> List[
     out: List[dict] = []
     for i in range(n_cols):
         path: List[str] = []
-        for r_i, row in enumerate(rows):
+        for row in rows:
             lab = row[i] if i < len(row) else ""
             if not lab:
                 continue
@@ -213,12 +210,10 @@ def resolve_column_headers(header_matrix: List[List[Any]], n_cols: int) -> List[
                 continue
             if _is_header_metadata_label(lab):
                 continue
-            orig = ""
-            if r_i < len(original_rows) and i < len(original_rows[r_i]):
-                orig = _cell_str(original_rows[r_i][i])
-            # Skip only a fill-down/fill-across copy. A printed leaf that
-            # matches its parent (Total under Total) stays on the path.
-            if path and path[-1].upper() == lab.upper() and not orig:
+            # Vertical merges (Excel rowspan / PDF stub) and horizontal fill
+            # both repeat the same label. One entry is enough — display uses
+            # rowspan for short paths. RURAL|RURAL|INSTITUTIONAL → RURAL|INSTITUTIONAL.
+            if path and path[-1].upper() == lab.upper():
                 continue
             path.append(lab)
 

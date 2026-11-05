@@ -7,10 +7,12 @@ RUN npm ci
 
 COPY . .
 
-# Dev server reads BACKEND_ORIGIN at startup (next.config.mjs rewrites).
-# Compose sets http://backend:8000. `next build` is only for the prod image.
+# Next rewrites bake BACKEND_ORIGIN at build time (see next.config.mjs).
+# Compose sets http://backend:8000 for the multi-container stack.
 ARG BACKEND_ORIGIN=http://127.0.0.1:8000
 ENV BACKEND_ORIGIN=$BACKEND_ORIGIN
 
+RUN npm run build
+
 EXPOSE 3000
-CMD ["npm", "run", "dev"]
+CMD ["npm", "run", "start"]

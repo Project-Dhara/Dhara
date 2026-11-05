@@ -1,5 +1,5 @@
 """GET/POST the authenticated caller's stored LLM API key."""
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import CurrentUser, require_user
@@ -7,6 +7,7 @@ from app.core.crypto import CredentialCryptoError
 from app.core.permissions import MUTATING_ROLES, require_roles
 from app.db.repositories import llm_keys as llm_repo
 from app.db.session import get_db
+from app.schemas.llm_key import LlmKeySaveRequest, LlmKeyStatusResponse
 
 router = APIRouter(tags=["Settings"])
 
@@ -24,7 +25,11 @@ def _status_payload(status: llm_repo.LlmKeyStatus, *, extra: dict | None = None)
     return body
 
 
-@router.get("/api/llm-key", summary="Get LLM credential (decrypted for owner)")
+@router.get(
+    "/api/llm-key",
+    summary="Get LLM credential (decrypted for owner)",
+    response_model=LlmKeyStatusResponse,
+)
 async def get_llm_key(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
@@ -33,15 +38,18 @@ async def get_llm_key(
     return _status_payload(status)
 
 
-@router.post("/api/llm-key", summary="Save or clear stored LLM API key")
+@router.post(
+    "/api/llm-key",
+    summary="Save or clear stored LLM API key",
+    response_model=LlmKeyStatusResponse,
+)
 async def save_llm_key(
-    request: Request,
+    body: LlmKeySaveRequest,
     user: CurrentUser = Depends(require_roles(*MUTATING_ROLES)),
     db: Session = Depends(get_db),
 ):
-    data = await request.json()
-    api_key = (data.get("api_key") or "").strip()
-    provider = (data.get("provider") or "").strip() or None
+    api_key = (body.api_key or "").strip()
+    provider = (body.provider or "").strip() or None
     if provider:
         provider = provider.lower()
         if provider in ("meity-empanelled llm", "self-hosted"):

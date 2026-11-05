@@ -29,7 +29,10 @@ const {
   buildBodyCellSpans,
   buildMultiLevelHeaderRows,
   buildEditorHeaderRows,
+  columnHeaderPath,
   columnHeaderPathForDisplay,
+  collapseConsecutiveHeaderLabels,
+  placeHeaderPath,
   reconcileBodyMergesWithAutoInfer,
   resolveDisplayBodySpans,
 } = require(out)
@@ -165,5 +168,46 @@ assert(
 const previewH = buildMultiLevelHeaderRows([unitCol, qualCol])
 const editorH = buildEditorHeaderRows([unitCol, qualCol])
 assert(previewH.depth === 1 && editorH.depth === 1, 'preview/editor depth must match for flat paren leaves')
+
+// Vertical merge labels must collapse to one path entry (rowspan), not stack.
+assert(
+  JSON.stringify(collapseConsecutiveHeaderLabels(['YEAR', 'YEAR', 'YEAR'])) === JSON.stringify(['YEAR']),
+  'YEAR rowspan path collapses',
+)
+assert(
+  JSON.stringify(collapseConsecutiveHeaderLabels(['RURAL', 'RURAL', 'INSTITUTIONAL']))
+    === JSON.stringify(['RURAL', 'INSTITUTIONAL']),
+  'RURAL|RURAL|INSTITUTIONAL collapses middle repeat',
+)
+assert(
+  JSON.stringify(columnHeaderPath({ header_path: ['Months', 'Months'] })) === JSON.stringify(['Months']),
+  'Months duplicate path collapses for display',
+)
+assert(
+  JSON.stringify(columnHeaderPath({
+    header_path: ['LOCAL BODY', 'LOCAL BODY'],
+  })) === JSON.stringify(['LOCAL BODY']),
+  'LOCAL BODY rowspan path collapses',
+)
+{
+  const cols = [
+    { name: 'YEAR', header_path: ['YEAR', 'YEAR', 'YEAR'] },
+    { name: 'TOTAL BIRTHS', header_path: ['TOTAL BIRTHS', 'TOTAL BIRTHS', 'TOTAL BIRTHS'] },
+    { name: 'INSTITUTIONAL', header_path: ['RURAL', 'RURAL', 'INSTITUTIONAL'] },
+    { name: 'PHYSICIAN', header_path: ['RURAL', 'DOMICILIARY', 'PHYSICIAN, NURSE, TRAINED MID- WIFE'] },
+  ]
+  const { depth, rows } = buildMultiLevelHeaderRows(cols)
+  assert(depth === 3, 'attendant table header depth is 3')
+  const yearSeg = rows[0].find((s) => s.label === 'YEAR')
+  assert(yearSeg && yearSeg.rowSpan === 3, 'YEAR is a single rowspan cell')
+  assert(!rows[1].some((s) => s.label === 'YEAR'), 'YEAR must not repeat on middle header row')
+  assert(!rows[2].some((s) => s.label === 'YEAR'), 'YEAR must not repeat on leaf header row')
+  assert(rows[0].some((s) => s.label === 'RURAL'), 'RURAL still appears as a group on the top row')
+  assert(!rows[1].some((s) => s.label === 'RURAL'), 'RURAL must not repeat as a mid-level label')
+  const placed = placeHeaderPath(['RURAL', 'INSTITUTIONAL'], 3)
+  assert(placed[0].label === 'RURAL' && placed[0].rowSpan === 2, 'institutional stub keeps RURAL rowspan into mid row')
+  assert(placed[1] && placed[1].covered, 'mid cell under institutional RURAL is covered')
+  assert(placed[2].label === 'INSTITUTIONAL', 'leaf stays INSTITUTIONAL')
+}
 
 console.log('check_body_cell_spans: ok')

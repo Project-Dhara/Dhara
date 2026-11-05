@@ -74,7 +74,7 @@ function toClientGrouping(data) {
  */
 export default function PdfGrouping({ jobId }) {
   const router = useRouter()
-  const { keySaved } = useApp()
+  const { keySaved, invalidateDashboard, invalidateCatalogue } = useApp()
   const persisted = loadPdfPipeline(jobId)
 
   const [filename, setFilename] = useState(persisted?.filename ?? '')
@@ -545,8 +545,14 @@ export default function PdfGrouping({ jobId }) {
           }}
           showClassifyHeading
           onGoSettings={() => router.push('/settings')}
-          onGoDashboard={() => router.push('/dashboard')}
-          onGoCatalogue={() => router.push('/catalogue')}
+          onGoDashboard={() => {
+            invalidateDashboard()
+            router.push('/dashboard')
+          }}
+          onGoCatalogue={() => {
+            invalidateCatalogue()
+            router.push('/catalogue')
+          }}
           onUploadAnother={() => {
             clearPdfPipeline(jobId)
             goToConsoleFiles(router)

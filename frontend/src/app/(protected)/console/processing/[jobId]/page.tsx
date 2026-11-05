@@ -90,6 +90,9 @@ export default function PdfProcessingPage() {
         if (data.status === 'done' || data.status === 'completed_with_errors') {
           if (pollRef.current) clearInterval(pollRef.current)
           router.push(`/console/review/${jobId}`)
+        } else if (data.status === 'cancelled') {
+          if (pollRef.current) clearInterval(pollRef.current)
+          goToConsoleFiles(router)
         } else if (data.status === 'error' || data.status === 'failed') {
           if (pollRef.current) clearInterval(pollRef.current)
           setError(data.message || 'PDF processing failed')
@@ -107,9 +110,30 @@ export default function PdfProcessingPage() {
     return () => { cancelled = true; if (pollRef.current) clearInterval(pollRef.current) }
   }, [jobId, router])
 
+  const existingFilenames = job?.filename
+    ? [job.filename]
+    : (job?.batch_files || []).map((f) => f.filename).filter(Boolean)
+
+  const filesLayoutProps = {
+    jobId,
+    step: 1 as const,
+    maxStepReached: 1,
+    askBeforeLeaveFiles: true,
+    cancelJobOnStartOver: true,
+    existingFilenames,
+    filesReturnPath: `/console/processing/${jobId}`,
+    filesReturnTitle: 'File still processing',
+    filesReturnBody: (
+      <>
+        This upload is still running. You can add more files while it continues, or start
+        over with a new upload (this cancels the current job).
+      </>
+    ),
+  }
+
   if (error) {
     return (
-      <PdfConsoleLayout jobId={jobId} step={1} maxStepReached={1}>
+      <PdfConsoleLayout {...filesLayoutProps}>
         <div className="mx-auto flex max-w-xl flex-col gap-4 py-8">
           <div className="font-display text-xl font-medium text-ink">Something went wrong</div>
           <ErrorBanner>{error}</ErrorBanner>
@@ -121,7 +145,7 @@ export default function PdfProcessingPage() {
 
   // Still on Dataset Inventory → Files while extraction runs; Preview unlocks on review.
   return (
-    <PdfConsoleLayout jobId={jobId} step={1} maxStepReached={1}>
+    <PdfConsoleLayout {...filesLayoutProps}>
       <div className="mx-auto flex max-w-xl flex-col gap-8 py-8">
         <div>
           <div className="font-display text-xl font-medium text-ink">{job?.filename || 'Processing your document'}</div>

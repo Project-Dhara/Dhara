@@ -1,5 +1,4 @@
 """Unified file upload → data ingestion → extraction job (PDF, Excel, CSV)."""
-import asyncio
 import json
 import uuid
 from typing import List, Optional
@@ -9,19 +8,17 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from app.api.dependencies import CurrentUser
 from app.core.permissions import MUTATING_ROLES, require_roles
 from app.services.ingestion.utils.source_type import resolve_source_type
+from app.services.jobs.enqueue import (
+    dispatch_batch_resume,
+    dispatch_extraction,
+    dispatch_upload_batch,
+)
 from app.workers.extraction_jobs import (
     _get_pdf_job,
     _pdf_job_public,
     _pdf_jobs_lock,
-    _run_extraction_job,
-    queue_extraction_job,
 )
-from app.workers.upload_batches import (
-    append_files_to_batch,
-    queue_upload_batch,
-    retry_batch_file,
-    run_upload_batch,
-)
+from app.workers.upload_batches import append_files_to_batch, retry_batch_file
 
 
 def _parse_dataset_id_config_form(raw: Optional[str]) -> Optional[dict]:
@@ -36,7 +33,7 @@ def _parse_dataset_id_config_form(raw: Optional[str]) -> Optional[dict]:
 router = APIRouter(tags=["Upload"])
 
 MAX_BATCH_FILES = 20
-MAX_BATCH_BYTES = 80 * 1024 * 1024
+MAX_BATCH_BYTES = 200 * 1024 * 1024  # 200 MB total per batch
 
 
 @router.post("/api/upload")
@@ -70,8 +67,7 @@ async def unified_upload(
     job_id = uuid.uuid4().hex
     id_cfg = _parse_dataset_id_config_form(dataset_id_config)
 
-    # Worker decrypts the caller's stored llm_api_keys row at run time.
-    queue_extraction_job(
+    return dispatch_extraction(
         job_id=job_id,
         filename=filename,
         user_email=user.email,
@@ -81,11 +77,6 @@ async def unified_upload(
         user_id=str(user.id),
         dataset_id_config=id_cfg,
     )
-
-    asyncio.create_task(
-        asyncio.to_thread(_run_extraction_job, job_id, content, source_type)
-    )
-    return {"job_id": job_id, "source_type": source_type}
 
 
 def _job_visible_to(job, user: CurrentUser) -> bool:
@@ -129,7 +120,7 @@ async def upload_batch(
 
     batch_id = uuid.uuid4().hex
     id_cfg = _parse_dataset_id_config_form(dataset_id_config)
-    queue_upload_batch(
+    return dispatch_upload_batch(
         batch_id=batch_id,
         user_email=user.email,
         organisation_id=str(user.organisation_id),
@@ -137,8 +128,6 @@ async def upload_batch(
         files=prepared,
         dataset_id_config=id_cfg,
     )
-    asyncio.create_task(asyncio.to_thread(run_upload_batch, batch_id))
-    return {"batch_id": batch_id, "job_id": batch_id, "file_count": len(prepared)}
 
 
 @router.get("/api/upload/batches/{batch_id}")
@@ -199,12 +188,16 @@ async def upload_batch_append_files(
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
-    asyncio.create_task(asyncio.to_thread(run_upload_batch, batch_id))
+    # In-flight single-file jobs park appends until extract finishes — do not
+    # re-queue the parent or the running worker will be interrupted.
+    if not info.get("deferred"):
+        dispatch_batch_resume(batch_id)
     return {
         "batch_id": batch_id,
         "job_id": batch_id,
         "added": info.get("added", len(prepared)),
         "file_count": info.get("file_count"),
+        "deferred": bool(info.get("deferred")),
     }
 
 
@@ -222,4 +215,5 @@ async def upload_batch_retry(
         retry_batch_file(batch_id, file_job_id.strip())
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    dispatch_batch_resume(batch_id)
     return {"ok": True, "batch_id": batch_id, "file_job_id": file_job_id}

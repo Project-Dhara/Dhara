@@ -485,13 +485,24 @@ export function useConsolePipeline() {
     try {
       const append = appendFilesMode || getAppendFilesMode()
       if (append?.jobId) {
-        const data = await appendDatasetBatch(append.jobId, files)
-        const jobId = data.job_id || data.batch_id || append.jobId
-        clearAppendFilesMode()
-        setAppendFilesMode(null)
-        setPendingDatasetFiles([])
-        router.push(`/console/processing/${jobId}`)
-        return
+        try {
+          const data = await appendDatasetBatch(append.jobId, files)
+          const jobId = data.job_id || data.batch_id || append.jobId
+          clearAppendFilesMode()
+          setAppendFilesMode(null)
+          setPendingDatasetFiles([])
+          router.push(`/console/processing/${jobId}`)
+          return
+        } catch (appendErr) {
+          const msg = String(appendErr?.message || '')
+          // Stale append target (cancelled / failed / gone) → fresh upload.
+          const stale =
+            /cancelled|failed|not found|no extracted tables/i.test(msg)
+          if (!stale) throw appendErr
+          clearAppendFilesMode()
+          setAppendFilesMode(null)
+          setRetainedDatasetNames([])
+        }
       }
       if (useSinglePdfUpload(files)) {
         await handlePdfFile(files[0])

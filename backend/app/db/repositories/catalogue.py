@@ -339,6 +339,68 @@ def _tables_for_group(session: Session, metadata_id: str) -> list:
     return out
 
 
+def _tables_for_groups(
+    session: Session, metadata_ids: list[str]
+) -> dict[str, list]:
+    """Load tables + row counts for many groups in two queries (not N+1)."""
+    if not metadata_ids:
+        return {}
+    rows = _mappings(
+        session.execute(
+            text(
+                """
+                SELECT
+                  d.metadata_id,
+                  d.dataset_id,
+                  d.unique_dataset_id,
+                  d.title,
+                  d.table_id,
+                  COALESCE(c.row_count, 0)::int AS row_count
+                FROM datasets d
+                LEFT JOIN (
+                  SELECT r.dataset_id, COUNT(*)::int AS row_count
+                  FROM dataset_rows r
+                  INNER JOIN datasets d2 ON d2.dataset_id = r.dataset_id
+                  WHERE d2.metadata_id = ANY(:mids)
+                  GROUP BY r.dataset_id
+                ) c ON c.dataset_id = d.dataset_id
+                WHERE d.metadata_id = ANY(:mids)
+                ORDER BY d.metadata_id ASC, d.title ASC NULLS LAST, d.dataset_id ASC
+                """
+            ),
+            {"mids": list(metadata_ids)},
+        )
+    )
+    by_group: dict[str, list] = {mid: [] for mid in metadata_ids}
+    for r in rows:
+        mid = str(r.get("metadata_id") or "").strip()
+        if not mid:
+            continue
+        raw_ds = str(r.get("dataset_id") or "").strip()
+        display_id = raw_ds
+        for cand in (r.get("unique_dataset_id"), r.get("table_id"), r.get("dataset_id")):
+            s = str(cand or "").strip()
+            if not s:
+                continue
+            if re.fullmatch(
+                r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+                s,
+            ):
+                continue
+            display_id = s
+            break
+        by_group.setdefault(mid, []).append(
+            {
+                "id": display_id or raw_ds,
+                "dataset_id": display_id or raw_ds,
+                "title": r.get("title") or display_id or raw_ds,
+                "table_id": str(r.get("table_id") or display_id or raw_ds),
+                "row_count": int(r.get("row_count") or 0),
+            }
+        )
+    return by_group
+
+
 def list_catalogue_groups(
     session: Session, *, organisation_id: uuid.UUID | str | None = None
 ) -> list[dict]:
@@ -366,8 +428,10 @@ def list_catalogue_groups(
                 )
             )
         )
+    mids = [str(g["metadata_id"]) for g in groups if g.get("metadata_id")]
+    tables_by_group = _tables_for_groups(session, mids)
     shaped = [
-        _shape_group_row(g, _tables_for_group(session, g["metadata_id"]))
+        _shape_group_row(g, tables_by_group.get(str(g["metadata_id"]), []))
         for g in groups
     ]
     # Hide orphan releases left behind after republish / unlink (0 datasets).

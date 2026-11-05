@@ -90,9 +90,20 @@ Grouping tunables (optional): `PDF_GROUP_DISTANCE`, `PDF_GROUP_TOP_K`, `EMBEDDIN
 
 ### Background work
 
-There is no separate worker service, Celery, or RQ queue. `docker-compose.yml` runs one `uvicorn` process. Extraction threads die if that process restarts; finished jobs remain in Postgres and can be read again.
+`docker-compose.yml` runs **two** backend processes from the same image:
 
-Do not put provider keys in job rows. Today the key is passed only as a worker argument. Keep it that way, and encrypt the database copy.
+| Service | Command | Role |
+|---------|---------|------|
+| `backend` | `uvicorn main:app` | HTTP API only (`DHARA_INLINE_JOBS=false`) |
+| `worker` | `python -m app.workers.job_worker` | Claims `queued` rows in `pdf_jobs` and runs extraction / batches |
+
+Upload routes persist a `queued` job (with source bytes) and return `job_id` immediately. The worker uses `FOR UPDATE SKIP LOCKED` so you can scale workers. Poll interval: `DHARA_WORKER_POLL_SECONDS` (default 1.5).
+
+For API-only host runs without a worker, set `DHARA_INLINE_JOBS=1` (uses the in-process pool in `app/workers/runner.py`).
+
+Do not put provider keys in job rows. The worker decrypts the caller's stored LLM key at run time.
+
+Required at process start: `JWT_SECRET` and `DATABASE_URL` (see `backend/.env.example`). Missing values fail startup instead of returning opaque 500s on login.
 
 ### MCP
 

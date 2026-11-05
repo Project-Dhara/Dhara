@@ -109,7 +109,7 @@ def _column_header_path(col: Any) -> list[str]:
 
     raw = col.get("header_path")
     if isinstance(raw, (list, tuple)) and len(raw) > 0:
-        path = [_cell_str(p) for p in raw if _cell_str(p)]
+        path = _collapse_consecutive([_cell_str(p) for p in raw if _cell_str(p)])
         if path:
             return _filter_banner_roots(path)
 

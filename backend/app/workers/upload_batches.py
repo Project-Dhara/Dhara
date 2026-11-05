@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import os
-import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -312,6 +311,13 @@ def run_upload_batch(batch_id: str) -> None:
         fid = file_entry["file_job_id"]
         if file_entry.get("status") == "done":
             return
+        parent = _get_pdf_job(batch_id)
+        if parent and str(parent.get("status") or "") == "cancelled":
+            with _pdf_jobs_lock:
+                file_entry["status"] = "cancelled"
+            return
+        if str(file_entry.get("status") or "") == "cancelled":
+            return
         content = _load_file_bytes(fid)
         if not content:
             with _pdf_jobs_lock:
@@ -361,7 +367,7 @@ def run_upload_batch(batch_id: str) -> None:
 
     with _pdf_jobs_lock:
         batch = _pdf_jobs.get(batch_id) or _get_pdf_job(batch_id)
-        if batch:
+        if batch and str(batch.get("status") or "") != "cancelled":
             meta = (batch.get("result") or {}).get("__batch_meta__") or {}
             files = meta.get("batch_files") or files
             status, pct, message = _aggregate_batch_status(files)
@@ -454,6 +460,155 @@ def ensure_job_is_batch(job_id: str) -> Dict[str, Any]:
     return _get_pdf_job(job_id) or job
 
 
+def _queue_append_while_inflight(
+    batch_id: str,
+    files: List[Tuple[str, str, bytes]],
+    *,
+    user_email: str,
+    organisation_id: Optional[str],
+    user_id: Optional[str],
+    dataset_id_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Park additional files on a still-running single-file job.
+
+    Children stay queued (worker skips parent-linked children) until the
+    current extract finishes; ``finalize_pending_appends`` then promotes the
+    parent to a batch and resumes.
+    """
+    from app.services.ingestion.table_ids import (
+        dataset_id_config_from_job,
+        normalize_dataset_id_config,
+    )
+
+    batch = _get_pdf_job(batch_id)
+    if not batch:
+        raise ValueError("Job not found")
+
+    reviews = dict(batch.get("reviews") or {})
+    pending: List[Dict[str, Any]] = list(reviews.get("__pending_append_files") or [])
+    if len(pending) + len(files) > 20:
+        raise ValueError("At most 20 files per batch")
+
+    id_cfg = normalize_dataset_id_config(
+        dataset_id_config or dataset_id_config_from_job(batch)
+    )
+    new_entries: List[Dict[str, Any]] = []
+    for filename, source_type, content in files:
+        file_job_id = uuid.uuid4().hex
+        size_bytes = len(content or b"")
+        page_count = (
+            _pdf_page_count_quick(content) if (source_type or "").lower() == "pdf" else 0
+        )
+        entry = _batch_file_entry(
+            file_job_id=file_job_id,
+            filename=filename,
+            source_type=source_type,
+            status="queued",
+            size_bytes=size_bytes,
+            page_count=page_count,
+        )
+        new_entries.append(entry)
+        pending.append(entry)
+        queue_extraction_job(
+            job_id=file_job_id,
+            filename=filename,
+            user_email=user_email,
+            source_type=source_type,
+            file_bytes=content,
+            organisation_id=organisation_id,
+            user_id=user_id,
+            persist_file_bytes=True,
+            parent_batch_id=batch_id,
+            dataset_id_config=id_cfg,
+        )
+
+    with _pdf_jobs_lock:
+        batch = _pdf_jobs.get(batch_id) or _get_pdf_job(batch_id)
+        if not batch:
+            raise ValueError("Job not found")
+        reviews = dict(batch.get("reviews") or {})
+        reviews["__pending_append_files"] = pending
+        batch["reviews"] = reviews
+        batch["dataset_id_config"] = id_cfg
+        # Keep current extract running — only note that more files are waiting.
+        if batch.get("status") in ("queued", "running"):
+            batch["message"] = (
+                f"{batch.get('message') or 'Processing'} · "
+                f"{len(pending)} more file(s) queued"
+            )
+        _save_pdf_job(batch)
+
+    return {
+        "batch_id": batch_id,
+        "added": len(new_entries),
+        "file_count": 1 + len(pending),
+        "deferred": True,
+    }
+
+
+def finalize_pending_appends(job_id: str) -> bool:
+    """After a single-file extract completes, promote + resume parked appends.
+
+    Returns True when pending files were attached (caller should resume batch).
+    """
+    job = _get_pdf_job(job_id)
+    if not job:
+        return False
+    reviews = dict(job.get("reviews") or {})
+    pending = list(reviews.get("__pending_append_files") or [])
+    if not pending:
+        return False
+
+    try:
+        ensure_job_is_batch(job_id)
+    except ValueError:
+        logger.warning(
+            "Could not promote job %s for pending appends — leaving files parked",
+            job_id,
+        )
+        return False
+
+    from app.services.ingestion.review_tables import batch_meta_from_result
+
+    with _pdf_jobs_lock:
+        batch = _pdf_jobs.get(job_id) or _get_pdf_job(job_id)
+        if not batch:
+            return False
+        meta = batch_meta_from_result(batch.get("result"))
+        batch_files: List[Dict[str, Any]] = list(
+            meta.get("batch_files") or batch.get("batch_files") or []
+        )
+        existing_ids = {f.get("file_job_id") for f in batch_files}
+        for entry in pending:
+            if entry.get("file_job_id") in existing_ids:
+                continue
+            batch_files.append(entry)
+        reviews = dict(batch.get("reviews") or {})
+        reviews.pop("__pending_append_files", None)
+        batch["reviews"] = reviews
+        batch["batch_files"] = batch_files
+        label = (
+            batch_files[0]["filename"]
+            if len(batch_files) == 1
+            else f"{len(batch_files)} files"
+        )
+        batch["filename"] = label
+        pages = {
+            k: v
+            for k, v in (batch.get("result") or {}).items()
+            if k != "__batch_meta__"
+        }
+        batch["result"] = attach_batch_meta(pages, {"batch_files": batch_files})
+        batch["source_type"] = "batch"
+        batch["status"] = "queued"
+        batch["stage"] = "queued"
+        batch["percent"] = 0
+        batch["message"] = f"Queued {len(pending)} additional file(s)"
+        batch["error"] = None
+        _save_pdf_job(batch)
+    return True
+
+
 def append_files_to_batch(
     batch_id: str,
     files: List[Tuple[str, str, bytes]],
@@ -473,6 +628,35 @@ def append_files_to_batch(
     if not files:
         raise ValueError("At least one file is required")
 
+    batch = _get_pdf_job(batch_id)
+    if not batch:
+        raise ValueError("Job not found")
+
+    status = str(batch.get("status") or "")
+    if status in ("cancelled", "error", "failed"):
+        raise ValueError(
+            "Cannot add files to a cancelled or failed job — start a new upload"
+        )
+
+    meta = batch_meta_from_result(batch.get("result"))
+    existing_files = list(meta.get("batch_files") or batch.get("batch_files") or [])
+    from app.services.ingestion.review_tables import result_pages_only
+
+    pages = result_pages_only(batch.get("result"))
+    if (
+        not existing_files
+        and not pages
+        and status in ("queued", "running")
+    ):
+        return _queue_append_while_inflight(
+            batch_id,
+            files,
+            user_email=user_email,
+            organisation_id=organisation_id,
+            user_id=user_id,
+            dataset_id_config=dataset_id_config,
+        )
+
     ensure_job_is_batch(batch_id)
     batch = _get_pdf_job(batch_id)
     if not batch:
@@ -482,6 +666,17 @@ def append_files_to_batch(
     batch_files: List[Dict[str, Any]] = list(
         meta.get("batch_files") or batch.get("batch_files") or []
     )
+    # Include any files that were parked while the first extract was still running.
+    reviews = dict(batch.get("reviews") or {})
+    parked = list(reviews.get("__pending_append_files") or [])
+    if parked:
+        existing_ids = {f.get("file_job_id") for f in batch_files}
+        for entry in parked:
+            if entry.get("file_job_id") not in existing_ids:
+                batch_files.append(entry)
+        reviews.pop("__pending_append_files", None)
+        batch["reviews"] = reviews
+
     if len(batch_files) + len(files) > 20:
         raise ValueError("At most 20 files per batch")
 
@@ -550,7 +745,7 @@ def append_files_to_batch(
 
 
 def retry_batch_file(batch_id: str, file_job_id: str) -> None:
-    """Re-run one failed file without reprocessing successful siblings."""
+    """Mark one failed file queued again. Caller dispatches the batch worker."""
     batch = _get_pdf_job(batch_id)
     if not batch:
         raise ValueError("Batch not found")
@@ -561,34 +756,27 @@ def retry_batch_file(batch_id: str, file_job_id: str) -> None:
         raise ValueError("File not in batch")
     target["status"] = "queued"
     target["error"] = None
+    # Also re-queue the child job row so extraction can run again.
+    child = _get_pdf_job(file_job_id)
+    if child is not None:
+        with _pdf_jobs_lock:
+            child.update(
+                status="queued",
+                stage="queued",
+                percent=0,
+                message="Queued",
+                error=None,
+                result=None,
+            )
+            _save_pdf_job(child)
     with _pdf_jobs_lock:
         batch["batch_files"] = files
         batch["result"] = attach_batch_meta(
             {k: v for k, v in (batch.get("result") or {}).items() if k != "__batch_meta__"},
             {"batch_files": files},
         )
-        batch["status"] = "running"
+        batch["status"] = "queued"
+        batch["stage"] = "queued"
+        batch["message"] = "Queued retry"
         _save_pdf_job(batch)
 
-    t = threading.Thread(target=_retry_one, args=(batch_id, target), daemon=True)
-    t.start()
-
-
-def _retry_one(batch_id: str, file_entry: Dict[str, Any]) -> None:
-    fid = file_entry["file_job_id"]
-    content = _load_file_bytes(fid)
-    if not content:
-        file_entry["status"] = "error"
-        file_entry["error"] = "File data missing"
-        _refresh_batch_merge(batch_id)
-        return
-    file_entry["status"] = "running"
-    _run_extraction_job(fid, content, file_entry["source_type"])
-    child = _get_pdf_job(fid)
-    if child and child.get("status") == "done":
-        file_entry["status"] = "done"
-        file_entry["error"] = None
-    else:
-        file_entry["status"] = "error"
-        file_entry["error"] = (child or {}).get("error") or "Extraction failed"
-    _refresh_batch_merge(batch_id)

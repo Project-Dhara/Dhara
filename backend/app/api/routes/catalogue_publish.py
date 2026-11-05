@@ -77,13 +77,31 @@ def _parse_dataset_id_config_form(raw: Optional[str]) -> Optional[dict]:
 @router.post("/api/catalogue/batch-push")
 async def batch_push(
     request: Request,
-    groups_json: str = Form(...),
-    metadata_files: list[UploadFile] = File(None),
-    tables_blob: Optional[UploadFile] = File(None),
-    nmds_concepts_json: Optional[str] = Form(None),
-    batch_id: Optional[str] = Form(None),
-    pdf_job_id: Optional[str] = Form(None),
-    dataset_id_config: Optional[str] = Form(None),
+    groups_json: str = Form(
+        ...,
+        description=(
+            "JSON array of catalogue groups (metadata + matched table refs). "
+            "Paste a JSON string in /docs; the UI sends this via FormData."
+        ),
+    ),
+    metadata_files: list[UploadFile] = File(
+        None, description="Optional metadata workbook uploads keyed by group index"
+    ),
+    tables_blob: Optional[UploadFile] = File(
+        None, description="Optional JSON file of full table payloads (legacy sessions)"
+    ),
+    nmds_concepts_json: Optional[str] = Form(
+        None, description="Optional JSON object of NMDS/SDG concept metadata"
+    ),
+    batch_id: Optional[str] = Form(
+        None, description="Staging batch id from extract/match (preferred table source)"
+    ),
+    pdf_job_id: Optional[str] = Form(
+        None, description="PDF job id when publishing from PDF grouping"
+    ),
+    dataset_id_config: Optional[str] = Form(
+        None, description="Optional JSON string for dataset id configuration"
+    ),
     user: CurrentUser = Depends(require_roles(*MUTATING_ROLES)),
 ):
     user_email = user.email

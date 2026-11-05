@@ -61,6 +61,11 @@ from app.services.ingestion.wizard.original_sheet_export import extract_sheet_wi
 from app.services.ingestion.wizard.sql_extract import extract_tables_from_sql
 from app.services.ingestion.wizard.table_export import table_to_excel_bytes
 from app.services.metadata.table_id_title import _catalogue_table_title, _validate_tables
+from app.schemas.catalogue import (
+    FillGroupMetadataRequest,
+    SqlExtractRequest,
+    TableMetadataRequest,
+)
 
 router = APIRouter(tags=["Catalogue"])
 
@@ -68,11 +73,12 @@ router = APIRouter(tags=["Catalogue"])
 @router.post("/api/table-metadata")
 async def table_metadata(
     request: Request,
+    body: TableMetadataRequest,
     user_email: str = Depends(require_user_email),
     db: Session = Depends(get_db),
 ):
     """LLM-based semantic category extraction from a table's raw structure."""
-    data = await request.json()
+    data = body.model_dump()
     extractor = _extractor_for(request, user_email, db=db)
     try:
         categories = extractor.extract_category_metadata(
@@ -196,7 +202,10 @@ async def batch_extract(
 
 
 @router.post("/api/catalogue/sql-extract")
-async def sql_extract(request: Request, user_email: str = Depends(require_user_email)):
+async def sql_extract(
+    body: SqlExtractRequest,
+    user_email: str = Depends(require_user_email),
+):
     """Connect to a user-supplied Postgres database and return Excel-shaped
     tables for batch-match → review → publish.
 
@@ -208,30 +217,25 @@ async def sql_extract(request: Request, user_email: str = Depends(require_user_e
       title?, table_id?  (used only when query is provided)
       row_limit?, max_tables?
     """
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(400, "Expected a JSON body")
-    if not isinstance(body, dict):
-        raise HTTPException(400, "Expected a JSON object")
+    data = body.model_dump()
 
-    query = body.get("query")
+    query = data.get("query")
     query = str(query).strip() if query is not None and str(query).strip() else None
 
     def _run():
         return extract_tables_from_sql(
             query=query,
-            database_url=body.get("database_url"),
-            host=body.get("host"),
-            port=body.get("port"),
-            database=body.get("database"),
-            user=body.get("user"),
-            password=body.get("password"),
-            sslmode=body.get("sslmode"),
-            title=body.get("title"),
-            table_id=body.get("table_id"),
-            row_limit=body.get("row_limit") or None,
-            max_tables=body.get("max_tables") or None,
+            database_url=data.get("database_url"),
+            host=data.get("host"),
+            port=data.get("port"),
+            database=data.get("database"),
+            user=data.get("user"),
+            password=data.get("password"),
+            sslmode=data.get("sslmode"),
+            title=data.get("title"),
+            table_id=data.get("table_id"),
+            row_limit=data.get("row_limit") or None,
+            max_tables=data.get("max_tables") or None,
         )
 
     try:
@@ -270,9 +274,19 @@ async def sql_extract(request: Request, user_email: str = Depends(require_user_e
 @router.post("/api/catalogue/batch-match")
 async def batch_match(
     request: Request,
-    tables_json: str = Form(...),
-    metadata_files: list[UploadFile] = File(None),
-    dataset_files: list[UploadFile] = File(None),
+    tables_json: str = Form(
+        ...,
+        description=(
+            "JSON array of extracted table objects (same shape as batch-extract "
+            "/ sql-extract `tables`). Paste a JSON string in /docs."
+        ),
+    ),
+    metadata_files: list[UploadFile] = File(
+        None, description="Optional metadata workbooks (.xlsx) for matching"
+    ),
+    dataset_files: list[UploadFile] = File(
+        None, description="Optional original dataset workbooks"
+    ),
     user_email: str = Depends(require_user_email),
     db: Session = Depends(get_db),
 ):
@@ -321,6 +335,7 @@ async def batch_match(
 @router.post("/api/catalogue/fill-group-metadata")
 async def fill_group_metadata(
     request: Request,
+    body: FillGroupMetadataRequest,
     user_email: str = Depends(require_user_email),
     db: Session = Depends(get_db),
 ):
@@ -334,24 +349,19 @@ async def fill_group_metadata(
       dataset_files_b64? — optional { filename: base64 } map of workbook bytes
     """
     extractor = _extractor_for(request, user_email, db=db)
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(400, "Expected a JSON body")
-    if not isinstance(body, dict):
-        raise HTTPException(400, "Expected a JSON object")
+    data = body.model_dump()
 
-    groups = body.get("groups")
+    groups = data.get("groups")
     if not isinstance(groups, list):
         raise HTTPException(400, "groups must be a list")
 
-    standard = str(body.get("standard") or "nmds").lower()
+    standard = str(data.get("standard") or "nmds").lower()
     if standard not in ("nmds", "sdg"):
         standard = "nmds"
     use_sdg = standard == "sdg"
 
     dataset_payloads: dict = {}
-    raw_files = body.get("dataset_files_b64") or {}
+    raw_files = data.get("dataset_files_b64") or {}
     if isinstance(raw_files, dict):
         for filename, b64 in raw_files.items():
             if not filename or not b64:

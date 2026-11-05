@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, ChevronDown, Copy, Download, FileText, Loader2, Plug, Tags, Terminal } from 'lucide-react'
 import { getToken, withAuthHeaders } from '../../lib/auth'
+import { useApp } from '../../context/AppContext'
 import { publicApiDatasetsUrl, publicMcpUrl } from '../../lib/publicUrls'
 
 const MCP_TOOLS = ['search_datasets', 'get_table', 'get_metadata']
@@ -240,37 +241,28 @@ export default function Catalogue({ hasKey, onGoSettings }) {
   const [copied, setCopied] = useState(null)
   const listScrollRef = useRef(null)
   const detailScrollRef = useRef(null)
-  const [groups, setGroups] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+  const {
+    catalogueGroups,
+    catalogueLoading,
+    catalogueError,
+    ensureCatalogue,
+  } = useApp()
+  const groups = catalogueGroups || []
+  const loading = catalogueLoading && !catalogueGroups
+  const error = catalogueError
   const [downloading, setDownloading] = useState(false)
 
   useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    setError(null)
-    fetch('/api/catalogue/groups', withAuthHeaders())
-      .then(async (res) => {
-        if (!res.ok) {
-          const text = await res.text()
-          throw new Error(text || `Could not load catalogue (${res.status})`)
-        }
-        return res.json()
-      })
-      .then((data) => {
-        if (cancelled) return
-        const rows = data.groups || []
-        setGroups(rows)
-        setSelId((prev) => (prev && rows.some((r) => r.id === prev) ? prev : rows[0]?.id || null))
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err.message || 'Could not load catalogue')
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => { cancelled = true }
-  }, [])
+    ensureCatalogue()
+  }, [ensureCatalogue])
+
+  useEffect(() => {
+    if (!groups.length) {
+      setSelId(null)
+      return
+    }
+    setSelId((prev) => (prev && groups.some((r) => r.id === prev) ? prev : groups[0]?.id || null))
+  }, [groups])
 
   const q = query.trim().toLowerCase()
   const list = groups

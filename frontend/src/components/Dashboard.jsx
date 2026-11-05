@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, ArrowRight, CheckCircle2, Clock, Database, Package } from 'lucide-react'
 import Button from './ui/Button'
-import { withAuthHeaders } from '../lib/auth'
+import { useApp } from '../context/AppContext'
 
 const PAGE_SIZE = 5
 
@@ -35,45 +35,32 @@ function subtitleFor(stats, rows) {
 }
 
 // minmax(0, …) so long filenames wrap inside the column instead of shoving neighbors.
-const gridCols = 'grid-cols-[minmax(0,2.4fr)_minmax(0,0.7fr)_minmax(0,1.3fr)_minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(0,0.7fr)]'
+const gridCols = 'grid-cols-[minmax(0,2.6fr)_minmax(0,0.8fr)_minmax(0,1.2fr)_minmax(0,1.3fr)_minmax(0,0.7fr)]'
 const cellWrap = 'min-w-0 break-words'
 
 export default function Dashboard({ onStartFlow }) {
   const router = useRouter()
-  const [stats, setStats] = useState(null)
-  const [rows, setRows] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+  const {
+    dashboard,
+    dashboardLoading,
+    dashboardError,
+    ensureDashboard,
+  } = useApp()
+  const stats = dashboard?.stats || null
+  const rows = dashboard?.rows || []
+  const loading = dashboardLoading && !dashboard
+  const error = dashboardError
   const [page, setPage] = useState(0)
   const [pageDir, setPageDir] = useState(1)
 
   useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    setError(null)
-    fetch('/api/dashboard', withAuthHeaders())
-      .then(async (res) => {
-        if (!res.ok) {
-          const text = await res.text()
-          throw new Error(text || `Could not load dashboard (${res.status})`)
-        }
-        return res.json()
-      })
-      .then((data) => {
-        if (cancelled) return
-        setStats(data.stats || {})
-        setRows(Array.isArray(data.rows) ? data.rows : [])
-        setPage(0)
-        setPageDir(1)
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err.message || 'Could not load dashboard')
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => { cancelled = true }
-  }, [])
+    ensureDashboard()
+  }, [ensureDashboard])
+
+  useEffect(() => {
+    setPage(0)
+    setPageDir(1)
+  }, [rows.length])
 
   const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
   const currentPage = Math.min(page, pageCount - 1)
@@ -170,7 +157,6 @@ export default function Dashboard({ onStartFlow }) {
           <div className={`grid ${gridCols} items-center gap-4 border-b border-line/80 bg-cream/70 px-5 py-3 text-[11.5px] uppercase tracking-[0.05em] text-ink-soft`}>
             <div className={cellWrap}>Uploaded file</div>
             <div className={cellWrap}>Source</div>
-            <div className={cellWrap}>Data product</div>
             <div className={cellWrap}>Readiness</div>
             <div className={cellWrap}>Status</div>
             <div />
@@ -207,7 +193,6 @@ export default function Dashboard({ onStartFlow }) {
                   >
                     <div className="min-w-0 break-all font-semibold leading-snug tracking-tight text-ink">{row.name}</div>
                     <div className={`${cellWrap} text-[12.5px] text-ink-soft`}>{row.source}</div>
-                    <div className={`${cellWrap} leading-snug text-ink-soft`}>{row.product || '—'}</div>
                     <div className={`${cellWrap} flex items-center gap-2.5 pt-0.5`}>
                       <div className="h-1.5 w-16 flex-none overflow-hidden rounded-full bg-line">
                         <div className="h-full rounded-full transition-[width] duration-500 ease-out" style={{ width: `${pct}%`, background: barColor(pct) }} />

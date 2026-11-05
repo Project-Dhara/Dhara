@@ -10,13 +10,16 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.routing import Route
 
 from app.api.router import api_router
 from app.core.exceptions import AppError
+from app.core.startup import ensure_runtime_config
 from app.mcp.http_asgi import mcp_http_handler, mcp_http_lifespan
+from app.workers.runner import shutdown_job_runner
 
 OPENAPI_TAGS = [
     {
@@ -72,8 +75,42 @@ _INDEX_HTML = _STATIC_DIR / "index.html"
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
+    ensure_runtime_config()
     async with mcp_http_lifespan():
-        yield
+        try:
+            yield
+        finally:
+            shutdown_job_runner(wait=False)
+
+
+def _install_openapi(application: FastAPI) -> None:
+    """Ensure Bearer JWT appears in /docs Authorize even for mixed public routes."""
+
+    def custom_openapi():
+        if application.openapi_schema:
+            return application.openapi_schema
+        schema = get_openapi(
+            title=application.title,
+            version=application.version or "0.1.0",
+            description=application.description,
+            routes=application.routes,
+            tags=application.openapi_tags,
+        )
+        components = schema.setdefault("components", {})
+        schemes = components.setdefault("securitySchemes", {})
+        schemes["BearerAuth"] = {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": (
+                "Paste the JWT from POST /api/login or /api/signup "
+                "(token field only — do not type Bearer)."
+            ),
+        }
+        application.openapi_schema = schema
+        return application.openapi_schema
+
+    application.openapi = custom_openapi  # type: ignore[method-assign]
 
 
 def create_app() -> FastAPI:
@@ -83,14 +120,18 @@ def create_app() -> FastAPI:
     configure_logging()
     application = FastAPI(
         title="DHARA API",
+        version="0.1.0",
         description=(
             "Internal catalogue pipeline API.\n\n"
-            "## JWT\n\n"
-            "1. Call **POST /api/login** with `{ \"email\", \"password\" }` (no token).\n"
+            "## JWT (try endpoints from /docs)\n\n"
+            "1. Call **POST /api/signup** (if enabled) or **POST /api/login** — "
+            "request bodies show email/password fields in Try it out.\n"
             "2. Copy `token` from the response.\n"
             "3. Click **Authorize**, paste the token only (do not type `Bearer`).\n"
-            "4. Try authenticated endpoints. The token expires after 12 hours "
+            "4. Call authenticated endpoints. The token expires after 12 hours "
             "(or sooner if JWT_SECRET is rotated).\n\n"
+            "Email must look like `name@organization.domain` "
+            "(a dot is required in the domain).\n\n"
             "## Catalogue access (v1)\n\n"
             "Published datasets: **GET /api/v1/datasets**, "
             "**GET /api/v1/datasets/{id}**, "
@@ -123,6 +164,7 @@ def create_app() -> FastAPI:
         )
 
     application.include_router(api_router)
+    _install_openapi(application)
 
     # Streamable HTTP MCP — register before the SPA catch-all. Both slash forms
     # so clients that omit the trailing slash still work (no 307 on POST).

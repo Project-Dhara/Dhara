@@ -855,11 +855,30 @@ export function columnHeaderGroup(col) {
 }
 
 
+/**
+ * Drop consecutive duplicate labels from a header path.
+ * Excel/PDF vertical merges expand into YEAR|YEAR|YEAR; one label with rowspan
+ * is the correct display. Distinct levels (RURAL|DOMICILIARY|OTHERS) stay.
+ */
+export function collapseConsecutiveHeaderLabels(parts) {
+  const out = []
+  for (const raw of parts || []) {
+    const p = String(raw ?? '').trim()
+    if (!p) continue
+    if (out.length && out[out.length - 1].toLowerCase() === p.toLowerCase()) continue
+    out.push(p)
+  }
+  return out
+}
+
+
 /** Full top→leaf header path for a column (supports 1..N levels). */
 export function columnHeaderPath(col) {
   const raw = col?.header_path
   if (Array.isArray(raw) && raw.length > 0) {
-    const path = raw.map((p) => String(p ?? '').trim()).filter(Boolean)
+    const path = collapseConsecutiveHeaderLabels(
+      raw.map((p) => String(p ?? '').trim()).filter(Boolean),
+    )
     if (path.length) {
       // Drop banner-like roots that shouldn't appear as header rows.
       const filtered = path.filter((p, idx) => {

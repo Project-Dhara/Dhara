@@ -37,15 +37,17 @@ The catalogued data is made accessible through API and MCP endpoints.
 dhara-poc/
 ├── docs/                        Architecture, pipeline stages, deployment
 ├── Makefile                     make up / down / logs / psql / prod …
-├── docker-compose.yml           postgres + backend + frontend (dev); app (prod)
+├── docker-compose.yml           postgres + backend + frontend (build/start); app (prod)
 ├── Dockerfile                   Combined Next.js + FastAPI image (host :80 → :8080)
 ├── Dhara_logo.png               Brand mark (README / docs)
 ├── backend/                     FastAPI + openpyxl + LLM + Postgres + pgvector
 │   ├── main.py                  Process entry (`uvicorn main:app` → `app.main`)
 │   ├── app/                     API, services, psycopg2 store, MCP
 │   │   ├── api/routes/          HTTP: auth, kyds, catalogue, pdf, upload, dashboard, access
+│   │   ├── schemas/             Pydantic request/response models for /docs Try it out
 │   │   ├── db/                  psycopg.py, pdf_store.py, kyds_psycopg.py, SQLAlchemy repos
 │   │   ├── services/            ingestion, extraction, grouping, catalogue, metadata
+│   │   ├── workers/             extraction jobs + in-process job runner pool
 │   │   └── mcp/                 MCP tools (stdio `python -m app.mcp`, HTTP `/mcp`)
 │   ├── scripts/create_user.py   Admin user provisioning CLI
 │   ├── tests/                   test_nco_matching.py, test_pdf_pipeline.py
@@ -68,7 +70,7 @@ Requires Docker Compose. From the repo root:
 
 ```bash
 cp backend/.env.example backend/.env   # then edit secrets / keys
-make up                                 # postgres + backend :8000 + frontend :80
+make up                                 # postgres + API :8000 + worker + frontend :80
 make urls                               # print local URLs
 ```
 
@@ -78,6 +80,7 @@ make urls                               # print local URLs
 | UI        | [http://localhost:80](http://localhost:80)                         |
 | API       | [http://localhost:8000](http://localhost:8000)                     |
 | API docs  | [http://localhost:8000/docs](http://localhost:8000/docs)           |
+| Worker    | Compose service `worker` (claims queued `pdf_jobs`)                |
 | Liveness  | [http://localhost:8000/api/live](http://localhost:8000/api/live)   |
 | Readiness | [http://localhost:8000/api/ready](http://localhost:8000/api/ready) |
 

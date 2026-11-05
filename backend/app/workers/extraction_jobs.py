@@ -22,6 +22,12 @@ logger = logging.getLogger(__name__)
 _pdf_jobs: Dict[str, Dict[str, Any]] = {}
 _pdf_jobs_lock = threading.Lock()
 
+# Statuses the API may still hold after a separate worker has advanced Postgres.
+_IN_FLIGHT_STATUSES = frozenset({"queued", "running"})
+_TERMINAL_STATUSES = frozenset(
+    {"done", "completed_with_errors", "error", "failed", "cancelled"}
+)
+
 
 def _save_pdf_job(
     job: Dict[str, Any],
@@ -69,24 +75,82 @@ def _get_pdf_bytes(job_id: str) -> Optional[bytes]:
         return None
 
 
+def _should_replace_cached_job(cached: Dict[str, Any], fresh: Dict[str, Any]) -> bool:
+    """True when Postgres is ahead of (or equal for progress) this process cache.
+
+    Keeps in-process inline runners authoritative when their memory percent is
+    higher than the last flushed DB row.
+    """
+    cached_status = str(cached.get("status") or "")
+    fresh_status = str(fresh.get("status") or "")
+    if fresh_status in _TERMINAL_STATUSES and cached_status in _IN_FLIGHT_STATUSES:
+        return True
+    if fresh_status in _TERMINAL_STATUSES and cached_status in _TERMINAL_STATUSES:
+        # Prefer the DB snapshot once finished (includes result payload).
+        return True
+    if cached_status not in _IN_FLIGHT_STATUSES:
+        return False
+    fresh_pct = int(fresh.get("percent") or 0)
+    cached_pct = int(cached.get("percent") or 0)
+    if fresh_pct > cached_pct:
+        return True
+    if fresh_pct < cached_pct:
+        return False
+    # Same percent: adopt DB when stage/message advanced (e.g. claimed → classify).
+    return (fresh.get("stage") or "") != (cached.get("stage") or "") or (
+        fresh_status != cached_status
+    )
+
+
 def _get_pdf_job(job_id: str) -> Optional[Dict[str, Any]]:
-    """Prefer in-memory job; fall back to Postgres after a process restart."""
+    """Return job state, refreshing from Postgres when this process is stale.
+
+    Upload routes cache a ``queued`` row in-process. A separate ``job_worker``
+    advances status only in its own memory + Postgres. Status polls must reload
+    in-flight rows so the Console stepper sees progress and completion.
+    """
     job = _pdf_jobs.get(job_id)
-    if job is not None:
+    if job is None:
+        job = _load_pdf_job(job_id)
+        if job is not None:
+            _pdf_jobs[job_id] = job
         return job
-    job = _load_pdf_job(job_id)
-    if job is not None:
-        _pdf_jobs[job_id] = job
+
+    if str(job.get("status") or "") not in _IN_FLIGHT_STATUSES:
+        return job
+
+    fresh = _load_pdf_job(job_id)
+    if fresh is None:
+        return job
+    if _should_replace_cached_job(job, fresh):
+        # Preserve process-local keys the durable row does not carry.
+        for key in ("parent_batch_id", "dataset_id_config", "user_id"):
+            if key in job and key not in fresh:
+                fresh[key] = job[key]
+        _pdf_jobs[job_id] = fresh
+        return fresh
     return job
 
 
 def _hydrate_user_pdf_jobs(user_email: str) -> None:
-    """Ensure this user's Postgres jobs are present in the in-memory cache."""
+    """Ensure this user's Postgres jobs are present in the in-memory cache.
+
+    Also replaces in-flight cache entries when Postgres has moved on (worker).
+    """
     for job in _list_pdf_jobs_for_user(user_email):
         jid = job.get("job_id")
         if not jid:
             continue
-        if jid not in _pdf_jobs:
+        cached = _pdf_jobs.get(jid)
+        if cached is None:
+            _pdf_jobs[jid] = job
+            continue
+        if str(cached.get("status") or "") in _IN_FLIGHT_STATUSES and _should_replace_cached_job(
+            cached, job
+        ):
+            for key in ("parent_batch_id", "dataset_id_config", "user_id"):
+                if key in cached and key not in job:
+                    job[key] = cached[key]
             _pdf_jobs[jid] = job
 
 
@@ -139,6 +203,12 @@ def _pdf_job_public(job: Dict[str, Any]) -> Dict[str, Any]:
 
 
 _SUFFIX_BY_TYPE = {"pdf": ".pdf", "excel": ".xlsx", "csv": ".csv"}
+# Source types whose raw upload bytes are kept on pdf_jobs.pdf_bytes (Postgres).
+_RETAIN_SOURCE_TYPES = frozenset({"pdf", "csv", "excel"})
+
+
+def _should_retain_file_bytes(source_type: str, *, retain_flag: bool = False) -> bool:
+    return source_type in _RETAIN_SOURCE_TYPES or retain_flag
 
 
 def queue_extraction_job(
@@ -158,10 +228,15 @@ def queue_extraction_job(
     from app.services.ingestion.table_ids import normalize_dataset_id_config
 
     id_cfg = normalize_dataset_id_config(dataset_id_config)
+    retain = _should_retain_file_bytes(source_type, retain_flag=persist_file_bytes)
     with _pdf_jobs_lock:
         reviews: Dict[str, Any] = {"__dataset_id_config": id_cfg}
-        if persist_file_bytes:
+        if retain:
             reviews["__retain_file_bytes"] = True
+        # Persist parent link inside reviews so a separate worker process can
+        # skip child file jobs (the batch parent owns them).
+        if parent_batch_id:
+            reviews["__parent_batch_id"] = parent_batch_id
         _pdf_jobs[job_id] = {
             "job_id": job_id,
             "status": "queued",
@@ -181,7 +256,7 @@ def queue_extraction_job(
             "parent_batch_id": parent_batch_id,
             "dataset_id_config": id_cfg,
         }
-        store_bytes = file_bytes if (source_type == "pdf" or persist_file_bytes) else None
+        store_bytes = file_bytes if retain else None
         _save_pdf_job(_pdf_jobs[job_id], pdf_bytes=store_bytes)
 
 
@@ -211,6 +286,70 @@ def _resolve_job_api_key(
     return (legacy_api_key or "").strip() or None
 
 
+class JobCancelled(Exception):
+    """Raised when the user cancels an in-flight extraction job."""
+
+
+def _job_is_cancelled(job: Optional[Dict[str, Any]]) -> bool:
+    return bool(job) and str(job.get("status") or "") == "cancelled"
+
+
+def cancel_extraction_job(job_id: str) -> Optional[Dict[str, Any]]:
+    """Mark a job (and batch children) cancelled. Cooperative stop via progress.
+
+    Returns the updated public job dict, or None if missing.
+    """
+    from app.services.ingestion.review_tables import batch_meta_from_result
+
+    with _pdf_jobs_lock:
+        job = _get_pdf_job(job_id)
+        if job is None:
+            return None
+        status = str(job.get("status") or "")
+        if status in ("done", "completed_with_errors", "error", "failed", "cancelled"):
+            return _pdf_job_public(job)
+
+        job.update(
+            status="cancelled",
+            stage="cancelled",
+            message="Cancelled by user",
+            error=None,
+        )
+        _save_pdf_job(job, clear_pdf_bytes=True)
+
+        # Cancel child file jobs for multi-file batches.
+        meta = batch_meta_from_result(job.get("result"))
+        batch_files = job.get("batch_files") or meta.get("batch_files") or []
+        for entry in batch_files:
+            child_id = entry.get("file_job_id")
+            if not child_id:
+                continue
+            child = _get_pdf_job(child_id)
+            if not child:
+                continue
+            child_status = str(child.get("status") or "")
+            if child_status in (
+                "done",
+                "completed_with_errors",
+                "error",
+                "failed",
+                "cancelled",
+            ):
+                continue
+            child.update(
+                status="cancelled",
+                stage="cancelled",
+                message="Cancelled by user",
+                error=None,
+            )
+            _save_pdf_job(child, clear_pdf_bytes=True)
+            entry["status"] = "cancelled"
+        if batch_files:
+            job["batch_files"] = batch_files
+            _save_pdf_job(job)
+        return _pdf_job_public(job)
+
+
 def _run_extraction_job(
     job_id: str,
     file_bytes: bytes,
@@ -222,21 +361,33 @@ def _run_extraction_job(
     ``api_key`` is a legacy fallback when the job has no ``user_email``; the
     worker prefers the decrypted key from Postgres for the job owner.
     """
+    # Worker processes start cold — hydrate the durable row into the local cache.
+    with _pdf_jobs_lock:
+        if job_id not in _pdf_jobs:
+            loaded = _load_pdf_job(job_id)
+            if loaded is not None:
+                _pdf_jobs[job_id] = loaded
+        if _job_is_cancelled(_pdf_jobs.get(job_id)):
+            return
+
     last_flush = {"stage": None, "bucket": -1}
     resolved_key = _resolve_job_api_key(job_id, api_key)
 
     def on_progress(stage: str, percent: int, message: str) -> None:
         with _pdf_jobs_lock:
             job = _pdf_jobs.get(job_id)
-            if job is not None:
-                job.update(
-                    status="running", stage=stage, percent=percent, message=message
-                )
-                bucket = int(percent) // 10
-                if stage != last_flush["stage"] or bucket != last_flush["bucket"]:
-                    last_flush["stage"] = stage
-                    last_flush["bucket"] = bucket
-                    _save_pdf_job(job)
+            if job is None:
+                return
+            if _job_is_cancelled(job):
+                raise JobCancelled()
+            job.update(
+                status="running", stage=stage, percent=percent, message=message
+            )
+            bucket = int(percent) // 10
+            if stage != last_flush["stage"] or bucket != last_flush["bucket"]:
+                last_flush["stage"] = stage
+                last_flush["bucket"] = bucket
+                _save_pdf_job(job)
 
     suffix = _SUFFIX_BY_TYPE.get(source_type, ".bin")
     tmp_path: Optional[pathlib.Path] = None
@@ -247,6 +398,8 @@ def _run_extraction_job(
         display_filename = None
         with _pdf_jobs_lock:
             live = _pdf_jobs.get(job_id)
+            if _job_is_cancelled(live):
+                return
             if live:
                 display_filename = live.get("filename")
         result = run_upload_pipeline(
@@ -258,31 +411,39 @@ def _run_extraction_job(
         )
         with _pdf_jobs_lock:
             job = _pdf_jobs.get(job_id)
-            if job is not None:
-                from app.services.ingestion.table_ids import (
-                    assign_table_ids_to_result,
-                    dataset_id_config_from_job,
-                )
+            if job is None or _job_is_cancelled(job):
+                return
+            from app.services.ingestion.table_ids import (
+                assign_table_ids_to_result,
+                dataset_id_config_from_job,
+            )
 
-                assign_table_ids_to_result(
-                    result,
-                    config=dataset_id_config_from_job(job),
-                    default_filename=job.get("filename"),
-                    default_source_type=source_type,
-                )
-                job.update(
-                    status="done",
-                    stage="done",
-                    percent=100,
-                    message="Complete",
-                    result=result,
-                )
-                retain = bool((job.get("reviews") or {}).get("__retain_file_bytes"))
-                # Always keep source PDF bytes so review snapshots can be rendered
-                # and re-opened later (Excel/CSV stay opt-in via __retain_file_bytes).
-                pdf_store_bytes = file_bytes if (source_type == "pdf" or retain) else None
-                _save_pdf_job(job, pdf_bytes=pdf_store_bytes)
+            assign_table_ids_to_result(
+                result,
+                config=dataset_id_config_from_job(job),
+                default_filename=job.get("filename"),
+                default_source_type=source_type,
+            )
+            job.update(
+                status="done",
+                stage="done",
+                percent=100,
+                message="Complete",
+                result=result,
+            )
+            retain = bool((job.get("reviews") or {}).get("__retain_file_bytes"))
+            # Keep PDF/CSV/Excel source bytes so the original workbook/file can
+            # be re-opened later (batch jobs also set __retain_file_bytes).
+            pdf_store_bytes = (
+                file_bytes
+                if _should_retain_file_bytes(source_type, retain_flag=retain)
+                else None
+            )
+            _save_pdf_job(job, pdf_bytes=pdf_store_bytes)
         if source_type == "pdf" and file_bytes and result:
+            with _pdf_jobs_lock:
+                if _job_is_cancelled(_pdf_jobs.get(job_id)):
+                    return
             try:
                 from app.services.extraction.pdf.snapshots import persist_job_snapshots
 
@@ -291,11 +452,35 @@ def _run_extraction_job(
                 logger.warning(
                     "could not pre-render PDF snapshots for job %s: %s", job_id, e
                 )
+        # Files added via "Upload additional" while this extract was still
+        # running are parked until now — promote to batch and resume.
+        try:
+            from app.workers.upload_batches import finalize_pending_appends
+            from app.services.jobs.enqueue import dispatch_batch_resume
+
+            if finalize_pending_appends(job_id):
+                dispatch_batch_resume(job_id)
+        except Exception as e:
+            logger.warning(
+                "could not finalize pending appends for job %s: %s", job_id, e
+            )
+    except JobCancelled:
+        logger.info("Extraction job %s cancelled by user", job_id)
+        with _pdf_jobs_lock:
+            job = _pdf_jobs.get(job_id)
+            if job is not None and not _job_is_cancelled(job):
+                job.update(
+                    status="cancelled",
+                    stage="cancelled",
+                    message="Cancelled by user",
+                    error=None,
+                )
+                _save_pdf_job(job, clear_pdf_bytes=True)
     except Exception as e:
         print(f"Extraction job {job_id} ({source_type}) failed: {e}")
         with _pdf_jobs_lock:
             job = _pdf_jobs.get(job_id)
-            if job is not None:
+            if job is not None and not _job_is_cancelled(job):
                 job.update(status="error", message=f"Failed: {e}", error=str(e))
                 _save_pdf_job(job, clear_pdf_bytes=True)
     finally:

@@ -187,6 +187,87 @@ def list_for_user(
     return list(session.scalars(stmt).all())
 
 
+def list_dashboard_job_summaries(
+    session: Session,
+    *,
+    user_email: str,
+    organisation_id: uuid.UUID | None = None,
+) -> list[dict]:
+    """Lightweight PDF job rows for Dashboard — no ``result`` / ``pdf_bytes``.
+
+    Table counts come from ``pdf_tables`` (active rows only), not full job JSON.
+    """
+    stmt = (
+        select(PdfJob)
+        .options(defer(PdfJob.pdf_bytes), defer(PdfJob.result), defer(PdfJob.reviews))
+        .where(PdfJob.user_email == user_email)
+    )
+    if organisation_id is not None:
+        stmt = stmt.where(
+            or_(
+                PdfJob.organisation_id == organisation_id,
+                PdfJob.organisation_id.is_(None),
+            )
+        )
+    stmt = stmt.order_by(PdfJob.updated_at.desc().nullslast())
+    jobs = list(session.scalars(stmt).all())
+    if not jobs:
+        return []
+
+    job_ids = [j.job_id for j in jobs]
+    count_rows = session.execute(
+        select(
+            PdfTable.job_id,
+            func.count().label("table_count"),
+            func.count()
+            .filter(PdfTable.human_review_needed.is_(True))
+            .label("needs_review_count"),
+        )
+        .where(PdfTable.job_id.in_(job_ids), PdfTable.deleted_at.is_(None))
+        .group_by(PdfTable.job_id)
+    ).all()
+    counts = {
+        row.job_id: (
+            int(row.table_count or 0),
+            int(row.needs_review_count or 0),
+        )
+        for row in count_rows
+    }
+
+    out: list[dict] = []
+    for job in jobs:
+        table_count, needs_review = counts.get(job.job_id, (0, 0))
+        epoch = job.created_at_epoch
+        if epoch is None and job.created_at is not None:
+            try:
+                epoch = float(job.created_at.timestamp())
+            except Exception:
+                epoch = None
+        elif epoch is not None:
+            epoch = float(epoch)
+        updated = job.updated_at
+        out.append(
+            {
+                "job_id": job.job_id,
+                "filename": job.filename,
+                "status": job.status or "queued",
+                "percent": int(job.percent or 0),
+                "grouping_status": job.grouping_status,
+                "pipeline_step": int(job.pipeline_step)
+                if job.pipeline_step is not None
+                else None,
+                "created_at": epoch,
+                "updated_at": updated.timestamp() if updated is not None else epoch,
+                "organisation_id": str(job.organisation_id)
+                if job.organisation_id
+                else None,
+                "table_count": table_count,
+                "needs_review_count": needs_review,
+            }
+        )
+    return out
+
+
 def upsert_job(
     session: Session,
     *,
@@ -299,6 +380,40 @@ def get_pdf_bytes(session: Session, job_id: str) -> Optional[bytes]:
     if value is None:
         return None
     return bytes(value)
+
+
+def claim_next_queued_job(session: Session) -> Optional[dict]:
+    """Atomically claim the next top-level queued extraction/batch job.
+
+    Child file jobs (``reviews.__parent_batch_id`` set) are left for the batch
+    parent. Uses ``FOR UPDATE SKIP LOCKED`` so multiple workers can poll safely.
+    """
+    stmt = (
+        select(PdfJob)
+        .options(defer(PdfJob.pdf_bytes))
+        .where(PdfJob.status == "queued")
+        .where(PdfJob.source_type.in_(("pdf", "excel", "csv", "batch")))
+        .order_by(
+            func.coalesce(
+                PdfJob.created_at_epoch,
+                func.extract("epoch", PdfJob.created_at),
+            ).asc().nullslast()
+        )
+        .limit(16)
+        .with_for_update(skip_locked=True)
+    )
+    for job in session.scalars(stmt).all():
+        reviews = _json_obj(job.reviews, {}) or {}
+        if isinstance(reviews, dict) and reviews.get("__parent_batch_id"):
+            continue
+        job.status = "running"
+        job.stage = "claimed"
+        job.message = "Claimed by worker"
+        job.percent = int(job.percent or 0)
+        job.updated_at = datetime.now(timezone.utc)
+        session.flush()
+        return _row_to_working_job(job)
+    return None
 
 
 def get_table_snapshot(

@@ -61,11 +61,17 @@ from app.services.ingestion.wizard.original_sheet_export import extract_sheet_wi
 from app.services.ingestion.wizard.sql_extract import extract_tables_from_sql
 from app.services.ingestion.wizard.table_export import table_to_excel_bytes
 from app.services.metadata.table_id_title import _catalogue_table_title, _validate_tables
+from app.schemas.catalogue import (
+    FillDefinitionsRequest,
+    MatchOccupationsRequest,
+    NcoAliasesRequest,
+)
 
 router = APIRouter(tags=["Catalogue"])
 @router.post("/api/catalogue/fill-definitions")
 async def fill_definitions(
     request: Request,
+    body: FillDefinitionsRequest,
     user_email: str = Depends(require_user_email),
     db: Session = Depends(get_db),
 ):
@@ -75,7 +81,7 @@ async def fill_definitions(
     the steward chooses Fill with AI as a fallback."""
     from app.services.metadata.metadata_llm import fill_classification_definitions
 
-    data = await request.json()
+    data = body.model_dump()
     columns = data.get("columns") or []
     if not isinstance(columns, list):
         raise HTTPException(400, "columns must be a list")
@@ -201,6 +207,7 @@ async def delete_classification_standard_route(
 @router.post("/api/catalogue/match-nco")
 async def match_nco(
     request: Request,
+    body: MatchOccupationsRequest,
     user_email: str = Depends(require_user_email),
     db: Session = Depends(get_db),
 ):
@@ -210,7 +217,7 @@ async def match_nco(
     for a few ambiguous rows, and only to choose among retrieved codes.
     """
     from app.services.classification import nco_matching as _nco
-    data = await request.json()
+    data = body.model_dump()
     values = data.get("values") or []
     if not isinstance(values, list):
         raise HTTPException(400, "values must be a list of strings")
@@ -237,13 +244,12 @@ async def match_nco(
 
 
 @router.post("/api/catalogue/nco-aliases")
-async def save_nco_aliases(request: Request, user_email: str = Depends(require_user_email)):
+async def save_nco_aliases(
+    body: NcoAliasesRequest,
+    user_email: str = Depends(require_user_email),
+):
     """Learn occupation → NCO mappings from steward Verify in Classify."""
-    try:
-        data = await request.json()
-    except Exception:
-        raise HTTPException(400, "Expected a JSON body")
-    aliases = data.get("aliases") if isinstance(data, dict) else None
+    aliases = body.aliases
     if not isinstance(aliases, list):
         raise HTTPException(400, "aliases must be a list")
 

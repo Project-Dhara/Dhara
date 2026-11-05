@@ -28,7 +28,7 @@ Some older sections below may still describe pre-migration behavior; prefer `RES
 | `python -m app.mcp` | stdio MCP in `app/mcp/` |
 | HTTP MCP | `/mcp` and `/mcp/` on the same FastAPI app |
 
-Docker Compose, `backend/Dockerfile`, root `start.sh`, and Render all start `uvicorn main:app`. There is no separate worker process. Extraction runs as `asyncio.to_thread` inside the API process (`app/api/routes/pdf.py`, `app/api/routes/upload.py`).
+Docker Compose runs `uvicorn main:app` (**backend**) plus `python -m app.workers.job_worker` (**worker**). Routes call `app.services.jobs.enqueue` which persists `queued` jobs; the worker claims them from Postgres. Set `DHARA_INLINE_JOBS=1` only when running the API without a worker.
 
 ```text
 backend/main.py
@@ -41,14 +41,15 @@ backend/main.py
 
 ```text
 app/api/routes/pdf.py, upload.py
-  └─ app/workers/extraction_jobs.py
-       ├─ app/services/ingestion/service.py
-       │    └─ adapters → app/services/extraction/pdf and app/services/ingestion (excel/csv)
-       └─ app/db/pdf_store.py via app/db/psycopg.get_connection
+  └─ app/services/jobs/enqueue.py
+       └─ queue row in pdf_jobs (bytes retained)
+            └─ app/workers/job_worker (or inline runner if DHARA_INLINE_JOBS=1)
+                 └─ app/workers/extraction_jobs.py
+                      └─ app/services/ingestion/service.py
 
 app/api/routes/pdf.py persist-approved
-  └─ app/db/pdf_store.py + app/services/grouping/pdf_grouping.py
-       └─ app/storage/vectors.py
+  └─ app/services/jobs/pdf_review.py
+       └─ app/db/repositories/pdf_jobs + app/services/grouping/pdf_grouping.py
 
 app/api/routes/catalogue.py
   └─ app/services/* and app/db/kyds_psycopg.py (metadata-fill read)
@@ -74,7 +75,7 @@ app/mcp tools
 | `app/workers/` | Job execution. Calls services. Does not reimplement them. |
 | `app/mcp/` | Tool registration and transport. Thin handlers. |
 
-`app/schemas/` should hold Pydantic request and response models. It is empty today; routes read `request.json()` and return dicts.
+`app/schemas/` holds Pydantic request and response models for Auth, Settings (LLM key), KYDS, PDF review/grouping JSON, catalogue JSON, and pipeline-step routes so `/docs` Try it out shows editable fields. Multipart publish/match keep Form/File fields (with descriptions); their large JSON stays a Form string as the UI sends it.
 
 ### Rules
 
@@ -109,7 +110,7 @@ This is the product path the UI uses. It is not the ten-step target.
 
 1. An authenticated user uploads a PDF (`POST /api/pdf/upload`) or an Excel/SQL batch (`POST /api/catalogue/batch-extract` or `sql-extract`). `POST /api/upload` exists and is not used by the frontend.
 2. PDF bytes are stored on `pdf_jobs.pdf_bytes`. Excel/CSV job inputs are not stored; the worker uses a temporary file. Optional GCS is only for later workbook exports.
-3. A row is written to `pdf_jobs` and a thread is started in the API process. If the process dies mid-run, the job can remain `queued` or `running`. There is no retry loop and no second worker to resume it. Completed results do reload from Postgres.
+3. A row is written to `pdf_jobs` and the job is submitted to the in-process pool (`submit_extraction_job`). If the process dies mid-run, the job can remain `queued` or `running`. There is no retry loop and no second container to resume it. Completed results do reload from Postgres.
 4. PDF parsing is PyMuPDF in `app/services/extraction/pdf/`. CSV and Excel upload parsing is `app/services/ingestion/csv.py` and `excel.py`. The wizard uses a different extractor.
 5. Shared validation is `app/services/extraction/pdf/confidence_validation/`, reached through shims. Contracts are `app/services/ingestion/contracts.py`.
 6. Extraction asks the LLM to fill classification fields and `human_review_*` flags. The catalogue stage later matches NCO 2015 (bundled) or an uploaded standard. There is no single classification service that both stages call.

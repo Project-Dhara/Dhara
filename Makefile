@@ -7,7 +7,7 @@ BACKEND_URL  ?= http://localhost:8000
 PROD_URL     ?= http://localhost:80
 API_DOCS     ?= $(BACKEND_URL)/docs
 
-.PHONY: help urls up down logs build restart ps psql postgres migrate prod prod-down clean
+.PHONY: help urls up down logs build restart ps psql postgres migrate worker prod prod-down clean
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -23,7 +23,7 @@ urls: ## Print local service URLs
 	@echo "  Prod (all):  $(PROD_URL)"
 	@echo ""
 
-up: ## Start Postgres, backend (:8000), and frontend (:80)
+up: ## Start Postgres, API, extraction worker, and frontend (:80)
 	@test -f backend/.env || { cp backend/.env.example backend/.env && echo "Created backend/.env from .env.example (set JWT_SECRET for non-dev use)"; }
 	# Retry once: Docker+systemd cgroup setup can fail transiently with
 	# "Message recipient disconnected from message bus without replying".
@@ -32,7 +32,7 @@ up: ## Start Postgres, backend (:8000), and frontend (:80)
 		sleep 2; \
 		$(COMPOSE) start 2>/dev/null || { \
 			echo "Removing stale fixed-name containers (if any)..."; \
-			docker rm -f dhara-postgres dhara-backend dhara-frontend dhara-app 2>/dev/null || true; \
+			docker rm -f dhara-postgres dhara-backend dhara-worker dhara-frontend dhara-app 2>/dev/null || true; \
 			$(COMPOSE) up -d; \
 		}; \
 	}
@@ -70,7 +70,13 @@ postgres: ## Start only Postgres (run backend/frontend on the host)
 	@echo "  Postgres: postgresql://dhara:dhara_local_password@localhost:5432/dhara"
 	@echo "  UI:       $(FRONTEND_URL)  (run frontend on host)"
 	@echo "  Backend:  $(BACKEND_URL)  (run backend on host)"
+	@echo "  Worker:   cd backend && python -m app.workers.job_worker"
+	@echo "            (or set DHARA_INLINE_JOBS=1 to run jobs inside the API)"
 	@echo ""
+
+worker: ## Start / follow only the extraction worker container
+	$(COMPOSE) up -d worker
+	$(COMPOSE) logs -f worker
 
 prod: ## Start Postgres + combined app image on :80
 	@test -f backend/.env || { cp backend/.env.example backend/.env && echo "Created backend/.env from .env.example (set JWT_SECRET for non-dev use)"; }
