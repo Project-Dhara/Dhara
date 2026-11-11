@@ -5,8 +5,9 @@ approved alias, fuzzy match, title unigram BM25, phrase BM25, and semantic
 search each return their own candidates. Reciprocal rank fusion merges
 those ranked lists. Phrase alignment is applied with the cross-encoder
 when the shortlist is scored, not as a fusion multiplier. Hierarchy titles
-are a separate index. The result is the most specific level the input
-supports. The chat model is not called here.
+are a separate index. Medium-confidence rows refresh hierarchy candidates
+from parents of the top occupations plus embedding nearest neighbours,
+then re-apply specificity rules. The chat model is not called here.
 
 Does not write PDF grouping embeddings.
 """
@@ -103,6 +104,10 @@ _LEVEL_AUTO = {
     "subdivision": 0.84,
     "division": 0.86,
 }
+# Review pass: parents of the top occupations + hierarchy neighbours.
+_REVIEW_OCC_PARENTS = 5
+_REVIEW_HIERARCHY_K = 20
+_REVIEW_EMBED_FLOOR = 0.62
 
 _INDEX_CACHE = {"key": None, "index": None}
 _EMBEDDER = None
@@ -288,7 +293,10 @@ def _cosine_sparse(query: dict[str, float], doc: dict[str, float]) -> float:
 
 
 def _load_embedder():
-    """Optional local model. Unset NCO_EMBEDDING_MODEL keeps matching offline and instant."""
+    """Optional local model. Unset NCO_EMBEDDING_MODEL keeps matching offline and instant.
+
+    Recommended: ``google/embeddinggemma-300m``. Set ``HF_TOKEN`` if Hub access is gated.
+    """
     global _EMBEDDER, _EMBEDDER_TRIED
     if _EMBEDDER_TRIED:
         return _EMBEDDER
@@ -298,8 +306,23 @@ def _load_embedder():
         _EMBEDDER = None
         return None
     try:
+        import torch
         from sentence_transformers import SentenceTransformer
-        _EMBEDDER = SentenceTransformer(name)
+
+        token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN") or None
+        dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+        model_kwargs = {
+            "torch_dtype": dtype,
+            "low_cpu_mem_usage": True,
+        }
+        _EMBEDDER = SentenceTransformer(
+            name,
+            trust_remote_code=True,
+            token=token,
+            model_kwargs=model_kwargs,
+        )
+        if not torch.cuda.is_available():
+            _EMBEDDER = _EMBEDDER.to("cpu")
     except Exception:
         _EMBEDDER = None
     return _EMBEDDER
@@ -532,6 +555,19 @@ def _pack_level_index(docs):
                 raw[term] = (1.0 + math.log(freq)) * weight
         vec, _norm = _unit(raw)
         tfidf.append(vec)
+    by_level_code = {
+        (doc["level"], doc["code"]): idx for idx, doc in enumerate(docs)
+    }
+    embeddings = None
+    embedder = _load_embedder()
+    if embedder is not None and docs:
+        try:
+            texts = [d["search_text"] or d["title"] for d in docs]
+            embeddings = embedder.encode(
+                texts, normalize_embeddings=True, show_progress_bar=False,
+            )
+        except Exception:
+            embeddings = None
     return {
         "docs": docs,
         "by_title": by_title,
@@ -541,9 +577,10 @@ def _pack_level_index(docs):
         "phrase_bm25": phrase_bm25,
         "idf": idf,
         "tfidf": tfidf,
-        "embeddings": None,
+        "embeddings": embeddings,
         "norm_titles": [d["norm_title"] for d in docs],
         "char_postings": char_postings,
+        "by_level_code": by_level_code,
         "query_embeddings": {},
         "query_tfidf": {},
     }
@@ -1064,6 +1101,25 @@ def _score_pool(
     return scored
 
 
+def _embedding_supported(level, evidence, score, semantic) -> bool:
+    """Hierarchy-only. A strong embedding hit still needs some title evidence."""
+    if level == "occupation":
+        return False
+    if semantic < _REVIEW_EMBED_FLOOR or score < 0.55:
+        return False
+    if evidence.get("token_exact"):
+        return True
+    # Extra content words mean a narrower class than the input named.
+    extras = set(evidence.get("extra") or ())
+    if extras and not extras <= _STRUCTURAL_EXTRA:
+        return False
+    if evidence.get("distinctive") and (
+        evidence.get("query_subset") or evidence.get("recall", 0.0) >= 0.5
+    ):
+        return True
+    return False
+
+
 def _supported_groups(occupation_scored, hierarchy_scored):
     grouped = {level: [] for level in _LEVELS}
     for item in occupation_scored:
@@ -1071,7 +1127,11 @@ def _supported_groups(occupation_scored, hierarchy_scored):
             grouped["occupation"].append(item)
     for item in hierarchy_scored:
         level = item["level"]
-        if level in grouped and _lexically_supported(level, item["evidence"], item["score"]):
+        if level not in grouped:
+            continue
+        if _lexically_supported(level, item["evidence"], item["score"]) or _embedding_supported(
+            level, item["evidence"], item["score"], item.get("semantic", 0.0),
+        ):
             grouped[level].append(item)
     for level in _LEVELS:
         if grouped[level]:
@@ -1125,6 +1185,270 @@ def _exact_hierarchy_node(index, normalized):
         if len(found) > 1:
             return None
     return None
+
+
+def _ensure_hierarchy_embeddings(hierarchy):
+    """Lazy-fill hierarchy vectors when a local model is configured after index build."""
+    if hierarchy is None or hierarchy.get("embeddings") is not None:
+        return
+    docs = hierarchy.get("docs") or []
+    embedder = _load_embedder()
+    if embedder is None or not docs:
+        return
+    try:
+        texts = [d.get("search_text") or d.get("title") or "" for d in docs]
+        hierarchy["embeddings"] = embedder.encode(
+            texts, normalize_embeddings=True, show_progress_bar=False,
+        )
+    except Exception:
+        hierarchy["embeddings"] = None
+
+
+def _hierarchy_level_code_map(hierarchy):
+    mapping = hierarchy.get("by_level_code")
+    if mapping is not None:
+        return mapping
+    mapping = {
+        (doc["level"], doc["code"]): idx
+        for idx, doc in enumerate(hierarchy.get("docs") or [])
+    }
+    hierarchy["by_level_code"] = mapping
+    return mapping
+
+
+def _parent_hierarchy_idxs(occupation_scored, hierarchy):
+    """Parents of the top occupation hits. Wrong tops still contribute several paths."""
+    lookup = _hierarchy_level_code_map(hierarchy)
+    idxs = []
+    for item in occupation_scored[:_REVIEW_OCC_PARENTS]:
+        row = (item.get("doc") or {}).get("row") or {}
+        for level in ("family", "group", "subdivision", "division"):
+            code = str(row.get(f"{level}_code") or "").strip()
+            if not code:
+                continue
+            idx = lookup.get((level, code))
+            if idx is not None:
+                idxs.append(idx)
+    return idxs
+
+
+def _hierarchy_review_idxs(occupation_scored, hierarchy_scored, hierarchy, normalized, query_tokens):
+    """Mixed hierarchy pool for medium/low confidence: parents + shortlist + neighbours."""
+    lookup = _hierarchy_level_code_map(hierarchy)
+    idxs = []
+    idxs.extend(_parent_hierarchy_idxs(occupation_scored, hierarchy))
+    for item in hierarchy_scored:
+        idx = lookup.get((item["level"], item["code"]))
+        if idx is not None:
+            idxs.append(idx)
+    _ensure_hierarchy_embeddings(hierarchy)
+    semantic_hits, _name = _semantic_hits(
+        hierarchy, normalized, query_tokens, _REVIEW_HIERARCHY_K,
+    )
+    for idx, _score in semantic_hits:
+        idxs.append(idx)
+    return list(dict.fromkeys(idxs))[:_REVIEW_HIERARCHY_K]
+
+
+def _hierarchy_review_refresh(
+    hierarchy,
+    normalized,
+    query_tokens,
+    qset,
+    occupation_scored,
+    hierarchy_scored,
+    context_tokens,
+    use_context,
+):
+    """Rescore a mixed hierarchy pool with embeddings (or TF-IDF) for review rows."""
+    if not hierarchy or not hierarchy.get("docs"):
+        return hierarchy_scored
+    idxs = _hierarchy_review_idxs(
+        occupation_scored, hierarchy_scored, hierarchy, normalized, query_tokens,
+    )
+    if not idxs:
+        return hierarchy_scored
+
+    _ensure_hierarchy_embeddings(hierarchy)
+    semantic_scores = {}
+    semantic_name = "tfidf"
+    embeddings = hierarchy.get("embeddings")
+    embedder = _load_embedder()
+    if embeddings is not None and embedder is not None:
+        try:
+            query = _cached_query_embedding(hierarchy, embedder, normalized)
+            for idx, score in _dense_selected(query, embeddings, idxs):
+                semantic_scores[idx] = score
+            semantic_name = "embedding"
+        except Exception:
+            semantic_scores = {}
+    if not semantic_scores:
+        query = _cached_query_tfidf(hierarchy, query_tokens, normalized)
+        for idx in idxs:
+            semantic_scores[idx] = max(0.0, _cosine_sparse(query, hierarchy["tfidf"][idx]))
+        semantic_name = "tfidf"
+
+    shortlist = []
+    for rank, idx in enumerate(idxs, start=1):
+        shortlist.append((
+            idx,
+            [{
+                "method": "hierarchy_review",
+                "rank": rank,
+                "score": float(semantic_scores.get(idx, 0.0)),
+            }],
+        ))
+
+    bm25_raw = hierarchy["bm25"].scores(query_tokens)
+    max_bm25 = max((bm25_raw.get(idx, 0.0) for idx in idxs), default=0.0)
+    phrase_raw = {}
+    max_phrase = 0.0
+    phrase_index = hierarchy.get("phrase_bm25")
+    phrase_query = _phrase_features(query_tokens)
+    if phrase_index is not None and phrase_query:
+        phrase_raw = phrase_index.scores(phrase_query)
+        max_phrase = max((phrase_raw.get(idx, 0.0) for idx in idxs), default=0.0)
+
+    refreshed = _score_pool(
+        hierarchy, normalized, qset, shortlist, bm25_raw, max_bm25, semantic_scores,
+        context_tokens, use_context, phrase_raw, max_phrase,
+    )
+    for item in refreshed:
+        if semantic_name not in item["methods"]:
+            item["methods"].append(semantic_name)
+        if "hierarchy_review" not in item["methods"]:
+            item["methods"].append("hierarchy_review")
+        # A strong hierarchy embedding is review evidence even when lexical overlap is thin.
+        sem = item.get("semantic", 0.0)
+        if sem >= _REVIEW_EMBED_FLOOR:
+            item["score"] = max(item["score"], min(0.89, 0.45 + 0.5 * sem))
+
+    by_key = {}
+    for item in hierarchy_scored + refreshed:
+        key = (item["level"], item["code"])
+        prev = by_key.get(key)
+        if prev is None or item["score"] > prev["score"]:
+            by_key[key] = item
+    return sorted(by_key.values(), key=lambda item: item["score"], reverse=True)
+
+
+def _decide_from_pools(
+    occupation_scored,
+    hierarchy_scored,
+    *,
+    normalized,
+    source_value,
+):
+    """Pick a result from scored occupation and hierarchy pools."""
+    combined = occupation_scored + hierarchy_scored
+    level, group = _supported_groups(occupation_scored, hierarchy_scored)
+    if level is not None:
+        best = group[0]
+        status, reason = _status_for_group(level, group)
+        result = _result_from_doc(
+            best["doc"],
+            status=status,
+            score=best["score"],
+            methods=best["methods"],
+            reason=reason,
+            normalized=normalized,
+            source_value=source_value,
+            alternatives=_mixed_alternatives(combined, best),
+        )
+        if status == "needs_review":
+            result["needs_llm"] = True
+        return result
+
+    if not occupation_scored and not hierarchy_scored:
+        return _unmatched(
+            normalized,
+            source_value,
+            "No classification in the registry shares terms with this value.",
+        )
+
+    best_occ = next((item for item in occupation_scored if not _weak_occupation(item)), None)
+    phrase_hierarchy = [
+        item for item in hierarchy_scored
+        if _phrase_alignment_score(normalized, item["doc"].get("norm_title") or "") >= 0.85
+    ]
+    alternatives = _mixed_alternatives(combined, None)
+    if phrase_hierarchy and (best_occ is None or phrase_hierarchy[0]["score"] >= best_occ["score"]):
+        best = phrase_hierarchy[0]
+        result = _result_from_doc(
+            best["doc"],
+            status="needs_review",
+            score=best["score"],
+            methods=best["methods"],
+            reason="The input appears in order inside this title, but the title adds words the input does not name, so the code is not assigned automatically.",
+            normalized=normalized,
+            source_value=source_value,
+            alternatives=_mixed_alternatives(combined, best),
+        )
+        result["needs_llm"] = True
+        return result
+
+    strong_hierarchy = [
+        item for item in hierarchy_scored
+        if item.get("semantic", 0.0) >= _REVIEW_EMBED_FLOOR
+    ]
+    # Prefer the deepest level when embedding scores are tied.
+    _depth = {level: i for i, level in enumerate(_LEVELS)}
+    strong_hierarchy.sort(
+        key=lambda item: (
+            item.get("semantic", 0.0),
+            item["score"],
+            -_depth.get(item["level"], 99),
+        ),
+        reverse=True,
+    )
+    occupation_has_strong_semantic = (
+        best_occ is not None
+        and best_occ.get("semantic", 0.0) >= _REVIEW_EMBED_FLOOR
+        and not _weak_occupation(best_occ)
+    )
+    # Hierarchy embedding may win only when the occupation hit is weak or absent.
+    if strong_hierarchy and not occupation_has_strong_semantic and (
+        best_occ is None
+        or _weak_occupation(best_occ)
+        or (
+            strong_hierarchy[0].get("semantic", 0.0) >= best_occ.get("semantic", 0.0) + 0.08
+            and strong_hierarchy[0]["score"] >= best_occ["score"]
+        )
+    ):
+        best = strong_hierarchy[0]
+        result = _result_from_doc(
+            best["doc"],
+            status="needs_review",
+            score=best["score"],
+            methods=best["methods"],
+            reason="A broader classification is a closer semantic match than any occupation, but it is not assigned automatically.",
+            normalized=normalized,
+            source_value=source_value,
+            alternatives=_mixed_alternatives(combined, best),
+        )
+        result["needs_llm"] = True
+        return result
+
+    if best_occ is None:
+        return _unmatched(
+            normalized,
+            source_value,
+            "No classification in the registry is close enough to assign a code.",
+            alternatives=alternatives,
+        )
+
+    result = _result_from_doc(
+        best_occ["doc"],
+        status="needs_review",
+        score=best_occ["score"],
+        methods=best_occ["methods"],
+        reason="The closest occupation is below the evidence bar for automatic assignment, and no broader title is independently supported.",
+        normalized=normalized,
+        source_value=source_value,
+        alternatives=_mixed_alternatives(combined, best_occ),
+    )
+    result["needs_llm"] = True
+    return result
 
 
 def _unmatched(normalized, source_value, reason, alternatives=None):
@@ -1238,67 +1562,70 @@ def classify_occupation(text, index, context=None):
             context_tokens, use_context, h_phrase, h_max_phrase,
         )
 
-    combined = occupation_scored + hierarchy_scored
-    level, group = _supported_groups(occupation_scored, hierarchy_scored)
-    if level is not None:
-        best = group[0]
-        status, reason = _status_for_group(level, group)
-        return _result_from_doc(
-            best["doc"],
-            status=status,
-            score=best["score"],
-            methods=best["methods"],
-            reason=reason,
-            normalized=normalized,
-            source_value=source_value,
-            alternatives=_mixed_alternatives(combined, best),
-        )
-
-    if not occupation_scored and not hierarchy_scored:
-        return _unmatched(
-            normalized,
-            source_value,
-            "No classification in the registry shares terms with this value.",
-        )
-
-    best_occ = next((item for item in occupation_scored if not _weak_occupation(item)), None)
-    phrase_hierarchy = [
-        item for item in hierarchy_scored
-        if _phrase_alignment_score(normalized, item["doc"].get("norm_title") or "") >= 0.85
-    ]
-    alternatives = _mixed_alternatives(combined, None)
-    # An ordered phrase inside a broader title is review evidence. It is not
-    # enough to assign that title, because the title may add other words.
-    if phrase_hierarchy and (best_occ is None or phrase_hierarchy[0]["score"] >= best_occ["score"]):
-        best = phrase_hierarchy[0]
-        return _result_from_doc(
-            best["doc"],
-            status="needs_review",
-            score=best["score"],
-            methods=best["methods"],
-            reason="The input appears in order inside this title, but the title adds words the input does not name, so the code is not assigned automatically.",
-            normalized=normalized,
-            source_value=source_value,
-            alternatives=_mixed_alternatives(combined, best),
-        )
-    if best_occ is None:
-        return _unmatched(
-            normalized,
-            source_value,
-            "No classification in the registry is close enough to assign a code.",
-            alternatives=alternatives,
-        )
-
-    return _result_from_doc(
-        best_occ["doc"],
-        status="needs_review",
-        score=best_occ["score"],
-        methods=best_occ["methods"],
-        reason="The closest occupation is below the evidence bar for automatic assignment, and no broader title is independently supported.",
+    result = _decide_from_pools(
+        occupation_scored,
+        hierarchy_scored,
         normalized=normalized,
         source_value=source_value,
-        alternatives=_mixed_alternatives(combined, best_occ),
     )
+    # Medium/low confidence: refresh hierarchy from parents of the top
+    # occupations and embedding neighbours, then decide again.
+    if (
+        result
+        and result.get("status") in ("needs_review", "unmatched")
+        and hierarchy
+        and hierarchy.get("docs")
+        and (occupation_scored or hierarchy_scored)
+    ):
+        refreshed = _hierarchy_review_refresh(
+            hierarchy,
+            normalized,
+            query_tokens,
+            qset,
+            occupation_scored,
+            hierarchy_scored,
+            context_tokens,
+            use_context,
+        )
+        if refreshed is not hierarchy_scored:
+            reviewed = _decide_from_pools(
+                occupation_scored,
+                refreshed,
+                normalized=normalized,
+                source_value=source_value,
+            )
+            keep_occupation_embedding = (
+                result.get("level") == "occupation"
+                and reviewed
+                and reviewed.get("level") not in (None, "occupation")
+                and "embedding" in (result.get("matching_method") or [])
+            )
+            if reviewed and not keep_occupation_embedding and (
+                reviewed.get("status") == "auto_matched"
+                or (
+                    reviewed.get("status") == "needs_review"
+                    and reviewed.get("score", 0.0) >= result.get("score", 0.0)
+                )
+                or (
+                    result.get("status") == "unmatched"
+                    and reviewed.get("status") != "unmatched"
+                )
+            ):
+                result = reviewed
+            elif reviewed and result.get("status") in ("needs_review", "unmatched"):
+                # Keep the first choice, but surface refreshed hierarchy alternatives.
+                merged = _mixed_alternatives(
+                    occupation_scored + refreshed,
+                    {
+                        "level": result.get("level"),
+                        "code": result.get("code"),
+                    },
+                )
+                result = dict(result)
+                result["alternatives"] = merged
+                if result.get("status") == "needs_review":
+                    result["needs_llm"] = True
+    return result
 
 
 def rank_occupation(text, index, context=None):

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import openpyxl
 
+from app.services.ingestion.utils.dataframe_build import dataframe_from_spreadsheet_rows
 from app.services.ingestion.utils.grid import (
     block_to_rows,
     context_text_from_grid,
@@ -14,10 +15,7 @@ from app.services.ingestion.utils.grid import (
 )
 from app.services.ingestion.contracts import PagesGrouped, PreValidationInput, UnitContextText
 from app.services.ingestion.wizard.extractor import TableExtractor
-from app.services.extraction.pdf.utils.header_utils import (
-    dataframe_from_extracted_rows,
-    extract_in_grid_caption,
-)
+from app.services.extraction.pdf.utils.header_utils import extract_in_grid_caption
 
 INGEST_METHOD = "excel_grid"
 
@@ -65,7 +63,8 @@ def ingest_bytes(content: bytes, filename: str = "") -> PreValidationInput:
             # Caption before strip — merge-filled banners are removed next.
             caption = extract_in_grid_caption(rows)
             grid_rows = strip_uniform_banner_rows(rows)
-            df = dataframe_from_extracted_rows(grid_rows)
+            # Spreadsheet header detect — not PDF dataframe_from_extracted_rows.
+            df = dataframe_from_spreadsheet_rows(grid_rows)
             if df is None or getattr(df, "empty", True):
                 continue
             _attach_in_grid_caption(df, caption)

@@ -6,9 +6,9 @@ import csv
 import io
 from pathlib import Path
 
+from app.services.ingestion.utils.dataframe_build import dataframe_from_spreadsheet_rows
 from app.services.ingestion.utils.grid import cell_str, context_text_from_grid
 from app.services.ingestion.contracts import PagesGrouped, PreValidationInput, UnitContextText
-from app.services.extraction.pdf.utils.header_utils import dataframe_from_extracted_rows
 
 INGEST_METHOD = "csv_grid"
 
@@ -36,7 +36,8 @@ def ingest_bytes(content: bytes, filename: str = "") -> PreValidationInput:
             source_file=filename,
         )
 
-    df = dataframe_from_extracted_rows(rows)
+    # Spreadsheet header detect — not PDF dataframe_from_extracted_rows.
+    df = dataframe_from_spreadsheet_rows(rows)
     if df is None or getattr(df, "empty", True):
         return PreValidationInput(
             pages_grouped=pages_grouped,

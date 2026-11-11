@@ -226,7 +226,7 @@ def queue_upload_batch(
             "status": "queued",
             "stage": "queued",
             "percent": 0,
-            "message": "Queued",
+            "message": "Waiting for extraction worker",
             "filename": label,
             "user_email": user_email,
             "organisation_id": organisation_id,
@@ -764,7 +764,7 @@ def retry_batch_file(batch_id: str, file_job_id: str) -> None:
                 status="queued",
                 stage="queued",
                 percent=0,
-                message="Queued",
+                message="Waiting for extraction worker",
                 error=None,
                 result=None,
             )

@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LGD hierarchy</title>
+  <style>
+    :root {
+      --ink: #1c1612;
+      --muted: #6f6256;
+      --paper: #f4efe6;
+      --paper-2: #fffaf3;
+      --line: #e2d8c8;
+      --accent: #e07a3d;
+      --map: #14110e;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      display: grid;
+      grid-template-columns: minmax(300px, 380px) 1fr;
+      min-height: 100%;
+      background: var(--map);
+      color: var(--ink);
+      font-family: "Avenir Next", "Segoe UI", "Liberation Sans", sans-serif;
+    }
+    aside {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding: 28px 22px 18px;
+      background:
+        radial-gradient(1200px 240px at 0% -10%, rgba(224, 122, 61, 0.16), transparent 50%),
+        var(--paper);
+      border-right: 1px solid #2a241e;
+      min-height: 100vh;
+      min-width: 0;
+    }
+    .kicker {
+      margin: 0;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      font-size: 11px;
+      color: var(--accent);
+      font-weight: 600;
+    }
+    h1 {
+      margin: 0;
+      font-family: Georgia, "Liberation Serif", serif;
+      font-weight: 560;
+      font-size: 34px;
+      letter-spacing: -0.03em;
+      line-height: 0.95;
+    }
+    .lede {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    label { display: block; }
+    input {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: var(--paper-2);
+      color: var(--ink);
+      border-radius: 999px;
+      padding: 12px 16px;
+      font: inherit;
+      font-size: 15px;
+      outline: none;
+    }
+    input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(224, 122, 61, 0.18); }
+    #status { min-height: 1.2em; color: var(--muted); font-size: 13px; }
+    #results {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      overflow: auto;
+      padding-right: 4px;
+      flex: 1;
+    }
+    .result {
+      text-align: left;
+      border: 1px solid var(--line);
+      background: rgba(255, 250, 243, 0.72);
+      border-radius: 14px;
+      padding: 10px 12px;
+      cursor: pointer;
+      font: inherit;
+      color: inherit;
+    }
+    .result.active { border-color: var(--accent); background: white; }
+    .result .top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+    .result strong { font-size: 14px; }
+    .code { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
+    .pill {
+      display: inline-block;
+      margin-top: 4px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      letter-spacing: 0.02em;
+      background: #efe6d8;
+    }
+    .hierarchy { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.35; }
+    .also { margin: 4px 0 0; font-size: 12px; color: #8a7360; }
+    #legend { display: flex; flex-wrap: wrap; gap: 6px 10px; }
+    .key { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+    .swatch { width: 9px; height: 9px; border-radius: 50%; }
+    main { position: relative; min-width: 0; min-height: 100vh; background: #f3efe6; }
+    canvas { width: 100%; height: 100%; display: block; cursor: grab; }
+    canvas.dragging { cursor: grabbing; }
+    .toolbar, #crumb {
+      position: absolute;
+      z-index: 2;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .toolbar { top: 16px; right: 16px; }
+    #crumb {
+      left: 16px;
+      right: 16px;
+      bottom: 16px;
+      color: #1c1612;
+      font-size: 13px;
+      line-height: 1.4;
+      pointer-events: none;
+    }
+    button.ghost {
+      border: 1px solid #e2d8c8;
+      background: rgba(255, 250, 243, 0.92);
+      color: #1c1612;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    button.ghost:hover { border-color: #e07a3d; }
+    #hint {
+      position: absolute;
+      z-index: 2;
+      top: 16px;
+      left: 16px;
+      color: #6f6256;
+      font-size: 12px;
+      pointer-events: none;
+    }
+    @media (max-width: 860px) {
+      body { grid-template-columns: 1fr; }
+      aside { min-height: auto; }
+      main { height: 70vh; min-height: 460px; }
+    }
+  </style>
+</head>
+<body>
+  <aside>
+    <div>
+      <p class="kicker">Local Government Directory</p>
+      <h1>Where it sits</h1>
+      <p class="lede" id="lede">The chart opens on the directory. A search draws the branch and marks the place.</p>
+    </div>
+    <label>
+      <input id="q" type="search" placeholder="Type a name or code" autocomplete="off" autofocus>
+    </label>
+    <div id="status"></div>
+    <div id="results"></div>
+    <div id="legend"></div>
+  </aside>
+  <main>
+    <div id="hint">Crowded levels show 7 at a time. Click +N more to page. Type a name to mark its place.</div>
+    <div class="toolbar">
+      <button class="ghost" id="fit" type="button">Overview</button>
+    </div>
+    <canvas id="map"></canvas>
+    <div id="crumb"></div>
+  </main>
+  <script>
+    const canvas = document.getElementById("map");
+    const ctx = canvas.getContext("2d");
+    const input = document.getElementById("q");
+    const statusEl = document.getElementById("status");
+    const resultsEl = document.getElementById("results");
+    const legendEl = document.getElementById("legend");
+    const crumbEl = document.getElementById("crumb");
+
+    const BOX_W = 188;
+    const BOX_H = 70;
+    const GAP_X = 36;
+    const GAP_Y = 70;
+    const MAX_VISIBLE_SIBLINGS = 7;
+    const GROUP_COLORS = ["#8eb4f5", "#79c2e0", "#7dce8a", "#f2c14e", "#f0a07a", "#e7a0cf"];
+
+    const state = {
+      graph: null,
+      nodeById: new Map(),
+      children: new Map(),
+      roots: [],
+      root: {
+        id: "root",
+        label: "Directory",
+        kind: "group",
+        entity_type: null,
+        lgd_code: null,
+        color: GROUP_COLORS[0],
+        parent_id: null,
+        level: 0,
+      },
+      expanded: new Set(),
+      browseFocus: null,
+      windowOffset: new Map(),
+      proxyById: new Map(),
+      visible: new Set(),
+      placed: new Set(),
+      cam: { x: 40, y: 50, scale: 1 },
+      target: null,
+      matches: [],
+      active: 0,
+      hover: null,
+      drag: null,
+    };
+
+    function humanize(label) {
+      return String(label || "")
+        .split("_")
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ")
+        .replaceAll(" And ", " and ");
+    }
+
+    function pluralize(phrase, count) {
+      const text = phrase.toLowerCase();
+      if (count === 1) return text;
+      const parts = text.split(" ");
+      const last = parts.pop();
+      const plural = last.endsWith("y") && !"aeiou".includes(last.at(-2) || "")
+        ? last.slice(0, -1) + "ies"
+        : last + "s";
+      return [...parts, plural].join(" ");
+    }
+
+    function kidsOf(id) {
+      if (id === "root") return state.roots;
+      return state.children.get(id) || [];
+    }
+
+    function nodeBy(id) {
+      if (id === "root") return state.root;
+      return state.proxyById.get(id) || state.nodeById.get(id);
+    }
+
+    function kindLabelForKids(kids) {
+      const kinds = [...new Set(kids.map((id) => {
+        const child = nodeBy(id);
+        return child?.kind === "group" ? "group" : (child?.entity_type || "item");
+      }))];
+      return kinds.length === 1 ? humanize(kinds[0]) : "more";
+    }
+
+    function makeMoreNode(parentId, side, count, kids) {
+      const parent = nodeBy(parentId);
+      const label = side === "before" ? `${count} earlier` : `+${count} more`;
+      const id = `more:${parentId}:${side}`;
+      const node = {
+        id,
+        label,
+        kind: "more",
+        entity_type: null,
+        lgd_code: null,
+        color: "#d7cec2",
+        parent_id: parentId === "root" ? null : parentId,
+        level: (parent?.level || 0) + 1,
+        side,
+        parent_for_window: parentId,
+        count,
+        kids,
+      };
+      state.proxyById.set(id, node);
+      return id;
+    }
+
+    function windowedChildren(parentId) {
+      const kids = kidsOf(parentId).filter((kid) => state.visible.has(kid));
+      if (kids.length <= MAX_VISIBLE_SIBLINGS) return kids;
+
+      let start = state.windowOffset.get(parentId) || 0;
+      const focusIds = new Set();
+      if (state.matches[state.active]) {
+        for (const id of state.matches[state.active].path) focusIds.add(id);
+      }
+      const focusIndex = kids.findIndex((kid) => focusIds.has(kid));
+
+      const pack = (from) => {
+        const beforeSlots = from > 0 ? 1 : 0;
+        const remaining = kids.length - from;
+        const open = MAX_VISIBLE_SIBLINGS - beforeSlots;
+        if (remaining <= open) return { from, take: remaining, after: 0 };
+        const take = Math.max(1, open - 1);
+        return { from, take, after: remaining - take };
+      };
+
+      if (focusIndex >= 0) {
+        start = Math.max(0, focusIndex - 2);
+        let packed = pack(start);
+        if (focusIndex >= packed.from + packed.take) {
+          start = Math.max(0, focusIndex - packed.take + 1);
+          packed = pack(start);
+        }
+        start = packed.from;
+      }
+
+      start = Math.max(0, Math.min(start, Math.max(0, kids.length - 1)));
+      let packed = pack(start);
+      if (packed.after > 0 && packed.from + packed.take >= kids.length) packed = pack(Math.max(0, kids.length - packed.take));
+      state.windowOffset.set(parentId, packed.from);
+
+      const shown = [];
+      if (packed.from > 0) shown.push(makeMoreNode(parentId, "before", packed.from, kids));
+      shown.push(...kids.slice(packed.from, packed.from + packed.take));
+      if (packed.after > 0) shown.push(makeMoreNode(parentId, "after", packed.after, kids));
+      return shown;
+    }
+
+    function assignLevels() {
+      const walk = (id, level) => {
+        const node = state.nodeById.get(id);
+        if (node) node.level = level;
+        for (const child of state.children.get(id) || []) walk(child, level + 1);
+      };
+      for (const id of state.roots) walk(id, 1);
+    }
+
+    function ancestorsOf(id) {
+      const chain = [];
+      let current = id;
+      const seen = new Set();
+      while (current && !seen.has(current)) {
+        seen.add(current);
+        chain.push(current);
+        if (current === "root") break;
+        if (state.roots.includes(current)) {
+          current = "root";
+          continue;
+        }
+        current = nodeBy(current)?.parent_id || null;
+      }
+      return chain;
+    }
+
+    function applyOverview() {
+      state.expanded = new Set(["root"]);
+      state.browseFocus = null;
+      state.windowOffset = new Map();
+      const walk = (id) => {
+        const kids = kidsOf(id);
+        if (!kids.length) return;
+        const allGroups = kids.every((kid) => nodeBy(kid)?.kind === "group");
+        if (!allGroups && kids.length > 1) return;
+        state.expanded.add(id);
+        for (const kid of kids) walk(kid);
+      };
+      walk("root");
+    }
+
+    function computeVisible() {
+      if (state.matches.length) {
+        const visible = new Set(["root"]);
+        for (const match of state.matches) {
+          for (const id of match.path) visible.add(id);
+        }
+        return visible;
+      }
+      if (state.browseFocus) {
+        const visible = new Set(ancestorsOf(state.browseFocus));
+        for (const child of kidsOf(state.browseFocus)) visible.add(child);
+        return visible;
+      }
+      const visible = new Set();
+      const walk = (id) => {
+        visible.add(id);
+        if (!state.expanded.has(id)) return;
+        for (const child of kidsOf(id)) walk(child);
+      };
+      walk("root");
+      return visible;
+    }
+
+    function layout() {
+      state.visible = computeVisible();
+      state.proxyById = new Map();
+      const cachedKids = new Map();
+      const childList = (id) => {
+        if (cachedKids.has(id)) return cachedKids.get(id);
+        if (String(id).startsWith("more:")) {
+          cachedKids.set(id, []);
+          return [];
+        }
+        const kids = windowedChildren(id);
+        cachedKids.set(id, kids);
+        return kids;
+      };
+      const units = new Map();
+      const measure = (id) => {
+        const kids = childList(id);
+        const total = kids.length ? kids.reduce((sum, kid) => sum + measure(kid), 0) : 1;
+        units.set(id, total);
+        return total;
+      };
+      measure("root");
+      state.placed = new Set();
+      const place = (id, left) => {
+        const node = nodeBy(id);
+        const kids = childList(id);
+        const span = units.get(id) * (BOX_W + GAP_X) - GAP_X;
+        node.w = BOX_W;
+        node.h = BOX_H;
+        node.x = left + Math.max(0, (span - BOX_W) / 2);
+        node.y = (node.level || 0) * (BOX_H + GAP_Y);
+        state.placed.add(id);
+        let cursor = left;
+        for (const kid of kids) {
+          place(kid, cursor);
+          cursor += units.get(kid) * (BOX_W + GAP_X);
+        }
+      };
+      place("root", 0);
+    }
+
+    function hiddenCaption(node) {
+      if (node.kind === "more") return "click to show";
+      if (state.expanded.has(node.id)) return "";
+      const hidden = kidsOf(node.id).filter((id) => !state.placed.has(id));
+      if (!hidden.length) return "";
+      return `${hidden.length} ${pluralize(kindLabelForKids(hidden), hidden.length)}`;
+    }
+
+    function shiftWindow(proxy) {
+      const parentId = proxy.parent_for_window;
+      const kids = proxy.kids || kidsOf(parentId);
+      const current = state.windowOffset.get(parentId) || 0;
+      const step = Math.max(1, MAX_VISIBLE_SIBLINGS - 2);
+      let next = proxy.side === "before" ? current - step : current + step;
+      next = Math.max(0, Math.min(next, Math.max(0, kids.length - MAX_VISIBLE_SIBLINGS)));
+      state.windowOffset.set(parentId, next);
+      layout();
+      fit();
+    }
+
+    function resize() {
+      const rect = canvas.parentElement.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+      canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+      canvas.dataset.width = rect.width;
+      canvas.dataset.height = rect.height;
+      draw();
+    }
+
+    function worldToScreen(x, y) {
+      return [x * state.cam.scale + state.cam.x, y * state.cam.scale + state.cam.y];
+    }
+
+    function activePath() {
+      const match = state.matches[state.active];
+      const ids = new Set(match ? match.path : []);
+      if (ids.size) ids.add("root");
+      return ids;
+    }
+
+    function litNodes() {
+      const ids = new Set();
+      for (const match of state.matches) {
+        for (const id of match.path) ids.add(id);
+      }
+      if (ids.size) ids.add("root");
+      return ids;
+    }
+
+    function fit() {
+      const nodes = [...state.placed].map(nodeBy).filter(Boolean);
+      if (!nodes.length) return;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const node of nodes) {
+        minX = Math.min(minX, node.x);
+        minY = Math.min(minY, node.y);
+        maxX = Math.max(maxX, node.x + node.w);
+        maxY = Math.max(maxY, node.y + node.h);
+      }
+      const pad = 48;
+      const width = Number(canvas.dataset.width);
+      const height = Number(canvas.dataset.height);
+      const spanX = Math.max(BOX_W, maxX - minX);
+      const spanY = Math.max(BOX_H, maxY - minY);
+      const scale = Math.min((width - pad * 2) / spanX, (height - pad * 2) / spanY, 1.35);
+      state.target = {
+        scale,
+        x: (width - spanX * scale) / 2 - minX * scale,
+        y: (height - spanY * scale) / 2 - minY * scale,
+      };
+    }
+
+    function step() {
+      if (state.target) {
+        const cam = state.cam;
+        const next = state.target;
+        cam.x += (next.x - cam.x) * 0.18;
+        cam.y += (next.y - cam.y) * 0.18;
+        cam.scale += (next.scale - cam.scale) * 0.18;
+        if (Math.abs(next.x - cam.x) < 0.4 && Math.abs(next.y - cam.y) < 0.4 && Math.abs(next.scale - cam.scale) < 0.002) {
+          state.cam = { ...next };
+          state.target = null;
+        }
+      }
+      draw();
+      requestAnimationFrame(step);
+    }
+
+    function boxColor(node) {
+      if (node.kind === "group") return GROUP_COLORS[(node.level || 0) % GROUP_COLORS.length];
+      return node.color || "#e7d3b0";
+    }
+
+    function inkFor(hex) {
+      const value = parseInt(hex.slice(1), 16);
+      const red = (value >> 16) & 255;
+      const green = (value >> 8) & 255;
+      const blue = value & 255;
+      const luminance = (0.299 * red + 0.587 * green + 0.114 * blue) / 255;
+      return luminance > 0.64 ? "#1c1612" : "#fffaf3";
+    }
+
+    function shorten(text, maxWidth) {
+      if (ctx.measureText(text).width <= maxWidth) return text;
+      let out = text;
+      while (out.length > 1 && ctx.measureText(out + "…").width > maxWidth) out = out.slice(0, -1);
+      return out + "…";
+    }
+
+    function wrapLines(text, maxWidth) {
+      const words = String(text).split(/\s+/).filter(Boolean);
+      const lines = [];
+      let line = "";
+      for (const word of words) {
+        const piece = shorten(word, maxWidth);
+        const next = line ? `${line} ${piece}` : piece;
+        if (line && ctx.measureText(next).width > maxWidth) {
+          lines.push(line);
+          line = piece;
+        } else {
+          line = next;
+        }
+      }
+      if (line) lines.push(line);
+      return lines.slice(0, 2);
+    }
+
+    function roundBox(x, y, w, h, radius) {
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(x, y, w, h, radius);
+      else ctx.rect(x, y, w, h);
+    }
+
+    function draw() {
+      const width = Number(canvas.dataset.width);
+      const height = Number(canvas.dataset.height);
+      const dpr = (canvas.width / width) || 1;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.fillStyle = "#f3efe6";
+      ctx.fillRect(0, 0, width, height);
+      if (!state.graph) return;
+
+      const scale = state.cam.scale;
+      const path = activePath();
+      const lit = litNodes();
+      const searching = state.matches.length > 0;
+      ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * state.cam.x, dpr * state.cam.y);
+
+      const placed = [...state.placed].map(nodeBy).filter(Boolean);
+      const edges = placed.filter((node) => node.id !== "root");
+      const paintEdge = (node, emphasized) => {
+        const parentId = state.roots.includes(node.id) || node.parent_for_window === "root"
+          ? "root"
+          : (node.parent_id || node.parent_for_window);
+        const parent = nodeBy(parentId);
+        if (!parent || !state.placed.has(parent.id)) return;
+        const x1 = parent.x + parent.w / 2;
+        const y1 = parent.y + parent.h;
+        const x2 = node.x + node.w / 2;
+        const y2 = node.y;
+        const mid = y1 + GAP_Y / 2;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x1, mid);
+        ctx.lineTo(x2, mid);
+        ctx.lineTo(x2, y2);
+        ctx.lineWidth = emphasized ? 3.2 : 1.6;
+        ctx.strokeStyle = emphasized ? "#e07a3d" : "#c9bfb2";
+        ctx.stroke();
+      };
+      for (const node of edges) {
+        const parentId = state.roots.includes(node.id) || node.parent_for_window === "root"
+          ? "root"
+          : (node.parent_id || node.parent_for_window);
+        if (!(path.has(node.id) && path.has(parentId))) paintEdge(node, false);
+      }
+      for (const node of edges) {
+        const parentId = state.roots.includes(node.id) || node.parent_for_window === "root"
+          ? "root"
+          : (node.parent_id || node.parent_for_window);
+        if (path.has(node.id) && path.has(parentId)) paintEdge(node, true);
+      }
+
+      for (const node of placed) {
+        const emphasized = path.has(node.id);
+        const marked = lit.has(node.id) || node.kind === "more";
+        const fill = node.kind === "more" ? "#d7cec2" : boxColor(node);
+        ctx.globalAlpha = searching && !marked ? 0.78 : 1;
+        ctx.shadowColor = emphasized ? "rgba(224, 122, 61, 0.28)" : "rgba(28, 22, 18, 0.06)";
+        ctx.shadowBlur = emphasized ? 18 : 10;
+        ctx.shadowOffsetY = 4;
+        roundBox(node.x, node.y, node.w, node.h, 14);
+        ctx.fillStyle = fill;
+        ctx.fill();
+        ctx.shadowColor = "transparent";
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetY = 0;
+        ctx.lineWidth = emphasized ? 3 : 1.25;
+        ctx.strokeStyle = emphasized ? "#9a3412" : "rgba(28, 22, 18, 0.14)";
+        ctx.stroke();
+
+        const ink = inkFor(fill);
+        const caption = hiddenCaption(node);
+        const subtitle = caption || (node.lgd_code ? `${humanize(node.entity_type)} · ${node.lgd_code}` : "");
+        ctx.fillStyle = ink;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.font = "600 15px Georgia, serif";
+        const lines = wrapLines(node.label, node.w - 22);
+        const block = lines.length * 17 + (subtitle ? 16 : 0);
+        let textY = node.y + (node.h - block) / 2 + 8;
+        for (const line of lines) {
+          ctx.fillText(line, node.x + node.w / 2, textY);
+          textY += 17;
+        }
+        if (subtitle) {
+          ctx.font = "12px sans-serif";
+          ctx.globalAlpha = (searching && !marked ? 0.78 : 1) * 0.82;
+          ctx.fillText(shorten(subtitle, node.w - 18), node.x + node.w / 2, textY + 2);
+        }
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    function nodeAt(px, py) {
+      const x = (px - state.cam.x) / state.cam.scale;
+      const y = (py - state.cam.y) / state.cam.scale;
+      const nodes = [
+        ...state.proxyById.values(),
+        state.root,
+        ...(state.graph ? state.graph.nodes : []),
+      ];
+      for (let index = nodes.length - 1; index >= 0; index -= 1) {
+        const node = nodes[index];
+        if (!state.placed.has(node.id)) continue;
+        if (x >= node.x && x <= node.x + node.w && y >= node.y && y <= node.y + node.h) return node;
+      }
+      return null;
+    }
+
+    function renderLegend() {
+      legendEl.replaceChildren();
+      for (const item of state.graph.legend) {
+        const row = document.createElement("div");
+        row.className = "key";
+        const swatch = document.createElement("span");
+        swatch.className = "swatch";
+        swatch.style.background = item.color;
+        row.append(swatch, document.createTextNode(`${item.label} ${item.count}`));
+        legendEl.append(row);
+      }
+    }
+
+    function renderResults(payload) {
+      resultsEl.replaceChildren();
+      if (!payload || !input.value.trim()) {
+        statusEl.textContent = `${state.graph.entity_count} places in the graph`;
+        crumbEl.textContent = "";
+        return;
+      }
+      if (!payload.matches.length) {
+        statusEl.textContent = `No match for “${payload.query}”.`;
+        crumbEl.textContent = "";
+        return;
+      }
+      const shown = payload.matches.length;
+      const extra = payload.total > shown ? ` of ${payload.total}` : "";
+      statusEl.textContent = `${shown}${extra} by ${payload.kind}`;
+      payload.matches.forEach((match, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "result" + (index === state.active ? " active" : "");
+        const top = document.createElement("div");
+        top.className = "top";
+        const name = document.createElement("strong");
+        name.textContent = match.name_english;
+        const code = document.createElement("span");
+        code.className = "code";
+        code.textContent = match.lgd_code || "";
+        top.append(name, code);
+        const pill = document.createElement("div");
+        pill.className = "pill";
+        pill.textContent = match.entity_type.replaceAll("_", " ");
+        button.append(top, pill);
+        if (match.aliases && match.aliases.length) {
+          const also = document.createElement("p");
+          also.className = "also";
+          also.textContent = match.aliases.slice(0, 3).join(" · ");
+          button.append(also);
+        }
+        if (match.hierarchy) {
+          const hierarchy = document.createElement("p");
+          hierarchy.className = "hierarchy";
+          hierarchy.textContent = match.hierarchy;
+          button.append(hierarchy);
+        }
+        button.addEventListener("click", () => focusMatch(index));
+        resultsEl.append(button);
+      });
+      const match = payload.matches[state.active];
+      crumbEl.textContent = match
+        ? ["Directory", ...match.path.map((id) => state.nodeById.get(id)?.label || "").filter(Boolean)].join("  →  ")
+        : "";
+    }
+
+    function focusMatch(index) {
+      state.active = index;
+      const match = state.matches[index];
+      if (!match) return;
+      layout();
+      fit();
+      renderResults({ query: input.value.trim(), kind: statusEl.dataset.kind, total: Number(statusEl.dataset.total || state.matches.length), matches: state.matches });
+    }
+
+    let timer = 0;
+    async function runSearch() {
+      const query = input.value.trim();
+      if (!query) {
+        state.matches = [];
+        state.active = 0;
+        state.browseFocus = null;
+        applyOverview();
+        layout();
+        renderResults(null);
+        fit();
+        return;
+      }
+      const response = await fetch("/api/search?q=" + encodeURIComponent(query));
+      const payload = await response.json();
+      if (input.value.trim() !== query) return;
+      state.matches = payload.matches;
+      state.active = 0;
+      statusEl.dataset.kind = payload.kind || "";
+      statusEl.dataset.total = String(payload.total || 0);
+      if (!payload.matches.length) applyOverview();
+      layout();
+      renderResults(payload);
+      fit();
+    }
+
+    input.addEventListener("input", () => {
+      clearTimeout(timer);
+      timer = setTimeout(runSearch, 140);
+    });
+    input.addEventListener("keydown", (event) => {
+      if (!state.matches.length) return;
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        focusMatch((state.active + delta + state.matches.length) % state.matches.length);
+      }
+    });
+    document.getElementById("fit").addEventListener("click", () => {
+      input.value = "";
+      state.matches = [];
+      state.active = 0;
+      applyOverview();
+      layout();
+      renderResults(null);
+      fit();
+    });
+
+    canvas.addEventListener("pointerdown", (event) => {
+      canvas.setPointerCapture(event.pointerId);
+      state.drag = { x: event.clientX, y: event.clientY, camX: state.cam.x, camY: state.cam.y, moved: false };
+      canvas.classList.add("dragging");
+    });
+    canvas.addEventListener("pointermove", (event) => {
+      const rect = canvas.getBoundingClientRect();
+      const px = event.clientX - rect.left;
+      const py = event.clientY - rect.top;
+      if (state.drag) {
+        const dx = event.clientX - state.drag.x;
+        const dy = event.clientY - state.drag.y;
+        if (Math.hypot(dx, dy) > 3) state.drag.moved = true;
+        state.target = null;
+        state.cam.x = state.drag.camX + dx;
+        state.cam.y = state.drag.camY + dy;
+        return;
+      }
+      state.hover = nodeAt(px, py);
+      canvas.style.cursor = state.hover ? "pointer" : "grab";
+    });
+    canvas.addEventListener("pointerup", (event) => {
+      const drag = state.drag;
+      state.drag = null;
+      canvas.classList.remove("dragging");
+      if (drag && !drag.moved) {
+        const rect = canvas.getBoundingClientRect();
+        const node = nodeAt(event.clientX - rect.left, event.clientY - rect.top);
+        if (!node || node.id === "root") return;
+        if (node.kind === "more") {
+          shiftWindow(node);
+          return;
+        }
+        const kids = kidsOf(node.id);
+        if (!state.matches.length && kids.length) {
+          if (state.browseFocus === node.id || (state.expanded.has(node.id) && !state.browseFocus)) {
+            state.expanded.delete(node.id);
+            state.windowOffset.delete(node.id);
+            state.browseFocus = null;
+          } else if (kids.length > MAX_VISIBLE_SIBLINGS) {
+            state.browseFocus = node.id;
+            state.expanded.add(node.id);
+            state.windowOffset.set(node.id, 0);
+          } else {
+            state.browseFocus = null;
+            state.expanded.add(node.id);
+            state.windowOffset.set(node.id, 0);
+          }
+          layout();
+          fit();
+          return;
+        }
+        if (node.kind === "entity") {
+          input.value = node.label;
+          runSearch();
+        }
+      }
+    });
+    canvas.addEventListener("pointerleave", () => { state.hover = null; });
+    canvas.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const px = event.clientX - rect.left;
+      const py = event.clientY - rect.top;
+      const next = state.cam.scale * (event.deltaY > 0 ? 0.92 : 1.08);
+      const scale = Math.min(2.4, Math.max(0.2, next));
+      const worldX = (px - state.cam.x) / state.cam.scale;
+      const worldY = (py - state.cam.y) / state.cam.scale;
+      state.target = null;
+      state.cam.scale = scale;
+      state.cam.x = px - worldX * scale;
+      state.cam.y = py - worldY * scale;
+    }, { passive: false });
+
+    async function boot() {
+      const response = await fetch("/api/graph");
+      state.graph = await response.json();
+      for (const node of state.graph.nodes) {
+        state.nodeById.set(node.id, node);
+        if (node.parent_id) {
+          const list = state.children.get(node.parent_id) || [];
+          list.push(node.id);
+          state.children.set(node.parent_id, list);
+        } else {
+          state.roots.push(node.id);
+        }
+      }
+      assignLevels();
+      applyOverview();
+      layout();
+      renderLegend();
+      renderResults(null);
+      resize();
+      fit();
+      requestAnimationFrame(step);
+    }
+
+    window.addEventListener("resize", resize);
+    boot();
+  </script>
+</body>
+</html>

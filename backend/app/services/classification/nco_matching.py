@@ -327,12 +327,20 @@ def _llm_confirm(extractor, occupation_text, result):
     """Ask the chat model to pick among retrieved codes only. Never invents a code."""
     if extractor is None or getattr(extractor, "skip_llm", False) or not result:
         return result
-    candidates = [{"code": result.get("code"), "title": result.get("title")}]
+    candidates = [{
+        "code": result.get("code"),
+        "title": result.get("title"),
+        "level": result.get("level"),
+        "family_code": result.get("family_code"),
+        "group_code": result.get("group_code"),
+        "subdivision_code": result.get("subdivision_code"),
+        "division_code": result.get("division_code"),
+    }]
     for alt in result.get("alternatives") or []:
         if alt.get("code"):
             candidates.append(alt)
     lines = "\n".join(
-        f"{item.get('code')}\t{item.get('title')}"
+        f"{item.get('level') or 'occupation'}\t{item.get('code')}\t{item.get('title')}"
         for item in candidates
         if item.get("code")
     )
@@ -344,8 +352,9 @@ def _llm_confirm(extractor, occupation_text, result):
         f"Normalized: \"{result.get('normalized_value') or ''}\"\n\n"
         "Choose the single best NCO classification from this retrieved list only.\n"
         "A candidate may be a division, subdivision, group, family, or occupation.\n"
+        "Prefer the most specific level that the input itself supports.\n"
         "Do not invent codes. If none fits, set code to null.\n\n"
-        f"Candidates (code, title):\n{lines}\n\n"
+        f"Candidates (level, code, title):\n{lines}\n\n"
         "Return ONLY JSON:\n"
         "{\"code\": \"code from the list or null\", \"confidence\": \"high\" or \"medium\" or \"low\", "
         "\"reason\": \"short reason\"}"

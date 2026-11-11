@@ -92,7 +92,9 @@ def test_embedding_retrieval_does_not_require_shared_tokens():
 
     assert result["code"] == "2212.0100"
     assert "embedding" in result["matching_method"]
-    assert calls["n"] == 1
+    # Occupation query is cached; hierarchy review may encode once more.
+    assert calls["n"] >= 1
+    assert calls["n"] <= 4
 
 
 def test_cross_encoder_scores_the_shortlist_in_one_call():
@@ -190,7 +192,8 @@ def test_semantic_fill_does_not_rescore_the_registry():
         pipe._EMBEDDER_TRIED = False
 
     assert seen
-    assert max(seen) == pipe._SEMANTIC_K
+    # Occupation top-k stays small; hierarchy review may request a wider neighbour set.
+    assert max(seen) <= max(pipe._SEMANTIC_K, pipe._REVIEW_HIERARCHY_K)
     assert pipe._SEMANTIC_K < 100
 
 
@@ -246,6 +249,88 @@ def test_chef_uses_the_family_when_no_occupation_is_named():
     assert named["level"] == "occupation"
     assert named["code"] == "1120.3100"
     assert named["occupation_code"] == "1120.3100"
+
+
+def test_review_refresh_uses_hierarchy_embeddings_not_only_top_parents():
+    """Medium-confidence rows rescore a mixed hierarchy pool with embeddings."""
+    import app.services.classification.nco_pipeline as pipe
+
+    index = build_index([
+        _row(
+            "2512.0100",
+            "Software Developer",
+            division="2",
+            division_title="Professionals",
+            family="2512",
+            family_title="Software Developers",
+        ),
+        _row(
+            "3434.0100",
+            "Head Cook",
+            division="3",
+            division_title="Technicians and Associate Professionals",
+            family="3434",
+            family_title="Chefs",
+        ),
+    ])
+    hierarchy = index["hierarchy"]
+    hierarchy["embeddings"] = []
+    for doc in hierarchy["docs"]:
+        if doc["level"] == "family" and doc["code"] == "3434":
+            hierarchy["embeddings"].append([0.0, 1.0])
+        else:
+            hierarchy["embeddings"].append([1.0, 0.0])
+
+    class FakeEmbedder:
+        def encode(self, texts, **kwargs):
+            # Query vectors point at Chefs; unrelated titles stay orthogonal.
+            return [[0.0, 1.0] for _ in texts]
+
+    original = pipe._load_embedder
+    pipe._load_embedder = lambda: FakeEmbedder()
+    try:
+        # No shared tokens with "Chefs" / "Head Cook", so the first pass is weak
+        # and the review refresh must surface the family through embeddings.
+        result = rank_occupation("culinary brigade lead", index)
+    finally:
+        pipe._load_embedder = original
+        pipe._EMBEDDER = None
+        pipe._EMBEDDER_TRIED = False
+
+    assert result["status"] == "needs_review"
+    assert result["level"] == "family"
+    assert result["code"] == "3434"
+    assert result["occupation_code"] is None
+    assert result["auto_fill"] is False
+    assert result["needs_llm"] is True
+    assert "hierarchy_review" in (result.get("matching_method") or [])
+
+
+def test_review_pool_includes_parents_of_top_occupations():
+    import app.services.classification.nco_pipeline as pipe
+
+    index = build_index([
+        _row("2512.0100", "Software Developer", family="2512", family_title="Software Developers"),
+        _row(
+            "5142.0101",
+            "Assistant Beautician",
+            division="5",
+            division_title="Service and Sales Workers",
+            family="5142",
+            family_title="Beauticians and Related Workers",
+        ),
+    ])
+    occupation_scored = [{
+        "doc": index["docs"][1],
+        "level": "occupation",
+        "code": "5142.0101",
+        "score": 0.5,
+    }]
+    idxs = pipe._parent_hierarchy_idxs(occupation_scored, index["hierarchy"])
+    docs = index["hierarchy"]["docs"]
+    codes = {(docs[i]["level"], docs[i]["code"]) for i in idxs}
+    assert ("family", "5142") in codes
+    assert ("division", "5") in codes
 
 
 def test_unrelated_text_is_not_forced():

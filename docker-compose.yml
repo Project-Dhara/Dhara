@@ -53,6 +53,9 @@ services:
       # PyMuPDF/glibc keep freed arenas. On this 8GB host that RSS never
       # comes back, and the kernel OOM-kills the API.
       MALLOC_ARENA_MAX: "2"
+      # NCO local embeddings (also readable from backend/.env).
+      NCO_EMBEDDING_MODEL: ${NCO_EMBEDDING_MODEL:-google/embeddinggemma-300m}
+      HF_TOKEN: ${HF_TOKEN:-}
     env_file:
       - path: backend/.env
         required: false
@@ -89,6 +92,8 @@ services:
 
   # Extraction / upload-batch worker — same image as backend, different command.
   # Keeps heavy PDF/LLM work off the API process so login stays responsive.
+  # Required: with DHARA_INLINE_JOBS=false, uploads stay queued until this
+  # process claims them (python -m app.workers.job_worker).
   worker:
     build:
       context: ./backend
@@ -107,6 +112,8 @@ services:
       DHARA_INLINE_JOBS: "false"
       MALLOC_ARENA_MAX: "2"
       DHARA_WORKER_POLL_SECONDS: "1.5"
+      NCO_EMBEDDING_MODEL: ${NCO_EMBEDDING_MODEL:-google/embeddinggemma-300m}
+      HF_TOKEN: ${HF_TOKEN:-}
     env_file:
       - path: backend/.env
         required: false

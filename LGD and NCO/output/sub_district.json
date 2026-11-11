@@ -1,0 +1,665 @@
+[
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 1,
+    "sub_district_lgd_code": "7571",
+    "sub_district_name_english": "Adarsh Nagar",
+    "sub_district_name_local": "Adarsh Nagar",
+    "hierarchy": "North(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "North",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 2,
+    "sub_district_lgd_code": "7573",
+    "sub_district_name_english": "Badarpur",
+    "sub_district_name_local": "Badarpur",
+    "hierarchy": "South East(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "South East",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 3,
+    "sub_district_lgd_code": "7570",
+    "sub_district_name_english": "Badli",
+    "sub_district_name_local": "Badli",
+    "hierarchy": "North(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "North",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 4,
+    "sub_district_lgd_code": "7582",
+    "sub_district_name_english": "Bawana",
+    "sub_district_name_local": "Bawana",
+    "hierarchy": "Outer North(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "Outer North",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 5,
+    "sub_district_lgd_code": "7580",
+    "sub_district_name_english": "Bijwasan",
+    "sub_district_name_local": "Bijwasan",
+    "hierarchy": "South West(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "South West",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 6,
+    "sub_district_lgd_code": "7569",
+    "sub_district_name_english": "Burari",
+    "sub_district_name_local": "Burari",
+    "hierarchy": "North(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "North",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 7,
+    "sub_district_lgd_code": "7574",
+    "sub_district_name_english": "Chandni Chowk",
+    "sub_district_name_local": "Chandni Chowk",
+    "hierarchy": "Old Delhi(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "Old Delhi",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 8,
+    "sub_district_lgd_code": "7587",
+    "sub_district_name_english": "Chhatarpur",
+    "sub_district_name_local": "Chhatarpur",
+    "hierarchy": "South(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "South",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 9,
+    "sub_district_lgd_code": "452",
+    "sub_district_name_english": "Delhi Cantonment",
+    "sub_district_name_local": null,
+    "hierarchy": "New Delhi(District) / Delhi(State)",
+    "census_2001_code": "2",
+    "census_2011_code": "00452",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "New Delhi",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 10,
+    "sub_district_lgd_code": "7588",
+    "sub_district_name_english": "Deoli",
+    "sub_district_name_local": "Deoli",
+    "hierarchy": "South(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "South",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 11,
+    "sub_district_lgd_code": "7592",
+    "sub_district_name_english": "Dwarka",
+    "sub_district_name_local": "Dwarka",
+    "hierarchy": "South West(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "South West",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 12,
+    "sub_district_lgd_code": "439",
+    "sub_district_name_english": "Gandhi Nagar",
+    "sub_district_name_local": null,
+    "hierarchy": "East(District) / Delhi(State)",
+    "census_2001_code": "1",
+    "census_2011_code": "00439",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "East",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 13,
+    "sub_district_lgd_code": "7584",
+    "sub_district_name_english": "Gokalpur",
+    "sub_district_name_local": "Gokalpur",
+    "hierarchy": "North East(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "North East",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 14,
+    "sub_district_lgd_code": "7590",
+    "sub_district_name_english": "Janakpuri",
+    "sub_district_name_local": "Janakpuri",
+    "hierarchy": "West(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "West",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 15,
+    "sub_district_lgd_code": "7572",
+    "sub_district_name_english": "Jangpura",
+    "sub_district_name_local": "Jangpura",
+    "hierarchy": "South East(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "South East",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 16,
+    "sub_district_lgd_code": "456",
+    "sub_district_name_english": "Kalkaji",
+    "sub_district_name_local": null,
+    "hierarchy": "South East(District) / Delhi(State)",
+    "census_2001_code": "3",
+    "census_2011_code": "00456",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "South East",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 17,
+    "sub_district_lgd_code": "6083",
+    "sub_district_name_english": "Karawal Nagar",
+    "sub_district_name_local": "Karawal Nagar",
+    "hierarchy": "North East(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "North East",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 18,
+    "sub_district_lgd_code": "447",
+    "sub_district_name_english": "Karol Bagh",
+    "sub_district_name_local": null,
+    "hierarchy": "Central(District) / Delhi(State)",
+    "census_2001_code": "1",
+    "census_2011_code": "00447",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "Central",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 19,
+    "sub_district_lgd_code": "7594",
+    "sub_district_name_english": "Kirari",
+    "sub_district_name_local": "Kirari",
+    "hierarchy": "North West(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "North West",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 20,
+    "sub_district_lgd_code": "7589",
+    "sub_district_name_english": "Malviya Nagar",
+    "sub_district_name_local": "Malviya Nagar",
+    "hierarchy": "South(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "South",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 21,
+    "sub_district_lgd_code": "7581",
+    "sub_district_name_english": "Matiala",
+    "sub_district_name_local": "Matiala",
+    "hierarchy": "South West(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "South West",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 22,
+    "sub_district_lgd_code": "6080",
+    "sub_district_name_english": "Mehrauli",
+    "sub_district_name_local": null,
+    "hierarchy": "South(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "South",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 23,
+    "sub_district_lgd_code": "432",
+    "sub_district_name_english": "Model Town",
+    "sub_district_name_local": null,
+    "hierarchy": "Central North(District) / Delhi(State)",
+    "census_2001_code": "3",
+    "census_2011_code": "00432",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "Central North",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 24,
+    "sub_district_lgd_code": "7583",
+    "sub_district_name_english": "Mundka",
+    "sub_district_name_local": "Mundka",
+    "hierarchy": "Outer North(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "Outer North",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 25,
+    "sub_district_lgd_code": "451",
+    "sub_district_name_english": "Najafgarh",
+    "sub_district_name_local": null,
+    "hierarchy": "South West(District) / Delhi(State)",
+    "census_2001_code": "1",
+    "census_2011_code": "00451",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "South West",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 26,
+    "sub_district_lgd_code": "7595",
+    "sub_district_name_english": "Nangloi Jat",
+    "sub_district_name_local": "Nangloi Jat",
+    "hierarchy": "North West(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "North West",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 27,
+    "sub_district_lgd_code": "430",
+    "sub_district_name_english": "Narela",
+    "sub_district_name_local": null,
+    "hierarchy": "Outer North(District) / Delhi(State)",
+    "census_2001_code": "1",
+    "census_2011_code": "00430",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "Outer North",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 28,
+    "sub_district_lgd_code": "7593",
+    "sub_district_name_english": "New Delhi",
+    "sub_district_name_local": "New Delhi",
+    "hierarchy": "New Delhi(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "New Delhi",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 29,
+    "sub_district_lgd_code": "448",
+    "sub_district_name_english": "Patel Nagar",
+    "sub_district_name_local": null,
+    "hierarchy": "Central(District) / Delhi(State)",
+    "census_2001_code": "2",
+    "census_2011_code": "00448",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "Central",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 30,
+    "sub_district_lgd_code": "7585",
+    "sub_district_name_english": "Patparganj",
+    "sub_district_name_local": "Patparganj",
+    "hierarchy": "East(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "East",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 31,
+    "sub_district_lgd_code": "449",
+    "sub_district_name_english": "Rajouri Garden",
+    "sub_district_name_local": null,
+    "hierarchy": "West(District) / Delhi(State)",
+    "census_2001_code": "3",
+    "census_2011_code": "00449",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "West",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 32,
+    "sub_district_lgd_code": "6077",
+    "sub_district_name_english": "Rohini",
+    "sub_district_name_local": null,
+    "hierarchy": "North West(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "North West",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 33,
+    "sub_district_lgd_code": "7575",
+    "sub_district_name_english": "Sadar Bazar",
+    "sub_district_name_local": "Sadar Bazar",
+    "hierarchy": "Old Delhi(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "Old Delhi",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 34,
+    "sub_district_lgd_code": "437",
+    "sub_district_name_english": "Shahdara",
+    "sub_district_name_local": null,
+    "hierarchy": "North East(District) / Delhi(State)",
+    "census_2001_code": "2",
+    "census_2011_code": "00437",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "North East",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 35,
+    "sub_district_lgd_code": "7578",
+    "sub_district_name_english": "Shakur Basti",
+    "sub_district_name_local": "Shakur Basti",
+    "hierarchy": "Central North(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "Central North",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 36,
+    "sub_district_lgd_code": "7579",
+    "sub_district_name_english": "Shalimar Bagh",
+    "sub_district_name_local": "Shalimar Bagh",
+    "hierarchy": "Central North(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "Central North",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 37,
+    "sub_district_lgd_code": "7591",
+    "sub_district_name_english": "Vikaspuri",
+    "sub_district_name_local": "Vikaspuri",
+    "hierarchy": "West(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "West",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 38,
+    "sub_district_lgd_code": "7586",
+    "sub_district_name_english": "Vishwas Nagar",
+    "sub_district_name_local": "Vishwas Nagar",
+    "hierarchy": "East(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "East",
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "sub_district",
+    "source_file": "SUB DISTRICT/LGD - Local Government Directory, Subdistrict.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 39,
+    "sub_district_lgd_code": "6082",
+    "sub_district_name_english": "Yamuna Vihar",
+    "sub_district_name_local": null,
+    "hierarchy": "North East(District) / Delhi(State)",
+    "census_2001_code": null,
+    "census_2011_code": "00000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "district": "North East",
+      "state": "Delhi"
+    }
+  }
+]

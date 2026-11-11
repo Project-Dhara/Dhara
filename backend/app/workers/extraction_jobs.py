@@ -242,7 +242,7 @@ def queue_extraction_job(
             "status": "queued",
             "stage": "queued",
             "percent": 0,
-            "message": "Queued",
+            "message": "Waiting for extraction worker",
             "filename": filename,
             "user_email": user_email,
             "organisation_id": organisation_id,

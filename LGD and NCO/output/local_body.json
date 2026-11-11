@@ -1,0 +1,42 @@
+[
+  {
+    "entity_type": "local_body",
+    "source_file": "LOCAL BODIES/LGD - Local Government Directory, MUNICIPALITY.xlsx",
+    "source_sheet": "Sheet1",
+    "list_name": "MUNICIPALITY",
+    "s_no": 1,
+    "local_body_lgd_code": "276400",
+    "local_body_name_english": "East Delhi Municipal Corporation",
+    "census_2011_code": "800441"
+  },
+  {
+    "entity_type": "local_body",
+    "source_file": "LOCAL BODIES/LGD - Local Government Directory, MUNICIPALITY.xlsx",
+    "source_sheet": "Sheet1",
+    "list_name": "MUNICIPALITY",
+    "s_no": 2,
+    "local_body_lgd_code": "276401",
+    "local_body_name_english": "North Delhi Municipal Corporation",
+    "census_2011_code": "800441"
+  },
+  {
+    "entity_type": "local_body",
+    "source_file": "LOCAL BODIES/LGD - Local Government Directory, MUNICIPALITY.xlsx",
+    "source_sheet": "Sheet1",
+    "list_name": "MUNICIPALITY",
+    "s_no": 3,
+    "local_body_lgd_code": "276402",
+    "local_body_name_english": "South Delhi Municipal Corporation",
+    "census_2011_code": "800441"
+  },
+  {
+    "entity_type": "local_body",
+    "source_file": "LOCAL BODIES/LGD - Local Government Directory, NCT.xlsx",
+    "source_sheet": "Sheet1",
+    "list_name": "NCT",
+    "s_no": 1,
+    "local_body_lgd_code": "276447",
+    "local_body_name_english": "New Delhi Municipal Council",
+    "census_2011_code": "800442"
+  }
+]

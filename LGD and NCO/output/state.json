@@ -1,0 +1,14 @@
+[
+  {
+    "entity_type": "state",
+    "source_file": "STATE/LGD - Local Government Directory, State.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 8,
+    "state_lgd_code": "7",
+    "state_name_english": "Delhi",
+    "state_name_local": "DELHI",
+    "state_or_ut": "UT",
+    "census_2001_code": "07",
+    "census_2011_code": "07"
+  }
+]

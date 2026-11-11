@@ -34,8 +34,8 @@ def strip_uniform_banner_rows(rows: List[List[Any]]) -> List[List[Any]]:
     """Drop leading caption/id rows where every non-empty cell is identical.
 
     Spreadsheet blocks often start with a table-id or title repeated across
-    columns. The shared PDF header flattener treats those as header levels and
-    can consume the real column row + data; strip them first for Excel/CSV.
+    columns. Strip them before spreadsheet header detection so they do not
+    become fake header levels or displace the real column row.
     """
     out = list(rows)
     while out:

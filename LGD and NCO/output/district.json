@@ -1,0 +1,223 @@
+[
+  {
+    "entity_type": "district",
+    "source_file": "DISTRICT/LGD - Local Government Directory, District.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 1,
+    "district_lgd_code": "77",
+    "district_name_english": "Central",
+    "district_name_local": "CENTRAL",
+    "hierarchy": "Delhi(State)",
+    "short_name_of_district": "CNT",
+    "census_2001_code": "06",
+    "census_2011_code": "095",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "district",
+    "source_file": "DISTRICT/LGD - Local Government Directory, District.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 2,
+    "district_lgd_code": "796",
+    "district_name_english": "Central North",
+    "district_name_local": "Central North",
+    "hierarchy": "Delhi(State)",
+    "short_name_of_district": null,
+    "census_2001_code": null,
+    "census_2011_code": null,
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "district",
+    "source_file": "DISTRICT/LGD - Local Government Directory, District.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 3,
+    "district_lgd_code": "78",
+    "district_name_english": "East",
+    "district_name_local": "EAST",
+    "hierarchy": "Delhi(State)",
+    "short_name_of_district": "EST",
+    "census_2001_code": "04",
+    "census_2011_code": "093",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "district",
+    "source_file": "DISTRICT/LGD - Local Government Directory, District.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 4,
+    "district_lgd_code": "79",
+    "district_name_english": "New Delhi",
+    "district_name_local": "NEW DELHI",
+    "hierarchy": "Delhi(State)",
+    "short_name_of_district": "NDL",
+    "census_2001_code": "05",
+    "census_2011_code": "094",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "district",
+    "source_file": "DISTRICT/LGD - Local Government Directory, District.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 5,
+    "district_lgd_code": "80",
+    "district_name_english": "North",
+    "district_name_local": "NORTH",
+    "hierarchy": "Delhi(State)",
+    "short_name_of_district": "NRD",
+    "census_2001_code": "02",
+    "census_2011_code": "091",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "district",
+    "source_file": "DISTRICT/LGD - Local Government Directory, District.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 6,
+    "district_lgd_code": "81",
+    "district_name_english": "North East",
+    "district_name_local": "NORTH EAST",
+    "hierarchy": "Delhi(State)",
+    "short_name_of_district": "NED",
+    "census_2001_code": "03",
+    "census_2011_code": "092",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "district",
+    "source_file": "DISTRICT/LGD - Local Government Directory, District.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 7,
+    "district_lgd_code": "82",
+    "district_name_english": "North West",
+    "district_name_local": "NORTH WEST",
+    "hierarchy": "Delhi(State)",
+    "short_name_of_district": "NWD",
+    "census_2001_code": "01",
+    "census_2011_code": "090",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "district",
+    "source_file": "DISTRICT/LGD - Local Government Directory, District.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 8,
+    "district_lgd_code": "795",
+    "district_name_english": "Old Delhi",
+    "district_name_local": "Old Delhi",
+    "hierarchy": "Delhi(State)",
+    "short_name_of_district": null,
+    "census_2001_code": null,
+    "census_2011_code": null,
+    "pesa_status": "Fully Covered",
+    "hierarchy_parts": {
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "district",
+    "source_file": "DISTRICT/LGD - Local Government Directory, District.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 9,
+    "district_lgd_code": "794",
+    "district_name_english": "Outer North",
+    "district_name_local": "Outer North",
+    "hierarchy": "Delhi(State)",
+    "short_name_of_district": null,
+    "census_2001_code": null,
+    "census_2011_code": null,
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "district",
+    "source_file": "DISTRICT/LGD - Local Government Directory, District.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 10,
+    "district_lgd_code": "83",
+    "district_name_english": "South",
+    "district_name_local": "SOUTH",
+    "hierarchy": "Delhi(State)",
+    "short_name_of_district": "SDL",
+    "census_2001_code": "09",
+    "census_2011_code": "098",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "district",
+    "source_file": "DISTRICT/LGD - Local Government Directory, District.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 11,
+    "district_lgd_code": "670",
+    "district_name_english": "South East",
+    "district_name_local": "SOUTH EAST",
+    "hierarchy": "Delhi(State)",
+    "short_name_of_district": "STS",
+    "census_2001_code": null,
+    "census_2011_code": "000",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "district",
+    "source_file": "DISTRICT/LGD - Local Government Directory, District.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 12,
+    "district_lgd_code": "84",
+    "district_name_english": "South West",
+    "district_name_local": "SOUTH WEST",
+    "hierarchy": "Delhi(State)",
+    "short_name_of_district": "SWD",
+    "census_2001_code": "08",
+    "census_2011_code": "097",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "state": "Delhi"
+    }
+  },
+  {
+    "entity_type": "district",
+    "source_file": "DISTRICT/LGD - Local Government Directory, District.xlsx",
+    "source_sheet": "Sheet1",
+    "s_no": 13,
+    "district_lgd_code": "85",
+    "district_name_english": "West",
+    "district_name_local": "WEST",
+    "hierarchy": "Delhi(State)",
+    "short_name_of_district": "WSD",
+    "census_2001_code": "07",
+    "census_2011_code": "096",
+    "pesa_status": "Not Covered",
+    "hierarchy_parts": {
+      "state": "Delhi"
+    }
+  }
+]

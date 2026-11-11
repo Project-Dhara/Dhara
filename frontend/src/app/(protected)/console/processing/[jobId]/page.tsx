@@ -50,6 +50,24 @@ type Job = {
 
 function buildSteps(job: Job | null, sawValidate: boolean) {
   if (!job) return STAGES.map((s) => ({ ...s, status: 'pending' }))
+  // queued / claimed are not pipeline stages — without this the stepper stays
+  // entirely pending and looks stuck even though the worker will pick the job up.
+  if (
+    job.status === 'queued'
+    || job.stage === 'queued'
+    || job.stage === 'claimed'
+  ) {
+    const waitingMsg =
+      job.message
+      || (job.stage === 'claimed'
+        ? 'Worker claimed this job — starting extraction…'
+        : 'Waiting for the extraction worker…')
+    return STAGES.map((s, i) => (
+      i === 0
+        ? { ...s, status: 'active' as const, message: waitingMsg }
+        : { ...s, status: 'pending' as const }
+    ))
+  }
   const currentIdx = STAGE_ORDER.indexOf(job.stage)
   return STAGES.map((s, i) => {
     if (job.status === 'done') {
@@ -66,6 +84,15 @@ function buildSteps(job: Job | null, sawValidate: boolean) {
     }
     return { ...s, status: 'pending' }
   })
+}
+
+function fileStatusLabel(f: BatchFile): string {
+  if (f.status === 'running') {
+    const pct = typeof f.percent === 'number' ? Math.max(0, Math.min(100, f.percent)) : null
+    return pct != null ? `${pct}%` : 'Processing…'
+  }
+  if (f.status === 'queued') return 'Waiting'
+  return f.status
 }
 
 export default function PdfProcessingPage() {
@@ -157,8 +184,7 @@ export default function PdfProcessingPage() {
             {job.batch_files.map((f) => {
               const stageHint = f.status === 'running' && f.stage
                 ? (STAGE_LABEL[f.stage] || f.message || f.stage)
-                : null
-              const pct = typeof f.percent === 'number' ? Math.max(0, Math.min(100, f.percent)) : null
+                : (f.status === 'queued' ? (f.message || 'Waiting for extraction worker') : null)
               return (
                 <li key={f.file_job_id} className="flex flex-col gap-1">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -170,9 +196,7 @@ export default function PdfProcessingPage() {
                           ? 'text-coral'
                           : 'text-ink-soft'
                     }`}>
-                      {f.status === 'running'
-                        ? (pct != null ? `${pct}%` : 'Processing…')
-                        : f.status}
+                      {fileStatusLabel(f)}
                     </span>
                   </div>
                   {stageHint ? (

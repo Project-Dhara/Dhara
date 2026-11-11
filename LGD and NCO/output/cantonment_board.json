@@ -1,0 +1,12 @@
+[
+  {
+    "entity_type": "cantonment_board",
+    "source_file": "CANTONMENT BOARDS/LGD - Local Government Directory, CANTONMENT BOARD.xlsx",
+    "source_sheet": "Sheet1",
+    "list_name": "CANTONMENT BOARD",
+    "s_no": 1,
+    "local_body_lgd_code": "276403",
+    "local_body_name_english": "Delhi Cantonment Board",
+    "census_2011_code": "800443"
+  }
+]

@@ -56,3 +56,9 @@ websockets==17.0.1
 pandas==2.2.3
 pymupdf==1.24.11
 mcp>=1.6.0,<2
+# Optional NCO local embeddings / cross-encoder (NCO_EMBEDDING_MODEL).
+torch>=2.2,<3
+transformers>=4.50,<5
+sentence-transformers>=3.0,<6
+accelerate>=0.33,<2
+huggingface-hub>=0.24,<1
