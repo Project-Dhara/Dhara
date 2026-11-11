@@ -1,0 +1,55 @@
+name: Desktop Windows
+
+# Builds the Electron NSIS/portable installer on windows-latest.
+# Website Docker workflows are unaffected.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'desktop/**'
+      - 'backend/**'
+      - 'frontend/**'
+      - '.github/workflows/desktop-windows.yml'
+
+jobs:
+  build-installer:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install Electron toolchain
+        run: npm ci
+
+      - name: Compile TypeScript
+        run: npm run build
+
+      - name: Fetch runtimes + stage backend/frontend + electron-builder
+        env:
+          PGVECTOR_WIN_ZIP_URL: ${{ secrets.PGVECTOR_WIN_ZIP_URL }}
+        shell: pwsh
+        run: |
+          $vec = $env:PGVECTOR_WIN_ZIP_URL
+          if ([string]::IsNullOrWhiteSpace($vec)) {
+            Write-Warning "PGVECTOR_WIN_ZIP_URL secret not set; installer step may fail until vector.dll is supplied."
+            .\scripts\build-installer.ps1
+          } else {
+            .\scripts\build-installer.ps1 -PgVectorZipUrl $vec
+          }
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dhara-windows-installer
+          path: |
+            desktop/release/*.exe
+            desktop/release/*.yml
+          if-no-files-found: warn

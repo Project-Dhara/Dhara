@@ -85,6 +85,10 @@ make urls                               # print local URLs
 | Readiness | [http://localhost:8000/api/ready](http://localhost:8000/api/ready) |
 
 
+### Desktop (Windows)
+
+A separate Electron installer under [`desktop/`](desktop/) bundles Postgres + pgvector, FastAPI, the extraction worker, and the Next.js UI for offline-from-Docker Windows installs. It does not change this Docker website flow — see [desktop/README.md](desktop/README.md).
+
 Useful Make targets:
 
 ```bash

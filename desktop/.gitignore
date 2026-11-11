@@ -1,0 +1,11 @@
+node_modules/
+dist/
+release/
+.cache/
+resources/win-x64/pgsql/
+resources/win-x64/python/
+resources/win-x64/node/
+resources/win-x64/backend/
+resources/win-x64/frontend/
+*.log
+.DS_Store

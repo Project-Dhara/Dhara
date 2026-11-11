@@ -1,0 +1,7 @@
+Place Windows PostgreSQL 16 pgvector files before building the installer:
+
+  pgsql/lib/vector.dll
+  pgsql/share/extension/vector.control
+  pgsql/share/extension/vector--*.sql
+
+Or pass -PgVectorZipUrl to scripts/fetch-win-deps.ps1 / scripts/build-installer.ps1.

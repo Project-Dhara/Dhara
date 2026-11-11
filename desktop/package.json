@@ -1,0 +1,71 @@
+{
+  "name": "dhara-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dhara Windows desktop shell (Electron + bundled Postgres/FastAPI/worker/Next)",
+  "license": "Apache-2.0",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "npm run build && electron .",
+    "start": "electron .",
+    "pack:win": "npm run build && electron-builder --win --x64",
+    "dist:win": "npm run build && electron-builder --win nsis portable --x64"
+  },
+  "dependencies": {
+    "electron-log": "^5.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.6.3"
+  },
+  "build": {
+    "appId": "org.ekstep.datadhara.desktop",
+    "productName": "Dhara",
+    "copyright": "Copyright © EkStep",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "splash.html",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/win-x64",
+        "to": "win-x64",
+        "filter": [
+          "**/*",
+          "!README.md",
+          "!.gitkeep",
+          "!PGVECTOR_REQUIRED.txt"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "Dhara-Setup-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Dhara",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

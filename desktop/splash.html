@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Starting Dhara</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f3f1ec;
+        --ink: #1c2430;
+        --muted: #5b6573;
+        --accent: #0a7ea4;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        font-family: "Segoe UI", Tahoma, sans-serif;
+        background:
+          radial-gradient(circle at top left, rgba(10, 126, 164, 0.12), transparent 40%),
+          linear-gradient(160deg, #f7f5f0, #ebe7df);
+        color: var(--ink);
+      }
+      .card {
+        width: min(420px, 90vw);
+        padding: 2rem 1.75rem;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.86);
+        box-shadow: 0 18px 50px rgba(28, 36, 48, 0.12);
+        text-align: center;
+      }
+      h1 {
+        margin: 0 0 0.35rem;
+        font-size: 1.55rem;
+        letter-spacing: 0.04em;
+      }
+      p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.95rem;
+        line-height: 1.45;
+      }
+      #status {
+        margin-top: 1.25rem;
+        min-height: 1.4em;
+        font-size: 0.92rem;
+        color: var(--ink);
+      }
+      .spinner {
+        width: 36px;
+        height: 36px;
+        margin: 1.4rem auto 0;
+        border: 3px solid rgba(10, 126, 164, 0.2);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 0.9s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      #error {
+        display: none;
+        margin-top: 1rem;
+        color: #9b1c1c;
+        white-space: pre-wrap;
+        text-align: left;
+        font-size: 0.85rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>DHARA</h1>
+      <p>Starting local services…</p>
+      <div class="spinner" id="spinner"></div>
+      <div id="status">Preparing</div>
+      <div id="error"></div>
+    </div>
+    <script>
+      const statusEl = document.getElementById('status')
+      const errorEl = document.getElementById('error')
+      const spinnerEl = document.getElementById('spinner')
+      window.dharaDesktop = {
+        setStatus(text) { statusEl.textContent = text || '' },
+        setError(text) {
+          spinnerEl.style.display = 'none'
+          errorEl.style.display = 'block'
+          errorEl.textContent = text || 'Startup failed'
+        },
+      }
+    </script>
+  </body>
+</html>
