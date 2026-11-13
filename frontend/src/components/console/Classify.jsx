@@ -8,6 +8,7 @@ import { withAuthHeaders } from '../../lib/auth'
 import { withLlmKeyHeaders } from '../../lib/llmKey'
 import { useApp } from '../../context/AppContext'
 import {
+  isLgdColumn,
   isOccupationColumn,
   rowMapped,
   cloneCodeRows,
@@ -78,6 +79,10 @@ export default function Classify({
   const [ncoPanelOpen, setNcoPanelOpen] = useState(false)
   const [ncoStandardReady, setNcoStandardReady] = useState(false)
   const [ncoNeedsStandard, setNcoNeedsStandard] = useState(false)
+  const [lgdMatchesByCol, setLgdMatchesByCol] = useState({})
+  const [lgdLoading, setLgdLoading] = useState(false)
+  const [lgdError, setLgdError] = useState('')
+  const [lgdPanelOpen, setLgdPanelOpen] = useState(false)
   const [fillAiLoading, setFillAiLoading] = useState(false)
   const [fillAllAiLoading, setFillAllAiLoading] = useState(false)
   const [fillAiError, setFillAiError] = useState('')
@@ -173,11 +178,14 @@ export default function Classify({
   const activeColumn = classifiedColumns.find((c) => c.name === selectedCol)
   const activeCodes = columnCodes[selectedCol] || []
   const ncoMatches = (selectedCol && ncoMatchesByCol[selectedCol]) || null
+  const lgdMatches = (selectedCol && lgdMatchesByCol[selectedCol]) || null
   const columnDirty = JSON.stringify(columnCodes[selectedCol]) !== JSON.stringify(savedCodes[selectedCol])
 
   useEffect(() => {
     setNcoPanelOpen(Boolean(selectedCol && ncoMatchesByCol[selectedCol]))
     setNcoError('')
+    setLgdPanelOpen(Boolean(selectedCol && lgdMatchesByCol[selectedCol]))
+    setLgdError('')
   }, [selectedCol])
 
   const setCodeFieldFor = (name, rowIndex, field, value) => {
@@ -687,6 +695,112 @@ export default function Classify({
       })
   }
 
+  const pickLgdCandidate = (value, candidate) => {
+    const targetCol = selectedCol
+    if (!targetCol || !candidate) return
+    const code = String(candidate.code || candidate.lgd_code || '').trim()
+    if (!code) return
+    const title = candidate.title != null && candidate.title !== ''
+      ? String(candidate.title)
+      : (candidate.name_english != null && candidate.name_english !== ''
+        ? String(candidate.name_english)
+        : '')
+    setColumnCodes((prev) => {
+      const rows = prev[targetCol] || []
+      return {
+        ...prev,
+        [targetCol]: rows.map((row) => (
+          row.value === value
+            ? { ...row, code, definition: title || row.definition }
+            : row
+        )),
+      }
+    })
+    setLgdMatchesByCol((prev) => {
+      const colMatches = { ...(prev[targetCol] || {}) }
+      const existing = colMatches[value]
+      if (!existing) return prev
+      colMatches[value] = {
+        ...existing,
+        code,
+        lgd_code: code,
+        title: title || existing.title,
+        name_english: title || existing.name_english,
+        entity_type: candidate.entity_type || existing.entity_type,
+        level: candidate.entity_type || existing.level,
+        hierarchy: candidate.hierarchy ?? existing.hierarchy,
+        hierarchy_parts: candidate.hierarchy_parts ?? existing.hierarchy_parts,
+        ambiguous: false,
+        auto_fill: false,
+        needs_manual_review: false,
+        confidence: 'high',
+        chosen: true,
+      }
+      return { ...prev, [targetCol]: colMatches }
+    })
+  }
+
+  const suggestLgdCodes = () => {
+    const targetCol = selectedCol
+    if (!targetCol || !isLgdColumn(targetCol) || isOccupationColumn(targetCol)) return
+    const rows = columnCodes[targetCol] || []
+    const values = rows.map((r) => r.value || r.code).filter(Boolean)
+    if (!values.length) return
+
+    setLgdPanelOpen(true)
+    setLgdLoading(true)
+    setLgdError('')
+    fetch('/api/catalogue/match-lgd', withAuthHeaders({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values }),
+    }))
+      .then(async (res) => {
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: 'LGD matching failed' }))
+          const detail = err.detail
+          throw new Error(
+            typeof detail === 'string'
+              ? detail
+              : (Array.isArray(detail) ? detail.map((d) => d.msg || d).join('; ') : 'LGD matching failed'),
+          )
+        }
+        return res.json()
+      })
+      .then((data) => {
+        const matches = data.matches || {}
+        setLgdMatchesByCol((prev) => ({ ...prev, [targetCol]: matches }))
+        if (!isLgdColumn(targetCol)) return
+        // Fill Code/Definition only when the steward clicks Suggest.
+        setColumnCodes((prev) => {
+          const current = prev[targetCol] || rows
+          const nextRows = current.map((row) => {
+            const m = matches[row.value]
+            // No directory hit → mark as not found (do not leave blank).
+            if (!m) {
+              return { ...row, code: '-', definition: '-' }
+            }
+            // Ambiguous / review-only: leave for steward pick; do not invent a code.
+            if (!m.auto_fill) return row
+            const code = String(m.code || m.lgd_code || '').trim()
+            if (!code || !/^\d+$/.test(code)) {
+              return { ...row, code: '-', definition: '-' }
+            }
+            return {
+              ...row,
+              code,
+              definition: m.title != null && m.title !== ''
+                ? String(m.title)
+                : (m.name_english != null && m.name_english !== '' ? String(m.name_english) : row.definition),
+            }
+          })
+          return { ...prev, [targetCol]: nextRows }
+        })
+      })
+      .catch((e) => setLgdError(e.message))
+      .finally(() => setLgdLoading(false))
+  }
+
   const selectHarmoniseEntry = (id) => setOpenRule(id)
   const toggleHarmoniseSkip = (id) => setRuleState((prev) => ({ ...prev, [id]: prev[id] === 'skip' ? undefined : 'skip' }))
   const verifyAndSaveHarmoniseEntry = (entry, rows) => {
@@ -816,6 +930,12 @@ export default function Classify({
               ncoMatches={ncoMatches}
               ncoPanelOpen={ncoPanelOpen}
               onSuggestNco={suggestNcoCodes}
+              lgdLoading={lgdLoading}
+              lgdError={lgdError}
+              lgdMatches={lgdMatches}
+              lgdPanelOpen={lgdPanelOpen}
+              onSuggestLgd={suggestLgdCodes}
+              onPickLgdCandidate={pickLgdCandidate}
               onCodeFieldChange={setCodeField}
               onSave={saveColumnCodes}
               highlightIncomplete={highlightIncomplete}
@@ -840,6 +960,7 @@ export default function Classify({
           aliasVerified={aliasVerified}
           harmDirty={harmDirty}
           ncoMatchesByCol={ncoMatchesByCol}
+          lgdMatchesByCol={lgdMatchesByCol}
           onVerifyAndSave={verifyAndSaveHarmoniseEntry}
           onSaveChanges={persistHarmoniseEntry}
           onFieldChange={setHarmField}

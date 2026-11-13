@@ -352,7 +352,7 @@ export default function Catalogue({ hasKey, onGoSettings }) {
                 key={d.id}
                 className={`flex cursor-pointer flex-col gap-1.5 rounded-lg border p-3 transition-all ${
                   d.id === sel?.id
-                    ? 'border-teal bg-sage shadow-[inset_0_0_0_1px_#176B6B]'
+                    ? 'border-teal bg-sage shadow-[inset_0_0_0_1px_#12403E]'
                     : 'border-line bg-white hover:-translate-y-px hover:border-teal hover:bg-cream hover:shadow-sm'
                 }`}
                 onClick={() => { setSelId(d.id); setTab('summary'); setMetadataSubTab('nmds') }}

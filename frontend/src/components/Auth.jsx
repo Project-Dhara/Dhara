@@ -64,7 +64,7 @@ export default function Auth({ onSuccess }) {
       <div className="selection-invert relative flex w-[420px] flex-none flex-col justify-between overflow-hidden bg-teal-deep p-11 px-10">
         <div
           className="pointer-events-none absolute inset-0"
-          style={{ background: 'radial-gradient(120% 90% at 0% 0%, rgba(23,107,107,0.45) 0%, rgba(18,64,62,0) 60%)' }}
+          style={{ background: 'radial-gradient(120% 90% at 0% 0%, rgba(18,64,62,0.45) 0%, rgba(18,64,62,0) 60%)' }}
           aria-hidden
         />
         <div className="relative z-10 self-start">

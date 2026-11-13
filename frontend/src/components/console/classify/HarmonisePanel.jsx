@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
-import { isOccupationColumn, rowMapped } from '../../../lib/classifyColumns'
+import { isLgdColumn, isOccupationColumn, rowMapped } from '../../../lib/classifyColumns'
 
 const primaryBtn =
   'inline-flex h-9 items-center justify-center rounded-md bg-teal px-4 text-[13px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]'
@@ -27,6 +27,7 @@ export default function HarmonisePanel({
   aliasVerified,
   harmDirty,
   ncoMatchesByCol,
+  lgdMatchesByCol = {},
   onVerifyAndSave,
   onSaveChanges,
   onFieldChange,
@@ -35,18 +36,23 @@ export default function HarmonisePanel({
     const rows = columnCodes[name] || []
     return rows.length > 0 && rows.every(rowMapped)
   }
+  const matchNeedsReview = (m) => (
+    m && (m.needs_manual_review || m.auto_fill === false || m.confidence !== 'high')
+  )
   const columnNeedsNcoReview = (sourceName) => {
     const matches = ncoMatchesByCol[sourceName]
     if (!matches) return false
-    return Object.values(matches).some((m) => m && (m.needs_manual_review || m.auto_fill === false || m.confidence !== 'high'))
+    return Object.values(matches).some(matchNeedsReview)
   }
-  const ncoReviewCount = (sourceName) => {
-    const matches = ncoMatchesByCol[sourceName] || {}
+  const columnNeedsLgdReview = (sourceName) => {
+    const matches = lgdMatchesByCol[sourceName]
+    if (!matches) return false
+    return Object.values(matches).some(matchNeedsReview)
+  }
+  const codeReviewCount = (sourceName, matchesByCol) => {
+    const matches = matchesByCol[sourceName] || {}
     const rows = columnCodes[sourceName] || []
-    return rows.filter((row) => {
-      const m = matches[row.value]
-      return m && (m.needs_manual_review || m.auto_fill === false || m.confidence !== 'high')
-    }).length
+    return rows.filter((row) => matchNeedsReview(matches[row.value])).length
   }
   const rowsFor = (club) => harmRows[club.id] || columnCodes[club.sourceName] || []
   const clubMeta = (club) => {
@@ -56,11 +62,13 @@ export default function HarmonisePanel({
     const mappedCount = rows.filter(rowMapped).length
     const fullyMapped = rows.length > 0 && mappedCount === rows.length
     const occ = isOccupationColumn(club.sourceName) || isOccupationColumn(club.name)
+    const geo = !occ && (isLgdColumn(club.sourceName) || isLgdColumn(club.name))
     const ncoOpen = occ && columnNeedsNcoReview(club.sourceName) && !verified
+    const lgdOpen = geo && columnNeedsLgdReview(club.sourceName) && !verified
     const pendingVerify = !verified && !skipped
     const done = skipped || (verified && fullyMapped)
     const ready = done && !pendingVerify
-    const status = skipped ? 'Skipped' : pendingVerify || ncoOpen || !done ? 'Needs review' : 'Ready'
+    const status = skipped ? 'Skipped' : pendingVerify || ncoOpen || lgdOpen || !done ? 'Needs review' : 'Ready'
     return {
       rows,
       skipped,
@@ -69,7 +77,10 @@ export default function HarmonisePanel({
       fullyMapped,
       occ,
       ncoOpen,
-      reviewCount: ncoOpen ? ncoReviewCount(club.sourceName) : 0,
+      lgdOpen,
+      reviewCount: ncoOpen
+        ? codeReviewCount(club.sourceName, ncoMatchesByCol)
+        : (lgdOpen ? codeReviewCount(club.sourceName, lgdMatchesByCol) : 0),
       pendingVerify,
       done,
       ready,
@@ -165,7 +176,7 @@ export default function HarmonisePanel({
                   aria-current={selected ? 'true' : undefined}
                   className={`flex w-full items-start gap-3 rounded-lg px-3 py-3 text-left transition-colors duration-dhara ease-dhara ${
                     selected
-                      ? 'bg-sage/70 shadow-[inset_0_0_0_1px_rgba(23,107,107,0.28)]'
+                      ? 'bg-sage/70 shadow-[inset_0_0_0_1px_rgba(18,64,62,0.28)]'
                       : 'hover:bg-sage/50'
                   }`}
                   onClick={() => onSelectEntry(club.id)}
@@ -267,8 +278,12 @@ export default function HarmonisePanel({
                       {activeMeta.rows.map((row, i) => {
                         const m = activeMeta.occ
                           ? (ncoMatchesByCol[active.sourceName] || {})[row.value]
-                          : null
-                        const rowReview = Boolean(m?.needs_manual_review) && !activeMeta.verified
+                          : (activeMeta.lgdOpen || isLgdColumn(active.sourceName)
+                            ? (lgdMatchesByCol[active.sourceName] || {})[row.value]
+                            : null)
+                        const rowReview = Boolean(
+                          m && (m.needs_manual_review || m.auto_fill === false || m.confidence !== 'high'),
+                        ) && !activeMeta.verified
                         const cellBorder = 'border-b border-[#ebe4d6]'
                         return (
                           <tr className="bg-white" key={row.value || i}>
@@ -284,7 +299,7 @@ export default function HarmonisePanel({
                               </div>
                               {m && (
                                 <div className="mt-0.5 truncate text-[11px] text-[#a49c8e]">
-                                  {m.level}
+                                  {m.level || m.entity_type || m.kind || ''}
                                   {rowReview ? ' · needs review' : ''}
                                   {m.codes?.length > 1 ? ' · both valid' : ''}
                                 </div>

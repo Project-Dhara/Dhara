@@ -18,6 +18,7 @@ from app.db.repositories.pdf_jobs import (
     save_grouping,
     save_working_job,
     set_pipeline_step,
+    soft_delete_tables_by_table_ids,
     upsert_job,
 )
 
@@ -34,6 +35,7 @@ __all__ = [
     "get_pipeline_step",
     "persist_approved_tables",
     "list_active_tables",
+    "soft_delete_tables_by_table_ids",
     "get_job",
     "save_grouping",
     "load_grouping",

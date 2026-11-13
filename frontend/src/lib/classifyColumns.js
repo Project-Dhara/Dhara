@@ -20,6 +20,28 @@ export function isOccupationColumn(name) {
   return !tokens.some((token) => OCCUPATION_ID_TOKENS.has(token))
 }
 
+const LGD_ID_TOKENS = new Set(['id', 'code', 'number', 'no', 'num', 'key'])
+const LGD_NAME_RE = /(?:^|_)(?:state|district|sub[_\s-]?districts?|tehsils?|taluks?|blocks?|villages?|wards?|local[_\s-]?bod(?:y|ies)|municipalit(?:y|ies)|corporations?|cantonments?|panchayats?|lgd)(?:_|$)/i
+
+/** Geography / admin columns are classified with LGD (explorer Directory.search). */
+export function isLgdColumn(name) {
+  const raw = String(name || '').trim()
+  if (!raw) return false
+  if (isOccupationColumn(raw)) return false
+  if (/lgd/i.test(raw)) return true
+  if (!LGD_NAME_RE.test(raw) && !LGD_NAME_RE.test(raw.replace(/\s+/g, '_'))) return false
+  const tokens = raw.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+  // Bare id/code columns are not value lists to match against names.
+  if (tokens.length <= 2 && tokens.some((token) => LGD_ID_TOKENS.has(token))) {
+    const geo = tokens.some((t) =>
+      /^(state|district|subdistrict|tehsil|taluk|block|village|ward|municipality|corporation|cantonment|panchayat|lgd)$/.test(t)
+      || t === 'local' || t === 'body' || t === 'bodies',
+    )
+    if (geo && tokens.some((token) => LGD_ID_TOKENS.has(token))) return false
+  }
+  return true
+}
+
 export function rowMapped(row) {
   return Boolean(String(row?.code || '').trim()) && Boolean(String(row?.definition || '').trim())
 }

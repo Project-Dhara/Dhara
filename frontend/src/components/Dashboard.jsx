@@ -99,7 +99,7 @@ export default function Dashboard({ onStartFlow }) {
       <div className="grid grid-cols-4 gap-3">
         {STAT_META.map((s) => (
           <div
-            className="dhara-tab dhara-surface group flex cursor-default items-center justify-between gap-3 rounded-2xl border-line/90 bg-surface px-4 py-3.5 hover:border-teal/35 hover:bg-sage hover:shadow-[0_8px_24px_rgba(23,107,107,0.08)]"
+            className="dhara-tab dhara-surface group flex cursor-default items-center justify-between gap-3 rounded-2xl border-line/90 bg-surface px-4 py-3.5 hover:border-teal/35 hover:bg-sage hover:shadow-[0_8px_24px_rgba(18,64,62,0.08)]"
             key={s.key}
           >
             <div className="flex min-w-0 items-center gap-2.5">

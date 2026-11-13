@@ -10,7 +10,7 @@ from app.api.dependencies import CurrentUser, require_user
 from app.db.repositories import pdf_jobs as pdf_jobs_repo
 from app.db.session import session_scope
 from app.schemas.jobs import PipelineStepRequest
-from app.services.catalogue.dashboard import list_dashboard
+from app.services.catalogue.dashboard import _infer_source_label, list_dashboard
 from app.workers.extraction_jobs import (
     _IN_FLIGHT_STATUSES,
     _TERMINAL_STATUSES,
@@ -59,11 +59,15 @@ def _pdf_dashboard_row(
         "id": f"pdf:{job_id}",
         "kind": "pdf_job",
         "name": name,
-        "source": "PDF",
+        "source": _infer_source_label(name, fallback="PDF"),
         "product": "—",
         "job_id": job_id,
         "updated_at": job.get("created_at") or job.get("updated_at"),
     }
+    # Non-published finished jobs reopen at Preview so stewards can always
+    # inspect stored PDF/Excel/CSV tables; later stages stay reachable via the
+    # Console stage rail.
+    preview_href = f"/console/review/{job_id}"
 
     if status in ("queued", "running"):
         # Step 1 — extraction in progress (cap below Preview).
@@ -119,7 +123,7 @@ def _pdf_dashboard_row(
             "status": "Classification review",
             "status_key": "classification_review",
             "action": "Review",
-            "href": f"/console/grouping/{job_id}",
+            "href": preview_href,
             "pipeline_step": 5,
         }
     if step >= 4:
@@ -129,7 +133,7 @@ def _pdf_dashboard_row(
             "status": "Metadata review",
             "status_key": "metadata_review",
             "action": "Review",
-            "href": f"/console/grouping/{job_id}",
+            "href": preview_href,
             "pipeline_step": 4,
         }
     if step >= 3:
@@ -139,7 +143,7 @@ def _pdf_dashboard_row(
             "status": "Harmonisation",
             "status_key": "harmonisation",
             "action": "Review",
-            "href": f"/console/grouping/{job_id}",
+            "href": preview_href,
             "pipeline_step": 3,
         }
 
@@ -156,7 +160,7 @@ def _pdf_dashboard_row(
         "status": label,
         "status_key": "table_review",
         "action": "Review",
-        "href": f"/console/review/{job_id}",
+        "href": preview_href,
         "pipeline_step": 2,
     }
 

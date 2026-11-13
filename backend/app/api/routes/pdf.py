@@ -275,6 +275,16 @@ async def pdf_delete_tables(
             reviews.pop(tid, None)
         job["reviews"] = reviews
         _save_pdf_job(job)
+    # Keep durable pdf_tables in sync for reopen-after-Continue Preview.
+    try:
+        from app.db import pdf_store
+
+        with session_scope() as session:
+            pdf_store.soft_delete_tables_by_table_ids(
+                session, job_id=job_id, table_ids=ids
+            )
+    except Exception:
+        pass
     return {"ok": True, "deleted": ids, "deleted_count": len(ids)}
 
 

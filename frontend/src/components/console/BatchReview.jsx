@@ -745,13 +745,7 @@ export default function BatchReview({
               </p>
             </>
           ) : (
-            <>
-              <h2 className="text-xl font-bold text-ink">Review auto-mapped catalogue</h2>
-              <p className="m-0 text-[13px] leading-relaxed text-ink-soft">
-                {totalMatched} table{totalMatched !== 1 ? 's' : ''} matched across {groups.length} metadata group{groups.length !== 1 ? 's' : ''}.
-                Kindly review the fields across all groups. Nothing is pushed until you confirm below.
-              </p>
-            </>
+            <h2 className="text-xl font-bold text-ink">Review auto-mapped catalogue</h2>
           )}
         </div>
       )}

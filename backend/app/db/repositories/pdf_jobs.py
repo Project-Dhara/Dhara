@@ -41,12 +41,26 @@ def _class_value(field: Any) -> Optional[str]:
 
 
 def classification_dict(table: dict) -> dict:
+    from app.services.ingestion.review_tables import PROVENANCE_KEY, provenance_from_table
+
     out: dict[str, Any] = {}
     for key in CLASSIFICATION_FIELDS:
         if key in table:
             out[key] = table[key]
     if isinstance(table.get("classification"), dict):
-        out = {**table["classification"], **out}
+        prior = {
+            k: v
+            for k, v in table["classification"].items()
+            if k != PROVENANCE_KEY
+        }
+        out = {**prior, **out}
+    prov = provenance_from_table(table)
+    if prov:
+        out[PROVENANCE_KEY] = prov
+    elif isinstance(table.get("classification"), dict):
+        legacy = table["classification"].get(PROVENANCE_KEY)
+        if isinstance(legacy, dict) and legacy:
+            out[PROVENANCE_KEY] = legacy
     return out
 
 
@@ -113,11 +127,22 @@ def _row_to_working_job(job: PdfJob) -> dict:
 
 
 def _row_to_table(row: PdfTable) -> dict:
-    from app.services.ingestion.review_tables import enrich_table_for_review
+    from app.services.ingestion.review_tables import (
+        PROVENANCE_KEY,
+        enrich_table_for_review,
+    )
 
     classification = row.classification or {}
     if isinstance(classification, str):
         classification = json.loads(classification)
+    if not isinstance(classification, dict):
+        classification = {}
+    else:
+        classification = dict(classification)
+    # Keep provenance for reopen, but do not expose it as a classification field.
+    prov = classification.pop(PROVENANCE_KEY, None)
+    if not isinstance(prov, dict):
+        prov = {}
     flat = flatten_classification_text(classification)
     base = {
         "id": str(row.id),
@@ -140,11 +165,17 @@ def _row_to_table(row: PdfTable) -> dict:
         "human_review_reason": row.human_review_reason,
         "semantic_status": row.semantic_status,
     }
+    for key, value in prov.items():
+        if value is not None and value != "":
+            base[key] = value
     # Same read-time review refresh as job-result flatten (clears stale flags).
     return enrich_table_for_review(
         base,
         table_id=str(row.table_id),
         page_key=row.page,
+        source_filename=base.get("source_filename"),
+        source_file_id=base.get("source_file_id"),
+        batch_id=base.get("batch_id"),
     )
 
 
@@ -579,6 +610,28 @@ def list_active_tables(session: Session, job_id: str) -> list[dict]:
         .order_by(PdfTable.page.nullslast(), PdfTable.table_id)
     )
     return [_row_to_table(r) for r in session.scalars(stmt).all()]
+
+
+def soft_delete_tables_by_table_ids(
+    session: Session,
+    *,
+    job_id: str,
+    table_ids: list[str],
+) -> int:
+    """Mark persisted ``pdf_tables`` rows deleted so Preview/Grouping stay aligned."""
+    ids = [str(tid) for tid in table_ids if tid is not None and str(tid).strip()]
+    if not ids:
+        return 0
+    result = session.execute(
+        update(PdfTable)
+        .where(
+            PdfTable.job_id == job_id,
+            PdfTable.table_id.in_(ids),
+            PdfTable.deleted_at.is_(None),
+        )
+        .values(deleted_at=func.now(), updated_at=func.now())
+    )
+    return int(result.rowcount or 0)
 
 
 def get_job(session: Session, job_id: str) -> Optional[dict]:

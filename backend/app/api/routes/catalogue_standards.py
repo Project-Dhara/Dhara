@@ -63,6 +63,7 @@ from app.services.ingestion.wizard.table_export import table_to_excel_bytes
 from app.services.metadata.table_id_title import _catalogue_table_title, _validate_tables
 from app.schemas.catalogue import (
     FillDefinitionsRequest,
+    MatchLgdRequest,
     MatchOccupationsRequest,
     NcoAliasesRequest,
 )
@@ -241,6 +242,32 @@ async def match_nco(
 
     matches = await asyncio.to_thread(_run)
     return {"matches": matches, "llm_used": not extractor.skip_llm}
+
+
+@router.post("/api/catalogue/match-lgd")
+async def match_lgd(
+    body: MatchLgdRequest,
+    user_email: str = Depends(require_user_email),
+):
+    """Match geography labels to LGD codes via the explorer Directory.search cascade.
+
+    No LLM and no Settings standard — uses the bundled hierarchy_lgd.json index.
+    """
+    from app.services.classification import lgd_matching as _lgd
+
+    data = body.model_dump()
+    values = data.get("values") or []
+    if not isinstance(values, list):
+        raise HTTPException(400, "values must be a list of strings")
+
+    def _run():
+        return _lgd.match_lgd_values(values)
+
+    try:
+        matches = await asyncio.to_thread(_run)
+    except FileNotFoundError as e:
+        raise HTTPException(503, str(e)) from e
+    return {"matches": matches, "llm_used": False}
 
 
 @router.post("/api/catalogue/nco-aliases")

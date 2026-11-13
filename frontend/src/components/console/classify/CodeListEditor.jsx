@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { isOccupationColumn, relatedAliasCount } from '../../../lib/classifyColumns'
+import { isLgdColumn, isOccupationColumn, relatedAliasCount } from '../../../lib/classifyColumns'
 import NcoSuggestPanel from './NcoSuggestPanel'
+import LgdSuggestPanel from './LgdSuggestPanel'
 
 const saveBtnClass = 'h-9 rounded-md border-0 px-4 text-[13px] font-semibold text-white transition-colors bg-teal hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]'
 const fieldClass = 'box-border h-9 w-full min-w-0 border-0 bg-transparent px-2.5 font-sans text-[12.5px] text-ink focus:bg-white focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-teal'
@@ -26,6 +27,12 @@ export default function CodeListEditor({
   ncoMatches,
   ncoPanelOpen,
   onSuggestNco,
+  lgdLoading = false,
+  lgdError = '',
+  lgdMatches = null,
+  lgdPanelOpen = false,
+  onSuggestLgd,
+  onPickLgdCandidate,
   onCodeFieldChange,
   onSave,
   highlightIncomplete = false,
@@ -33,12 +40,29 @@ export default function CodeListEditor({
   onGoNcoSettings,
 }) {
   const occupation = isOccupationColumn(column.name)
+  const geography = !occupation && isLgdColumn(column.name)
   const panelKey = `${column._metadataId || ''}:${column.name}`
   const [previewOpen, setPreviewOpen] = useState(false)
 
-  const canPreview = Boolean(
-    ncoMatches || ncoNeedsStandard || ncoError || ncoLoading || ncoPanelOpen,
+  const fieldFillCounts = (field) => {
+    let filled = 0
+    for (const row of codes || []) {
+      if (String(row?.[field] ?? '').trim()) filled += 1
+    }
+    const total = (codes || []).length
+    return { filled, notFilled: Math.max(0, total - filled) }
+  }
+  const codeCounts = fieldFillCounts('code')
+  const definitionCounts = fieldFillCounts('definition')
+  const fillLabel = (counts) => (
+    `Filled: ${counts.filled}, Not filled: ${counts.notFilled}`
   )
+
+  const canPreview = occupation
+    ? Boolean(ncoMatches || ncoNeedsStandard || ncoError || ncoLoading || ncoPanelOpen)
+    : geography
+      ? Boolean(lgdMatches || lgdError || lgdLoading || lgdPanelOpen)
+      : false
 
   // Open preview when Suggest produces results or needs Settings / AI fallback.
   useEffect(() => {
@@ -47,6 +71,13 @@ export default function CodeListEditor({
       setPreviewOpen(true)
     }
   }, [occupation, ncoNeedsStandard, ncoMatches, ncoLoading, ncoError])
+
+  useEffect(() => {
+    if (!geography) return
+    if ((lgdMatches && !lgdLoading) || (lgdError && !lgdLoading)) {
+      setPreviewOpen(true)
+    }
+  }, [geography, lgdMatches, lgdLoading, lgdError])
 
   useEffect(() => {
     setPreviewOpen(false)
@@ -100,6 +131,27 @@ export default function CodeListEditor({
               </button>
             </>
           )}
+          {geography && (
+            <>
+              <button
+                type="button"
+                className="h-8 rounded-md border-0 bg-teal px-3 text-[12.5px] font-semibold text-white transition-colors hover:enabled:bg-teal-dark disabled:cursor-default disabled:bg-[#ece4d6] disabled:text-[#a49c8e]"
+                disabled={lgdLoading || codes.length === 0 || !onSuggestLgd}
+                onClick={onSuggestLgd}
+              >
+                {lgdLoading ? 'Matching…' : 'Suggest LGD codes'}
+              </button>
+              <button
+                type="button"
+                className="h-8 rounded-md border border-line bg-white px-2.5 text-[12px] font-semibold text-ink-soft transition-colors hover:border-teal/40 hover:text-teal-deep disabled:cursor-default disabled:opacity-45"
+                disabled={!canPreview}
+                title={canPreview ? 'Show suggestion results' : 'Run Suggest LGD codes first'}
+                onClick={() => setPreviewOpen(true)}
+              >
+                Show results
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -107,34 +159,65 @@ export default function CodeListEditor({
         <table className="w-full min-w-[520px] table-fixed border-separate border-spacing-0 text-left">
           <thead className="sticky top-0 z-[1]">
             <tr className="bg-[#F4EFE3] text-[11px] uppercase tracking-wide text-[#8E9398]">
-              <th className={`w-[28%] ${rowRule} ${colRule} px-2.5 py-1.5 font-semibold`}>Code</th>
+              <th
+                className={`w-[28%] ${rowRule} ${colRule} px-2.5 py-1.5 font-semibold`}
+                title={fillLabel(codeCounts)}
+              >
+                <span className="flex flex-col items-start gap-0.5 leading-tight">
+                  <span>Code</span>
+                  <span className="font-semibold normal-case tracking-normal text-ink-soft">
+                    ({fillLabel(codeCounts)})
+                  </span>
+                </span>
+              </th>
               <th className={`w-[32%] ${rowRule} ${colRule} px-2.5 py-1.5 font-semibold`} title="From the data — not editable">
                 <span className="flex flex-col items-start gap-0.5 leading-tight">
                   <span>Value</span>
                   <span className="font-semibold normal-case tracking-normal text-[#c36637]">fixed</span>
                 </span>
               </th>
-              <th className={`w-[40%] ${rowRule} px-2.5 py-1.5 font-semibold`}>Definition</th>
+              <th
+                className={`w-[40%] ${rowRule} px-2.5 py-1.5 font-semibold`}
+                title={fillLabel(definitionCounts)}
+              >
+                <span className="flex flex-col items-start gap-0.5 leading-tight">
+                  <span>Definition</span>
+                  <span className="font-semibold normal-case tracking-normal text-ink-soft">
+                    ({fillLabel(definitionCounts)})
+                  </span>
+                </span>
+              </th>
             </tr>
           </thead>
           <tbody>
             {codes.map((row, i) => {
               const missingCode = highlightIncomplete && !String(row.code || '').trim()
               const missingDefinition = highlightIncomplete && !String(row.definition || '').trim()
+              const lgdMatch = geography ? lgdMatches?.[row.value] : null
+              const lgdAmbiguous = Boolean(lgdMatch?.ambiguous) && Number(lgdMatch?.candidate_count || 0) > 1
               return (
-                <tr className="bg-white" key={i}>
-                  <td className={`${rowRule} ${colRule} p-0 align-middle ${missingCode ? 'bg-[#fff3d9]' : 'bg-white'}`}>
+                <tr className={lgdAmbiguous ? 'bg-[#fff6e4]' : 'bg-white'} key={i}>
+                  <td className={`${rowRule} ${colRule} p-0 align-middle ${missingCode || lgdAmbiguous ? 'bg-[#fff3d9]' : 'bg-white'}`}>
                     <input
-                      className={missingCode ? fieldMissingClass : fieldClass}
+                      className={missingCode || lgdAmbiguous ? fieldMissingClass : fieldClass}
                       type="text"
                       value={row.code}
                       onChange={(e) => onCodeFieldChange(i, 'code', e.target.value)}
-                      title={row.code || (missingCode ? 'Code required' : '')}
-                      placeholder={missingCode ? 'Code required' : ''}
+                      title={
+                        lgdAmbiguous
+                          ? 'Multiple LGD codes — open Show results to pick one'
+                          : (row.code || (missingCode ? 'Code required' : ''))
+                      }
+                      placeholder={lgdAmbiguous ? 'Pick LGD code' : (missingCode ? 'Code required' : '')}
                     />
                   </td>
-                  <td className={`${rowRule} ${colRule} bg-[#FBF7EF] px-2.5 py-2 align-middle text-[12.5px] font-medium leading-snug text-ink`} title="From the data — not editable">
+                  <td className={`${rowRule} ${colRule} ${lgdAmbiguous ? 'bg-[#fff6e4]' : 'bg-[#FBF7EF]'} px-2.5 py-2 align-middle text-[12.5px] font-medium leading-snug text-ink`} title="From the data — not editable">
                     <span className="line-clamp-2" title={row.value}>{row.value}</span>
+                    {lgdAmbiguous && (
+                      <div className="mt-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-[#9a6700]">
+                        Multiple codes
+                      </div>
+                    )}
                   </td>
                   <td className={`${rowRule} p-0 align-middle ${missingDefinition ? 'bg-[#fff3d9]' : 'bg-white'}`}>
                     <input
@@ -170,6 +253,17 @@ export default function CodeListEditor({
           onGoSettings={onGoNcoSettings}
           onFillAiFallback={onFillAi}
           fillAiLoading={fillAiLoading}
+        />
+      )}
+      {geography && (
+        <LgdSuggestPanel
+          open={previewOpen}
+          onClose={() => setPreviewOpen(false)}
+          codes={codes}
+          lgdError={lgdError}
+          lgdLoading={lgdLoading}
+          lgdMatches={lgdMatches}
+          onPickCandidate={onPickLgdCandidate}
         />
       )}
     </div>

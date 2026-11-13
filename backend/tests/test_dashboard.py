@@ -30,7 +30,19 @@ def test_pdf_dashboard_row_stays_visible_after_metadata():
     assert row5["name"] == "births_death_report_2023_cond.pdf"
     assert row5["source"] == "PDF"
     assert row5["status_key"] == "classification_review"
-    assert "/console/grouping/j1" in row5["href"]
+    # Non-published rows reopen Preview so stored tables stay inspectable.
+    assert row5["href"] == "/console/review/j1"
+
+    row3 = _pdf_dashboard_row(job, "pending", 3)
+    assert row3 is not None
+    assert row3["status_key"] == "harmonisation"
+    assert row3["href"] == "/console/review/j1"
+
+    xlsx_job = {**job, "job_id": "j2", "filename": "districts.xlsx"}
+    row_xlsx = _pdf_dashboard_row(xlsx_job, "pending", 3)
+    assert row_xlsx is not None
+    assert row_xlsx["source"] == "XLSX"
+    assert row_xlsx["href"] == "/console/review/j2"
 
     row6 = _pdf_dashboard_row(job, "saved", 6)
     assert row6 is not None

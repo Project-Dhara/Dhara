@@ -67,6 +67,14 @@ class MatchOccupationsRequest(BaseModel):
     context: Optional[Dict[str, Any]] = None
 
 
+class MatchLgdRequest(BaseModel):
+    """POST /api/catalogue/match-lgd — values matched via explorer Directory.search."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    values: List[Any] = Field(default_factory=list)
+
+
 class NcoAliasesRequest(BaseModel):
     """POST /api/catalogue/nco-aliases."""
 

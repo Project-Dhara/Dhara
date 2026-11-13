@@ -30,7 +30,7 @@ html {
 
 /* Dark panels (auth left rail, catalogue API blocks) invert selection. */
 .selection-invert ::selection {
-  background: #176B6B;
+  background: #12403E;
   color: #FFF7EA;
 }
 
@@ -105,7 +105,7 @@ html {
 
   .dhara-surface:hover {
     transform: translateY(-1px);
-    box-shadow: 0 4px 14px rgba(23, 107, 107, 0.08), 0 12px 28px rgba(23, 107, 107, 0.08);
+    box-shadow: 0 4px 14px rgba(18, 64, 62, 0.08), 0 12px 28px rgba(18, 64, 62, 0.08);
   }
 
   /* Shared tab / chip chrome — deep fill + ivory text on active/hover. */

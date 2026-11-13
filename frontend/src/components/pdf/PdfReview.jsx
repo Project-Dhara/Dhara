@@ -1306,7 +1306,9 @@ export default function PdfReview({ jobId, filename, onDone }) {
                 ? 'No other tables share these column headers.'
                 : searchQuery
                   ? `No tables match “${searchQuery}”.`
-                  : 'No tables match this filter.'}
+                  : tables.length === 0
+                    ? 'No tables are stored for this upload yet.'
+                    : 'No tables match this filter.'}
             </div>
           ) : pageTables.map((t) => {
             const isOpen = expanded === t.table_id

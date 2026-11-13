@@ -4,6 +4,16 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
 BATCH_META_KEY = "__batch_meta__"
+PROVENANCE_KEY = "__provenance"
+PROVENANCE_FIELDS = (
+    "source_type",
+    "source_filename",
+    "source_file",
+    "source_file_id",
+    "sheet",
+    "batch_id",
+    "source_location",
+)
 
 
 def batch_meta_from_result(result: Optional[Dict[Any, Any]]) -> Dict[str, Any]:
@@ -149,6 +159,82 @@ def flatten_job_result_to_review_tables(
             )
             tables.append(merged)
     return tables
+
+
+def provenance_from_table(table: Dict[str, Any]) -> Dict[str, Any]:
+    """Fields needed to reopen Excel/PDF/CSV tables correctly in Preview."""
+    out: Dict[str, Any] = {}
+    for key in PROVENANCE_FIELDS:
+        value = table.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        out[key] = value
+    return out
+
+
+def infer_job_source_type(job: Optional[Dict[str, Any]]) -> str:
+    """Best-effort source type when a persisted row has no provenance."""
+    job = job or {}
+    st = str(job.get("source_type") or "").strip().lower()
+    if st in ("pdf", "excel", "csv"):
+        return st
+    name = str(job.get("filename") or "").rsplit("/", 1)[-1].lower()
+    if name.endswith((".xlsx", ".xls", ".xlsm")):
+        return "excel"
+    if name.endswith(".csv"):
+        return "csv"
+    if name.endswith(".pdf"):
+        return "pdf"
+    return "pdf" if st in ("", "batch") else st or "pdf"
+
+
+def merge_persisted_with_result_provenance(
+    persisted: List[Dict[str, Any]],
+    job: Optional[Dict[str, Any]] = None,
+    *,
+    result_tables: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    """Rebuild Preview rows from ``pdf_tables``, restoring Excel/PDF provenance.
+
+    After Continue, ``pdf_tables`` is the working copy. Extraction JSON may still
+    hold per-table source_type / sheet / filename — merge those when the
+    persisted row was saved without ``__provenance``.
+    """
+    job = job or {}
+    deleted = {str(x) for x in (job.get("deleted_table_ids") or []) if x is not None}
+    by_id = {
+        str(t.get("table_id") or ""): t
+        for t in (result_tables or [])
+        if isinstance(t, dict) and t.get("table_id")
+    }
+    default_type = infer_job_source_type(job)
+    default_name = job.get("filename")
+    out: List[Dict[str, Any]] = []
+    for raw in persisted or []:
+        if not isinstance(raw, dict):
+            continue
+        row = dict(raw)
+        tid = str(row.get("table_id") or "")
+        if tid and tid in deleted:
+            continue
+        src = by_id.get(tid) or {}
+        for key in PROVENANCE_FIELDS:
+            if row.get(key) in (None, "") and src.get(key) not in (None, ""):
+                row[key] = src[key]
+        st = str(row.get("source_type") or "").strip().lower()
+        if st in ("", "batch"):
+            row["source_type"] = default_type
+        if not row.get("source_filename") and default_name:
+            row["source_filename"] = default_name
+        if not row.get("source_file") and row.get("source_filename"):
+            row["source_file"] = row["source_filename"]
+        loc = source_location_label(row)
+        if loc:
+            row["source_location"] = loc
+        out.append(row)
+    return out
 
 
 def namespace_page_key(file_index: int, page_key: Any) -> str:
