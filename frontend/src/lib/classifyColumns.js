@@ -80,10 +80,16 @@ export function codesFingerprint(codes) {
 const NEAR_DUP_JACCARD = 0.85
 const NEAR_DUP_CONTAINMENT = 0.9
 
-/** Serial / TOC / page columns must never appear as Classify chips. */
-const NON_CLASSIFICATION_NAME_RE = /(?:^|_)(?:sl_?no|s\.?no|sr_?no|serial(?:_?no(?:umber)?)?|row_?no|index|#)(?:_|$)|contents?|page(?:_?no(?:umber)?)?|chapter|particulars|remarks?|notes?|^description$|list_of_tables|table_of_contents|^title$/i
+/** Serial / TOC / page / identifier columns must never appear as Classify chips. */
+const NON_CLASSIFICATION_NAME_RE = /(?:^|_)(?:sl_?no|s\.?no|sr_?no|serial(?:_?no(?:umber)?)?|row_?no|index|#|record_?id|row_?id)(?:_|$)|contents?|page(?:_?no(?:umber)?)?|chapter|particulars|remarks?|notes?|^description$|list_of_tables|table_of_contents|^title$|\b(?:record\s*id|row\s*id|uuid|guid)\b|^id$/i
 /** PDF placeholder headers (Col_1) and bare numeric / year leaf names. */
 const PLACEHOLDER_OR_NUMERIC_COL_RE = /^(?:col|column)[_\s-]?\d+$|^unnamed(?:[:\s._-]*\d+)?$|^\d+(?:[.,]\d+)?$|^\d{4}\s*[-–/]\s*\d{2,4}$|^\(\d+\)$/i
+
+const IDENTIFIER_COMPACT_NAMES = new Set([
+  'recordid', 'rowid', 'uuid', 'guid', 'pk', 'id',
+  'slno', 'sno', 'srno', 'serialno', 'serialnumber', 'rowno', 'index',
+  'page', 'pages', 'pageno', 'contents', 'content', 'chapter', 'title',
+])
 
 export function isNonClassificationColumn(name) {
   const raw = String(name || '').trim()
@@ -93,7 +99,9 @@ export function isNonClassificationColumn(name) {
   if (!normalized) return true
   if (NON_CLASSIFICATION_NAME_RE.test(normalized)) return true
   const compact = normalized.replace(/[_\-./]+/g, '')
-  return ['slno', 'sno', 'srno', 'serialno', 'serialnumber', 'rowno', 'index', 'page', 'pages', 'pageno', 'contents', 'content', 'chapter', 'title'].includes(compact)
+  if (IDENTIFIER_COMPACT_NAMES.has(compact)) return true
+  if (compact.endsWith('recordid') || compact.endsWith('rowid')) return true
+  return false
 }
 
 function valueSet(codes) {

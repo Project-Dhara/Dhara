@@ -25,23 +25,29 @@ PALETTE = [
 GROUP_COLOR = "#c4b6a0"
 
 
+def _data_roots() -> list[Path]:
+    here = Path(__file__).resolve().parent
+    backend_root = here.parents[2]  # .../backend/app/services/classification -> backend
+    repo_root = backend_root.parent
+    return [backend_root, repo_root, here, Path.cwd()]
+
+
 def find_hierarchy_path() -> Path:
     """Resolve bundled LGD hierarchy (explorer reference data).
 
     Prefer ``backend/data/hierarchy_lgd.json`` shipped with the app, then the
     toolkit paths used by ``lgd_explorer.py``.
     """
-    here = Path(__file__).resolve().parent
-    backend_root = here.parents[2]  # .../backend/app/services/classification -> backend
-    repo_root = backend_root.parent
+    roots = _data_roots()
+    backend_root, repo_root, here, cwd = roots[0], roots[1], roots[2], roots[3]
     candidates = [
         backend_root / "data" / "hierarchy_lgd.json",
         repo_root / "hierarchy_lgd.json",
         repo_root / "LGD and NCO" / "output" / "hierarchy_lgd.json",
         here / "output" / "hierarchy_lgd.json",
-        Path.cwd() / "output" / "hierarchy_lgd.json",
-        Path.cwd() / "LGD" / "output" / "hierarchy_lgd.json",
-        Path.cwd() / "LGD and NCO" / "output" / "hierarchy_lgd.json",
+        cwd / "output" / "hierarchy_lgd.json",
+        cwd / "LGD" / "output" / "hierarchy_lgd.json",
+        cwd / "LGD and NCO" / "output" / "hierarchy_lgd.json",
     ]
     for candidate in candidates:
         if candidate.is_file():
@@ -49,6 +55,76 @@ def find_hierarchy_path() -> Path:
     raise FileNotFoundError(
         "Could not find hierarchy_lgd.json. Expected backend/data/hierarchy_lgd.json."
     )
+
+
+def find_all_states_path() -> Path | None:
+    """Optional all-India states file (top-level revenue states / UTs)."""
+    roots = _data_roots()
+    backend_root, repo_root, cwd = roots[0], roots[1], roots[3]
+    candidates = [
+        backend_root / "data" / "hierarchy_all_states.json",
+        repo_root / "hierarchy_all_states.json",
+        cwd / "hierarchy_all_states.json",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _is_delhi_state(state: dict) -> bool:
+    """True for the Delhi state/UT node (already fully present in hierarchy_lgd)."""
+    code = str(state.get("state_lgd_code") or "").strip()
+    if code == "7":
+        return True
+    name = normalize_name(state.get("state_name_english") or "")
+    return name == "delhi"
+
+
+def merge_all_states_into_hierarchy(primary: dict, all_states: dict | None) -> dict:
+    """Append non-Delhi states from ``hierarchy_all_states.json`` into primary revenue.
+
+    Delhi is skipped because ``hierarchy_lgd.json`` already carries the full
+    Delhi tree (districts / villages / local bodies). Other states are
+    top-level only in the all-states file.
+    """
+    if not isinstance(all_states, dict):
+        return primary
+    extra = all_states.get("revenue")
+    if not isinstance(extra, list) or not extra:
+        return primary
+    out = dict(primary)
+    revenue = list(primary.get("revenue") or [])
+    existing_codes = {
+        str(s.get("state_lgd_code") or "").strip()
+        for s in revenue
+        if isinstance(s, dict)
+    }
+    for state in extra:
+        if not isinstance(state, dict):
+            continue
+        if _is_delhi_state(state):
+            continue
+        code = str(state.get("state_lgd_code") or "").strip()
+        if code and code in existing_codes:
+            continue
+        revenue.append(state)
+        if code:
+            existing_codes.add(code)
+    out["revenue"] = revenue
+    sources = []
+    if primary.get("source"):
+        sources.append(str(primary.get("source")))
+    if all_states.get("source"):
+        sources.append(str(all_states.get("source")))
+    if sources:
+        out["source"] = " + ".join(sources)
+    desc_bits = [str(primary.get("description") or "").strip()]
+    extra_desc = str(all_states.get("description") or "").strip()
+    if extra_desc and extra_desc not in desc_bits[0]:
+        desc_bits.append(extra_desc)
+    out["description"] = " | ".join(b for b in desc_bits if b)
+    return out
 
 
 def normalize_name(name: str) -> str:
@@ -285,7 +361,14 @@ class Directory:
     def load(cls) -> Directory:
         path = find_hierarchy_path()
         with path.open(encoding="utf-8") as handle:
-            return cls(json.load(handle), path)
+            primary = json.load(handle)
+        all_states_path = find_all_states_path()
+        all_states = None
+        if all_states_path is not None:
+            with all_states_path.open(encoding="utf-8") as handle:
+                all_states = json.load(handle)
+        merged = merge_all_states_into_hierarchy(primary, all_states)
+        return cls(merged, path)
 
     def _add_node(self, node: dict, parent_id: str | None) -> None:
         node["parent_id"] = parent_id

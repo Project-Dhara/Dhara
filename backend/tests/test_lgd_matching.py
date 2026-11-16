@@ -99,3 +99,23 @@ def test_ambiguous_place_exposes_candidates_without_autofill():
         codes = {str(c["code"]) for c in m["candidates"]}
         assert len(codes) >= 2
 
+
+def test_all_states_merged_without_duplicate_delhi():
+    from app.services.classification.lgd_directory import Directory
+    from app.services.classification.lgd_matching import get_lgd_directory
+
+    reset_lgd_directory_cache()
+    directory = get_lgd_directory()
+    assert isinstance(directory, Directory)
+    state_delhi = [
+        e for e in directory.entities
+        if e.get("entity_type") == "state" and str(e.get("lgd_code") or "") == "7"
+    ]
+    assert len(state_delhi) == 1
+    # Other states from hierarchy_all_states.json are searchable.
+    matches = match_lgd_values(["Bihar", "Maharashtra"])
+    assert matches["Bihar"]["code"] == "10"
+    assert matches["Bihar"]["entity_type"] == "state"
+    assert matches["Maharashtra"]["entity_type"] == "state"
+    assert matches["Maharashtra"]["auto_fill"] is True
+

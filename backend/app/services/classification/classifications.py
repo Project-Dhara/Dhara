@@ -13,6 +13,14 @@ _NON_CLASSIFICATION_NAME_HINTS = (
     "page number", "chapter", "particulars", "remarks", "remark", "notes",
     "note", "description", "list of tables", "table of contents",
 )
+# Row / record identifiers — never classification dimensions.
+_IDENTIFIER_COMPACT_NAMES = frozenset({
+    "recordid", "rowid", "uuid", "guid", "pk", "id",
+})
+_IDENTIFIER_NAME_RE = re.compile(
+    r"\b(?:record\s*id|row\s*id|uuid|guid)\b|(?:^|_)(?:record_?id|row_?id)(?:_|$)",
+    re.I,
+)
 # Whole-title match for Contents / Index pages — avoid "Price Index" false hits.
 _TOC_TITLE_RE = re.compile(
     r"^\s*(?:table\s+of\s+contents|list\s+of\s+tables|contents|index(?:\s+of\s+tables)?)\s*$"
@@ -25,6 +33,14 @@ _PAGE_VALUE_RE = re.compile(
 )
 _NEAR_DUP_JACCARD = 0.85
 _NEAR_DUP_CONTAINMENT = 0.9
+# Deterministic categorical keep thresholds (fixed; not UI-tunable).
+_UNIQUENESS_REJECT = 0.85
+# High enough for large occupation/job title lists in employee extracts.
+_LABEL_LIKE_MAX = 5000
+_CATEGORICAL_LABEL_SHARE = 0.8
+_STORED_ID_TOKEN_MIN = 8
+_ID_TOKEN_RE = re.compile(r"^[A-Za-z0-9._\-]+$")
+_OCCUPATION_ID_TOKENS = frozenset({"id", "code", "number", "no", "num", "key"})
 # PDF/Excel placeholder headers (failed header detect) and bare numeric leaf names.
 _PLACEHOLDER_COL_RE = re.compile(
     r"^(?:col|column)[_\s-]?\d+$|^unnamed(?:[:\s._-]*\d+)?$",
@@ -35,6 +51,7 @@ _NUMERIC_COL_RE = re.compile(
     r"|^\d{4}\s*[-–/]\s*\d{2,4}$"  # 2023-24 measure year headers
     r"|^\(\d+\)$"  # (1)(2) column-index strip labels
 )
+_NUMERIC_CELL_RE = re.compile(r"^[-+]?\d+(?:[.,]\d+)?$")
 
 
 def _normalize_col_key(name: str) -> str:
@@ -59,6 +76,19 @@ def _looks_like_serial_column_name(name: str) -> bool:
     return any(hint in lowered for hint in _SERIAL_NAME_HINTS)
 
 
+def _looks_like_identifier_column_name(name: str) -> bool:
+    """True for recordid / uuid / bare id — row keys, not categories."""
+    compact = _normalize_col_key(name)
+    if compact in _IDENTIFIER_COMPACT_NAMES:
+        return True
+    if compact.endswith("recordid") or compact.endswith("rowid"):
+        return True
+    lowered = re.sub(r"[\s_\-./]+", " ", str(name or "").lower()).strip()
+    if _IDENTIFIER_NAME_RE.search(lowered):
+        return True
+    return False
+
+
 def _looks_like_placeholder_or_numeric_column_name(name: str) -> bool:
     """True for Col_1 / Unnamed / bare numbers — not real classification dims."""
     s = str(name or "").strip()
@@ -76,6 +106,8 @@ def _looks_like_non_classification_column_name(name: str) -> bool:
         return True
     if _looks_like_serial_column_name(name):
         return True
+    if _looks_like_identifier_column_name(name):
+        return True
     lowered = re.sub(r"[\s_\-./]+", " ", str(name or "").lower()).strip()
     compact = _normalize_col_key(name)
     if compact in {"page", "pages", "pageno", "pagenumber", "contents", "content", "chapter"}:
@@ -83,6 +115,10 @@ def _looks_like_non_classification_column_name(name: str) -> bool:
     if lowered in {"page", "pages", "title"}:
         return True
     return any(hint in lowered for hint in _NON_CLASSIFICATION_NAME_HINTS)
+
+
+def _is_numeric_cell(value: str) -> bool:
+    return bool(_NUMERIC_CELL_RE.fullmatch(str(value or "").strip().replace(",", "")))
 
 
 def _column_names_from_table(table) -> list:
@@ -169,22 +205,119 @@ def _values_look_like_free_text(values: list, n_non_empty: int) -> bool:
     return False
 
 
-def _should_keep_classification_column(name: str, values: list, n_non_empty: int) -> bool:
+def _value_texts(values: list) -> list[str]:
+    out = []
+    for e in values or []:
+        if isinstance(e, dict):
+            t = str(e.get("value") or "").strip()
+        else:
+            t = str(e).strip()
+        if t:
+            out.append(t)
+    return out
+
+
+_UUID_VALUE_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def _value_looks_like_id_token(text: str) -> bool:
+    """True for code/id tokens (REC001, uuid) — not plain category words (Delhi)."""
+    t = str(text or "").strip()
+    if not t or " " in t or len(t) > 64:
+        return False
+    if not _ID_TOKEN_RE.fullmatch(t):
+        return False
+    if _UUID_VALUE_RE.fullmatch(t):
+        return True
+    # Digits in a compact token → identifier/code, not a place/sex label.
+    return any(c.isdigit() for c in t)
+
+
+def _values_look_like_id_tokens(values: list) -> bool:
+    """Mostly compact id/code tokens — used for value-based identifier rejection."""
+    texts = _value_texts(values)
+    if len(texts) < _STORED_ID_TOKEN_MIN:
+        return False
+    idish = sum(1 for t in texts if _value_looks_like_id_token(t))
+    return (idish / len(texts)) >= 0.8
+
+
+def _is_occupation_name(name):
+    """Occupation and job columns are owned by NCO matching."""
+    text = name or ""
+    if re.search(r"occupat", text, re.I):
+        return True
+    tokens = re.findall(r"[a-z]+", text.lower())
+    if "job" not in tokens and "jobs" not in tokens:
+        return False
+    return not any(tok in _OCCUPATION_ID_TOKENS for tok in tokens)
+
+
+def _is_categorical_column(
+    name: str,
+    values: list,
+    n_non_empty: int,
+    n_label: int | None = None,
+) -> bool:
+    """Keep categorical dimensions via value shape; name deny-list is a safety net.
+
+    Value-based confidence (primary):
+      - mostly non-numeric labels
+      - not long free-text
+      - not near-unique id/code tokens (works even if column is renamed)
+      - absolute distinct cap so runaway sets are dropped
+    Occupation/job columns are always kept when they have a real value list
+    (NCO dimensions; titles are often numerous and near-unique in employee files).
+    Name deny-list (additional): recordid/uuid/serial/TOC/etc.
+    """
     if not values or len(values) < 2:
         return False
     if _looks_like_non_classification_column_name(name):
         return False
+    n_non_empty = max(int(n_non_empty or 0), 1)
+    if n_label is not None and (n_label / n_non_empty) < _CATEGORICAL_LABEL_SHARE:
+        return False
+
+    # Occupation / job titles are classification dimensions even when nearly
+    # unique in employee microdata (many distinct role strings).
+    if _is_occupation_name(name):
+        return True
+
     if _values_look_like_free_text(values, n_non_empty):
         return False
-    return True
+
+    n_unique = len(values)
+    uniqueness = n_unique / n_non_empty
+
+    # Primary value-based ID filter: near-unique + id/code-shaped values.
+    # Plain category words (Delhi, Male) are not id tokens, so codebooks stay.
+    if (
+        n_non_empty >= _STORED_ID_TOKEN_MIN
+        and uniqueness >= _UNIQUENESS_REJECT
+        and _values_look_like_id_tokens(values)
+    ):
+        return False
+
+    # Absolute cap only — avoids dropping real high-cardinality categories.
+    return n_unique <= _LABEL_LIKE_MAX
+
+
+def _should_keep_classification_column(
+    name: str,
+    values: list,
+    n_non_empty: int,
+    n_label: int | None = None,
+) -> bool:
+    return _is_categorical_column(name, values, n_non_empty, n_label=n_label)
 
 
 def _filter_classification_dict(classifications: dict) -> dict:
-    """Drop serial/TOC/page dimensions from a stored or rebuilt map.
+    """Drop serial/TOC/page/identifier dimensions from a stored or rebuilt map.
 
-    Does not apply row-level free-text uniqueness heuristics — stored code
-    lists are already unique values, and legitimate dimensions (e.g. cause of
-    death) can be long and numerous.
+    Stored lists have unique values only (no row counts), so uniqueness bands
+    are not applied here — deny-list + page/id-token shape filters only.
     """
     out = {}
     for name, codes in (classifications or {}).items():
@@ -198,6 +331,8 @@ def _filter_classification_dict(classifications: dict) -> dict:
             if _PAGE_VALUE_RE.match(str(e.get("value") or "").strip())
         )
         if pageish >= max(2, int(0.8 * len(norm))):
+            continue
+        if _values_look_like_id_tokens(norm):
             continue
         out[str(name)] = norm
     return _collapse_near_duplicate_dimensions(out)
@@ -433,7 +568,8 @@ def _classifications_from_linked_datasets(conn, metadata_id):
                 if name not in merged and codes:
                     merged[name] = codes
         if merged:
-            return merged
+            # Strip identifiers (RecordID etc.) persisted before the categorical filter.
+            return _filter_classification_dict(merged)
         cur.execute("""
             SELECT dr.row_data
             FROM datasets d
@@ -488,13 +624,13 @@ def _normalize_classification_values(vals) -> list:
 
 
 def _classifications_from_table_data(tables):
-    """Treat non-numeric columns as classification dimensions.
+    """Treat categorical (non-numeric label) columns as classification dimensions.
 
     Used for Excel without a classifications workbook and for SQL extracts,
     where there is no metadata-excel code list.
 
-    Skips TOC/index tables and serial/contents/page/free-text columns so the
-    Classify UI does not fill with redundant junk chips.
+    Skips TOC/index tables and serial/contents/page/identifier/free-text
+    columns so the Classify UI only shows true categorical chips.
     """
     merged = {}
     for table in tables or []:
@@ -507,6 +643,7 @@ def _classifications_from_table_data(tables):
                 continue
             values, seen = [], set()
             n_non_empty = 0
+            n_label = 0
             for row in rows:
                 if isinstance(row, dict):
                     raw = row.get(col)
@@ -524,17 +661,18 @@ def _classifications_from_table_data(tables):
                 if not s:
                     continue
                 n_non_empty += 1
-                # Skip pure numerics (measures), keep codes like "01" that are
-                # categorical when mixed with non-numeric — only skip if the
-                # whole string parses as a number AND has no alpha.
-                if re.fullmatch(r"[-+]?\d+(?:[.,]\d+)?", s.replace(",", "")):
+                # Pure numerics are measures, not category labels.
+                if _is_numeric_cell(s):
                     continue
+                n_label += 1
                 key = s.lower()
                 if key in seen:
                     continue
                 seen.add(key)
                 values.append({"code": "", "value": s, "definition": None})
-            if not _should_keep_classification_column(col, values, n_non_empty):
+            if not _should_keep_classification_column(
+                col, values, n_non_empty, n_label=n_label
+            ):
                 continue
             name = re.sub(r"\s+", "_", str(col).strip()) or str(col)
             if name not in merged:
@@ -573,20 +711,6 @@ def _classification_value_key(entries):
         if v:
             vals.append(v)
     return tuple(sorted(vals))
-
-
-_OCCUPATION_ID_TOKENS = frozenset({"id", "code", "number", "no", "num", "key"})
-
-
-def _is_occupation_name(name):
-    """Occupation and job columns are owned by NCO matching."""
-    text = name or ""
-    if re.search(r"occupat", text, re.I):
-        return True
-    tokens = re.findall(r"[a-z]+", text.lower())
-    if "job" not in tokens and "jobs" not in tokens:
-        return False
-    return not any(tok in _OCCUPATION_ID_TOKENS for tok in tokens)
 
 
 def _expand_alias_names(classifications, names, codes):

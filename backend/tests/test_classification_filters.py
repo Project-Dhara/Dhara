@@ -210,3 +210,127 @@ def test_keeps_code_list_with_more_than_80_values():
     dims = _classifications_from_table_data([table])
     assert "Occupation" in dims
     assert len(dims["Occupation"]) == 120
+
+
+def test_identifier_column_names_excluded():
+    assert _looks_like_non_classification_column_name("recordid")
+    assert _looks_like_non_classification_column_name("Record_ID")
+    assert _looks_like_non_classification_column_name("Record ID")
+    assert _looks_like_non_classification_column_name("UUID")
+    assert _looks_like_non_classification_column_name("guid")
+    assert _looks_like_non_classification_column_name("id")
+    assert _looks_like_non_classification_column_name("rowid")
+    assert not _looks_like_non_classification_column_name("Organisation")
+    assert not _looks_like_non_classification_column_name("State")
+
+
+def test_recordid_not_rebuilt_as_classification():
+    """Employee-style near-unique short IDs are not categorical dimensions."""
+    rows = [
+        {
+            "recordid": f"REC{i:03d}",
+            "Organisation": "Org A" if i % 2 == 0 else "Org B",
+            "State": "Delhi" if i % 3 == 0 else "Haryana" if i % 3 == 1 else "Punjab",
+        }
+        for i in range(30)
+    ]
+    table = {
+        "title": "Employee Details by Organisation and State",
+        "columns": ["recordid", "Organisation", "State"],
+        "rows": rows,
+    }
+    dims = _classifications_from_table_data([table])
+    keys = {k.lower() for k in dims}
+    assert "recordid" not in keys
+    assert "organisation" in keys
+    assert "state" in keys
+
+
+def test_filter_drops_stored_recordid_and_id_tokens():
+    filtered = _filter_classification_dict({
+        "recordid": [
+            {"code": "", "value": f"REC{i:03d}", "definition": None}
+            for i in range(10)
+        ],
+        "MysteryId": [
+            {"code": "", "value": f"X{i:04d}", "definition": None}
+            for i in range(12)
+        ],
+        "State": [
+            {"code": "", "value": "Delhi", "definition": None},
+            {"code": "", "value": "Haryana", "definition": None},
+        ],
+    })
+    assert "State" in filtered
+    assert "recordid" not in filtered
+    assert "MysteryId" not in filtered
+
+
+def test_value_based_drops_renamed_id_column():
+    """Near-unique code tokens are dropped even when the name is not deny-listed."""
+    rows = [
+        {
+            "emp_key": f"REC{i:03d}",
+            "Organisation": f"Org {i % 5}",
+            "State": "Delhi" if i % 2 == 0 else "Haryana",
+        }
+        for i in range(40)
+    ]
+    table = {
+        "title": "Employee Details",
+        "columns": ["emp_key", "Organisation", "State"],
+        "rows": rows,
+    }
+    dims = _classifications_from_table_data([table])
+    keys = {k.lower() for k in dims}
+    assert "emp_key" not in keys
+    assert "organisation" in keys
+    assert "state" in keys
+
+
+def test_keeps_large_near_unique_occupation_list():
+    """Employee microdata often has hundreds of distinct occupation titles."""
+    titles = [f"Manager (Unit {i})" for i in range(831)]
+    # Mostly unique titles across rows (near-unique), still a classification dim.
+    rows = [{"Occupation": titles[i % 831], "State": "Delhi" if i % 2 == 0 else "Goa"} for i in range(900)]
+    dims = _classifications_from_table_data([{
+        "title": "Employee Details",
+        "columns": ["Occupation", "State"],
+        "rows": rows,
+    }])
+    assert "Occupation" in dims
+    assert len(dims["Occupation"]) == 831
+    assert "State" in dims
+
+
+def test_keeps_many_organisations_and_state_codebook():
+    """High-cardinality real categories must not be dropped by distinct-band rules."""
+    orgs = [f"Organisation {i}" for i in range(40)]
+    states = [
+        "Andhra Pradesh", "Bihar", "Delhi", "Goa", "Gujarat", "Haryana",
+        "Karnataka", "Kerala", "Maharashtra", "Odisha", "Punjab", "Rajasthan",
+        "Tamil Nadu", "Telangana", "Uttar Pradesh", "West Bengal",
+        "Assam", "Jharkhand", "Chhattisgarh", "Uttarakhand",
+    ]
+    rows = []
+    for i in range(100):
+        rows.append({
+            "Organisation": orgs[i % len(orgs)],
+            "State": states[i % len(states)],
+        })
+    # Codebook-shaped extract: one row per state label (single-word + multi-word).
+    state_book = {
+        "title": "State list",
+        "columns": ["State"],
+        "rows": [{"State": s} for s in states],
+    }
+    employee = {
+        "title": "Employees",
+        "columns": ["Organisation", "State"],
+        "rows": rows,
+    }
+    dims = _classifications_from_table_data([employee, state_book])
+    keys = {k.lower() for k in dims}
+    assert "organisation" in keys
+    assert "state" in keys
+    assert len(dims[[k for k in dims if k.lower() == "organisation"][0]]) == 40

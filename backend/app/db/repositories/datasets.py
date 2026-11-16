@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.db.repositories.catalogue import tag_publish_organisation
 from app.services.classification.classifications import (
     _classifications_from_table_data,
+    _filter_classification_dict,
     _looks_like_index_or_toc_table,
     _merge_classifications,
     _merge_real_classifications,
@@ -429,12 +430,14 @@ def push_to_catalogue(
         table_cls = _classifications_from_table_data(
             [{"columns": col_names, "rows": rows}]
         )
-        classifications = _merge_real_classifications(
-            table_cls,
+        classifications = _filter_classification_dict(
             _merge_real_classifications(
-                enriched.get("classifications") or {},
-                meta_real_classifications,
-            ),
+                table_cls,
+                _merge_real_classifications(
+                    enriched.get("classifications") or {},
+                    meta_real_classifications,
+                ),
+            )
         )
         age_column_keys = enriched.get("age_column_keys") or {}
 
@@ -539,12 +542,14 @@ def push_to_catalogue(
             f"AUTO-{re.sub(r'[^A-Z0-9]', '-', (meta_title or 'DATA').upper())[:20]}"
             f"-{uuid.uuid4().hex[:6]}"
         )
-        group_classifications = _merge_real_classifications(
-            _classifications_from_table_data(tables),
+        group_classifications = _filter_classification_dict(
             _merge_real_classifications(
-                _merge_classifications(enriched_data),
-                meta_real_classifications,
-            ),
+                _classifications_from_table_data(tables),
+                _merge_real_classifications(
+                    _merge_classifications(enriched_data),
+                    meta_real_classifications,
+                ),
+            )
         )
         full_record = {
             "metadata": {

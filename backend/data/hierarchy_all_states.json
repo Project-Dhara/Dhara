@@ -1,0 +1,375 @@
+{
+  "source": "LGD - Local Government Directory, Government of India-ALL-STATES.xlsx",
+  "description": "Local Government Directory — all States and Union Territories of India (top level of the LGD revenue hierarchy).",
+  "validation": {
+    "issue_count": 0,
+    "issues": [],
+    "counts": {
+      "state": 36,
+      "state_type_state": 28,
+      "state_type_ut": 8
+    }
+  },
+  "revenue": [
+    {
+      "entity_type": "state",
+      "state_lgd_code": "35",
+      "state_name_english": "Andaman And Nicobar Islands",
+      "state_name_local": "ANDAMAN AND NICOBAR ISLANDS",
+      "state_or_ut": "UT",
+      "census_2001_code": "35",
+      "census_2011_code": "35",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "28",
+      "state_name_english": "Andhra Pradesh",
+      "state_name_local": "ANDHRA PRADESH",
+      "state_or_ut": "State",
+      "census_2001_code": "28",
+      "census_2011_code": "28",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "12",
+      "state_name_english": "Arunachal Pradesh",
+      "state_name_local": "ARUNACHAL PRADESH",
+      "state_or_ut": "State",
+      "census_2001_code": "12",
+      "census_2011_code": "12",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "18",
+      "state_name_english": "Assam",
+      "state_name_local": "ASSAM",
+      "state_or_ut": "State",
+      "census_2001_code": "18",
+      "census_2011_code": "18",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "10",
+      "state_name_english": "Bihar",
+      "state_name_local": "BIHAR",
+      "state_or_ut": "State",
+      "census_2001_code": "10",
+      "census_2011_code": "10",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "4",
+      "state_name_english": "Chandigarh",
+      "state_name_local": "CHANDIGARH",
+      "state_or_ut": "UT",
+      "census_2001_code": "04",
+      "census_2011_code": "04",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "22",
+      "state_name_english": "Chhattisgarh",
+      "state_name_local": "छत्तीसगढ़",
+      "state_or_ut": "State",
+      "census_2001_code": "22",
+      "census_2011_code": "22",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "7",
+      "state_name_english": "Delhi",
+      "state_name_local": "DELHI",
+      "state_or_ut": "UT",
+      "census_2001_code": "07",
+      "census_2011_code": "07",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "30",
+      "state_name_english": "Goa",
+      "state_name_local": "GOA",
+      "state_or_ut": "State",
+      "census_2001_code": "30",
+      "census_2011_code": "30",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "24",
+      "state_name_english": "Gujarat",
+      "state_name_local": "GUJARAT",
+      "state_or_ut": "State",
+      "census_2001_code": "24",
+      "census_2011_code": "24",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "6",
+      "state_name_english": "Haryana",
+      "state_name_local": "HARYANA",
+      "state_or_ut": "State",
+      "census_2001_code": "06",
+      "census_2011_code": "06",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "2",
+      "state_name_english": "Himachal Pradesh",
+      "state_name_local": "HIMACHAL PRADESH",
+      "state_or_ut": "State",
+      "census_2001_code": "02",
+      "census_2011_code": "02",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "1",
+      "state_name_english": "Jammu And Kashmir",
+      "state_name_local": "JAMMU AND KASHMIR",
+      "state_or_ut": "UT",
+      "census_2001_code": "01",
+      "census_2011_code": "01",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "20",
+      "state_name_english": "Jharkhand",
+      "state_name_local": "झारखंड",
+      "state_or_ut": "State",
+      "census_2001_code": "20",
+      "census_2011_code": "20",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "29",
+      "state_name_english": "Karnataka",
+      "state_name_local": "ಕರ್ನಾಟಕ",
+      "state_or_ut": "State",
+      "census_2001_code": "29",
+      "census_2011_code": "29",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "32",
+      "state_name_english": "Kerala",
+      "state_name_local": "KERALA",
+      "state_or_ut": "State",
+      "census_2001_code": "32",
+      "census_2011_code": "32",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "37",
+      "state_name_english": "Ladakh",
+      "state_name_local": "Ladakh",
+      "state_or_ut": "UT",
+      "census_2001_code": null,
+      "census_2011_code": "00",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "31",
+      "state_name_english": "Lakshadweep",
+      "state_name_local": "LAKSHADWEEP",
+      "state_or_ut": "UT",
+      "census_2001_code": "31",
+      "census_2011_code": "31",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "23",
+      "state_name_english": "Madhya Pradesh",
+      "state_name_local": "MADHYA PRADESH",
+      "state_or_ut": "State",
+      "census_2001_code": "23",
+      "census_2011_code": "23",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "27",
+      "state_name_english": "Maharashtra",
+      "state_name_local": "महाराष्ट्र",
+      "state_or_ut": "State",
+      "census_2001_code": "27",
+      "census_2011_code": "27",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "14",
+      "state_name_english": "Manipur",
+      "state_name_local": "MANIPUR",
+      "state_or_ut": "State",
+      "census_2001_code": "14",
+      "census_2011_code": "14",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "17",
+      "state_name_english": "Meghalaya",
+      "state_name_local": "MEGHALAYA",
+      "state_or_ut": "State",
+      "census_2001_code": "17",
+      "census_2011_code": "17",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "15",
+      "state_name_english": "Mizoram",
+      "state_name_local": "MIZORAM",
+      "state_or_ut": "State",
+      "census_2001_code": "15",
+      "census_2011_code": "15",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "13",
+      "state_name_english": "Nagaland",
+      "state_name_local": "NAGALAND",
+      "state_or_ut": "State",
+      "census_2001_code": "13",
+      "census_2011_code": "13",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "21",
+      "state_name_english": "Odisha",
+      "state_name_local": "ଓଡ଼ିଶା",
+      "state_or_ut": "State",
+      "census_2001_code": "21",
+      "census_2011_code": "21",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "34",
+      "state_name_english": "Puducherry",
+      "state_name_local": "PUDUCHERRY",
+      "state_or_ut": "UT",
+      "census_2001_code": "34",
+      "census_2011_code": "34",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "3",
+      "state_name_english": "Punjab",
+      "state_name_local": "PUNJAB",
+      "state_or_ut": "State",
+      "census_2001_code": "03",
+      "census_2011_code": "03",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "8",
+      "state_name_english": "Rajasthan",
+      "state_name_local": "RAJASTHAN",
+      "state_or_ut": "State",
+      "census_2001_code": "08",
+      "census_2011_code": "08",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "11",
+      "state_name_english": "Sikkim",
+      "state_name_local": "SIKKIM",
+      "state_or_ut": "State",
+      "census_2001_code": "11",
+      "census_2011_code": "11",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "33",
+      "state_name_english": "Tamil Nadu",
+      "state_name_local": "TAMIL NADU",
+      "state_or_ut": "State",
+      "census_2001_code": "33",
+      "census_2011_code": "33",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "36",
+      "state_name_english": "Telangana",
+      "state_name_local": "తెలంగాణ",
+      "state_or_ut": "State",
+      "census_2001_code": null,
+      "census_2011_code": "00",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "38",
+      "state_name_english": "The Dadra And Nagar Haveli And Daman And Diu",
+      "state_name_local": "THE DADRA AND NAGAR HAVELI AND DAMAN AND DIU",
+      "state_or_ut": "UT",
+      "census_2001_code": null,
+      "census_2011_code": null,
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "16",
+      "state_name_english": "Tripura",
+      "state_name_local": "ত্রিপুরা",
+      "state_or_ut": "State",
+      "census_2001_code": "16",
+      "census_2011_code": "16",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "9",
+      "state_name_english": "Uttar Pradesh",
+      "state_name_local": "UTTAR PRADESH",
+      "state_or_ut": "State",
+      "census_2001_code": "09",
+      "census_2011_code": "09",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "5",
+      "state_name_english": "Uttarakhand",
+      "state_name_local": "UTTARAKHAND",
+      "state_or_ut": "State",
+      "census_2001_code": "05",
+      "census_2011_code": "05",
+      "districts": []
+    },
+    {
+      "entity_type": "state",
+      "state_lgd_code": "19",
+      "state_name_english": "West Bengal",
+      "state_name_local": "WEST BENGAL",
+      "state_or_ut": "State",
+      "census_2001_code": "19",
+      "census_2011_code": "19",
+      "districts": []
+    }
+  ]
+}
