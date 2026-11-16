@@ -23,6 +23,7 @@ from app.db.repositories import kyds as kyds_repo
 from app.db.repositories import pdf_jobs as pdf_jobs_repo
 from app.db.session import dbapi_connection, session_scope
 from app.services.catalogue.group_export import build_group_download_zip
+from app.storage.upload_archive import archive_upload_bytes, archive_upload_files
 from app.services.catalogue.query import (
     get_catalogue_group as query_catalogue_group,
     list_catalogue_datasets as query_catalogue_datasets,
@@ -101,6 +102,8 @@ async def parse_concept_metadata_file(file: UploadFile = File(...), user_email: 
     if not file.filename.lower().endswith((".xlsx", ".xls", ".csv")):
         raise HTTPException(400, "Only .xlsx / .xls / .csv files are supported")
     content = await file.read()
+    # Side-effect only: archive original under data/excel_uploads or csv_uploads.
+    archive_upload_bytes(file.filename or "concept", content)
     try:
         concepts = await asyncio.to_thread(parse_concept_file, content, file.filename)
     except ValueError as e:
@@ -127,6 +130,8 @@ async def batch_extract(
             raise HTTPException(400, f"Only .xlsx files are supported ({f.filename})")
 
     contents = [(f.filename, await f.read()) for f in files]
+    # Side-effect only: archive original workbooks as uploaded (no conversion).
+    archive_upload_files(contents)
 
     def _attach_original_sheets(filename: str, content: bytes, tables: list):
         # One extraction+upload per unique sheet (several tables can share a
@@ -311,6 +316,16 @@ async def batch_match(
                 raise HTTPException(400, f"Only .xlsx/.xls files are supported ({f.filename})")
             content = await f.read()
             metadata_payloads.append((f.filename, content))
+        archive_upload_files(metadata_payloads)
+
+    # Optional dataset workbooks (accepted for compatibility) — archive as-is.
+    if dataset_files:
+        for f in dataset_files:
+            if not f or not f.filename:
+                continue
+            content = await f.read()
+            if content:
+                archive_upload_bytes(f.filename, content)
 
     def _run():
         workbooks = []

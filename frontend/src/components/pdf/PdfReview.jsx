@@ -178,8 +178,9 @@ export default function PdfReview({ jobId, filename, onDone }) {
       router.push(`/console/review/${jobId}`)
       return
     }
-    if (targetStep === 3) {
-      router.push(`/console/grouping/${jobId}`)
+    if (targetStep >= 3) {
+      const q = targetStep > 3 ? `?step=${targetStep}` : ''
+      router.push(`/console/grouping/${jobId}${q}`)
     }
   }
 

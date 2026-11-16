@@ -59,8 +59,10 @@ export default function PdfConsoleLayout({
       router.push(`/console/review/${jobId}`)
       return
     }
-    if (targetStep === 3) {
-      router.push(`/console/grouping/${jobId}`)
+    if (targetStep >= 3) {
+      // Grouping shell hosts steps 3–7; pass step so Dashboard deep-links land correctly.
+      const q = targetStep > 3 ? `?step=${targetStep}` : ''
+      router.push(`/console/grouping/${jobId}${q}`)
     }
   }
 

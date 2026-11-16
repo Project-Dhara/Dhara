@@ -7,6 +7,7 @@ from app.core.config import clear_settings_cache
 from app.storage.files import NoOpObjectStore
 from app.storage.local import LocalFileStore
 from app.storage.object_store import get_object_store
+from app.storage import upload_archive
 
 
 def test_noop_object_store_returns_none(monkeypatch):
@@ -48,3 +49,46 @@ def test_local_file_store_writes_file(tmp_path, monkeypatch):
     assert uri and uri.startswith("file://")
     path = store.resolve_path("datasets/ds-1.xlsx")
     assert path.read_bytes() == b"excel-bytes"
+
+
+def test_upload_archive_keeps_original_name_and_suffixes(tmp_path, monkeypatch):
+    monkeypatch.setenv("UPLOAD_ARCHIVE_PATH", str(tmp_path))
+    first = upload_archive.archive_upload_bytes("report.pdf", b"one")
+    second = upload_archive.archive_upload_bytes("../evil/report.pdf", b"two")
+    third = upload_archive.archive_upload_bytes("report.pdf", b"three")
+    assert first is not None and first.name == "report.pdf"
+    assert first.parent.name == "pdf_uploads"
+    assert first.read_bytes() == b"one"
+    assert second is not None and second.name == "report(1).pdf"
+    assert second.read_bytes() == b"two"
+    assert third is not None and third.name == "report(2).pdf"
+    assert third.read_bytes() == b"three"
+
+
+def test_upload_archive_stores_excel_and_csv_in_separate_folders(tmp_path, monkeypatch):
+    monkeypatch.setenv("UPLOAD_ARCHIVE_PATH", str(tmp_path))
+    xlsx = upload_archive.archive_upload_bytes("District Tables.xlsx", b"PK\x03\x04-xlsx")
+    csv = upload_archive.archive_upload_bytes("codes.csv", b"code,name\n1,A\n")
+    pdf = upload_archive.archive_upload_bytes("report.pdf", b"%PDF")
+    assert xlsx is not None and xlsx.name == "District Tables.xlsx"
+    assert xlsx.parent.name == "excel_uploads"
+    assert xlsx.read_bytes() == b"PK\x03\x04-xlsx"
+    assert csv is not None and csv.name == "codes.csv"
+    assert csv.parent.name == "csv_uploads"
+    assert csv.read_bytes() == b"code,name\n1,A\n"
+    assert pdf is not None and pdf.parent.name == "pdf_uploads"
+    # Duplicate excel name gets (1) while keeping .xlsx
+    again = upload_archive.archive_upload_bytes("District Tables.xlsx", b"other")
+    assert again is not None and again.name == "District Tables(1).xlsx"
+    assert again.parent.name == "excel_uploads"
+    # Excel must not land in the PDF folder
+    assert not (tmp_path / "pdf_uploads" / "District Tables.xlsx").exists()
+    assert not (tmp_path / "pdf_uploads" / "codes.csv").exists()
+
+
+def test_upload_archive_failure_is_best_effort(tmp_path, monkeypatch):
+    """Archive errors must not raise — pipeline callers ignore the return value."""
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not-a-directory")
+    monkeypatch.setenv("UPLOAD_ARCHIVE_PATH", str(blocked / "nested"))
+    assert upload_archive.archive_upload_bytes("x.pdf", b"data") is None

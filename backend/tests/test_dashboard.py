@@ -30,19 +30,28 @@ def test_pdf_dashboard_row_stays_visible_after_metadata():
     assert row5["name"] == "births_death_report_2023_cond.pdf"
     assert row5["source"] == "PDF"
     assert row5["status_key"] == "classification_review"
-    # Non-published rows reopen Preview so stored tables stay inspectable.
-    assert row5["href"] == "/console/review/j1"
+    # Open the step shown on the Dashboard (Preview still via stage rail).
+    assert row5["href"] == "/console/grouping/j1?step=5"
+
+    row4 = _pdf_dashboard_row(job, "saved", 4)
+    assert row4 is not None
+    assert row4["status_key"] == "metadata_review"
+    assert row4["href"] == "/console/grouping/j1?step=4"
 
     row3 = _pdf_dashboard_row(job, "pending", 3)
     assert row3 is not None
     assert row3["status_key"] == "harmonisation"
-    assert row3["href"] == "/console/review/j1"
+    assert row3["href"] == "/console/grouping/j1?step=3"
+
+    row2 = _pdf_dashboard_row(job, None, 2)
+    assert row2 is not None
+    assert row2["href"] == "/console/review/j1"
 
     xlsx_job = {**job, "job_id": "j2", "filename": "districts.xlsx"}
     row_xlsx = _pdf_dashboard_row(xlsx_job, "pending", 3)
     assert row_xlsx is not None
     assert row_xlsx["source"] == "XLSX"
-    assert row_xlsx["href"] == "/console/review/j2"
+    assert row_xlsx["href"] == "/console/grouping/j2?step=3"
 
     row6 = _pdf_dashboard_row(job, "saved", 6)
     assert row6 is not None

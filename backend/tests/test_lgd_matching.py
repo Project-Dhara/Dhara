@@ -119,3 +119,46 @@ def test_all_states_merged_without_duplicate_delhi():
     assert matches["Maharashtra"]["entity_type"] == "state"
     assert matches["Maharashtra"]["auto_fill"] is True
 
+
+def test_ndmc_alias_resolves_new_delhi_municipal_council():
+    matches = match_lgd_values(["NDMC", "ndmc"])
+    for key in ("NDMC", "ndmc"):
+        assert key in matches
+        m = matches[key]
+        assert "New Delhi Municipal Council" in str(m.get("title") or m.get("name_english") or "")
+        assert m["auto_fill"] is True
+        assert m.get("ambiguous") in (False, None)
+
+
+def test_delhi_cantt_alias_offers_cantonment_choices():
+    matches = match_lgd_values(["Delhi cantt", "Delhi cant"])
+    for key in ("Delhi cantt", "Delhi cant"):
+        assert key in matches
+        m = matches[key]
+        titles = {
+            str(c.get("title") or c.get("name_english") or "")
+            for c in (m.get("candidates") or [])
+        }
+        assert any("Delhi Cantonment" == t for t in titles)
+        assert any("Cantonment Board" in t for t in titles)
+        assert m["ambiguous"] is True
+        assert m["auto_fill"] is False
+        assert m["needs_manual_review"] is True
+
+
+def test_mcd_alias_offers_east_north_south_corporations():
+    matches = match_lgd_values(["MCD", "Municipal Corporation of Delhi"])
+    for key in ("MCD", "Municipal Corporation of Delhi"):
+        assert key in matches
+        m = matches[key]
+        titles = {
+            str(c.get("title") or c.get("name_english") or "")
+            for c in (m.get("candidates") or [])
+        }
+        assert "East Delhi Municipal Corporation" in titles
+        assert "North Delhi Municipal Corporation" in titles
+        assert "South Delhi Municipal Corporation" in titles
+        assert m["ambiguous"] is True
+        assert m["auto_fill"] is False
+        assert len(m["candidates"]) >= 3
+

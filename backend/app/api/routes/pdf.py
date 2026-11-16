@@ -33,6 +33,7 @@ from app.schemas.pdf import (
 )
 from app.services.jobs.enqueue import dispatch_extraction
 from app.services.jobs.pdf_review import persist_approved_and_group
+from app.storage.upload_archive import archive_upload_bytes
 from app.workers.extraction_jobs import (
     _get_pdf_job,
     _hydrate_user_pdf_jobs,
@@ -88,6 +89,9 @@ async def pdf_upload(
     content = await file.read()
     if not content:
         raise HTTPException(400, "Uploaded file is empty")
+
+    # Side-effect only: keep a local copy under data/pdf_uploads/ (type-split archive).
+    archive_upload_bytes(file.filename or "upload.pdf", content)
 
     job_id = uuid.uuid4().hex
     id_cfg = _parse_dataset_id_config_form(dataset_id_config)

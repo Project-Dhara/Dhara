@@ -26,6 +26,7 @@ from app.services.catalogue.query import (
     list_catalogue_datasets as query_catalogue_datasets,
     list_catalogue_groups as query_catalogue_groups,
 )
+from app.storage.upload_archive import archive_upload_bytes
 from app.services.classification.classifications import (
     _looks_like_index_or_toc_table,
     get_definition_facts,
@@ -136,7 +137,11 @@ async def batch_push(
     if metadata_files:
         for i, f in enumerate(metadata_files):
             if f and f.filename:
-                metadata_by_index[i] = (f.filename, await f.read())
+                content = await f.read()
+                metadata_by_index[i] = (f.filename, content)
+                # Side-effect only: keep original metadata workbook as uploaded.
+                if content:
+                    archive_upload_bytes(f.filename, content)
 
     blob_by_uid: dict = {}
     if tables_blob and tables_blob.filename:

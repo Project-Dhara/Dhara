@@ -1,7 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { withAuthHeaders } from '../../lib/auth'
 import { withLlmKeyHeaders } from '../../lib/llmKey'
 import { getMetadataStandard } from '../../lib/settingsConfig'
@@ -42,7 +42,20 @@ function loadPdfPipeline(jobId) {
 
 function savePdfPipeline(jobId, state) {
   try {
-    sessionStorage.setItem(pdfPipelineStorageKey(jobId), JSON.stringify(state))
+    // Never clobber a populated grouping with a null/empty snapshot (Dashboard
+    // deep-links set pipelineStep early; a premature save would wipe tables).
+    let next = state
+    if (!matchResultHasTables(state?.matchResult)) {
+      const prev = loadPdfPipeline(jobId)
+      if (matchResultHasTables(prev?.matchResult)) {
+        next = {
+          ...state,
+          matchResult: prev.matchResult,
+          autoSnapshot: state?.autoSnapshot || prev.autoSnapshot || prev.matchResult,
+        }
+      }
+    }
+    sessionStorage.setItem(pdfPipelineStorageKey(jobId), JSON.stringify(next))
   } catch {
     // best-effort
   }
@@ -54,6 +67,33 @@ function clearPdfPipeline(jobId) {
   } catch {
     // best-effort
   }
+}
+
+/** Dashboard deep-link: /console/grouping/:id?step=4 (Grouping shell steps 3–7). */
+function parsePipelineStepParam(raw) {
+  const n = Number.parseInt(String(raw ?? ''), 10)
+  if (!Number.isFinite(n) || n < 3 || n > 7) return null
+  return n
+}
+
+function matchResultHasTables(mr) {
+  if (!mr || typeof mr !== 'object') return false
+  const grouped = (mr.groups || []).reduce(
+    (n, g) => n + ((g.matched_tables || g.tables || []).length),
+    0,
+  )
+  const unmatched = (mr.unmatched_tables || mr.unmatched || []).length
+  return grouped + unmatched > 0
+}
+
+function serverGroupingHasTables(data) {
+  if (!data || typeof data !== 'object') return false
+  const grouped = (data.groups || []).reduce(
+    (n, g) => n + ((g.tables || []).length),
+    0,
+  )
+  const unmatched = (data.unmatched_tables || data.unmatched || []).length
+  return grouped + unmatched > 0
 }
 
 function toClientGrouping(data) {
@@ -74,8 +114,14 @@ function toClientGrouping(data) {
  */
 export default function PdfGrouping({ jobId }) {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { keySaved, invalidateDashboard, invalidateCatalogue } = useApp()
   const persisted = loadPdfPipeline(jobId)
+  const requestedStep = useMemo(
+    () => parsePipelineStepParam(searchParams?.get('step')),
+    [searchParams],
+  )
+  const initialStep = requestedStep ?? persisted?.pipelineStep ?? 3
 
   const [filename, setFilename] = useState(persisted?.filename ?? '')
   const [method, setMethod] = useState(persisted?.method ?? null)
@@ -87,25 +133,38 @@ export default function PdfGrouping({ jobId }) {
   const [autoSnapshot, setAutoSnapshot] = useState(persisted?.autoSnapshot ?? null)
   const [toast, setToast] = useState(null)
 
-  const [pipelineStep, setPipelineStep] = useState(persisted?.pipelineStep ?? 3)
+  const [pipelineStep, setPipelineStep] = useState(initialStep)
   const [filesReturnOpen, setFilesReturnOpen] = useState(false)
-  const [maxStepReached, setMaxStepReached] = useState(persisted?.maxStepReached ?? 3)
+  const [maxStepReached, setMaxStepReached] = useState(
+    Math.max(persisted?.maxStepReached ?? 3, initialStep),
+  )
   const [matchResult, setMatchResult] = useState(persisted?.matchResult ?? null)
   const [metadataFilling, setMetadataFilling] = useState(false)
   const [metaLabel, setMetaLabel] = useState(persisted?.metaLabel ?? '')
   const [metadataId, setMetadataId] = useState(persisted?.metadataId ?? null)
   const [metadataIds, setMetadataIds] = useState(persisted?.metadataIds ?? [])
   const [metadataStarted, setMetadataStarted] = useState(
-    Boolean(persisted?.matchResult && (persisted?.pipelineStep ?? 3) >= 4),
+    Boolean(persisted?.matchResult && initialStep >= 4) || initialStep >= 4,
   )
   const [statusPage, setStatusPage] = useState(null)
   const [classificationComplete, setClassificationComplete] = useState(false)
   const goToHarmRef = useRef(null)
   const continueOkRef = useRef(false)
+  const appliedQueryStepRef = useRef(false)
 
   useEffect(() => {
     if (pipelineStep === 4) setMetadataStarted(true)
   }, [pipelineStep])
+
+  // Honour Dashboard ?step= once grouping data is available (metadata+ need matchResult).
+  useEffect(() => {
+    if (appliedQueryStepRef.current || requestedStep == null) return
+    if (requestedStep >= 4 && !matchResult) return
+    appliedQueryStepRef.current = true
+    setPipelineStep(requestedStep)
+    setMaxStepReached((prev) => Math.max(prev, requestedStep))
+    if (requestedStep >= 4) setMetadataStarted(true)
+  }, [requestedStep, matchResult])
 
   useEffect(() => {
     savePdfPipeline(jobId, {
@@ -162,12 +221,13 @@ export default function PdfGrouping({ jobId }) {
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      const hadPersistedPipeline = Boolean(persisted?.matchResult || (persisted?.pipelineStep ?? 3) > 3)
-      if (!hadPersistedPipeline) setLoading(true)
+      const localHasTables = matchResultHasTables(persisted?.matchResult)
+      // Only skip the loading flash when we already have tables to show.
+      // (pipelineStep alone is not enough — Dashboard ?step= used to trip that.)
+      if (!localHasTables) setLoading(true)
       setError('')
       try {
-        const res = await fetch(`/api/pdf/jobs/${jobId}/grouping`, withAuthHeaders())
-        if (res.status === 409) {
+        const hydrateFromPersist = async () => {
           const persistRes = await fetch(
             `/api/pdf/jobs/${jobId}/persist-approved`,
             withLlmKeyHeaders(withAuthHeaders({ method: 'POST' })),
@@ -177,9 +237,15 @@ export default function PdfGrouping({ jobId }) {
             throw new Error(body.detail || 'Could not persist tables for grouping')
           }
           const persistedJob = await persistRes.json()
-          if (cancelled) return
+          if (cancelled) return null
           applyServerGrouping(persistedJob.grouping || persistedJob, persistedJob.filename)
           setToast('Tables saved to Postgres and grouped by title.')
+          return persistedJob
+        }
+
+        const res = await fetch(`/api/pdf/jobs/${jobId}/grouping`, withAuthHeaders())
+        if (res.status === 409) {
+          await hydrateFromPersist()
           return
         }
         if (!res.ok) {
@@ -188,19 +254,31 @@ export default function PdfGrouping({ jobId }) {
         }
         const data = await res.json()
         if (cancelled) return
-        const keepLocal = Boolean(
-          persisted?.matchResult
-          || (persisted?.pipelineStep ?? 3) > 3
-          || (persisted?.manualGrouping && persisted?.matchResult),
-        )
-        if (!keepLocal) {
-          applyServerGrouping(data, data.filename)
-        } else if (!autoSnapshot && data.groups) {
-          const snap = pdfGroupingToMatchResult(toClientGrouping(data), data.filename || filename || 'pdf', jobId)
-          setAutoSnapshot(snap)
-          if (data.method) setMethod(data.method)
-          if (data.filename) setFilename(data.filename)
+
+        // Keep local edits only when sessionStorage still has real tables.
+        // A high pipelineStep with an empty matchResult (Dashboard ?step= race)
+        // must not block applying the server grouping.
+        if (localHasTables) {
+          if (!autoSnapshot && serverGroupingHasTables(data)) {
+            const snap = pdfGroupingToMatchResult(
+              toClientGrouping(data),
+              data.filename || filename || 'pdf',
+              jobId,
+            )
+            setAutoSnapshot(snap)
+            if (data.method) setMethod(data.method)
+            if (data.filename) setFilename(data.filename)
+          }
+          return
         }
+
+        if (serverGroupingHasTables(data)) {
+          applyServerGrouping(data, data.filename)
+          return
+        }
+
+        // Preview has tables but grouping rows are empty/missing — rebuild.
+        await hydrateFromPersist()
       } catch (e) {
         if (!cancelled) setError(e.message || 'Failed to load grouping')
       } finally {

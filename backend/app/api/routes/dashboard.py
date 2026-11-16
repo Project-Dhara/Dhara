@@ -64,10 +64,20 @@ def _pdf_dashboard_row(
         "job_id": job_id,
         "updated_at": job.get("created_at") or job.get("updated_at"),
     }
-    # Non-published finished jobs reopen at Preview so stewards can always
-    # inspect stored PDF/Excel/CSV tables; later stages stay reachable via the
-    # Console stage rail.
+    # Deep-link to the step shown on the Dashboard. Preview tables stay
+    # reachable via the Console stage rail (step 2 → /console/review/…).
+    # Steps 3–5 live on the grouping shell (in-page pipeline).
     preview_href = f"/console/review/{job_id}"
+
+    def _step_href(console_step: int) -> str:
+        if console_step <= 1:
+            return f"/console/processing/{job_id}"
+        if console_step == 2:
+            return preview_href
+        if console_step >= 6:
+            return "/catalogue"
+        # 3 Grouping · 4 Metadata · 5 Classify — same route, step query.
+        return f"/console/grouping/{job_id}?step={console_step}"
 
     if status in ("queued", "running"):
         # Step 1 — extraction in progress (cap below Preview).
@@ -77,7 +87,7 @@ def _pdf_dashboard_row(
             "status": "Processing",
             "status_key": "processing",
             "action": "View",
-            "href": f"/console/processing/{job_id}",
+            "href": _step_href(1),
             "pipeline_step": 1,
         }
     if status == "cancelled":
@@ -90,7 +100,7 @@ def _pdf_dashboard_row(
             "status": "Failed",
             "status_key": "failed",
             "action": "View",
-            "href": f"/console/processing/{job_id}",
+            "href": _step_href(1),
             "pipeline_step": 1,
         }
 
@@ -113,7 +123,7 @@ def _pdf_dashboard_row(
             "status": "Published",
             "status_key": "published",
             "action": "View",
-            "href": "/catalogue",
+            "href": _step_href(6),
             "pipeline_step": 6,
         }
     if step >= 5:
@@ -123,7 +133,7 @@ def _pdf_dashboard_row(
             "status": "Classification review",
             "status_key": "classification_review",
             "action": "Review",
-            "href": preview_href,
+            "href": _step_href(5),
             "pipeline_step": 5,
         }
     if step >= 4:
@@ -133,7 +143,7 @@ def _pdf_dashboard_row(
             "status": "Metadata review",
             "status_key": "metadata_review",
             "action": "Review",
-            "href": preview_href,
+            "href": _step_href(4),
             "pipeline_step": 4,
         }
     if step >= 3:
@@ -143,7 +153,7 @@ def _pdf_dashboard_row(
             "status": "Harmonisation",
             "status_key": "harmonisation",
             "action": "Review",
-            "href": preview_href,
+            "href": _step_href(3),
             "pipeline_step": 3,
         }
 
@@ -160,7 +170,7 @@ def _pdf_dashboard_row(
         "status": label,
         "status_key": "table_review",
         "action": "Review",
-        "href": preview_href,
+        "href": _step_href(2),
         "pipeline_step": 2,
     }
 

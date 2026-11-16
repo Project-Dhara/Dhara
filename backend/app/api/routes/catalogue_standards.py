@@ -27,6 +27,7 @@ from app.services.catalogue.query import (
     list_catalogue_datasets as query_catalogue_datasets,
     list_catalogue_groups as query_catalogue_groups,
 )
+from app.storage.upload_archive import archive_upload_bytes
 from app.services.classification.classifications import (
     _is_occupation_name,
     get_definition_facts,
@@ -148,6 +149,8 @@ async def upload_classification_standard(
     fname = file.filename or "classification.csv"
     if not fname.lower().endswith(".csv"):
         raise HTTPException(400, "Upload a .csv file in the NCO column layout")
+    # Side-effect only: keep the original CSV under data/csv_uploads/.
+    archive_upload_bytes(fname, raw)
     do_select = str(select).strip().lower() not in ("0", "false", "no")
 
     def _run():

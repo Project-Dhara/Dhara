@@ -13,6 +13,7 @@ from app.services.jobs.enqueue import (
     dispatch_extraction,
     dispatch_upload_batch,
 )
+from app.storage.upload_archive import archive_upload_bytes, archive_upload_files
 from app.workers.extraction_jobs import (
     _get_pdf_job,
     _pdf_job_public,
@@ -63,6 +64,9 @@ async def unified_upload(
             400,
             "Legacy .xls is not supported. Re-save the file as .xlsx.",
         )
+
+    # Side-effect only: type-split archive under data/{pdf,excel,csv}_uploads/.
+    archive_upload_bytes(filename, content)
 
     job_id = uuid.uuid4().hex
     id_cfg = _parse_dataset_id_config_form(dataset_id_config)
@@ -117,6 +121,8 @@ async def upload_batch(
         if total > MAX_BATCH_BYTES:
             raise HTTPException(400, "Total upload size exceeds batch limit")
         prepared.append((filename, source_type, content))
+
+    archive_upload_files(prepared)
 
     batch_id = uuid.uuid4().hex
     id_cfg = _parse_dataset_id_config_form(dataset_id_config)
@@ -174,6 +180,8 @@ async def upload_batch_append_files(
         if total > MAX_BATCH_BYTES:
             raise HTTPException(400, "Total upload size exceeds batch limit")
         prepared.append((filename, source_type, content))
+
+    archive_upload_files(prepared)
 
     id_cfg = _parse_dataset_id_config_form(dataset_id_config)
     try:

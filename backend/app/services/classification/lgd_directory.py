@@ -354,8 +354,41 @@ class Directory:
         self.parent_of: dict[str, str | None] = {}
         self.hierarchy_separator = detect_hierarchy_separator(data)
         self._walk(data, None, [])
+        self._apply_extra_aliases()
         self._layout()
         self.legend = self._legend()
+
+    def _index_alias_text(self, record: dict, text: str) -> None:
+        """Index one steward alias onto an existing directory record."""
+        display = str(record.get("name_english") or "")
+        folded_display = normalize_name(display)
+        alias = str(text or "").strip()
+        if not alias:
+            return
+        if normalize_name(alias) == folded_display:
+            return
+        aliases = list(record.get("aliases") or [])
+        if normalize_name(alias) not in {normalize_name(a) for a in aliases}:
+            aliases.append(alias)
+            record["aliases"] = aliases
+        for form in indexable_name_forms(alias):
+            add_to_bucket(self.lookup, form, record)
+            tokens = tokenize(form)
+            compact = "".join(tokens)
+            if compact:
+                add_to_bucket(self.compact_lookup, compact, record)
+            for token in tokens:
+                add_to_bucket(self.token_index, token, record)
+            for joined in consecutive_token_joins(tokens):
+                add_to_bucket(self.token_index, joined, record)
+                add_to_bucket(self.compact_lookup, joined, record)
+
+    def _apply_extra_aliases(self) -> None:
+        """Attach curated short forms (NDMC, MCD, Delhi cantt, …) after walk."""
+        from app.services.classification.lgd_aliases import iter_extra_alias_attachments
+
+        for record, alias in iter_extra_alias_attachments(self.entities):
+            self._index_alias_text(record, alias)
 
     @classmethod
     def load(cls) -> Directory:
