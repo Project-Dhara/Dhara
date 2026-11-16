@@ -43,7 +43,7 @@ import {
 } from './PdfReviewAtoms'
 import { TableDetail, TableTitleDisplay } from './TableDetail'
 import FilesReturnChoiceDialog from '../console/FilesReturnChoiceDialog'
-import { beginAppendFilesMode } from '../../lib/consoleSession'
+import { beginAppendFilesMode, goToConsoleFiles } from '../../lib/consoleSession'
 import { namesFromReviewTables } from '../../lib/existingDatasetNames'
 
 export function PdfTableEditorPage({ jobId, tableId }) {
@@ -179,6 +179,11 @@ export default function PdfReview({ jobId, filename, onDone }) {
       return
     }
     if (targetStep >= 3) {
+      // Nothing to group when extraction produced zero tables.
+      if (Array.isArray(tables) && tables.length === 0) {
+        setError('No tables were extracted — upload another file or try again.')
+        return
+      }
       const q = targetStep > 3 ? `?step=${targetStep}` : ''
       router.push(`/console/grouping/${jobId}${q}`)
     }
@@ -274,6 +279,10 @@ export default function PdfReview({ jobId, filename, onDone }) {
 
   const requestContinueToGrouping = () => {
     if (continuing) return
+    if (!tables?.length) {
+      setError('No tables were extracted — upload another file or try again.')
+      return
+    }
     if (pipelineSelectedIds?.size) {
       setContinueWarnOpen(true)
       return
@@ -283,6 +292,10 @@ export default function PdfReview({ jobId, filename, onDone }) {
 
   const continueToGrouping = async () => {
     setContinueWarnOpen(false)
+    if (!tables?.length) {
+      setError('No tables were extracted — upload another file or try again.')
+      return
+    }
     setContinuing(true)
     setContinuePhase('persist')
     setError('')
@@ -299,6 +312,13 @@ export default function PdfReview({ jobId, filename, onDone }) {
       const tablesForContinue = approvedIds
         ? (tables || []).filter((t) => approvedIds.includes(t.table_id))
         : (tables || [])
+      if (!tablesForContinue.length) {
+        clearTimeout(phaseTimer)
+        setError('No tables were extracted — upload another file or try again.')
+        setContinuing(false)
+        setContinuePhase('persist')
+        return
+      }
       const res = await fetch(
         `/api/pdf/jobs/${jobId}/persist-approved`,
         withLlmKeyHeaders(withAuthHeaders({
@@ -356,7 +376,10 @@ export default function PdfReview({ jobId, filename, onDone }) {
         }
         return res.json()
       })
-      .then((data) => { if (!cancelled) setTables(data.tables) })
+      .then((data) => {
+        if (cancelled) return
+        setTables(Array.isArray(data?.tables) ? data.tables : [])
+      })
       .catch((e) => { if (!cancelled) setError(e.message) })
     return () => { cancelled = true }
   }, [jobId])
@@ -602,9 +625,12 @@ export default function PdfReview({ jobId, filename, onDone }) {
     setTablePage(0)
   }
 
+  // Grouping stays locked until there is at least one table to continue with.
+  const reviewMaxStepReached = Array.isArray(tables) && tables.length > 0 ? 3 : 2
+
   if (error && !tables) {
     return (
-      <PdfConsoleLayout jobId={jobId} step={2} maxStepReached={3} onGoToStep={handleStageGoToStep}>
+      <PdfConsoleLayout jobId={jobId} step={2} maxStepReached={reviewMaxStepReached} onGoToStep={handleStageGoToStep}>
         <FilesReturnChoiceDialog
           open={filesReturnOpen}
           onCancel={() => setFilesReturnOpen(false)}
@@ -643,7 +669,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
   }
   if (!tables) {
     return (
-      <PdfConsoleLayout jobId={jobId} step={2} maxStepReached={3} onGoToStep={handleStageGoToStep}>
+      <PdfConsoleLayout jobId={jobId} step={2} maxStepReached={reviewMaxStepReached} onGoToStep={handleStageGoToStep}>
         <FilesReturnChoiceDialog
           open={filesReturnOpen}
           onCancel={() => setFilesReturnOpen(false)}
@@ -689,7 +715,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
       },
     ]
     return (
-      <PdfConsoleLayout jobId={jobId} step={2} maxStepReached={3}>
+      <PdfConsoleLayout jobId={jobId} step={2} maxStepReached={reviewMaxStepReached}>
         <div className="mx-auto flex max-w-xl flex-col gap-8 py-8">
           <div>
             <div className="font-display text-xl font-medium text-ink">{filename || 'Preparing grouping'}</div>
@@ -698,6 +724,62 @@ export default function PdfReview({ jobId, filename, onDone }) {
             </div>
           </div>
           <ProcessingStepper steps={continueSteps} />
+        </div>
+      </PdfConsoleLayout>
+    )
+  }
+
+  // Zero tables: stop on Preview with a clear message — never offer Continue / Grouping.
+  if (tables.length === 0) {
+    return (
+      <PdfConsoleLayout jobId={jobId} step={2} maxStepReached={2} onGoToStep={handleStageGoToStep}>
+        <FilesReturnChoiceDialog
+          open={filesReturnOpen}
+          onCancel={() => setFilesReturnOpen(false)}
+          onAddMore={confirmAddMoreFiles}
+          onStartOver={confirmStartOverFiles}
+        />
+        <div className="flex flex-col gap-[18px]">
+          <div className="flex flex-col">
+            <button
+              type="button"
+              className="mb-3.5 inline-flex items-center gap-1.5 self-start text-[15px] font-semibold text-teal hover:text-teal-dark"
+              onClick={requestLeaveToFiles}
+            >
+              <ArrowLeft className="h-4 w-4" strokeWidth={2} aria-hidden />
+              Upload another file
+            </button>
+            <StageSubstepBreadcrumb
+              crumbs={INVENTORY_CRUMBS}
+              activeId="preview"
+              onNavigate={(next) => {
+                if (next === 'files') requestLeaveToFiles()
+              }}
+              isReachable={() => true}
+              ariaLabel="Dataset inventory"
+              size="page"
+            />
+            <div className="mt-1.5 text-[13px] font-medium text-ink">
+              {filename || 'Uploaded file'}
+            </div>
+          </div>
+          <div className="flex flex-col gap-4 rounded-xl border border-line bg-white p-5 shadow-sm sm:p-6">
+            <div className="font-display text-xl font-medium text-ink">No tables found</div>
+            <ErrorBanner>
+              No tables were extracted — upload another file or try again
+            </ErrorBanner>
+            <p className="m-0 text-[14px] leading-relaxed text-ink-soft">
+              This upload finished without any usable tables, so grouping cannot continue.
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button variant="primary" onClick={() => goToConsoleFiles(router)}>
+                Upload another file
+              </Button>
+              <Button variant="secondary" onClick={() => goToConsoleFiles(router)}>
+                Try again
+              </Button>
+            </div>
+          </div>
         </div>
       </PdfConsoleLayout>
     )
@@ -877,7 +959,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
     }`
 
   return (
-    <PdfConsoleLayout jobId={jobId} step={2} maxStepReached={3} onGoToStep={handleStageGoToStep}>
+    <PdfConsoleLayout jobId={jobId} step={2} maxStepReached={reviewMaxStepReached} onGoToStep={handleStageGoToStep}>
     <div ref={rootRef} className="flex flex-col gap-[18px]">
       <ScrollToTopButton scrollRootRef={rootRef} />
       <FilesReturnChoiceDialog
@@ -1308,7 +1390,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
                 : searchQuery
                   ? `No tables match “${searchQuery}”.`
                   : tables.length === 0
-                    ? 'No tables are stored for this upload yet.'
+                    ? 'No tables were extracted from this file. Upload another file or try again.'
                     : 'No tables match this filter.'}
             </div>
           ) : pageTables.map((t) => {
@@ -1444,14 +1526,25 @@ export default function PdfReview({ jobId, filename, onDone }) {
       </div>
 
       <div className="flex items-center justify-end gap-4">
-        <Button variant="primary" disabled={continuing} onClick={requestContinueToGrouping} className="inline-flex items-center gap-1.5">
-          {continuing ? 'Saving…' : (
-            <>
-              Continue
-              <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
-            </>
-          )}
-        </Button>
+        {tables.length === 0 ? (
+          <>
+            <Button variant="secondary" onClick={() => goToConsoleFiles(router)}>
+              Try again
+            </Button>
+            <Button variant="primary" onClick={() => goToConsoleFiles(router)}>
+              Upload another file
+            </Button>
+          </>
+        ) : (
+          <Button variant="primary" disabled={continuing} onClick={requestContinueToGrouping} className="inline-flex items-center gap-1.5">
+            {continuing ? 'Saving…' : (
+              <>
+                Continue
+                <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
+              </>
+            )}
+          </Button>
+        )}
       </div>
     </div>
     </PdfConsoleLayout>

@@ -23,7 +23,9 @@ function barColor(pct) {
 
 function statusClass(status) {
   if (status === 'Published') return 'bg-sage text-teal'
-  if (status === 'Failed') return 'bg-[#f8d7da] text-[#842029]'
+  if (status === 'Failed' || status === 'No tables extracted') {
+    return 'bg-[#f8d7da] text-[#842029]'
+  }
   if (status === 'Processing') return 'bg-[#e8f1f8] text-[#2b6cb0]'
   return 'bg-yellow/25 text-[#6b5406]'
 }

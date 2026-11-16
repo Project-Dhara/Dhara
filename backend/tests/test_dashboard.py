@@ -16,6 +16,68 @@ def test_infer_source_label_file_types_only():
     assert _infer_source_label("meta.xlsx", "Births and Deaths Report 2023") == "XLSX"
 
 
+def test_pdf_dashboard_row_default_pending_is_preview_not_failed():
+    """DB default grouping_status='pending' must not imply Grouping / failure.
+
+    Excel/CSV jobs often have tables in the extraction result before Continue
+    persists pdf_tables — table_count stays 0 while Preview still has tables.
+    """
+    preview = {
+        "job_id": "j-xlsx",
+        "filename": "D1-D9-Final (1) (1).xlsx",
+        "status": "done",
+        "percent": 100,
+        "needs_review_count": 0,
+        "table_count": 0,
+        # Result still has tables; only pdf_tables is empty pre-Continue.
+        "extracted_table_count": 12,
+    }
+    # grouping_status defaults to 'pending' on insert; pipeline_step unset.
+    row = _pdf_dashboard_row(preview, "pending", None)
+    assert row is not None
+    assert row["status_key"] == "table_review"
+    assert row["status"] == "Preview"
+    assert row["href"] == "/console/review/j-xlsx"
+
+    empty = {
+        **preview,
+        "job_id": "j-empty",
+        "extracted_table_count": 0,
+    }
+    row_empty = _pdf_dashboard_row(empty, "pending", None)
+    assert row_empty is not None
+    assert row_empty["status_key"] == "failed"
+    assert row_empty["status"] == "No tables extracted"
+    assert row_empty["href"] == "/console/processing/j-empty"
+
+    failed = {
+        **preview,
+        "job_id": "j-failed",
+        "status": "failed",
+        "message": "No tables were extracted — upload another file or try again",
+        "extracted_table_count": 0,
+    }
+    row_f = _pdf_dashboard_row(failed, "pending", None)
+    assert row_f is not None
+    assert row_f["status_key"] == "failed"
+    assert row_f["status"] == "No tables extracted"
+
+
+def test_pdf_dashboard_row_persisted_tables_infer_grouping():
+    job = {
+        "job_id": "j-grouped",
+        "filename": "districts.xlsx",
+        "status": "done",
+        "percent": 100,
+        "needs_review_count": 0,
+        "table_count": 4,
+    }
+    row = _pdf_dashboard_row(job, "pending", None)
+    assert row is not None
+    assert row["status_key"] == "harmonisation"
+    assert row["href"] == "/console/grouping/j-grouped?step=3"
+
+
 def test_pdf_dashboard_row_stays_visible_after_metadata():
     job = {
         "job_id": "j1",
@@ -55,5 +117,11 @@ def test_pdf_dashboard_row_stays_visible_after_metadata():
 
     row6 = _pdf_dashboard_row(job, "saved", 6)
     assert row6 is not None
-    assert row6["status_key"] == "published"
-    assert row6["href"] == "/catalogue"
+    assert row6["status_key"] == "harmonisation_review"
+    assert row6["status"] == "Harmonisation"
+    assert row6["href"] == "/console/grouping/j1?step=6"
+
+    row7 = _pdf_dashboard_row(job, "saved", 7)
+    assert row7 is not None
+    assert row7["status_key"] == "published"
+    assert row7["href"] == "/catalogue"

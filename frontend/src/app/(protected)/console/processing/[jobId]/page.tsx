@@ -46,6 +46,7 @@ type Job = {
   filename?: string
   is_batch?: boolean
   batch_files?: BatchFile[]
+  table_count?: number
 }
 
 function buildSteps(job: Job | null, sawValidate: boolean) {
@@ -100,6 +101,7 @@ export default function PdfProcessingPage() {
   const router = useRouter()
   const [job, setJob] = useState<Job | null>(null)
   const [error, setError] = useState('')
+  const [noTables, setNoTables] = useState(false)
   const sawValidateRef = useRef(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -116,13 +118,23 @@ export default function PdfProcessingPage() {
         setJob(data)
         if (data.status === 'done' || data.status === 'completed_with_errors') {
           if (pollRef.current) clearInterval(pollRef.current)
+          // Extraction finished with nothing usable — stop before Preview/Grouping.
+          if (Number(data.table_count) === 0) {
+            setNoTables(true)
+            return
+          }
           router.push(`/console/review/${jobId}`)
         } else if (data.status === 'cancelled') {
           if (pollRef.current) clearInterval(pollRef.current)
           goToConsoleFiles(router)
         } else if (data.status === 'error' || data.status === 'failed') {
           if (pollRef.current) clearInterval(pollRef.current)
-          setError(data.message || 'PDF processing failed')
+          const msg = String(data.message || data.error || '')
+          if (/no tables/i.test(msg)) {
+            setNoTables(true)
+          } else {
+            setError(msg || 'PDF processing failed')
+          }
         }
       } catch (e: any) {
         if (!cancelled) {
@@ -165,6 +177,29 @@ export default function PdfProcessingPage() {
           <div className="font-display text-xl font-medium text-ink">Something went wrong</div>
           <ErrorBanner>{error}</ErrorBanner>
           <Button variant="primary" className="self-start" onClick={() => goToConsoleFiles(router)}>Upload a different PDF</Button>
+        </div>
+      </PdfConsoleLayout>
+    )
+  }
+
+  if (noTables) {
+    return (
+      <PdfConsoleLayout {...filesLayoutProps}>
+        <div className="mx-auto flex max-w-xl flex-col gap-4 py-8">
+          <div className="font-display text-xl font-medium text-ink">No tables found</div>
+          <p className="m-0 text-[14px] leading-relaxed text-ink-soft">
+            No tables were extracted from{' '}
+            <span className="font-medium text-ink">{job?.filename || 'this file'}</span>.
+            Upload another file or try again with a different document.
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="primary" onClick={() => goToConsoleFiles(router)}>
+              Upload another file
+            </Button>
+            <Button variant="secondary" onClick={() => goToConsoleFiles(router)}>
+              Try again
+            </Button>
+          </div>
         </div>
       </PdfConsoleLayout>
     )

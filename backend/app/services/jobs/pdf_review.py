@@ -73,6 +73,12 @@ def persist_approved_and_group(
             if not tables:
                 raise AppError("No approved tables matched this job", status_code=400)
 
+        if not tables:
+            raise AppError(
+                "No tables were extracted — upload another file or try again",
+                status_code=400,
+            )
+
     with session_scope() as session:
         persisted = pdf_jobs_repo.persist_approved_tables(
             session,

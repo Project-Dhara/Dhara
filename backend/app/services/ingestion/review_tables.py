@@ -29,6 +29,19 @@ def result_pages_only(result: Optional[Dict[Any, Any]]) -> Dict[Any, Any]:
     return {k: v for k, v in result.items() if k != BATCH_META_KEY}
 
 
+def count_tables_in_result(result: Optional[Dict[Any, Any]]) -> int:
+    """Count extracted tables in a page-keyed job ``result`` (excludes batch meta)."""
+    pages = result_pages_only(result)
+    total = 0
+    for page in pages.values():
+        if not isinstance(page, dict):
+            continue
+        tables = page.get("tables") or []
+        if isinstance(tables, list):
+            total += len(tables)
+    return total
+
+
 def source_location_label(table: Dict[str, Any]) -> Optional[str]:
     """Human-readable source location for review cards."""
     st = (table.get("source_type") or "").lower()

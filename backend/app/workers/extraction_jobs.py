@@ -424,13 +424,29 @@ def _run_extraction_job(
                 default_filename=job.get("filename"),
                 default_source_type=source_type,
             )
-            job.update(
-                status="done",
-                stage="done",
-                percent=100,
-                message="Complete",
-                result=result,
-            )
+            from app.services.ingestion.review_tables import count_tables_in_result
+
+            n_tables = count_tables_in_result(result)
+            if n_tables == 0:
+                no_tables_msg = (
+                    "No tables were extracted — upload another file or try again"
+                )
+                job.update(
+                    status="failed",
+                    stage="failed",
+                    percent=100,
+                    message=no_tables_msg,
+                    error=no_tables_msg,
+                    result=result,
+                )
+            else:
+                job.update(
+                    status="done",
+                    stage="done",
+                    percent=100,
+                    message="Complete",
+                    result=result,
+                )
             retain = bool((job.get("reviews") or {}).get("__retain_file_bytes"))
             # Keep PDF/CSV/Excel source bytes so the original workbook/file can
             # be re-opened later (batch jobs also set __retain_file_bytes).

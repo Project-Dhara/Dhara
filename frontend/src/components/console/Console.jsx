@@ -17,6 +17,7 @@ import { useConsolePipeline } from './useConsolePipeline'
 import ClassifyBreadcrumb from './classify/ClassifyBreadcrumb'
 import StageSubstepBreadcrumb from './StageSubstepBreadcrumb'
 import LlmKeyRequiredBanner from '../LlmKeyRequiredBanner'
+import Button from '../ui/Button'
 import { useApp } from '../../context/AppContext'
 import {
   goToConsoleFiles,
@@ -311,6 +312,29 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
                 />
               )}
             />
+          </div>
+        )}
+
+        {step === 2 && previewTables.length === 0 && (
+          <div className="flex flex-col gap-4 rounded-lg border border-dashed border-line px-4 py-10 text-center">
+            <div className="text-[15px] font-semibold text-ink">No tables found</div>
+            <p className="m-0 text-[13px] leading-relaxed text-ink-soft">
+              No tables were extracted from this upload. Upload another file or try again.
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <Button
+                variant="secondary"
+                onClick={() => (onUploadAnother ? onUploadAnother() : goToConsoleFiles(router))}
+              >
+                Try again
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => (onUploadAnother ? onUploadAnother() : goToConsoleFiles(router))}
+              >
+                Upload another file
+              </Button>
+            </div>
           </div>
         )}
 

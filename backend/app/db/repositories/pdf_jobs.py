@@ -224,10 +224,14 @@ def list_dashboard_job_summaries(
     user_email: str,
     organisation_id: uuid.UUID | None = None,
 ) -> list[dict]:
-    """Lightweight PDF job rows for Dashboard — no ``result`` / ``pdf_bytes``.
+    """Lightweight PDF job rows for Dashboard — no ``pdf_bytes``.
 
-    Table counts come from ``pdf_tables`` (active rows only), not full job JSON.
+    ``table_count`` is active ``pdf_tables`` rows (post-Continue). When that is
+    0 for a finished job, also count tables in ``result`` so empty extracts can
+    be distinguished from Preview-ready jobs that have not persisted yet.
     """
+    from app.services.ingestion.review_tables import count_tables_in_result
+
     stmt = (
         select(PdfJob)
         .options(defer(PdfJob.pdf_bytes), defer(PdfJob.result), defer(PdfJob.reviews))
@@ -265,6 +269,22 @@ def list_dashboard_job_summaries(
         for row in count_rows
     }
 
+    # Only hydrate ``result`` for finished jobs with no persisted tables —
+    # needed to tell empty extracts apart from Preview with tables still in JSON.
+    _finished = frozenset({"done", "completed_with_errors", "failed", "error"})
+    need_result_ids = [
+        j.job_id
+        for j in jobs
+        if counts.get(j.job_id, (0, 0))[0] == 0
+        and str(j.status or "") in _finished
+    ]
+    extracted_from_result: dict[str, int] = {}
+    if need_result_ids:
+        for jid, result in session.execute(
+            select(PdfJob.job_id, PdfJob.result).where(PdfJob.job_id.in_(need_result_ids))
+        ).all():
+            extracted_from_result[str(jid)] = count_tables_in_result(result)
+
     out: list[dict] = []
     for job in jobs:
         table_count, needs_review = counts.get(job.job_id, (0, 0))
@@ -277,12 +297,20 @@ def list_dashboard_job_summaries(
         elif epoch is not None:
             epoch = float(epoch)
         updated = job.updated_at
+        if table_count > 0:
+            extracted_table_count = table_count
+        elif job.job_id in extracted_from_result:
+            extracted_table_count = extracted_from_result[job.job_id]
+        else:
+            extracted_table_count = None
         out.append(
             {
                 "job_id": job.job_id,
                 "filename": job.filename,
                 "status": job.status or "queued",
                 "percent": int(job.percent or 0),
+                "message": job.message or "",
+                "error": job.error,
                 "grouping_status": job.grouping_status,
                 "pipeline_step": int(job.pipeline_step)
                 if job.pipeline_step is not None
@@ -293,6 +321,7 @@ def list_dashboard_job_summaries(
                 if job.organisation_id
                 else None,
                 "table_count": table_count,
+                "extracted_table_count": extracted_table_count,
                 "needs_review_count": needs_review,
             }
         )

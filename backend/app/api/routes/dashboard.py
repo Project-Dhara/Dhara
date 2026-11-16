@@ -38,7 +38,8 @@ def _pdf_dashboard_row(
 ) -> Optional[Dict[str, Any]]:
     """Map a PDF upload job into a Dashboard readiness row (one row per file).
 
-    Console steps: 1 Files → 2 Preview → 3 Grouping → 4 Metadata → 5 Classify → 6 Publish.
+    Console steps: 1 Files → 2 Preview → 3 Grouping → 4 Metadata →
+    5 Classification → 6 Harmonisation → 7 Publish.
     Jobs stay visible through classify/publish so stewards can resume from the
     uploaded file rather than from each catalogue table/group.
     """
@@ -48,6 +49,13 @@ def _pdf_dashboard_row(
     percent = int(job.get("percent") or 0)
     needs_review = int(job.get("needs_review_count") or 0)
     table_count = int(job.get("table_count") or 0)
+    extracted_raw = job.get("extracted_table_count")
+    try:
+        extracted_table_count = (
+            int(extracted_raw) if extracted_raw is not None else None
+        )
+    except (TypeError, ValueError):
+        extracted_table_count = None
     gs = (grouping_status or "").strip().lower()
     step = pipeline_step if pipeline_step is not None else job.get("pipeline_step")
     try:
@@ -66,7 +74,8 @@ def _pdf_dashboard_row(
     }
     # Deep-link to the step shown on the Dashboard. Preview tables stay
     # reachable via the Console stage rail (step 2 → /console/review/…).
-    # Steps 3–5 live on the grouping shell (in-page pipeline).
+    # Steps 3–7 live on the grouping shell (in-page pipeline); only true
+    # Publish (step 7) deep-links to the catalogue.
     preview_href = f"/console/review/{job_id}"
 
     def _step_href(console_step: int) -> str:
@@ -74,9 +83,9 @@ def _pdf_dashboard_row(
             return f"/console/processing/{job_id}"
         if console_step == 2:
             return preview_href
-        if console_step >= 6:
+        if console_step >= 7:
             return "/catalogue"
-        # 3 Grouping · 4 Metadata · 5 Classify — same route, step query.
+        # 3 Grouping · 4 Metadata · 5 Classify · 6 Harmonisation
         return f"/console/grouping/{job_id}?step={console_step}"
 
     if status in ("queued", "running"):
@@ -94,10 +103,29 @@ def _pdf_dashboard_row(
         # Abandoned via Start over — keep out of the Dashboard list.
         return None
     if status in ("error", "failed"):
+        msg = str(job.get("message") or job.get("error") or "").lower()
+        label = "No tables extracted" if "no tables" in msg else "Failed"
         return {
             **base,
             "readiness_pct": max(5, min(percent, 20)),
-            "status": "Failed",
+            "status": label,
+            "status_key": "failed",
+            "action": "View",
+            "href": _step_href(1),
+            "pipeline_step": 1,
+        }
+
+    # Real empty extract: result JSON has 0 tables. Do not use pdf_tables
+    # count alone — that stays 0 until Continue even when Preview has tables.
+    if (
+        status in ("done", "completed_with_errors")
+        and extracted_table_count is not None
+        and extracted_table_count == 0
+    ):
+        return {
+            **base,
+            "readiness_pct": max(5, min(percent, 20)),
+            "status": "No tables extracted",
             "status_key": "failed",
             "action": "View",
             "href": _step_href(1),
@@ -105,24 +133,38 @@ def _pdf_dashboard_row(
         }
 
     # Infer step when not explicitly stored (older jobs).
+    # NOTE: pdf_jobs.grouping_status defaults to 'pending' in Postgres for every
+    # new row — that is NOT evidence the steward reached Grouping. Only treat
+    # grouping as started when tables were persisted (Continue) or status is
+    # explicitly 'saved'.
     if step is None:
         if gs == "saved":
             step = 4  # grouping finished → Metadata
-        elif grouping_status is not None:
-            step = 3  # persisted tables, grouping in progress
+        elif table_count > 0:
+            step = 3  # tables persisted for grouping; step column missing
         else:
-            step = 2  # extraction done, Preview
+            step = 2  # extraction done, still on Preview
     elif gs == "saved" and step < 4:
         # Grouping Continue always advances into Metadata.
         step = 4
 
-    if step >= 6:
+    if step >= 7:
         return {
             **base,
             "readiness_pct": 100,
             "status": "Published",
             "status_key": "published",
             "action": "View",
+            "href": _step_href(7),
+            "pipeline_step": 7,
+        }
+    if step >= 6:
+        return {
+            **base,
+            "readiness_pct": 92,
+            "status": "Harmonisation",
+            "status_key": "harmonisation_review",
+            "action": "Review",
             "href": _step_href(6),
             "pipeline_step": 6,
         }
@@ -181,7 +223,7 @@ async def pdf_set_pipeline_step(
     body: PipelineStepRequest,
     user: CurrentUser = Depends(require_user),
 ):
-    """Persist console pipeline step for dashboard readiness (steps 3–6)."""
+    """Persist console pipeline step for dashboard readiness (steps 3–7)."""
     step = body.step
 
     user_email = user.email
@@ -310,7 +352,25 @@ async def get_dashboard(user: CurrentUser = Depends(require_user)):
                     else job.get("needs_review_count")
                     or 0
                 ),
+                "message": existing.get("message")
+                if existing.get("message") is not None
+                else job.get("message"),
+                "error": existing.get("error")
+                if existing.get("error") is not None
+                else job.get("error"),
+                "extracted_table_count": (
+                    existing.get("extracted_table_count")
+                    if existing.get("extracted_table_count") is not None
+                    else job.get("extracted_table_count")
+                ),
             }
+            # Live mem job may have result tables before pdf_tables persist.
+            if pdf_db[jid].get("extracted_table_count") is None and job.get("result") is not None:
+                from app.services.ingestion.review_tables import count_tables_in_result
+
+                pdf_db[jid]["extracted_table_count"] = count_tables_in_result(
+                    job.get("result")
+                )
 
     pdf_rows = []
     for jid, db in pdf_db.items():
@@ -322,8 +382,11 @@ async def get_dashboard(user: CurrentUser = Depends(require_user)):
                 "filename": db.get("filename"),
                 "status": db.get("status") or "done",
                 "percent": int(db.get("percent") or 0),
+                "message": db.get("message") or "",
+                "error": db.get("error"),
                 "created_at": db.get("updated_at") or db.get("created_at"),
                 "table_count": int(db.get("table_count") or 0),
+                "extracted_table_count": db.get("extracted_table_count"),
                 "needs_review_count": int(db.get("needs_review_count") or 0),
                 "pipeline_step": db.get("pipeline_step"),
             },

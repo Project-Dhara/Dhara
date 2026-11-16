@@ -9,4 +9,9 @@ class PipelineStepRequest(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    step: int = Field(..., ge=1, le=6, description="Console pipeline step 1–6")
+    step: int = Field(
+        ...,
+        ge=1,
+        le=7,
+        description="Console pipeline step 1–7 (6=Harmonisation, 7=Publish)",
+    )

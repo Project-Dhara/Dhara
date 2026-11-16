@@ -110,6 +110,9 @@ const BatchUpload = forwardRef(function BatchUpload({
         throw new Error(detail || `Extraction failed (HTTP ${extractRes.status})`)
       }
       const extractData = await extractRes.json()
+      if (!(extractData.tables || []).length) {
+        throw new Error('No tables were extracted — upload another file or try again.')
+      }
 
       setStage('matching')
       const matchFd = new FormData()

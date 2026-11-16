@@ -103,6 +103,9 @@ export default function SqlUpload({
         throw new Error(typeof err.detail === 'string' ? err.detail : 'SQL extraction failed')
       }
       const extractData = await extractRes.json()
+      if (!(extractData.tables || []).length) {
+        throw new Error('No tables were extracted — upload another file or try again.')
+      }
 
       setStage('matching')
       const matchFd = new FormData()

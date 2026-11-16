@@ -343,7 +343,7 @@ export default function ReconcileIds({ tables, onContinue, extraAction, visibleI
       )}
       <div className="flex items-center justify-end gap-4">
         {extraAction}
-        {allCorrected && (
+        {allCorrected && tables.length > 0 && (
           <Button onClick={handleContinue} className="inline-flex items-center gap-1.5">
             {mismatched.length > 0 ? 'Apply corrections & continue' : 'Continue'}
             <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
