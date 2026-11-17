@@ -359,6 +359,38 @@ def upsert_job(
     session.flush()
 
 
+def _json_safe(value: Any) -> Any:
+    """Convert pandas/numpy blanks to JSON-serializable None (recursive)."""
+    if value is None:
+        return None
+    type_name = type(value).__name__
+    if type_name in {"NAType", "NaTType", "NATypeType"}:
+        return None
+    if isinstance(value, float):
+        # Postgres JSONB rejects NaN/Inf; treat as null.
+        if value != value or value in (float("inf"), float("-inf")):
+            return None
+        return value
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, (str, int, bool)):
+        return value
+    # numpy scalar → Python scalar
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            return _json_safe(item())
+        except Exception:
+            pass
+    try:
+        json.dumps(value)
+        return value
+    except TypeError:
+        return str(value)
+
+
 def save_working_job(
     session: Session,
     job: dict,
@@ -374,7 +406,7 @@ def save_working_job(
         if isinstance(job.get("deleted_table_ids"), list)
         else []
     )
-    result = job.get("result")
+    result = _json_safe(job.get("result"))
     org_raw = job.get("organisation_id")
     org_id = uuid.UUID(str(org_raw)) if org_raw else None
 
@@ -447,12 +479,18 @@ def claim_next_queued_job(session: Session) -> Optional[dict]:
 
     Child file jobs (``reviews.__parent_batch_id`` set) are left for the batch
     parent. Uses ``FOR UPDATE SKIP LOCKED`` so multiple workers can poll safely.
+
+    Children are excluded in SQL (not only after ``LIMIT``) so a backlog of
+    queued child rows cannot hide claimable top-level / batch jobs.
     """
+    # JSONB `?` / has_key: child uploads stash their batch id under this key.
+    is_batch_child = PdfJob.reviews.has_key("__parent_batch_id")
     stmt = (
         select(PdfJob)
         .options(defer(PdfJob.pdf_bytes))
         .where(PdfJob.status == "queued")
         .where(PdfJob.source_type.in_(("pdf", "excel", "csv", "batch")))
+        .where(or_(PdfJob.reviews.is_(None), ~is_batch_child))
         .order_by(
             func.coalesce(
                 PdfJob.created_at_epoch,
@@ -463,6 +501,7 @@ def claim_next_queued_job(session: Session) -> Optional[dict]:
         .with_for_update(skip_locked=True)
     )
     for job in session.scalars(stmt).all():
+        # Defense in depth: same rule as the SQL filter above.
         reviews = _json_obj(job.reviews, {}) or {}
         if isinstance(reviews, dict) and reviews.get("__parent_batch_id"):
             continue

@@ -11,17 +11,36 @@ import { goToConsoleFiles } from '../../../../../lib/consoleSession'
 
 const POLL_INTERVAL_MS = 2000
 
-// (key, label, [rangeLow, rangeHigh]) -- ranges mirror the exact percent
-// values extraction/pdf_extraction.py's run_pipeline() reports for each
-// stage, used to scale the backend's single global percent into a per-row
-// local 0-100% fill.
-const STAGES = [
-  { key: 'classify', label: 'Scanning your document to find pages with tables', range: [2, 10] as [number, number] },
-  { key: 'extract', label: 'Extracting tables from the document', range: [10, 45] as [number, number] },
-  { key: 'classify_confidence', label: 'Checking how confident we are in each table', range: [45, 55] as [number, number] },
-  { key: 'validate', label: 'Double-checking uncertain tables with AI', range: [55, 100] as [number, number] },
+type StageDef = {
+  key: string
+  label: string
+  range: [number, number]
+}
+
+// Ranges mirror extraction progress percents; labels vary by source type so
+// Excel/CSV waiting/running jobs do not show PDF "pages" copy.
+const PDF_STAGES: StageDef[] = [
+  { key: 'classify', label: 'Scanning your document to find pages with tables', range: [2, 10] },
+  { key: 'extract', label: 'Extracting tables from the document', range: [10, 45] },
+  { key: 'classify_confidence', label: 'Checking how confident we are in each table', range: [45, 55] },
+  { key: 'validate', label: 'Double-checking uncertain tables with AI', range: [55, 100] },
 ]
-const STAGE_ORDER = STAGES.map((s) => s.key)
+
+const SPREADSHEET_STAGES: StageDef[] = [
+  { key: 'classify', label: 'Reading your spreadsheet and locating tables', range: [2, 10] },
+  { key: 'extract', label: 'Extracting tables from sheets', range: [10, 45] },
+  { key: 'classify_confidence', label: 'Checking table structure and quality', range: [45, 55] },
+  { key: 'validate', label: 'Reviewing uncertain tables', range: [55, 100] },
+]
+
+const MIXED_STAGES: StageDef[] = [
+  { key: 'classify', label: 'Scanning uploaded files for tables', range: [2, 10] },
+  { key: 'extract', label: 'Extracting tables from your files', range: [10, 45] },
+  { key: 'classify_confidence', label: 'Checking how confident we are in each table', range: [45, 55] },
+  { key: 'validate', label: 'Reviewing uncertain tables', range: [55, 100] },
+]
+
+const STAGE_ORDER = PDF_STAGES.map((s) => s.key)
 
 type BatchFile = {
   file_job_id: string
@@ -34,23 +53,81 @@ type BatchFile = {
   message?: string
 }
 
-const STAGE_LABEL: Record<string, string> = Object.fromEntries(
-  STAGES.map((s) => [s.key, s.label]),
-)
-
 type Job = {
   status: string
   stage: string
   percent: number
   message?: string
   filename?: string
+  source_type?: string
   is_batch?: boolean
   batch_files?: BatchFile[]
   table_count?: number
+  error?: string
+}
+
+type SourceKind = 'pdf' | 'spreadsheet' | 'mixed'
+
+function stagesForKind(kind: SourceKind): StageDef[] {
+  if (kind === 'spreadsheet') return SPREADSHEET_STAGES
+  if (kind === 'mixed') return MIXED_STAGES
+  return PDF_STAGES
+}
+
+function stageLabelMap(kind: SourceKind): Record<string, string> {
+  return Object.fromEntries(stagesForKind(kind).map((s) => [s.key, s.label]))
+}
+
+function kindFromSourceType(sourceType?: string | null): SourceKind | null {
+  const st = String(sourceType || '').toLowerCase()
+  if (st === 'excel' || st === 'csv') return 'spreadsheet'
+  if (st === 'pdf') return 'pdf'
+  return null
+}
+
+function kindFromFilename(filename?: string | null): SourceKind | null {
+  const name = String(filename || '').toLowerCase()
+  if (/\.(xlsx?|xlsm|xls|csv|tsv)$/.test(name)) return 'spreadsheet'
+  if (name.endsWith('.pdf')) return 'pdf'
+  return null
+}
+
+/** Infer UI copy family without changing backend progress stages. */
+function inferSourceKind(job: Job | null): SourceKind {
+  if (!job) return 'pdf'
+  const direct = kindFromSourceType(job.source_type)
+  if (direct) return direct
+
+  if (job.is_batch || String(job.source_type || '').toLowerCase() === 'batch') {
+    const types = new Set(
+      (job.batch_files || [])
+        .map((f) => String(f.source_type || '').toLowerCase())
+        .filter(Boolean),
+    )
+    const hasPdf = types.has('pdf')
+    const hasSheet = types.has('excel') || types.has('csv')
+    if (hasPdf && hasSheet) return 'mixed'
+    if (hasSheet) return 'spreadsheet'
+    if (hasPdf) return 'pdf'
+    // Fall back to per-file names when source_type is missing on children.
+    const nameKinds = (job.batch_files || [])
+      .map((f) => kindFromFilename(f.filename))
+      .filter(Boolean) as SourceKind[]
+    if (nameKinds.length) {
+      const set = new Set(nameKinds)
+      if (set.has('pdf') && set.has('spreadsheet')) return 'mixed'
+      if (set.has('spreadsheet')) return 'spreadsheet'
+      if (set.has('pdf')) return 'pdf'
+    }
+  }
+
+  return kindFromFilename(job.filename) || 'pdf'
 }
 
 function buildSteps(job: Job | null, sawValidate: boolean) {
-  if (!job) return STAGES.map((s) => ({ ...s, status: 'pending' }))
+  const kind = inferSourceKind(job)
+  const stages = stagesForKind(kind)
+  if (!job) return stages.map((s) => ({ ...s, status: 'pending' as const }))
   // queued / claimed are not pipeline stages — without this the stepper stays
   // entirely pending and looks stuck even though the worker will pick the job up.
   if (
@@ -63,27 +140,33 @@ function buildSteps(job: Job | null, sawValidate: boolean) {
       || (job.stage === 'claimed'
         ? 'Worker claimed this job — starting extraction…'
         : 'Waiting for the extraction worker…')
-    return STAGES.map((s, i) => (
+    return stages.map((s, i) => (
       i === 0
         ? { ...s, status: 'active' as const, message: waitingMsg }
         : { ...s, status: 'pending' as const }
     ))
   }
   const currentIdx = STAGE_ORDER.indexOf(job.stage)
-  return STAGES.map((s, i) => {
+  return stages.map((s, i) => {
     if (job.status === 'done') {
       if (s.key === 'validate' && !sawValidate) {
-        return { ...s, status: 'skipped', message: 'Skipped — all tables auto-accepted, no AI review needed' }
+        return {
+          ...s,
+          status: 'skipped' as const,
+          message: kind === 'pdf'
+            ? 'Skipped — all tables auto-accepted, no AI review needed'
+            : 'Skipped — all tables auto-accepted',
+        }
       }
-      return { ...s, status: 'done' }
+      return { ...s, status: 'done' as const }
     }
-    if (i < currentIdx) return { ...s, status: 'done' }
+    if (i < currentIdx) return { ...s, status: 'done' as const }
     if (i === currentIdx) {
       const [lo, hi] = s.range
       const localPercent = Math.max(0, Math.min(100, Math.round(((job.percent - lo) / (hi - lo)) * 100)))
-      return { ...s, status: 'active', percent: localPercent, message: job.message }
+      return { ...s, status: 'active' as const, percent: localPercent, message: job.message }
     }
-    return { ...s, status: 'pending' }
+    return { ...s, status: 'pending' as const }
   })
 }
 
@@ -94,6 +177,15 @@ function fileStatusLabel(f: BatchFile): string {
   }
   if (f.status === 'queued') return 'Waiting'
   return f.status
+}
+
+function fileStageHint(f: BatchFile): string | null {
+  if (f.status === 'running' && f.stage) {
+    const kind = kindFromSourceType(f.source_type) || kindFromFilename(f.filename) || 'pdf'
+    return stageLabelMap(kind)[f.stage] || f.message || f.stage
+  }
+  if (f.status === 'queued') return f.message || 'Waiting for extraction worker'
+  return null
 }
 
 export default function PdfProcessingPage() {
@@ -133,7 +225,7 @@ export default function PdfProcessingPage() {
           if (/no tables/i.test(msg)) {
             setNoTables(true)
           } else {
-            setError(msg || 'PDF processing failed')
+            setError(msg || 'Processing failed')
           }
         }
       } catch (e: any) {
@@ -148,6 +240,13 @@ export default function PdfProcessingPage() {
     pollRef.current = setInterval(poll, POLL_INTERVAL_MS)
     return () => { cancelled = true; if (pollRef.current) clearInterval(pollRef.current) }
   }, [jobId, router])
+
+  const sourceKind = inferSourceKind(job)
+  const uploadCta = sourceKind === 'spreadsheet'
+    ? 'Upload a different file'
+    : sourceKind === 'mixed'
+      ? 'Upload different files'
+      : 'Upload a different PDF'
 
   const existingFilenames = job?.filename
     ? [job.filename]
@@ -176,7 +275,9 @@ export default function PdfProcessingPage() {
         <div className="mx-auto flex max-w-xl flex-col gap-4 py-8">
           <div className="font-display text-xl font-medium text-ink">Something went wrong</div>
           <ErrorBanner>{error}</ErrorBanner>
-          <Button variant="primary" className="self-start" onClick={() => goToConsoleFiles(router)}>Upload a different PDF</Button>
+          <Button variant="primary" className="self-start" onClick={() => goToConsoleFiles(router)}>
+            {uploadCta}
+          </Button>
         </div>
       </PdfConsoleLayout>
     )
@@ -217,9 +318,7 @@ export default function PdfProcessingPage() {
         {job?.is_batch && job.batch_files?.length ? (
           <ul className="flex flex-col gap-2 rounded-lg border border-line bg-white p-4 text-[13px]">
             {job.batch_files.map((f) => {
-              const stageHint = f.status === 'running' && f.stage
-                ? (STAGE_LABEL[f.stage] || f.message || f.stage)
-                : (f.status === 'queued' ? (f.message || 'Waiting for extraction worker') : null)
+              const stageHint = fileStageHint(f)
               return (
                 <li key={f.file_job_id} className="flex flex-col gap-1">
                   <div className="flex flex-wrap items-center justify-between gap-2">

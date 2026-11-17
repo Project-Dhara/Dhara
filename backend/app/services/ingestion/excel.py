@@ -1,8 +1,14 @@
-"""Excel data ingestion: workbook → table grid candidates (no PyMuPDF, no LLM)."""
+"""Excel data ingestion: workbook → table grid candidates (no PyMuPDF, no LLM).
+
+Primary path: layout-driven extractor (``layout_table_extractor``).
+Legacy ``TableExtractor`` grid/blocks path is retained as a fallback so a
+failure in the new engine does not break upload → validation → Preview.
+"""
 
 from __future__ import annotations
 
 import io
+import logging
 from pathlib import Path
 
 import openpyxl
@@ -16,6 +22,8 @@ from app.services.ingestion.utils.grid import (
 from app.services.ingestion.contracts import PagesGrouped, PreValidationInput, UnitContextText
 from app.services.ingestion.wizard.extractor import TableExtractor
 from app.services.extraction.pdf.utils.header_utils import extract_in_grid_caption
+
+logger = logging.getLogger(__name__)
 
 INGEST_METHOD = "excel_grid"
 
@@ -41,7 +49,8 @@ def _attach_in_grid_caption(df, caption: dict) -> None:
         attrs["dhara_banner_table_id"] = banner_id
 
 
-def ingest_bytes(content: bytes, filename: str = "") -> PreValidationInput:
+def _legacy_ingest_bytes(content: bytes, filename: str = "") -> PreValidationInput:
+    """Previous grid/block ingest (TableExtractor._find_blocks)."""
     extractor = TableExtractor(skip_llm=True)
     wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
     pages_grouped: PagesGrouped = {}
@@ -91,5 +100,48 @@ def ingest_bytes(content: bytes, filename: str = "") -> PreValidationInput:
     )
 
 
+def ingest_bytes(content: bytes, filename: str = "") -> PreValidationInput:
+    from app.services.ingestion.layout_ingest import ingest_with_layout_extractor
+
+    try:
+        pre = ingest_with_layout_extractor(
+            source_type="excel",
+            filename=filename or "upload.xlsx",
+            content=content,
+        )
+        if pre.get("pages_grouped"):
+            return pre
+        logger.info(
+            "layout extractor found no Excel tables for %s; trying legacy ingest",
+            filename or "upload.xlsx",
+        )
+    except Exception:
+        logger.exception(
+            "layout Excel ingest failed for %s; falling back to legacy",
+            filename or "upload.xlsx",
+        )
+    return _legacy_ingest_bytes(content, filename)
+
+
 def ingest_path(path: Path) -> PreValidationInput:
-    return ingest_bytes(path.read_bytes(), path.name)
+    from app.services.ingestion.layout_ingest import ingest_with_layout_extractor
+
+    path = Path(path)
+    try:
+        pre = ingest_with_layout_extractor(
+            source_type="excel",
+            filename=path.name,
+            path=path,
+        )
+        if pre.get("pages_grouped"):
+            return pre
+        logger.info(
+            "layout extractor found no Excel tables for %s; trying legacy ingest",
+            path.name,
+        )
+    except Exception:
+        logger.exception(
+            "layout Excel ingest failed for %s; falling back to legacy",
+            path.name,
+        )
+    return _legacy_ingest_bytes(path.read_bytes(), path.name)

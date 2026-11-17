@@ -78,6 +78,46 @@ def _sample_csv_bytes() -> bytes:
     ).encode("utf-8")
 
 
+def _multilevel_header_bytes() -> bytes:
+    """Merge-filled group + leaf headers (Births/Deaths × Male/Female/…)."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Vital"
+    ws.append(
+        [
+            "Sl. No.",
+            "Religion",
+            "Births",
+            "Births",
+            "Births",
+            "Births",
+            "Deaths",
+            "Deaths",
+            "Deaths",
+            "Deaths",
+        ]
+    )
+    ws.append(
+        [
+            "A",
+            "Number",
+            "Male",
+            "Female",
+            "Other",
+            "Total",
+            "Male",
+            "Female",
+            "Other",
+            "Total",
+        ]
+    )
+    ws.append([1, "Hindu", 10, 9, 0, 19, 5, 4, 0, 9])
+    ws.append([2, "Muslim", 8, 7, 0, 15, 3, 2, 0, 5])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def _assert_pre_validation_shape(pre: dict) -> None:
     assert "pages_grouped" in pre and "unit_context" in pre
     grouped = pre["pages_grouped"]
@@ -138,6 +178,113 @@ def test_excel_preserves_in_grid_title_not_sheet_name():
     ctx = pre["unit_context"][1]
     assert "Scheme Summary (Basic Statistics)" in ctx.splitlines()[0]
     assert ctx.strip().endswith("Sheet: MySheetName")
+
+
+def test_excel_multilevel_headers_not_tuple_strings():
+    """Preview must not show MultiIndex as ``('Births', 'Male')`` literals."""
+    pre = ingest_excel.ingest_bytes(_multilevel_header_bytes(), "vital.xlsx")
+    _assert_pre_validation_shape(pre)
+    df = pre["pages_grouped"][1][0]["df"]
+    for col in df.columns:
+        assert isinstance(col, str), f"expected flat str column, got {type(col)}: {col!r}"
+        assert not (col.startswith("('") and "', '" in col), col
+    meta = list((getattr(df, "attrs", {}) or {}).get("dhara_column_meta") or [])
+    assert meta
+    paths = [tuple(m.get("header_path") or []) for m in meta]
+    assert ("Births", "Male") in paths
+    assert ("Deaths", "Female") in paths
+    assert all(isinstance(p, str) for path in paths for p in path)
+
+
+def test_excel_keeps_number_and_percentage_section_rows():
+    """``A | Number`` / ``B | Percentage`` are body section banners, not header leaves."""
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "data"
+        / "excel_uploads"
+        / "Distribution_of_Vital_Events_by_Main_Religion.xlsx"
+    )
+    if not path.is_file():
+        pytest.skip(f"fixture missing: {path.name}")
+    pre = ingest_excel.ingest_path(path)
+    _assert_pre_validation_shape(pre)
+    df = pre["pages_grouped"][1][0]["df"]
+    stub0 = [str(v) if v is not None else "" for v in df.iloc[:, 0].tolist()]
+    stub1 = [str(v) if v is not None else "" for v in df.iloc[:, 1].tolist()]
+    assert "A" in stub0 and "B" in stub0
+    assert "Number" in stub1 and "Percentage" in stub1
+    meta = list((getattr(df, "attrs", {}) or {}).get("dhara_column_meta") or [])
+    paths = [tuple(m.get("header_path") or []) for m in meta]
+    assert ("Sl. No.",) in paths or any(p == ("Sl. No.",) or p[:1] == ("Sl. No.",) for p in paths)
+    assert ("Sl. No.", "A") not in paths
+    assert ("Religion", "Number") not in paths
+    assert ("Births", "Male") in paths
+
+
+def test_excel_preview_keeps_detected_total_rows():
+    """Total/subtotal body rows must survive layout → Preview (no label hardcoding)."""
+    from app.services.ingestion.layout_ingest import ingest_with_layout_extractor
+    from app.services.ingestion.layout_table_extractor import Config, extract_file
+
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "data"
+        / "excel_uploads"
+        / "Infant & Mother Death D12-D18-Final1.xlsx"
+    )
+    if not path.is_file():
+        pytest.skip(f"fixture missing: {path.name}")
+
+    tables = extract_file(path, Config(recalc_missing_cached=False))
+    assert tables
+    # Prefer a table that the layout engine itself marked as having totals.
+    target = next(
+        (
+            t
+            for t in tables
+            if "_row_kind" in t.df.columns
+            and set(t.df["_row_kind"]).intersection({"total", "subtotal"})
+        ),
+        None,
+    )
+    assert target is not None, "fixture should yield at least one totaled table"
+
+    expected = int(
+        target.df["_row_kind"].isin(["data", "section", "total", "subtotal"]).sum()
+    )
+    data_only_n = len(target.data_only(include_totals=False, include_sections=True))
+    assert expected > data_only_n
+
+    pre = ingest_with_layout_extractor(
+        source_type="excel", path=path, filename=path.name
+    )
+    # Match extractor table order → ingest unit index (1-based).
+    unit = tables.index(target) + 1
+    df = pre["pages_grouped"][unit][0]["df"]
+    assert len(df) == expected
+
+
+
+def test_excel_multilevel_headers_validated_leaf_names(tmp_path):
+    path = tmp_path / "vital.xlsx"
+    path.write_bytes(_multilevel_header_bytes())
+    result = run_upload_pipeline(path, "excel", api_key=None)
+    _assert_validated_table_shape(result)
+    cols = result[1]["tables"][0]["columns"]
+    names = [str(c.get("name") or "") for c in cols]
+    # Never serialize MultiIndex as Python tuple literals in Preview.
+    assert all(not (n.startswith("('") and "', '" in n) for n in names)
+    assert "Male" in names
+    assert "Female" in names
+    birth_male = next(
+        c
+        for c in cols
+        if list(c.get("header_path") or [])[:2] == ["Births", "Male"]
+        or (c.get("header_group") == "Births" and c.get("name") == "Male")
+    )
+    assert birth_male["name"] == "Male"
+    path = list(birth_male.get("header_path") or [])
+    assert path[:2] == ["Births", "Male"] or birth_male.get("header_group") == "Births"
 
 
 def test_excel_upload_title_is_not_sheet_name(tmp_path):

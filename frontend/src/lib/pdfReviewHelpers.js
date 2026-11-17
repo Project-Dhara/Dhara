@@ -348,9 +348,13 @@ export function tableSupportsPdfReference(table) {
   return st !== 'excel' && st !== 'csv'
 }
 
-/** Full View/Edit structure editor is PDF-oriented; hide for Excel/CSV previews. */
+/**
+ * Full View/Edit structure editor for Preview cards.
+ * Available for PDF, Excel, and CSV — cell/header editing is source-agnostic.
+ * PDF page snapshot compare stays gated by ``tableSupportsPdfReference``.
+ */
 export function tableSupportsStructureEditor(table) {
-  return tableSupportsPdfReference(table)
+  return Boolean(table)
 }
 
 export function matchesSourceTypeFilter(table, filterId) {

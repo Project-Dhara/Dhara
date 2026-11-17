@@ -1,19 +1,26 @@
-"""CSV data ingestion: file → table grid candidates (no PyMuPDF, no LLM)."""
+"""CSV data ingestion: file → table grid candidates (no PyMuPDF, no LLM).
+
+Primary path: layout-driven extractor (``layout_table_extractor``).
+Legacy single-table CSV reader is retained as a fallback.
+"""
 
 from __future__ import annotations
 
 import csv
 import io
+import logging
 from pathlib import Path
 
 from app.services.ingestion.utils.dataframe_build import dataframe_from_spreadsheet_rows
 from app.services.ingestion.utils.grid import cell_str, context_text_from_grid
 from app.services.ingestion.contracts import PagesGrouped, PreValidationInput, UnitContextText
 
+logger = logging.getLogger(__name__)
+
 INGEST_METHOD = "csv_grid"
 
 
-def ingest_bytes(content: bytes, filename: str = "") -> PreValidationInput:
+def _legacy_ingest_bytes(content: bytes, filename: str = "") -> PreValidationInput:
     text = None
     for enc in ("utf-8-sig", "utf-8", "latin-1"):
         try:
@@ -66,5 +73,48 @@ def ingest_bytes(content: bytes, filename: str = "") -> PreValidationInput:
     )
 
 
+def ingest_bytes(content: bytes, filename: str = "") -> PreValidationInput:
+    from app.services.ingestion.layout_ingest import ingest_with_layout_extractor
+
+    try:
+        pre = ingest_with_layout_extractor(
+            source_type="csv",
+            filename=filename or "upload.csv",
+            content=content,
+        )
+        if pre.get("pages_grouped"):
+            return pre
+        logger.info(
+            "layout extractor found no CSV tables for %s; trying legacy ingest",
+            filename or "upload.csv",
+        )
+    except Exception:
+        logger.exception(
+            "layout CSV ingest failed for %s; falling back to legacy",
+            filename or "upload.csv",
+        )
+    return _legacy_ingest_bytes(content, filename)
+
+
 def ingest_path(path: Path) -> PreValidationInput:
-    return ingest_bytes(path.read_bytes(), path.name)
+    from app.services.ingestion.layout_ingest import ingest_with_layout_extractor
+
+    path = Path(path)
+    try:
+        pre = ingest_with_layout_extractor(
+            source_type="csv",
+            filename=path.name,
+            path=path,
+        )
+        if pre.get("pages_grouped"):
+            return pre
+        logger.info(
+            "layout extractor found no CSV tables for %s; trying legacy ingest",
+            path.name,
+        )
+    except Exception:
+        logger.exception(
+            "layout CSV ingest failed for %s; falling back to legacy",
+            path.name,
+        )
+    return _legacy_ingest_bytes(path.read_bytes(), path.name)

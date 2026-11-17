@@ -600,8 +600,16 @@ def looks_like_toc_or_index_candidate(
 def _cell_str(v: Any) -> str:
     if v is None:
         return ""
-    # Pandas empty cells often arrive as float NaN; str(nan)=="nan" must not
-    # count as a real value (or as numeric) for fill / mixed-type checks.
+    # Pandas empty cells often arrive as float NaN / pd.NA; str(nan)=="nan"
+    # must not count as a real value (or as numeric) for fill / mixed-type checks.
+    # Never use truthiness on v — bool(pd.NA) raises.
+    try:
+        import pandas as pd
+
+        if v is pd.NA or pd.isna(v):
+            return ""
+    except (TypeError, ValueError):
+        pass
     if isinstance(v, float) and math.isnan(v):
         return ""
     s = re.sub(r"\s+", " ", str(v)).strip()

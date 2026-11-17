@@ -20,7 +20,6 @@ def _jwt_env(monkeypatch):
     yield
     clear_settings_cache()
 
-
 def test_create_token_sub_is_uuid():
     user_id = uuid.uuid4()
     token = security.create_token(user_id, email="alice@example.org")
