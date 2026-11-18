@@ -56,6 +56,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any, Optional
 
@@ -168,6 +169,253 @@ def is_num(v: Any) -> bool:
     return parse_number(v) is not None
 
 
+class _FmtUnsupported(Exception):
+    """Number format feature we do not render (conditions, scientific, elapsed time, ...)."""
+
+
+_MONTHS = ["January", "February", "March", "April", "May", "June", "July",
+           "August", "September", "October", "November", "December"]
+_WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+def _legacy_text(v: Any) -> str:
+    """Plain text of a value as the extractor always produced it (integral floats without '.0')."""
+    return str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)
+
+
+def _split_excel_sections(fmt: str) -> list[str]:
+    secs, cur, in_q, in_b = [], [], False, False
+    for ch in fmt:
+        if ch == '"' and not in_b:
+            in_q = not in_q
+        elif ch == "[" and not in_q:
+            in_b = True
+        elif ch == "]" and not in_q:
+            in_b = False
+        if ch == ";" and not in_q and not in_b:
+            secs.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    secs.append("".join(cur))
+    return secs
+
+
+def _tokenize_excel_section(sec: str) -> list[tuple[str, str]]:
+    toks: list[tuple[str, str]] = []
+    i, n = 0, len(sec)
+    while i < n:
+        ch = sec[i]
+        if ch == '"':
+            j = sec.find('"', i + 1)
+            j = n if j < 0 else j
+            toks.append(("lit", sec[i + 1:j]))
+            i = j + 1
+        elif ch == "\\" and i + 1 < n:
+            toks.append(("lit", sec[i + 1]))
+            i += 2
+        elif ch == "[":
+            j = sec.find("]", i + 1)
+            if j < 0:
+                raise _FmtUnsupported
+            body = sec[i + 1:j]
+            i = j + 1
+            if body.startswith("$"):                       # [$€-407] -> '€' ; [$-409] -> ''
+                toks.append(("lit", body[1:].split("-", 1)[0]))
+            elif re.match(r"^\s*[<>=]", body) or re.fullmatch(r"[hHmMsS]+", body):
+                raise _FmtUnsupported                      # conditions / elapsed time
+            # colours such as [Red] are not displayed
+        elif ch == "_" and i + 1 < n:                      # _x: space the width of x
+            toks.append(("lit", " "))
+            i += 2
+        elif ch == "*" and i + 1 < n:                      # *x: repeat-fill (no fixed width here)
+            i += 2
+        elif ch in "0#?":
+            toks.append(("digit", ch))
+            i += 1
+        elif ch in ".,":
+            toks.append(("sep", ch))
+            i += 1
+        elif ch == "%":
+            toks.append(("pct", "%"))
+            i += 1
+        elif ch == "@":
+            toks.append(("text", "@"))
+            i += 1
+        elif ch in "yYmMdDhHsS":
+            toks.append(("date", ch.lower()))
+            i += 1
+        elif sec[i:i + 5].upper() == "AM/PM":
+            toks.append(("ampm", sec[i:i + 5]))
+            i += 5
+        elif sec[i:i + 3].upper() == "A/P":
+            toks.append(("ampm", sec[i:i + 3]))
+            i += 3
+        elif ch in "EeAaPp":
+            raise _FmtUnsupported                          # scientific notation
+        else:
+            toks.append(("lit", ch))
+            i += 1
+    return toks
+
+
+def _render_excel_date(d: Any, toks: list[tuple[str, str]]) -> str:
+    h = getattr(d, "hour", 0)
+    mi = getattr(d, "minute", 0)
+    s = getattr(d, "second", 0)
+    ampm = next((t[1] for t in toks if t[0] == "ampm"), None)
+    if ampm is not None:                                   # 12-hour clock with AM/PM or A/P
+        h12 = h % 12 or 12
+        marker = ("PM" if h >= 12 else "AM") if ampm.upper() == "AM/PM" else ("P" if h >= 12 else "A")
+        if ampm.islower():
+            marker = marker.lower()
+        h = h12
+    date_letters = [t[1] for t in toks if t[0] == "date"]
+    out: list[str] = []
+    seen: list[str] = []                                   # date letters rendered so far
+    i = 0
+    while i < len(toks):
+        kind, val = toks[i]
+        if kind in ("lit", "sep"):                         # ',' '/' '-' ':' are literals in a date section
+            out.append(val)
+            i += 1
+            continue
+        if kind == "ampm":
+            out.append(marker)
+            i += 1
+            continue
+        if kind != "date":
+            raise _FmtUnsupported                          # digit placeholders in a date section
+        j = i
+        while j < len(toks) and toks[j] == ("date", val):
+            j += 1
+        run = j - i
+        # 'm' is minutes when it follows an hour token or precedes a seconds token
+        prev_letter = seen[-1] if seen else None
+        next_letter = next((t[1] for t in toks[j:] if t[0] == "date"), None)
+        if val == "y":
+            out.append(f"{d.year:04d}" if run >= 3 else f"{d.year % 100:02d}")
+        elif val == "m" and (prev_letter == "h" or next_letter == "s"):
+            out.append(f"{mi:02d}" if run >= 2 else str(mi))
+        elif val == "m":
+            if run == 1:
+                out.append(str(d.month))
+            elif run == 2:
+                out.append(f"{d.month:02d}")
+            elif run == 3:
+                out.append(_MONTHS[d.month - 1][:3])
+            else:
+                out.append(_MONTHS[d.month - 1])
+        elif val == "d":
+            if run == 1:
+                out.append(str(d.day))
+            elif run == 2:
+                out.append(f"{d.day:02d}")
+            elif run == 3:
+                out.append(_WEEKDAYS[d.weekday()][:3])
+            else:
+                out.append(_WEEKDAYS[d.weekday()])
+        elif val == "h":
+            out.append(f"{h:02d}" if run >= 2 else str(h))
+        elif val == "s":
+            out.append(f"{s:02d}" if run >= 2 else str(s))
+        seen.append(val)
+        i = j
+    if not date_letters:
+        raise _FmtUnsupported
+    return "".join(out)
+
+
+def _group_thousands(ip: str) -> str:
+    return f"{int(ip):,}" if ip else ""
+
+
+def _render_excel_number(v: Any, toks: list[tuple[str, str]], negative_section: bool) -> str:
+    digit_pos = [i for i, t in enumerate(toks) if t[0] == "digit"]
+    if not digit_pos:                                      # literal-only section, e.g. '"zero"' for zero values
+        if any(t[0] in ("text", "date") for t in toks):
+            raise _FmtUnsupported
+        return "".join(t[1] for t in toks if t[0] in ("lit", "sep"))
+    last_digit = digit_pos[-1]
+    if any(t == ("sep", ",") for t in toks[last_digit + 1:]):
+        raise _FmtUnsupported                              # trailing comma scales by 1000
+    dot = next((i for i, t in enumerate(toks) if t == ("sep", ".")), None)
+    int_digits = [toks[i][1] for i in digit_pos if dot is None or i < dot]
+    dec_digits = [toks[i][1] for i in digit_pos if dot is not None and i > dot]
+    thousands = any(t == ("sep", ",") for t in toks[:last_digit])
+    pct = sum(1 for t in toks if t[0] == "pct")
+
+    x = Decimal(str(abs(v))) * (Decimal(100) ** pct)
+    ndec = len(dec_digits)
+    q = x.quantize(Decimal(1).scaleb(-ndec), rounding=ROUND_HALF_UP) if ndec else x.quantize(Decimal(1), rounding=ROUND_HALF_UP)
+    s = format(q, "f")
+    ip, _, fp = s.partition(".")
+    nreq = dec_digits.count("0")
+    while len(fp) > nreq and fp.endswith("0"):
+        fp = fp[:-1]
+    min_int = int_digits.count("0")
+    ip = str(int(ip))
+    if ip == "0" and min_int == 0:
+        ip = ""
+    ip = ip.rjust(min_int, "0")
+    if thousands:
+        ip = _group_thousands(ip)
+    number = ip + (("." + fp) if (dot is not None and fp) else "")
+
+    out: list[str] = []
+    for i, (kind, val) in enumerate(toks):
+        if kind == "digit":
+            if i == digit_pos[0]:
+                out.append(number)
+        elif kind == "sep":
+            if not (digit_pos[0] < i < last_digit):          # separators outside the number stay as literals
+                out.append(val)
+        elif kind == "pct":
+            out.append("%")
+        elif kind == "lit":
+            out.append(val)
+        else:                                                # @ or date letters in a numeric section
+            raise _FmtUnsupported
+    text = "".join(out)
+    return ("-" + text) if (v < 0 and not negative_section) else text
+
+
+def excel_display(v: Any, fmt: Optional[str]) -> Optional[str]:
+    """The text Excel shows for a cell value under its number format, e.g. 1234.5 with '#,##0.00' -> '1,234.50',
+    0.25 with '0%' -> '25%', a date with 'dd-mmm-yyyy' -> '01-Jul-2023'. Returns None when the format is not
+    rendered here (the caller then keeps the value unchanged)."""
+    if v is None or isinstance(v, (bool, str)):
+        return None
+    is_date = isinstance(v, (datetime, date))
+    if not is_date and not isinstance(v, (int, float)):
+        return None
+    if not is_date and not math.isfinite(float(v)):
+        return None
+    if fmt is None or fmt.strip().lower() in ("", "general"):
+        if is_date:
+            return None
+        if isinstance(v, float) and v.is_integer() and abs(v) < 1e15:
+            return str(int(v))
+        return format(v, ".10g").replace("e", "E") if isinstance(v, float) else str(v)
+    try:
+        secs = _split_excel_sections(fmt)
+        if is_date:
+            sec = secs[0]
+            return _render_excel_date(v, _tokenize_excel_section(sec)).strip()
+        if len(secs) >= 3 and v == 0:
+            sec, neg_sec = secs[2], False
+        elif len(secs) >= 2 and v < 0:
+            sec, neg_sec = secs[1], True
+        else:
+            sec, neg_sec = secs[0], False
+        toks = _tokenize_excel_section(sec)
+        if any(t[0] == "date" for t in toks):
+            return None                                    # numeric value under a date format
+        return _render_excel_number(v, toks, neg_sec).strip()
+    except (_FmtUnsupported, ValueError, ArithmeticError, IndexError):
+        return None
+
+
 def _is_integral(x: Any) -> bool:
     return isinstance(x, int) or (isinstance(x, float) and x.is_integer())
 
@@ -184,6 +432,9 @@ class Grid:
         self.merges: list[tuple[int, int, int, int]] = merges   # (r0, c0, r1, c1) zero-based inclusive
         self.ws = ws
         self.name = name
+        # Display text per cell, only where it differs from the plain value (e.g. '1,234.50' for 1234.5).
+        # Logic (totals, stubs, numeric checks) keeps using self.val; Preview output uses this text.
+        self.shown: dict[tuple[int, int], str] = {}
         self.merge_at: dict[tuple[int, int], tuple[int, int, int, int]] = {}
         for m in merges:
             r0, c0, r1, c1 = m
@@ -298,7 +549,23 @@ def load_excel_grids(path: Path, cfg: Config) -> list[tuple[str, Grid, list[str]
         if ws_f.sheet_state != "visible" and not cfg.include_hidden_sheets:
             continue
         ws_v = wb_v[ws_f.title]
-        val = [[clean_cell(v) for v in row] for row in ws_v.iter_rows(values_only=True)]
+        val: list[list[Any]] = []
+        shown: dict[tuple[int, int], str] = {}
+        for r_i, row in enumerate(ws_v.iter_rows()):
+            line: list[Any] = []
+            for c_i, cell in enumerate(row):
+                v = cell.value
+                if isinstance(v, (int, float, datetime, date)) and not isinstance(v, bool):
+                    txt = excel_display(v, cell.number_format)     # what Excel shows for this cell
+                    if txt is not None and txt != _legacy_text(v):
+                        shown[(r_i, c_i)] = txt
+                elif isinstance(v, str):
+                    cv = clean_cell(v)
+                    n = parse_number(cv) if isinstance(cv, str) else None
+                    if n is not None and _legacy_text(n) != cv:    # text such as '$1,200' / '25%' as written
+                        shown[(r_i, c_i)] = cv
+                line.append(clean_cell(v))
+            val.append(line)
         frm = [[_formula_text(v) for v in row] for row in ws_f.iter_rows(values_only=True)]
         val, frm = _pad_grid(val), _pad_grid(frm)
         R = min(len(val), len(frm))
@@ -313,7 +580,9 @@ def load_excel_grids(path: Path, cfg: Config) -> list[tuple[str, Grid, list[str]
             r0, c0, r1, c1 = m.min_row - 1, m.min_col - 1, min(m.max_row, R) - 1, min(m.max_col, C) - 1
             if r0 < R and c0 < C:
                 merges.append((r0, c0, r1, c1))
-        out.append((ws_f.title, Grid(val, frm, merges, ws_f, ws_f.title), notes))
+        g = Grid(val, frm, merges, ws_f, ws_f.title)
+        g.shown = shown
+        out.append((ws_f.title, g, notes))
     return out
 
 
@@ -367,19 +636,25 @@ def load_csv_grid(path: Path, cfg: Config) -> Grid:
 def grid_from_rows(rows: list[list[Any]], name: str = "") -> Grid:
     """Build a Grid from raw rows (strings get numeric parsing; no merges/formulas)."""
     val = []
-    for row in rows:
+    shown: dict[tuple[int, int], str] = {}
+    for r_i, row in enumerate(rows):
         out = []
-        for v in row:
+        for c_i, v in enumerate(row):
             v = clean_cell(v)
             if isinstance(v, str):
                 n = parse_number(v)
-                v = n if n is not None else v
+                if n is not None:
+                    if _legacy_text(n) != v:                    # keep the text as written ('$1,200', '25%')
+                        shown[(r_i, c_i)] = v
+                    v = n
             out.append(v)
         val.append(out)
     val = _pad_grid(val)
     frm = [[None] * len(val[0]) for _ in val] if val else []
     val, frm = _trim(val, frm)
-    return Grid(val, frm, [], None, name)
+    g = Grid(val, frm, [], None, name)
+    g.shown = shown
+    return g
 
 
 # =============================================================================
@@ -1130,12 +1405,30 @@ def _cell_value(grid: Grid, r: int, c: int, numeric_merges: bool = False) -> Any
     return v
 
 
-def _finalize_column(values: list, is_stub: bool, is_identifier: bool, cfg: Config, name: str, warns: list):
+def _shown_cell(grid: Grid, r: int, c: int, numeric_merges: bool = False) -> Any:
+    """Display text of the cell that _cell_value() returns (same merge rules). None when the cell is blank
+    or when its text is the plain value (then the value itself is shown)."""
+    v = _cell_value(grid, r, c, numeric_merges)
+    if v is None:
+        return None
+    src = (r, c)
+    if grid.val[r][c] is None and (r, c) in grid.merge_at:
+        src = grid.merge_at[(r, c)][:2]
+    return grid.shown.get(src, v)
+
+
+def _finalize_column(values: list, is_stub: bool, is_identifier: bool, cfg: Config, name: str, warns: list,
+                     shown: Optional[list] = None):
     """Return (Series, column_type).  column_type: numeric | text | mixed | identifier | empty.
 
     Nothing is discarded: a value column becomes numeric only if EVERY non-blank value is numeric
     (placeholders such as '-' / 'NA' are treated as missing markers). Otherwise the original values are
-    kept untouched. The untouched cell values are also always available in ExtractedTable.raw_df."""
+    kept untouched. The untouched cell values are also always available in ExtractedTable.raw_df.
+
+    ``shown`` (optional, aligned with ``values``) is the display text of cells written with a number format
+    or as text in the file ('1,234.50', '25%', '$1,200', '01-Jul-2023'). Type decisions use ``values``; when the
+    column has any such cell, the output shows the display text for every cell, exactly as in the sheet/file."""
+    shown = list(shown) if shown is not None else [None] * len(values)
     kinds = []
     for v in values:
         if v is None:
@@ -1151,11 +1444,21 @@ def _finalize_column(values: list, is_stub: bool, is_identifier: bool, cfg: Conf
     if n_d + n_t == 0:
         return original, "empty"                         # all blank / placeholders: keep as they are
 
-    def as_text(v):
-        return str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)
+    def _needs_display(v: Any, s: Any) -> bool:
+        """True when the display text differs from the plain output this cell would otherwise get."""
+        if not isinstance(s, str) or v is None:
+            return False
+        base = parse_number(v) if isinstance(v, str) else v
+        return base is not None and s != _legacy_text(base)
+
+    display_mode = any(_needs_display(v, s) for v, s in zip(values, shown))
+    disp = [None if v is None else (s if isinstance(s, str) else _legacy_text(v)) for v, s in zip(values, shown)]
+    display_series = pd.Series(disp, dtype="object")
 
     if is_identifier:                                    # codes / ids: always text, never numeric
-        return pd.Series([None if k == "n" else as_text(v) for v, k in zip(values, kinds)], dtype="object"), "identifier"
+        return pd.Series([None if k == "n" else d for d, k in zip(disp, kinds)], dtype="object"), "identifier"
+    if n_t == 0 and display_mode:                        # numeric column written with formats: show as written
+        return pd.Series([None if k == "n" else d for d, k in zip(disp, kinds)], dtype="object"), "numeric"
     if n_t == 0:                                         # confidently numeric
         nums = [None if k in "np" else parse_number(v) for v, k in zip(values, kinds)]
         # Use object + None (not pandas Int64/NA): Dhara persists table rows as
@@ -1166,12 +1469,12 @@ def _finalize_column(values: list, is_stub: bool, is_identifier: bool, cfg: Conf
             [None if x is None else float(x) for x in nums], dtype="object"
         ), "numeric"
     if is_stub:                                          # label column with some numbers: normalise to text
-        return pd.Series([None if k == "n" else as_text(v) for v, k in zip(values, kinds)], dtype="object"), "text"
+        return pd.Series([None if k == "n" else d for d, k in zip(disp, kinds)], dtype="object"), "text"
     if n_d / (n_d + n_t) >= 0.5:
         warns.append(f"column '{name}': mixed values ({n_d} numeric, {n_t} text); original values kept "
                      f"(use .numeric('{name}') for a coerced view)")
-        return original, "mixed"
-    return original, "text"
+        return (display_series if display_mode else original), "mixed"
+    return (display_series if display_mode else original), "text"
 
 
 _ROMAN = re.compile(r"^[IVXLCDM]+$")
@@ -1301,11 +1604,19 @@ def build_table(grid: Grid, source: str, sheet: str, idx: int, blk: Block, cfg: 
             carry.clear()                           # labels never carry across a confident total row
         rows_out.append((r, kind, " > ".join(sections), rec, filled))
 
+    # Display text per output cell (as written in the sheet/file). Inferred (filled-down) labels have no
+    # display text of their own, so they keep their value.
+    shown_rows = []
+    for r, _k, _g, _rec, filled in rows_out:
+        fs = set(filled)
+        shown_rows.append([None if names[i] in fs else _shown_cell(grid, r, c, numeric_merges=(c in stub))
+                           for i, c in enumerate(cols)])
     ident = [any(re.search(p, n, re.I) for p in cfg.identifier_column_patterns) for n in names]
     series, ctypes = {}, {}
-    for (c, name), is_id in zip(zip(cols, names), ident):
+    for i, ((c, name), is_id) in enumerate(zip(zip(cols, names), ident)):
         series[name], ctypes[name] = _finalize_column([rec[c] for _, _, _, rec, _ in rows_out], c in stub, is_id,
-                                                      cfg, name, warns)
+                                                      cfg, name, warns,
+                                                      shown=[sr[i] for sr in shown_rows])
     df = pd.DataFrame(series)
     raw = pd.DataFrame({name: pd.Series([grid.val[r][c] for r, *_ in rows_out], dtype="object")
                         for c, name in zip(cols, names)})
@@ -1552,6 +1863,15 @@ def _selftest() -> None:
     rows = [["Name", "Flag", "N"], ["a", 0, 3], ["b", 1, 4], ["c", 0, 5], ["d", 1, 6], ["e", 1, 7]]
     t = extract_grid(grid_from_rows(rows), "t.csv", "t9", cfg)[0]
     assert t.stub_columns == ["Name"] and len(t.data_only()) == 5, (t.stub_columns, len(t.data_only()))
+
+    # 10) display text: values are shown as written (symbols, separators, percent, dates); logic stays numeric
+    assert excel_display(1234.5, "#,##0.00") == "1,234.50" and excel_display(0.25, "0%") == "25%"
+    assert excel_display(-1234.5, '"$"#,##0.00') == "-$1,234.50" and excel_display(1.5, "0.00E+00") is None
+    assert excel_display(datetime(2023, 7, 1), "dd-mmm-yyyy") == "01-Jul-2023"
+    rows = [["Item", "Price", "Pct"], ["a", "$1,200", "25%"], ["b", "$300.50", "12.5%"], ["Total", "$1,500.50", "37.5%"]]
+    t = extract_grid(grid_from_rows(rows), "t.csv", "t10", cfg)[0]
+    assert list(t.df["Price"]) == ["$1,200", "$300.50", "$1,500.50"], list(t.df["Price"])
+    assert list(t.df["_row_kind"]) == ["data", "data", "total"] and t.numeric("Price").iloc[2] == 1500.5
     print("selftest OK")
 
 

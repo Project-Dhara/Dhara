@@ -296,7 +296,7 @@ function downloadTableExcel(table) {
   })
 
   ;(table.rows || []).forEach((row) => {
-    aoa.push(cols.map((c) => (row && row[c] != null ? row[c] : '')))
+    aoa.push(cols.map((c) => (row && row[c] != null ? downloadValue(row[c]) : '')))
   })
 
   const ws = XLSX.utils.aoa_to_sheet(aoa)
@@ -320,10 +320,40 @@ function safeSheetName(name, usedNames) {
   return safe
 }
 
+// Number from a displayed value: '1,234.50', '$1,200', '₹45.50', '(40)', '25%', '-$99.90'. NaN if not a number.
+function toNumeric(v) {
+  if (v == null) return NaN
+  if (typeof v === 'number') return v
+  let s = String(v).trim()
+  if (!s) return NaN
+  let neg = false
+  if (s.startsWith('(') && s.endsWith(')')) {
+    neg = true
+    s = s.slice(1, -1).trim()
+  }
+  const pct = s.endsWith('%')
+  if (pct) s = s.slice(0, -1).trim()
+  s = s.replace(/[$€£₹¥,\s]/g, '')
+  if (!/^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/.test(s)) return NaN
+  let n = Number(s)
+  if (neg) n = -n
+  if (pct) n = n / 100
+  return n
+}
+
+// Value for the Excel download: numbers as numbers, except leading-zero codes (e.g. '007') stay text.
+function downloadValue(v) {
+  if (typeof v !== 'string') return v
+  const n = toNumeric(v)
+  if (isNaN(n)) return v
+  if (/^[+-]?0\d/.test(v.replace(/[$€£₹¥,\s()%]/g, ''))) return v
+  return n
+}
+
 function inferType(colName, rows) {
   const vals = rows.map((r) => r[colName]).filter((v) => v != null && v !== '')
   if (!vals.length) return 'Empty'
-  const numCount = vals.filter((v) => !isNaN(Number(v)) && String(v).trim() !== '').length
+  const numCount = vals.filter((v) => !isNaN(toNumeric(v))).length
   if (numCount === vals.length) return 'Numeric'
   if (numCount > vals.length / 2) return 'Mixed'
   return 'Text'
@@ -331,9 +361,8 @@ function inferType(colName, rows) {
 
 function numericStats(colName, rows) {
   const nums = rows
-    .map((r) => r[colName])
-    .filter((v) => v != null && !isNaN(Number(v)) && String(v).trim() !== '')
-    .map(Number)
+    .map((r) => toNumeric(r[colName]))
+    .filter((n) => !isNaN(n))
   if (!nums.length) return { min: '', max: '', avg: '', count: 0 }
   const sum = nums.reduce((a, b) => a + b, 0)
   return { min: Math.min(...nums), max: Math.max(...nums), avg: (sum / nums.length).toFixed(2), count: nums.length }
