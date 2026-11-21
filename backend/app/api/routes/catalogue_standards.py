@@ -46,6 +46,7 @@ from app.services.standards.classification_standards import (
     list_standards as list_classification_standards,
     select_standard as select_classification_standard,
 )
+from app.services.standards.reference_standards import list_reference_standards
 from app.storage.object_store import (
     upload_excel_to_gcs as _upload_excel_to_gcs,
     upload_original_sheet_to_gcs as _upload_original_sheet_to_gcs,
@@ -131,7 +132,9 @@ async def get_classification_standards(user_email: str = Depends(require_user_em
             return list_classification_standards(dbapi_connection(session))
 
     standards = await asyncio.to_thread(_run)
-    return {"standards": standards}
+    # Read-only bundled code lists (LGD). Kept out of ``standards`` so NCO selection is unaffected.
+    reference_standards = await asyncio.to_thread(list_reference_standards)
+    return {"standards": standards, "reference_standards": reference_standards}
 
 
 @router.post("/api/catalogue/classification-standards")

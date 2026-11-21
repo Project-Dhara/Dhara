@@ -5,7 +5,7 @@ const METADATA_STANDARD_KEY = 'dhara.metadataStandard'
 export const STATISTICS_OPTIONS = ['Vital Statistics', 'Labour Statistics', 'Industrial Statistics']
 
 export const METADATA_STANDARD_OPTIONS = [
-  { value: 'nmds', label: 'NMDS' },
+  { value: 'nmds', label: 'Metadata' },
   { value: 'sdg', label: 'Sustainable Development Goals' },
 ] as const
 

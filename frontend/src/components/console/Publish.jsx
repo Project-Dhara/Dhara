@@ -126,7 +126,6 @@ export default function Publish({ datasetLabel, metadataId, onGoDashboard, onUpl
             <label className={fieldLabelClass}>Licence</label>
             <select className={selectClass} value={licence} onChange={(e) => setLicence(e.target.value)}>
               <option value="GODL — India">Government Open Data Licence — India</option>
-              <option value="CC BY 4.0">CC BY 4.0</option>
               <option value="Departmental terms">Departmental terms</option>
             </select>
           </div>

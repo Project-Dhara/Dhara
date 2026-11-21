@@ -73,6 +73,8 @@ export default function Settings({
 }) {
   const [local, setLocal] = useState(settings)
   const [standards, setStandards] = useState([])
+  // Read-only bundled code lists (e.g. Delhi LGD) — pre-configured, not selectable or removable.
+  const [referenceStandards, setReferenceStandards] = useState([])
   const [standardsLoading, setStandardsLoading] = useState(false)
   const [standardsError, setStandardsError] = useState('')
   const [standardsBusy, setStandardsBusy] = useState(false)
@@ -137,6 +139,7 @@ export default function Settings({
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.detail || 'Failed to load classification standards')
       setStandards(Array.isArray(data.standards) ? data.standards : [])
+      setReferenceStandards(Array.isArray(data.reference_standards) ? data.reference_standards : [])
     } catch (err) {
       setStandardsError(err.message || 'Failed to load classification standards')
     } finally {
@@ -371,7 +374,7 @@ export default function Settings({
                   const selected = metadataStandard === opt.value
                   const blurb = opt.value === 'sdg'
                     ? 'UN SDG indicator fields for goals, targets, and custodians.'
-                    : 'National metadata sheet fields for catalogue publication.'
+                    : 'Configure metadata fields for catalogue publication.'
                   return (
                     <button
                       key={opt.value}
@@ -523,7 +526,7 @@ export default function Settings({
         {activeTab === 'classification' && (
           <>
             <div className="-mt-2.5 text-sm text-ink-soft">
-              NCO 2015 is pre-configured from the backend. You can upload more
+              NCO 2015 and LGD codes are pre-configured from the backend. You can upload more
               CSVs and select which standard Classify should use for suggestions.
             </div>
 
@@ -580,6 +583,24 @@ export default function Settings({
                   </div>
                 )
               })}
+
+              {referenceStandards.map((s) => (
+                <div
+                  key={s.id}
+                  className="flex items-start gap-3 border-b border-line bg-white px-4 py-3.5 last:border-b-0"
+                >
+                  <span
+                    className="mt-0.5 flex h-5 w-5 flex-none items-center justify-center rounded-full border border-transparent bg-green text-white"
+                    aria-hidden
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={2.25} />
+                  </span>
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <div className="text-[15px] font-semibold text-ink">{s.name}</div>
+                    <div className="text-[13px] text-ink-soft">Selected for classification.</div>
+                  </div>
+                </div>
+              ))}
 
               {pendingFile && (
                 <div className="flex cursor-default select-text items-start gap-3 border-b border-line bg-[#fffaf1] px-4 py-3.5 last:border-b-0">
