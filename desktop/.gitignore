@@ -1,0 +1,7 @@
+node_modules/
+dist/
+vendor/*.exe
+vendor/*.tar
+vendor/*.tar.gz
+!vendor/README.md
+!vendor/.gitkeep

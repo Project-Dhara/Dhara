@@ -18,8 +18,6 @@ import os
 import re
 from typing import Dict, List, Optional
 
-import openai
-
 TABLE_MARKER_RE = re.compile(r"\bTABLE[\s:\-]", re.IGNORECASE)
 
 OPENAI_VALIDATION_MODEL = "gpt-4o"
@@ -82,7 +80,9 @@ def validate_table_fields_llm(
             "title": title,
         }
 
-    client = openai.OpenAI(api_key=key)
+    from app.services.llm_client import make_openai_client, resolve_chat_model
+
+    client = make_openai_client(key)
 
 # f"""You are validating two fields extracted from a statistical table sheet.
 
@@ -160,7 +160,7 @@ Respond with ONLY: {{"valid": true or false, "issues": ["...", ...]}}
 """
 
     response = client.chat.completions.create(
-        model=model,
+        model=resolve_chat_model(),
         messages=[{"role": "user", "content": prompt}],
         temperature=0,
     )
@@ -310,9 +310,11 @@ Definitions:
 """
 
     try:
-        client = openai.OpenAI(api_key=key)
+        from app.services.llm_client import make_openai_client, resolve_chat_model
+
+        client = make_openai_client(key)
         response = client.chat.completions.create(
-            model=model,
+            model=resolve_chat_model(),
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
             max_tokens=280,

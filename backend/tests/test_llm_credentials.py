@@ -70,7 +70,7 @@ def test_get_status_includes_decrypted_api_key(fernet_env):
     llm_repo.get = lambda _s, _e: row  # type: ignore
     try:
         status = llm_repo.get_status(session, "u@example.com")
-        key, provider = llm_repo.get_decrypted(session, "u@example.com")
+        key, provider, base_url, model = llm_repo.get_decrypted(session, "u@example.com")
     finally:
         llm_repo.get = original
 
@@ -81,6 +81,8 @@ def test_get_status_includes_decrypted_api_key(fernet_env):
     assert status.updated_at is not None
     assert key == "sk-live-owner-key"
     assert provider == "openai"
+    assert base_url is None
+    assert model is None
 
 
 def test_get_status_crypto_error_when_decrypt_fails(fernet_env):
@@ -98,7 +100,7 @@ def test_get_status_crypto_error_when_decrypt_fails(fernet_env):
     llm_repo.get = lambda _s, _e: row  # type: ignore
     try:
         status = llm_repo.get_status(session, "u@example.com")
-        key, provider = llm_repo.get_decrypted(session, "u@example.com")
+        key, provider, base_url, model = llm_repo.get_decrypted(session, "u@example.com")
     finally:
         llm_repo.get = original
 
@@ -108,6 +110,8 @@ def test_get_status_crypto_error_when_decrypt_fails(fernet_env):
     assert status.provider == "openai"
     assert key is None
     assert provider is None
+    assert base_url is None
+    assert model is None
 
 
 def test_get_status_legacy_plaintext(fernet_env):

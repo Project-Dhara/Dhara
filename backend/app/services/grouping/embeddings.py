@@ -73,8 +73,8 @@ def embed_texts(texts: list[str], api_key: Optional[str] = None) -> list[list[fl
     if not key or not texts:
         return [_pseudo_embedding(t, dim) for t in texts]
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=key)
+        from app.services.llm_client import make_openai_client
+        client = make_openai_client(key)
         out: list[list[float]] = []
         for i in range(0, len(texts), 64):
             chunk = texts[i : i + 64]

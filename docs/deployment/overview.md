@@ -12,7 +12,8 @@ DHARA runs as:
 
 | Goal | Guide |
 |------|--------|
-| Laptop / datacenter / air-gapped VM | [On-prem](./on-prem.md) |
+| **Windows PC — clickable desktop app** (beginners) | [Windows desktop setup](./desktop-windows.md) |
+| Laptop / datacenter / air-gapped VM (Docker Compose) | [On-prem](./on-prem.md) |
 | GCP Cloud Run, Render, managed DB | [Cloud](./cloud.md) |
 | Env vars and secrets | [Configuration](./configuration.md) |
 

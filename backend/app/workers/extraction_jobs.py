@@ -260,10 +260,12 @@ def queue_extraction_job(
         _save_pdf_job(_pdf_jobs[job_id], pdf_bytes=store_bytes)
 
 
-def _resolve_job_api_key(
+def _resolve_job_llm_creds(
     job_id: str, legacy_api_key: Optional[str] = None
-) -> Optional[str]:
-    """Decrypt the job owner's stored LLM key at run time (DB is source of truth)."""
+):
+    """Decrypt the job owner's stored LLM credentials (DB is source of truth)."""
+    from app.services.credentials.service import LlmCredentials
+
     job = _get_pdf_job(job_id)
     user_email = (job or {}).get("user_email") if job else None
     if user_email:
@@ -271,11 +273,9 @@ def _resolve_job_api_key(
             from app.services.credentials import service as credentials_service
 
             with session_scope() as session:
-                key, _provider = credentials_service.resolve_for_user(
-                    session, user_email
-                )
-            if key:
-                return key
+                creds = credentials_service.resolve_for_user(session, user_email)
+            if creds.api_key:
+                return creds
         except Exception as e:
             logger.warning(
                 "could not resolve LLM key for job %s (%s): %s",
@@ -283,7 +283,17 @@ def _resolve_job_api_key(
                 user_email,
                 e,
             )
-    return (legacy_api_key or "").strip() or None
+    legacy = (legacy_api_key or "").strip() or None
+    if legacy:
+        return LlmCredentials(legacy, None)
+    return LlmCredentials(None, None)
+
+
+def _resolve_job_api_key(
+    job_id: str, legacy_api_key: Optional[str] = None
+) -> Optional[str]:
+    """Backward-compatible helper: API key only."""
+    return _resolve_job_llm_creds(job_id, legacy_api_key).api_key
 
 
 class JobCancelled(Exception):
@@ -371,7 +381,8 @@ def _run_extraction_job(
             return
 
     last_flush = {"stage": None, "bucket": -1}
-    resolved_key = _resolve_job_api_key(job_id, api_key)
+    creds = _resolve_job_llm_creds(job_id, api_key)
+    resolved_key = creds.api_key
 
     def on_progress(stage: str, percent: int, message: str) -> None:
         with _pdf_jobs_lock:
@@ -402,13 +413,21 @@ def _run_extraction_job(
                 return
             if live:
                 display_filename = live.get("filename")
-        result = run_upload_pipeline(
-            tmp_path,
-            source_type,
-            api_key=resolved_key,
-            on_progress=on_progress,
-            display_filename=display_filename,
-        )
+        from app.services.llm_client import llm_credentials_context
+
+        with llm_credentials_context(
+            resolved_key,
+            provider=creds.provider,
+            base_url=creds.base_url,
+            model=creds.model,
+        ):
+            result = run_upload_pipeline(
+                tmp_path,
+                source_type,
+                api_key=resolved_key,
+                on_progress=on_progress,
+                display_filename=display_filename,
+            )
         with _pdf_jobs_lock:
             job = _pdf_jobs.get(job_id)
             if job is None or _job_is_cancelled(job):

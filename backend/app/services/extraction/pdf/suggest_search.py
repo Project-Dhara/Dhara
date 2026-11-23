@@ -6,7 +6,7 @@ import logging
 import re
 from typing import Any, Dict, List
 
-from app.services.llm_prompts import OPENAI_MODEL, TABLE_AI_SEARCH_PROMPT
+from app.services.llm_prompts import TABLE_AI_SEARCH_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -77,15 +77,15 @@ def suggest_tables_from_prompt(
             "rationale": "No tables are available.",
         }
 
-    from openai import OpenAI
+    from app.services.llm_client import make_openai_client, resolve_chat_model
 
     user_prompt = TABLE_AI_SEARCH_PROMPT.format(
         prompt=text,
         catalog_json=json.dumps(catalog, ensure_ascii=False),
     )
-    client = OpenAI(api_key=api_key.strip())
+    client = make_openai_client(api_key.strip())
     resp = client.chat.completions.create(
-        model=OPENAI_MODEL,
+        model=resolve_chat_model(),
         response_format={"type": "json_object"},
         messages=[{"role": "user", "content": user_prompt}],
         max_tokens=2000,

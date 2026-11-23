@@ -1,0 +1,132 @@
+:root {
+  --ink: #1a2332;
+  --muted: #5c6b7a;
+  --line: #d5dde5;
+  --surface: #f7f9fb;
+  --teal: #0a7ea4;
+  --teal-dark: #086484;
+  --danger: #b42318;
+  --ok: #067647;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  height: 100%;
+  font-family: "Segoe UI", "Candara", "Gill Sans", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(1200px 600px at 10% -10%, #d9eef5 0%, transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, #e8f0e6 0%, transparent 50%),
+    var(--surface);
+}
+
+.shell {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 40px 24px 48px;
+}
+
+.hero {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 28px;
+}
+
+.logo {
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.06);
+}
+
+h1 {
+  margin: 0;
+  font-size: 28px;
+  letter-spacing: -0.02em;
+}
+
+.tagline {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.card {
+  background: rgba(255,255,255,0.88);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 22px 22px 20px;
+  backdrop-filter: blur(6px);
+}
+
+.card h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.card p {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.option {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  background: #fff;
+}
+
+.option input { margin-top: 3px; }
+.option span { font-size: 14px; line-height: 1.4; }
+.hint { font-size: 13px !important; }
+
+.primary {
+  appearance: none;
+  border: 0;
+  background: var(--teal);
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  padding: 10px 18px;
+  border-radius: 10px;
+  cursor: pointer;
+  margin-top: 8px;
+}
+.primary:hover { background: var(--teal-dark); }
+.primary:disabled { opacity: 0.55; cursor: default; }
+
+.bar {
+  height: 10px;
+  background: #e8eef3;
+  border-radius: 999px;
+  overflow: hidden;
+  margin: 12px 0;
+}
+.bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--teal), #2f9e8a);
+  transition: width 0.25s ease;
+}
+
+.msg { min-height: 1.4em; }
+.log {
+  max-height: 220px;
+  overflow: auto;
+  background: #0f1720;
+  color: #d7e2ec;
+  font-size: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  white-space: pre-wrap;
+}
+.error { color: var(--danger); font-weight: 600; }
+.hidden { display: none !important; }

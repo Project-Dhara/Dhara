@@ -260,12 +260,52 @@ export default function Settings({
               type="password"
               value={local.apiKey}
               onChange={setField('apiKey')}
-              placeholder={llmCryptoError ? 'Re-enter API key' : 'API key'}
+              placeholder={
+                llmCryptoError
+                  ? 'Re-enter API key'
+                  : local.provider === 'self-hosted'
+                    ? 'ollama (or any non-empty key)'
+                    : 'API key'
+              }
               autoComplete="off"
               spellCheck={false}
             />
           </div>
         </div>
+        {local.provider === 'self-hosted' ? (
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1.5">
+              <label className={fieldLabelClass}>Base URL</label>
+              <input
+                className={inputClass}
+                type="text"
+                value={local.baseUrl || ''}
+                onChange={setField('baseUrl')}
+                placeholder="http://host.docker.internal:11434/v1"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <div className="text-[12px] text-ink-muted">
+                OpenAI-compatible endpoint (Ollama on this PC: host.docker.internal:11434/v1).
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className={fieldLabelClass}>Model</label>
+              <input
+                className={inputClass}
+                type="text"
+                value={local.model || ''}
+                onChange={setField('model')}
+                placeholder="qwen2.5:1.5b-instruct"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <div className="text-[12px] text-ink-muted">
+                Small CPU models (e.g. 1.5B) recommended on 8 GB RAM systems.
+              </div>
+            </div>
+          </div>
+        ) : null}
         <div className="flex items-center gap-3.5">
           <Button
             onClick={() => {

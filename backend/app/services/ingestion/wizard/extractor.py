@@ -185,16 +185,34 @@ def _extract_json_with_key(text: str, required_key: str) -> Optional[Dict]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TableExtractor:
-    def __init__(self, api_key: Optional[str] = None, skip_llm: bool = False, provider: Optional[str] = None):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        skip_llm: bool = False,
+        provider: Optional[str] = None,
+        base_url: Optional[str] = None,
+        model: Optional[str] = None,
+    ):
         self.skip_llm = skip_llm
-        self.provider = provider or _detect_provider(api_key)
+        self.base_url = (base_url or "").strip() or None
+        self.model_override = (model or "").strip() or None
+        raw_provider = provider or _detect_provider(api_key)
+        # self-hosted → OpenAI-compatible SDK with optional base_url (Ollama).
+        if raw_provider == "self-hosted" or self.base_url:
+            self.provider = "openai"
+            self._self_hosted = True
+        else:
+            self.provider = raw_provider
+            self._self_hosted = False
         # Don't touch the SDK at all in skip_llm mode -- constructing it raises
         # if no API key is configured anywhere, which would otherwise make
         # SKIP_LLM=1 unusable without also having a (unused) key set.
         if skip_llm:
             self.client = None
         elif self.provider == "openai":
-            self.client = openai.OpenAI(api_key=api_key)
+            from app.services.llm_client import make_openai_client
+
+            self.client = make_openai_client(api_key, base_url=self.base_url)
         else:
             self.client = anthropic.Anthropic(api_key=api_key)
 
@@ -716,8 +734,15 @@ class TableExtractor:
         """Single-turn plain-text completion, routed to whichever provider
         this extractor was constructed for."""
         if self.provider == "openai":
+            from app.services.llm_client import resolve_chat_model
+
+            chat_model = resolve_chat_model(
+                provider="self-hosted" if self._self_hosted else "openai",
+                model=self.model_override,
+                base_url=self.base_url,
+            )
             resp = _call_with_retry(lambda: self.client.chat.completions.create(
-                model=OPENAI_MODEL,
+                model=chat_model,
                 max_tokens=max_tokens,
                 messages=[{"role": "user", "content": prompt}],
             ))

@@ -33,12 +33,19 @@ type LoginData = {
   role?: string
 }
 
-type Settings = { provider: string; apiKey: string }
+type Settings = {
+  provider: string
+  apiKey: string
+  baseUrl?: string
+  model?: string
+}
 
 type LlmKeyStatus = {
   configured: boolean
   provider: string
   apiKey: string
+  baseUrl: string
+  model: string
   cryptoError: boolean
 }
 
@@ -111,6 +118,9 @@ function normalizeProvider(raw: string): string {
   if (raw === 'OpenAI' || raw === 'Anthropic' || raw === 'MEITY-empanelled LLM') {
     return 'openai'
   }
+  if (raw === 'Self-hosted' || raw === 'self-hosted') {
+    return 'self-hosted'
+  }
   return raw || 'openai'
 }
 
@@ -131,6 +141,8 @@ async function fetchLlmKeyStatus(): Promise<LlmKeyStatus | null> {
     configured: Boolean(data.configured),
     provider: normalizeProvider(String(data.provider || 'openai')),
     apiKey: typeof data.api_key === 'string' ? data.api_key : '',
+    baseUrl: typeof data.base_url === 'string' ? data.base_url : '',
+    model: typeof data.model === 'string' ? data.model : '',
     cryptoError: Boolean(data.crypto_error),
   }
 }
@@ -142,7 +154,12 @@ function applyLlmStatus(
   setLlmCryptoError: (v: boolean) => void,
 ) {
   setLlmProvider(status.provider)
-  setSettings({ provider: status.provider, apiKey: status.apiKey })
+  setSettings({
+    provider: status.provider,
+    apiKey: status.apiKey,
+    baseUrl: status.baseUrl || '',
+    model: status.model || '',
+  })
   setKeySaved(status.configured)
   setLlmCryptoError(status.cryptoError)
 }
@@ -152,7 +169,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [loggedIn, setLoggedIn] = useState(false)
   const [user, setUser] = useState<StoredUser>(EMPTY_USER)
   const [showKyds, setShowKyds] = useState(false)
-  const [settings, setSettings] = useState<Settings>({ provider: 'openai', apiKey: '' })
+  const [settings, setSettings] = useState<Settings>({
+    provider: 'openai',
+    apiKey: '',
+    baseUrl: '',
+    model: '',
+  })
   const [keySaved, setKeySaved] = useState(false)
   const [llmCryptoError, setLlmCryptoError] = useState(false)
 
@@ -358,13 +380,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const next = fromForm || settings
     const key = String(next.apiKey || '').trim()
     const provider = String(next.provider || '').trim() || 'openai'
+    const baseUrl = String(next.baseUrl || '').trim()
+    const model = String(next.model || '').trim()
 
     void (async () => {
       try {
         const res = await fetch('/api/llm-key', withAuthHeaders({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ api_key: key, provider }),
+          body: JSON.stringify({
+            api_key: key,
+            provider,
+            base_url: baseUrl || null,
+            model: model || null,
+          }),
         }))
         if (!res.ok) {
           setKeySaved(false)
@@ -377,7 +406,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           applyLlmStatus(status, setSettings, setKeySaved, setLlmCryptoError)
         } else {
           setLlmProvider(provider)
-          setSettings({ provider, apiKey: key })
+          setSettings({ provider, apiKey: key, baseUrl, model })
           setKeySaved(Boolean(key))
           setLlmCryptoError(false)
         }

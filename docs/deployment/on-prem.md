@@ -3,6 +3,10 @@
 Run DHARA on a laptop, VM, or private datacenter without depending on a public
 PaaS. All required services can run in Docker.
 
+**Windows beginners who want a clickable desktop app** (auto-install Docker /
+optional Ollama): use the step-by-step guide
+[Windows desktop setup](./desktop-windows.md) instead of this page.
+
 ## Prerequisites
 
 - Docker Engine + Docker Compose v2

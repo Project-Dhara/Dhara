@@ -7,7 +7,7 @@ BACKEND_URL  ?= http://localhost:8000
 PROD_URL     ?= http://localhost:80
 API_DOCS     ?= $(BACKEND_URL)/docs
 
-.PHONY: help urls up down logs build restart ps psql postgres migrate worker prod prod-down clean
+.PHONY: help urls up down logs build restart ps psql postgres migrate worker prod prod-down clean desktop-images
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -92,3 +92,6 @@ prod-down: ## Stop prod-profile services
 
 clean: ## Stop everything and delete the Postgres volume
 	$(COMPOSE) --profile prod down -v
+
+desktop-images: ## Build/export Windows desktop container tarballs into desktop/vendor/
+	bash desktop/scripts/build-images.sh

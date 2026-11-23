@@ -1,0 +1,70 @@
+{
+  "name": "dhara-desktop",
+  "productName": "Dhara",
+  "version": "0.1.0",
+  "description": "Dhara Desktop — local data stewardship toolkit for Windows",
+  "author": "Data DHARA",
+  "license": "Apache-2.0",
+  "main": "src/main/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir --win",
+    "dist": "electron-builder --win nsis",
+    "dist:dir": "electron-builder --win dir"
+  },
+  "build": {
+    "appId": "org.ekstep.datadhara.desktop",
+    "productName": "Dhara",
+    "copyright": "Copyright © Data DHARA",
+    "directories": {
+      "output": "dist",
+      "buildResources": "resources"
+    },
+    "files": [
+      "src/**/*",
+      "resources/**/*",
+      "docker-compose.desktop.yml",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "docker-compose.desktop.yml",
+        "to": "docker-compose.desktop.yml"
+      },
+      {
+        "from": "vendor",
+        "to": "vendor",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "DharaSetup-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Dhara",
+      "license": "../LICENSE",
+      "include": "scripts/installer.nsh",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "icon": "resources/logo.png"
+  },
+  "dependencies": {
+    "electron-store": "^8.2.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  }
+}

@@ -119,12 +119,12 @@ def resolve_llm_credentials(
     request: Request,
     user_email: str,
     db: Session | None = None,
-) -> Tuple[Optional[str], Optional[str]]:
-    """Return ``(api_key, provider)`` from encrypted storage.
+):
+    """Return ``LlmCredentials`` from encrypted storage (+ desktop env fallbacks).
 
     ``request`` is accepted for call-site compatibility; header overrides are
     no longer honoured so keys never travel in browser storage or request
-    headers.
+    headers. Legacy ``key, provider = resolve_llm_credentials(...)`` still works.
     """
     del request  # unused — kept for signature compatibility during migration
     if db is not None:
@@ -146,8 +146,14 @@ def _extractor_for(
 ):
     from app.services.ingestion.wizard.extractor import TableExtractor
 
-    key, provider = resolve_llm_credentials(request, user_email, db=db)
-    return TableExtractor(api_key=key, skip_llm=not key, provider=provider)
+    creds = resolve_llm_credentials(request, user_email, db=db)
+    return TableExtractor(
+        api_key=creds.api_key,
+        skip_llm=not creds.api_key,
+        provider=creds.provider,
+        base_url=creds.base_url,
+        model=creds.model,
+    )
 
 
 __all__ = [

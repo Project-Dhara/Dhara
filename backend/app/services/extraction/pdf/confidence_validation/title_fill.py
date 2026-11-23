@@ -122,9 +122,11 @@ Context:
 """
 
     try:
-        client = openai.OpenAI(api_key=key)
+        from app.services.llm_client import make_openai_client, resolve_chat_model
+
+        client = make_openai_client(key)
         response = client.chat.completions.create(
-            model=model,
+            model=resolve_chat_model(),
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
             max_tokens=120,

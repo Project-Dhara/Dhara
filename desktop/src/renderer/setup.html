@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;" />
+  <title>Dhara Setup</title>
+  <link rel="stylesheet" href="setup.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <img src="../../resources/logo.png" alt="Dhara" class="logo" width="64" height="64" />
+      <div>
+        <h1>Dhara Desktop</h1>
+        <p class="tagline">Local data stewardship on this PC — not a website mirror.</p>
+      </div>
+    </header>
+
+    <section id="choice" class="card">
+      <h2>AI assist</h2>
+      <p>On 8&nbsp;GB RAM systems, a small local CPU model is recommended. You can still paste a cloud API key later in Settings.</p>
+      <label class="option">
+        <input type="radio" name="llm" value="local" checked />
+        <span><strong>Local CPU model (Ollama)</strong> — installs Ollama and pulls a small model. Works offline after the first pull.</span>
+      </label>
+      <label class="option">
+        <input type="radio" name="llm" value="cloud" />
+        <span><strong>Cloud API key later</strong> — skip Ollama; configure OpenAI/Anthropic in Settings after login.</span>
+      </label>
+      <p class="hint">Close other heavy apps during setup. Docker and WSL will be installed if missing. A reboot may be required once.</p>
+      <button id="startBtn" type="button" class="primary">Start setup</button>
+    </section>
+
+    <section id="progress" class="card hidden">
+      <h2 id="stepTitle">Working…</h2>
+      <div class="bar"><div id="barFill" class="bar-fill"></div></div>
+      <p id="stepMsg" class="msg">Preparing…</p>
+      <pre id="log" class="log"></pre>
+      <p id="error" class="error hidden"></p>
+      <button id="retryBtn" type="button" class="primary hidden">Retry</button>
+    </section>
+  </main>
+  <script src="setup.js"></script>
+</body>
+</html>

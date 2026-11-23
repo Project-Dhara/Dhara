@@ -18,6 +18,8 @@ def _status_payload(status: llm_repo.LlmKeyStatus, *, extra: dict | None = None)
         "provider": status.provider,
         "updated_at": status.updated_at,
         "api_key": status.api_key if status.configured else None,
+        "base_url": status.base_url,
+        "model": status.model,
         "crypto_error": status.crypto_error,
     }
     if extra:
@@ -50,10 +52,13 @@ async def save_llm_key(
 ):
     api_key = (body.api_key or "").strip()
     provider = (body.provider or "").strip() or None
+    base_url = (body.base_url or "").strip() or None
+    model = (body.model or "").strip() or None
     if provider:
         provider = provider.lower()
-        if provider in ("meity-empanelled llm", "self-hosted"):
-            provider = "openai" if provider.startswith("meity") else provider
+        if provider in ("meity-empanelled llm",):
+            provider = "openai"
+        # Keep "self-hosted" as-is (OpenAI-compatible local endpoint).
     if not api_key:
         llm_repo.delete_key(db, user.email)
         return {
@@ -61,11 +66,20 @@ async def save_llm_key(
             "configured": False,
             "provider": None,
             "api_key": None,
+            "base_url": None,
+            "model": None,
             "crypto_error": False,
             "updated_at": None,
         }
     try:
-        llm_repo.upsert(db, user.email, api_key, provider)
+        llm_repo.upsert(
+            db,
+            user.email,
+            api_key,
+            provider,
+            base_url=base_url,
+            model=model,
+        )
     except CredentialCryptoError as e:
         raise HTTPException(500, str(e)) from e
     status = llm_repo.get_status(db, user.email)

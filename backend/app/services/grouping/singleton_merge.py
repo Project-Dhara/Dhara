@@ -94,8 +94,6 @@ def _call_singleton_merge_llm(
     api_key: str,
 ) -> list[dict[str, Any]]:
     """Ask the model for merges among singleton titles. Uses short surrogate ids."""
-    from openai import OpenAI
-
     # Short ids (t1, t2, …) — UUIDs / long catalogue ids are often mangled.
     alias_to_real: dict[str, str] = {}
     catalog = []
@@ -149,9 +147,13 @@ Catalog:
 {json.dumps(catalog, ensure_ascii=False)}
 """
 
-    client = OpenAI(api_key=api_key)
+    from app.services.llm_client import env_llm_base_url, make_openai_client, resolve_chat_model
+
+    client = make_openai_client(api_key)
+    # Prefer self-hosted / env model when configured; else legacy group model.
+    chat_model = resolve_chat_model() if env_llm_base_url() else GROUP_LLM_MODEL
     resp = client.chat.completions.create(
-        model=GROUP_LLM_MODEL,
+        model=chat_model,
         response_format={"type": "json_object"},
         messages=[{"role": "user", "content": prompt}],
         max_tokens=6000,

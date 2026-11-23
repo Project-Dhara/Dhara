@@ -15,14 +15,16 @@ remembers the approved meaning.
 | [Architecture](./architecture.md) | System components, **Configuration modules**, data stores, console stages, design principles |
 | [Pipeline overview](./pipeline/overview.md) | End-to-end flow, Configuration modules, implementation status |
 | [Pipeline stages](./pipeline/) | Design + behaviour for each step (including planned stages) |
-| [Deployment overview](./deployment/overview.md) | Choose on-prem vs cloud |
+| [Deployment overview](./deployment/overview.md) | Choose on-prem, Windows desktop, or cloud |
 | [On-prem deployment](./deployment/on-prem.md) | Docker Compose, host-run, air-gapped notes |
+| [Windows desktop setup](./deployment/desktop-windows.md) | Beginner step-by-step: build installer, install, first-run, Ollama |
 | [Cloud deployment](./deployment/cloud.md) | Cloud Run, Render, managed Postgres, GCS |
 | [Configuration](./deployment/configuration.md) | Environment variables and secrets (deploy-time; distinct from Settings modules) |
 
 ## Quick links
 
 - Root [README](../README.md) — quick start and project layout
+- [Windows desktop setup](./deployment/desktop-windows.md) — local clickable app on Windows
 - API Swagger (local) — `http://localhost:8000/docs`
 - License — [Apache 2.0](../LICENSE)
 
@@ -32,3 +34,4 @@ remembers the approved meaning.
 2. [Pipeline overview](./pipeline/overview.md) — what happens to data
 3. Stage docs under [pipeline/](./pipeline/) for any step you care about
 4. [Deployment](./deployment/overview.md) for where you will run it
+5. [Windows desktop setup](./deployment/desktop-windows.md) if you want a local Windows app

@@ -19,13 +19,13 @@ from app.services.extraction.pdf.utils.pymupdf import (
     dedupe_candidates_by_bbox,
     log,
 )
+from app.services.llm_client import make_openai_client, resolve_chat_model
 from app.services.llm_prompts import (
     BATCH_SIZE,
     BATCH_VALIDATION_MAX_TOKENS_CAP,
     LLM_PROMPT_MAX_ROWS,
     LLM_VALIDATION_TEMPERATURE,
     MAX_TOKENS_PER_PAGE,
-    OPENAI_MODEL,
     OPENAI_WORKERS,
     PDF_VALIDATION_RAW_TEXT_CHARS,
     RAW_TEXT_CHARS_PER_PAGE_BATCHED,
@@ -122,7 +122,7 @@ def validate_page(client: openai.OpenAI, page_num: int, candidates: List[Dict[st
     prompt = build_validation_prompt(page_num, candidates, text)
     with _llm_api_semaphore():
         resp = client.chat.completions.create(
-            model=OPENAI_MODEL,
+            model=resolve_chat_model(),
             response_format={"type": "json_object"},
             messages=[{"role": "user", "content": prompt}],
             max_tokens=SINGLE_PAGE_MAX_TOKENS,
@@ -142,7 +142,7 @@ def validate_all_pages(pages_grouped: Dict[int, List[Dict[str, Any]]], page_text
     key = (api_key or "").strip()
     if not key:
         return {}
-    client = openai.OpenAI(api_key=key)
+    client = make_openai_client(key)
     validated: Dict[int, Dict[str, Any]] = {}
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
         futures = {
@@ -209,7 +209,7 @@ def validate_batch(client: openai.OpenAI, pages: List[int], pages_grouped: Dict[
     prompt = build_batch_validation_prompt(pages, pages_grouped, page_text)
     with _llm_api_semaphore():
         resp = client.chat.completions.create(
-            model=OPENAI_MODEL,
+            model=resolve_chat_model(),
             response_format={"type": "json_object"},
             messages=[{"role": "user", "content": prompt}],
             max_tokens=min(
@@ -277,7 +277,7 @@ def validate_all_pages_batched(pages_grouped: Dict[int, List[Dict[str, Any]]], p
     key = (api_key or "").strip()
     if not key:
         return {}
-    client = openai.OpenAI(api_key=key)
+    client = make_openai_client(key)
     all_pages = list(pages_grouped.keys())
     batches = [all_pages[i:i + batch_size] for i in range(0, len(all_pages), batch_size)]
 

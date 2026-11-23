@@ -64,6 +64,16 @@ dhara-poc/
         └── lib/                 auth, llmKey, postPreview, pipeline.js, settings
 ```
 
+## Windows desktop app
+
+Run Dhara as a **local clickable app** on Windows (not the public website). Data
+stays on your PC. Optional local CPU AI via Ollama, tuned for **8 GB RAM**.
+
+**Setup (step-by-step for beginners):**
+[docs/deployment/desktop-windows.md](docs/deployment/desktop-windows.md)
+
+Package source: [`desktop/`](desktop/).
+
 ## Quick start (Docker)
 
 Requires Docker Compose. From the repo root:

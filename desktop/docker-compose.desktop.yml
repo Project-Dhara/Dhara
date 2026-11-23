@@ -1,0 +1,123 @@
+# Dhara Desktop stack — packaged images, no source bind-mounts.
+# Tuned for 8 GB Windows hosts. UI on host :8080 (avoid Windows :80 / IIS).
+#
+# Image tags are overridable via DHARA_IMAGE_* env vars written by the desktop app.
+# Default tags assume images loaded from vendor/*.tar or a private registry.
+
+name: dhara-desktop
+
+services:
+  postgres:
+    image: ${DHARA_IMAGE_POSTGRES:-pgvector/pgvector:pg16}
+    container_name: dhara-postgres
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      POSTGRES_USER: dhara
+      POSTGRES_PASSWORD: dhara_local_password
+      POSTGRES_DB: dhara
+    ports:
+      - "5432:5432"
+    volumes:
+      - dhara_pg_data:/var/lib/postgresql/data
+      - ./resources/init-pgvector.sql:/docker-entrypoint-initdb.d/01-pgvector.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dhara -d dhara"]
+      interval: 5s
+      timeout: 5s
+      retries: 8
+
+  backend:
+    image: ${DHARA_IMAGE_BACKEND:-dhara-backend:desktop}
+    container_name: dhara-backend
+    restart: unless-stopped
+    mem_limit: 768m
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    dns:
+      - 127.0.0.11
+      - 8.8.8.8
+      - 1.1.1.1
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://dhara:dhara_local_password@postgres:5432/dhara
+      ENABLE_GCS: "false"
+      DHARA_INLINE_JOBS: "false"
+      MALLOC_ARENA_MAX: "2"
+      PDF_CPU_WORKERS: "1"
+      PDF_CPU_WORKERS_MAX: "2"
+      PDF_BATCH_FILE_CONCURRENCY: "1"
+      PDF_OPENAI_WORKERS: "1"
+      # TF-IDF only by default — avoid loading HF embed models into RAM on 8 GB.
+      NCO_EMBEDDING_MODEL: ""
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      LLM_CREDENTIALS_KEY: ${LLM_CREDENTIALS_KEY:-}
+      ENABLE_SIGNUP: ${ENABLE_SIGNUP:-true}
+      # Local CPU LLM (Ollama on Windows host). Empty = cloud key via Settings only.
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      DHARA_SELF_HOSTED_MODEL: ${DHARA_SELF_HOSTED_MODEL:-qwen2.5:1.5b-instruct}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/ready')\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 40s
+
+  worker:
+    image: ${DHARA_IMAGE_BACKEND:-dhara-backend:desktop}
+    container_name: dhara-worker
+    restart: unless-stopped
+    mem_limit: 2g
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    dns:
+      - 127.0.0.11
+      - 8.8.8.8
+      - 1.1.1.1
+    environment:
+      DATABASE_URL: postgresql://dhara:dhara_local_password@postgres:5432/dhara
+      ENABLE_GCS: "false"
+      DHARA_INLINE_JOBS: "false"
+      MALLOC_ARENA_MAX: "2"
+      DHARA_WORKER_POLL_SECONDS: "1.5"
+      PDF_CPU_WORKERS: "1"
+      PDF_CPU_WORKERS_MAX: "2"
+      PDF_BATCH_FILE_CONCURRENCY: "1"
+      PDF_OPENAI_WORKERS: "1"
+      NCO_EMBEDDING_MODEL: ""
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      LLM_CREDENTIALS_KEY: ${LLM_CREDENTIALS_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      DHARA_SELF_HOSTED_MODEL: ${DHARA_SELF_HOSTED_MODEL:-qwen2.5:1.5b-instruct}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["python", "-m", "app.workers.job_worker"]
+
+  frontend:
+    image: ${DHARA_IMAGE_FRONTEND:-dhara-frontend:desktop}
+    container_name: dhara-frontend
+    restart: unless-stopped
+    mem_limit: 512m
+    ports:
+      - "8080:3000"
+    environment:
+      BACKEND_ORIGIN: http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+      worker:
+        condition: service_started
+
+volumes:
+  dhara_pg_data:
