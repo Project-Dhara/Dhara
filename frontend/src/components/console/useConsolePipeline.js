@@ -426,7 +426,14 @@ export function useConsolePipeline() {
     setPendingDatasetFiles((prev) => {
       const next = [...prev]
       datasets.forEach((file) => {
-        const exists = next.some((f) => f.name === file.name && f.size === file.size)
+        // Include lastModified — Electron often reports size 0, so name+size alone
+        // collapses every pick of the same name into one entry.
+        const exists = next.some(
+          (f) =>
+            f.name === file.name &&
+            f.size === file.size &&
+            (f.lastModified || 0) === (file.lastModified || 0),
+        )
         if (!exists) next.push(file)
       })
       return next
@@ -456,8 +463,10 @@ export function useConsolePipeline() {
     setPdfError('')
     setPdfUploading(true)
     try {
+      const { materializeFile } = await import('../../lib/datasetUpload')
+      const ready = await materializeFile(file)
       const fd = new FormData()
-      fd.append('file', file)
+      fd.append('file', ready)
       fd.append(
         'dataset_id_config',
         JSON.stringify(

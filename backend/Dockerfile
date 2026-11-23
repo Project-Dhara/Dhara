@@ -6,7 +6,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-RUN chmod +x docker-entrypoint.sh
+# Strip CRLF if the script was edited on Windows — Linux exec of "#!/bin/sh\r" fails with
+# "no such file or directory" and the desktop stack marks backend unhealthy.
+RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x docker-entrypoint.sh
 
 EXPOSE 8000
 ENTRYPOINT ["/backend/docker-entrypoint.sh"]

@@ -4,15 +4,21 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List
 
-def fill_classification_definitions(
+# One LLM completion cannot fit hundreds of short defs under the old 800-token
+# ceiling (~20 values). Batch so each call stays within a safe output budget.
+DEFINITION_BATCH_SIZE = 40
+DEFINITION_MAX_TOKENS = 4096
+
+
+def _fill_classification_definitions_batch(
     complete_fn: Callable[[str, int], str],
     column_name: str,
     values: List[str],
     facts: Dict[str, Any],
 ) -> Dict[str, str]:
-    """One-sentence definitions for classification values, grounded in catalogue/excel facts."""
+    """Same prompt + parse rules as before, for a single value batch."""
     if not values:
         return {}
     prompt = f"""You write brief catalogue definitions for classification VALUES (labels from the data).
@@ -29,7 +35,8 @@ Rules:
 - Keep each definition under 8 words. Prefer meaning over repeating the label.
 - No full sentences unless needed. No statistics. No occupation/NCO codes.
 - If facts do not explain a label, give a short plain-language gloss."""
-    text = complete_fn(prompt, min(800, 160 + 40 * len(values)))
+    max_tokens = min(DEFINITION_MAX_TOKENS, 160 + 40 * len(values))
+    text = complete_fn(prompt, max_tokens)
     text = re.sub(r"```[a-zA-Z]*\n?", "", text).strip().rstrip("`")
     parsed = json.loads(text)
     if not isinstance(parsed, dict):
@@ -51,6 +58,39 @@ Rules:
         out[str(v)] = " ".join(words[:8])
     return out
 
+
+def fill_classification_definitions(
+    complete_fn: Callable[[str, int], str],
+    column_name: str,
+    values: List[str],
+    facts: Dict[str, Any],
+) -> Dict[str, str]:
+    """One-sentence definitions for classification values, grounded in catalogue/excel facts.
+
+    Large value lists are filled in batches so the model can return a full JSON
+    map (a single call with max_tokens=800 silently failed for ~100+ values).
+    """
+    if not values:
+        return {}
+    if len(values) <= DEFINITION_BATCH_SIZE:
+        return _fill_classification_definitions_batch(complete_fn, column_name, values, facts)
+
+    out: Dict[str, str] = {}
+    for i in range(0, len(values), DEFINITION_BATCH_SIZE):
+        batch = values[i : i + DEFINITION_BATCH_SIZE]
+        try:
+            out.update(
+                _fill_classification_definitions_batch(
+                    complete_fn, column_name, batch, facts,
+                )
+            )
+        except json.JSONDecodeError:
+            # Keep earlier batches; skip a malformed batch rather than wiping all defs.
+            continue
+    return out
+
+
 __all__ = [
+    "DEFINITION_BATCH_SIZE",
     "fill_classification_definitions",
 ]

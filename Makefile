@@ -93,5 +93,5 @@ prod-down: ## Stop prod-profile services
 clean: ## Stop everything and delete the Postgres volume
 	$(COMPOSE) --profile prod down -v
 
-desktop-images: ## Build/export Windows desktop container tarballs into desktop/vendor/
+desktop-images: ## Build/export Windows desktop container tarballs into desktop/vendor/ (on Windows without bash/make: powershell -File desktop/scripts/build-images.ps1)
 	bash desktop/scripts/build-images.sh

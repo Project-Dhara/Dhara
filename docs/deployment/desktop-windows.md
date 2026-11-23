@@ -69,20 +69,35 @@ Skip this section if someone already gave you `DharaSetup-*.exe`.
 
 ### 0.2 Build Dhara container images
 
-In **Git Bash**, **WSL**, or another shell that can run bash:
+On Windows, prefer **PowerShell** (bash and `make` are often missing). From the
+repo root, with Docker Desktop running:
 
-```bash
-bash desktop/scripts/build-images.sh
+```powershell
+.\desktop\scripts\build-images.ps1
 ```
 
-Or from the repo root with Make:
+If PowerShell blocks the script, allow this one run:
 
-```bash
-make desktop-images
+```powershell
+powershell -ExecutionPolicy Bypass -File .\desktop\scripts\build-images.ps1
 ```
 
-If bash is unavailable, run the Docker commands listed in
+**Optional alternatives** (only if you already have these tools):
+
+| Environment | Command |
+|-------------|---------|
+| Git Bash or a working WSL distro | `bash desktop/scripts/build-images.sh` |
+| Make installed and on PATH | `make desktop-images` |
+
+Or run the raw `docker build` / `docker save` commands in
 [`desktop/vendor/README.md`](../../desktop/vendor/README.md).
+
+**Common mistakes on Windows**
+
+| Error | Cause | Fix |
+|-------|--------|-----|
+| `execvpe(/bin/bash) failed: No such file or directory` | Typing `bash` in PowerShell hits a broken/empty WSL install | Use `.\desktop\scripts\build-images.ps1` instead |
+| `make : The term 'make' is not recognized` | GNU Make is not installed on Windows by default | Use the PowerShell script; do not install Make just for this step |
 
 This writes image archives under `desktop/vendor/` (for example
 `dhara-backend-desktop.tar`).
@@ -100,10 +115,29 @@ files into `desktop/vendor/`:
 If you skip this step, the Dhara setup wizard can download the same official
 installers when needed (internet required).
 
+**Do not embed image `.tar` files in the installer.** Part 0.2 still writes
+`dhara-*-desktop.tar` under `desktop/vendor/` for optional `docker load` /
+offline handoff, but `electron-builder` **excludes** `*.tar` from
+`DharaSetup.exe`. Bundling multi‑GB image archives into NSIS often fails with
+`failed creating mmap of … .nsis.7z`. Keep the `.tar` files aside (or load them
+into Docker on the target PC); the setup wizard can use locally tagged images
+or pull when needed.
+
 ### 0.4 Create `DharaSetup.exe`
+
+On Windows **PowerShell**, `npm` may fail with *running scripts is disabled*
+(execution policy blocks `npm.ps1`). Prefer `npm.cmd` or a one-shot bypass:
 
 ```powershell
 cd desktop
+cmd /c "npm install && npm run dist"
+```
+
+Or:
+
+```powershell
+cd desktop
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 npm install
 npm run dist
 ```
@@ -116,6 +150,7 @@ desktop\dist\DharaSetup-<version>-x64.exe
 
 Copy that file to the PC where Dhara should be installed, then continue with
 Part 1.
+
 
 ---
 
@@ -254,13 +289,23 @@ Uninstalling the app defaults to **keeping** data unless you choose otherwise.
 
 | Symptom | What to try |
 |---------|-------------|
-| “Virtualization disabled” | Enable VT-x / AMD-V in BIOS/UEFI, reboot, run setup again |
+| “Virtualization disabled” | Enable VT-x / AMD-V in BIOS/UEFI, **Save**, then **Shut down** (not only Restart). Confirm Task Manager → Performance → CPU shows Virtualization **Enabled**. Setup also accepts a running hypervisor if the firmware WMI flag is wrong. |
+| WMI `VirtualizationFirmwareEnabled` is `False` but Task Manager shows Enabled | Normal on some PCs — current Dhara builds also accept `HypervisorPresent`. Close every Dhara window (including tray), then run `npm.cmd start` from `desktop/` or reinstall a newly built `DharaSetup.exe`. An old installed copy will keep failing. |
 | Port already in use | Stop IIS, Skype legacy, local Postgres, or other apps using 8080 / 8000 / 5432 |
 | Docker never becomes ready | Open **Docker Desktop** manually, wait for “Engine running”, click **Retry** in Dhara Setup |
 | Setup did not resume after reboot | Open **Dhara** from the Start Menu; the wizard should continue |
 | App opens but uploads stay “queued” | Worker must be running — use tray **Start services**, or re-run setup; `/api/ready` alone is not enough |
 | Very slow or out-of-memory on 8 GB | Close other apps; avoid large PDF batches while the local model is loading |
 | Self-hosted AI fails | Confirm Ollama is running (`http://127.0.0.1:11434`), model is pulled, and Settings Base URL / model / key match Part 3 |
+| `bash` / `/bin/bash` failed while building images | You are in PowerShell without a working WSL bash — run `.\desktop\scripts\build-images.ps1` (Part 0.2) |
+| `make` is not recognized while building images | Expected on Windows — use the PowerShell script in Part 0.2; Make is optional |
+| `npm.ps1` / “running scripts is disabled” | Use `cmd /c "npm install && npm run dist"` or `Set-ExecutionPolicy -Scope Process Bypass` (Part 0.4) |
+| `failed creating mmap of … .nsis.7z` while building the installer | Installer payload too large — do not put `*.tar` image archives into the NSIS build (they are excluded by default; move any leftover huge files out of `desktop/vendor` before `npm run dist`) |
+| `unknown docker command: "compose …Rahul\\AppData…"` (or similar) | Path with a space was split by an old shell/`docker.cmd` wrapper. Current builds call `docker.exe` with `shell:false`. Close the installed Start Menu app and run from updated source (`npm.cmd start` in `desktop/`) or reinstall a newly built `DharaSetup.exe`. |
+| `EPERM: operation not permitted, mkdir '…\Program Files\Dhara\resources\vendor'` | Old builds tried to download Ollama/Docker installers into Program Files. Current builds cache downloads under `%LOCALAPPDATA%\Dhara\downloads`. Use updated source or a new installer; do not “Retry” on the old Program Files build. |
+| Backend unhealthy / `exec …/docker-entrypoint.sh: no such file` | Almost always **CRLF** line endings in the entrypoint when the image was built on Windows. Rebuild: `docker build -t dhara-backend:desktop .\backend` (Dockerfile strips `\r`). Setup now clears leftover containers before Retry so you are not stuck on “Ports in use: 5432”. |
+| Retry says ports in use after a failed start | Fixed in current app: setup removes `dhara-*` containers before preflight. On an older build, run `docker rm -f dhara-postgres dhara-backend dhara-worker dhara-frontend` then Retry. |
+
 
 Official documentation (only if you need vendor help):
 
@@ -275,12 +320,17 @@ For developers iterating on the Electron shell without building an installer:
 
 ```powershell
 cd desktop
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 npm install
 npm start
 ```
 
 You still need Docker images tagged for desktop (Part 0.2) and a working Docker
 engine. Prefer `npm run dist` and Part 1 for a user-like install.
+
+**After changing setup/preflight code**, either use `npm start` above or rebuild
+`DharaSetup.exe` and reinstall — an already-installed copy will not pick up
+source edits until you rebuild.
 
 ---
 

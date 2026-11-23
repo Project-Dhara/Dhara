@@ -4,7 +4,7 @@ const fs = require('fs')
 const path = require('path')
 const http = require('http')
 const { run, spawnDetached } = require('./exec')
-const { vendorDir, OLLAMA_ORIGIN, DEFAULT_OLLAMA_MODEL } = require('./paths')
+const { vendorDir, downloadCacheDir, OLLAMA_ORIGIN, DEFAULT_OLLAMA_MODEL } = require('./paths')
 
 const OLLAMA_INSTALLER_NAMES = ['OllamaSetup.exe', 'OllamaSetup-windows.exe']
 
@@ -45,15 +45,18 @@ async function isOllamaReady() {
   }
 }
 
-function findBundledOllamaInstaller() {
-  const dir = vendorDir()
-  if (!fs.existsSync(dir)) return null
+function findInstallerInDir(dir) {
+  if (!dir || !fs.existsSync(dir)) return null
   for (const name of OLLAMA_INSTALLER_NAMES) {
     const p = path.join(dir, name)
     if (fs.existsSync(p)) return p
   }
   const hit = fs.readdirSync(dir).find((e) => /ollama.*\.exe$/i.test(e))
   return hit ? path.join(dir, hit) : null
+}
+
+function findBundledOllamaInstaller() {
+  return findInstallerInDir(vendorDir()) || findInstallerInDir(downloadCacheDir())
 }
 
 async function downloadOllamaInstaller(destPath, onProgress) {
@@ -90,10 +93,9 @@ async function downloadOllamaInstaller(destPath, onProgress) {
 }
 
 async function ensureOllamaInstaller(onProgress) {
-  const bundled = findBundledOllamaInstaller()
+  const bundled = findInstallerInDir(vendorDir())
   if (bundled) return { path: bundled, source: 'bundled' }
-  const dest = path.join(vendorDir(), 'OllamaSetup.exe')
-  fs.mkdirSync(path.dirname(dest), { recursive: true })
+  const dest = path.join(downloadCacheDir(), 'OllamaSetup.exe')
   if (fs.existsSync(dest) && fs.statSync(dest).size > 1_000_000) {
     return { path: dest, source: 'cached' }
   }

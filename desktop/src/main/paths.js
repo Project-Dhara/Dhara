@@ -30,7 +30,13 @@ function resourcesRoot() {
 }
 
 function vendorDir() {
+  // Packaged installers / image tarballs shipped with the app (read-only under Program Files).
   return path.join(resourcesRoot(), 'vendor')
+}
+
+function downloadCacheDir() {
+  // Writable cache for downloaded installers — never mkdir under Program Files (EPERM).
+  return ensureDir(path.join(userDataRoot(), 'downloads'))
 }
 
 function composeFile() {
@@ -70,6 +76,7 @@ module.exports = {
   ensureDir,
   resourcesRoot,
   vendorDir,
+  downloadCacheDir,
   composeFile,
   initSqlFile,
   envFilePath,

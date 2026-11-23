@@ -1,11 +1,15 @@
 'use strict'
 
+const fs = require('fs')
 const path = require('path')
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell } = require('electron')
 const { runSetup, startStackOnly } = require('./setup')
 const compose = require('./compose')
 const { readState, writeState } = require('./store')
 const { UI_ORIGIN, ensureDir, userDataRoot } = require('./paths')
+
+const UPLOAD_EXT = new Set(['.pdf', '.xlsx', '.xls', '.csv'])
+const MAX_UPLOAD_READ_BYTES = 200 * 1024 * 1024
 
 let mainWindow = null
 let tray = null
@@ -144,6 +148,36 @@ function registerIpc() {
       return { ok: true }
     }
     return { ok: false, error: 'URL not allowed' }
+  })
+
+  ipcMain.handle('fs:read-upload-file', async (_e, filePath) => {
+    const resolved = path.resolve(String(filePath || ''))
+    const ext = path.extname(resolved).toLowerCase()
+    if (!UPLOAD_EXT.has(ext)) {
+      throw new Error(`Unsupported upload type: ${ext || '(none)'}`)
+    }
+    let st
+    try {
+      st = await fs.promises.stat(resolved)
+    } catch {
+      throw new Error(`File not found: ${path.basename(resolved)}`)
+    }
+    if (!st.isFile()) throw new Error('Not a regular file')
+    if (st.size <= 0) {
+      throw new Error(
+        `${path.basename(resolved)} is empty on disk (0 bytes). If it is a OneDrive/SharePoint cloud-only file, open it once in Excel to download it, or copy it to a local folder (e.g. Desktop) and upload that copy.`,
+      )
+    }
+    if (st.size > MAX_UPLOAD_READ_BYTES) {
+      throw new Error(`${path.basename(resolved)} is too large to upload (>${MAX_UPLOAD_READ_BYTES / (1024 * 1024)} MB)`)
+    }
+    const buf = await fs.promises.readFile(resolved)
+    return {
+      name: path.basename(resolved),
+      // Structured clone sends Buffer as Uint8Array to the renderer.
+      bytes: buf,
+      size: buf.length,
+    }
   })
 }
 

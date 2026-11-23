@@ -129,8 +129,10 @@ export function UploadChoice({
   onCancelAppend = undefined,
   cancelAppendLabel = 'Back to preview',
 }) {
-  const datasetInputRef = useRef(null)
-  const metadataInputRef = useRef(null)
+  // One shared <input type="file"> — two separate inputs break onChange after the
+  // first pick in Chromium/Electron (see BatchUpload.jsx).
+  const fileInputRef = useRef(null)
+  const pickTargetRef = useRef('dataset') // 'dataset' | 'metadata'
   const [datasetDragging, setDatasetDragging] = useState(false)
   const [metadataDragging, setMetadataDragging] = useState(false)
 
@@ -154,6 +156,22 @@ export function UploadChoice({
     if (files.length) onMetadataFilesAdd?.(files)
   }
 
+  const openPicker = (target) => {
+    if (uploadsBlocked && target === 'dataset') return
+    if (pdfUploading && target === 'metadata') return
+    pickTargetRef.current = target
+    const input = fileInputRef.current
+    if (!input) return
+    input.accept = target === 'metadata' ? '.xlsx,.xls' : '.pdf,.xlsx,.xls,.csv'
+    input.multiple = true
+    input.click()
+  }
+
+  const onFilesChosen = (fileList) => {
+    if (pickTargetRef.current === 'metadata') takeMetadataFiles(fileList)
+    else routeDatasetFiles(fileList)
+  }
+
   const dropZoneClass = (dragging) =>
     `flex min-h-[168px] flex-1 flex-col items-center justify-center gap-2 rounded-xl border border-dashed px-5 py-6 text-center transition-colors ${
       uploadsBlocked
@@ -173,26 +191,13 @@ export function UploadChoice({
   return (
     <div className="flex flex-col gap-4">
       <input
-        ref={datasetInputRef}
+        ref={fileInputRef}
         type="file"
         accept=".pdf,.xlsx,.xls,.csv"
         multiple
         className="hidden"
-        disabled={uploadsBlocked}
         onChange={(e) => {
-          routeDatasetFiles(e.target.files)
-          e.target.value = ''
-        }}
-      />
-      <input
-        ref={metadataInputRef}
-        type="file"
-        accept=".xlsx,.xls"
-        multiple
-        className="hidden"
-        disabled={uploadsBlocked}
-        onChange={(e) => {
-          takeMetadataFiles(e.target.files)
+          onFilesChosen(e.target.files)
           e.target.value = ''
         }}
       />
@@ -232,8 +237,8 @@ export function UploadChoice({
               <div
                 role="button"
                 tabIndex={uploadsBlocked ? -1 : 0}
-                onClick={() => !uploadsBlocked && datasetInputRef.current?.click()}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); !uploadsBlocked && datasetInputRef.current?.click() } }}
+                onClick={() => openPicker('dataset')}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPicker('dataset') } }}
                 onDragOver={(e) => { if (uploadsBlocked) return; e.preventDefault(); setDatasetDragging(true) }}
                 onDragLeave={() => setDatasetDragging(false)}
                 onDrop={(e) => {
@@ -313,8 +318,8 @@ export function UploadChoice({
             <div
               role="button"
               tabIndex={0}
-              onClick={() => !pdfUploading && metadataInputRef.current?.click()}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); !pdfUploading && metadataInputRef.current?.click() } }}
+              onClick={() => openPicker('metadata')}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPicker('metadata') } }}
               onDragOver={(e) => { e.preventDefault(); setMetadataDragging(true) }}
               onDragLeave={() => setMetadataDragging(false)}
               onDrop={(e) => {

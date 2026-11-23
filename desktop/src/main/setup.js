@@ -23,6 +23,13 @@ async function runSetup({ useLocalLlm = true, resume = false, onProgress = () =>
   writeState({ setupRunning: true, useLocalLlm: Boolean(useLocalLlm) })
 
   emit('preflight', 'Checking Windows, RAM, disk, virtualization, and ports…', 5)
+  // If Docker is already up, drop leftover dhara-* containers first so Retry does not
+  // fail preflight on "Ports in use: 5432" from a previous half-started stack.
+  const earlyDocker = await docker.dockerInfo()
+  if (earlyDocker.ok) {
+    emit('preflight', 'Clearing any previous Dhara containers…', 4)
+    await compose.removeStaleContainers()
+  }
   const pf = await preflight.runPreflight()
   if (!pf.ok) {
     const fail = pf.checks.find((c) => !c.ok)

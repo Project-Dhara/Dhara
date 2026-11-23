@@ -48,10 +48,18 @@ async function compose(cmdArgs, opts = {}) {
 }
 
 async function removeStaleContainers() {
+  // Free host ports (5432/8000/8080) so setup retry does not fail preflight.
   await run('docker', [
-    'rm', '-f',
-    'dhara-postgres', 'dhara-backend', 'dhara-worker', 'dhara-frontend', 'dhara-app',
+    'rm',
+    '-f',
+    'dhara-postgres',
+    'dhara-backend',
+    'dhara-worker',
+    'dhara-frontend',
+    'dhara-app',
   ])
+  // Also stop the named compose project if present (removes network; keeps volumes).
+  await compose(['down', '--remove-orphans'], { timeout: 120000 })
 }
 
 async function loadImageTarballs() {
@@ -67,20 +75,35 @@ async function loadImageTarballs() {
   return { ok: loaded.every((x) => x.ok) || loaded.length === 0, loaded }
 }
 
+async function serviceLogs(service, tail = 80) {
+  return compose(['logs', '--tail', String(tail), service], { timeout: 60000 })
+}
+
 async function up() {
   await removeStaleContainers()
   const load = await loadImageTarballs()
   const r = await compose(['up', '-d'], { timeout: 600000 })
-  if (!r.ok) {
-    await removeStaleContainers()
-    const retry = await compose(['up', '-d'], { timeout: 600000 })
-    return { ...retry, load }
+  if (r.ok) return { ...r, load }
+
+  const backendLogs = await serviceLogs('backend', 100)
+  const detail = [r.stderr, r.stdout, backendLogs.stdout, backendLogs.stderr]
+    .filter(Boolean)
+    .join('\n')
+    .trim()
+
+  // Leave ports free for the next Retry click in the setup UI.
+  await removeStaleContainers()
+  return {
+    ok: false,
+    code: r.code,
+    stdout: r.stdout,
+    stderr: detail || r.stderr || 'compose up failed',
+    load,
   }
-  return { ...r, load }
 }
 
 async function down({ volumes = false } = {}) {
-  const args = ['down']
+  const args = ['down', '--remove-orphans']
   if (volumes) args.push('-v')
   return compose(args)
 }
@@ -90,7 +113,7 @@ async function ps() {
 }
 
 async function workerLogs() {
-  return compose(['logs', '--tail', '80', 'worker'], { timeout: 60000 })
+  return serviceLogs('worker', 80)
 }
 
 module.exports = {
@@ -98,6 +121,7 @@ module.exports = {
   down,
   ps,
   workerLogs,
+  serviceLogs,
   loadImageTarballs,
   removeStaleContainers,
   projectDir,

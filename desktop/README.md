@@ -20,10 +20,20 @@ That document covers:
 
 ## For developers (short)
 
+On **Windows PowerShell** (recommended; `bash` and `make` are often missing):
+
+```powershell
+# From repo root — build/export images into desktop/vendor/
+.\desktop\scripts\build-images.ps1
+# If blocked: powershell -ExecutionPolicy Bypass -File .\desktop\scripts\build-images.ps1
+```
+
+On macOS/Linux, or Windows with Git Bash / WSL / Make:
+
 ```bash
 # From repo root — build/export images into desktop/vendor/
-make desktop-images
-# or: bash desktop/scripts/build-images.sh
+bash desktop/scripts/build-images.sh
+# or: make desktop-images
 ```
 
 Optionally place official installers in [`vendor/`](vendor/) (see
@@ -32,14 +42,18 @@ Optionally place official installers in [`vendor/`](vendor/) (see
 - `Docker Desktop Installer.exe`
 - `OllamaSetup.exe`
 
-Then on Windows with Node 20+:
+Then on Windows with Node 20+ (use `npm.cmd` or bypass execution policy if
+PowerShell blocks `npm.ps1`):
 
 ```powershell
 cd desktop
-npm install
-npm start          # Electron setup UI (dev)
-npm run dist       # produces desktop\dist\DharaSetup-*.exe
+cmd /c "npm install && npm run dist"   # produces desktop\dist\DharaSetup-*.exe
+# Dev UI: Set-ExecutionPolicy -Scope Process Bypass; npm install; npm start
 ```
+
+Image `.tar` files under `vendor/` are **not** packed into the installer (avoids
+NSIS `mmap` failures). Docker/Ollama `.exe` installers in `vendor/` are included
+when present.
 
 Ship or run `DharaSetup-*.exe`, then continue from
 [Part 1 of the setup guide](../docs/deployment/desktop-windows.md#part-1--install-the-app).

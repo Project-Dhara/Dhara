@@ -4,6 +4,7 @@ const backendOrigin = process.env.BACKEND_ORIGIN || 'http://127.0.0.1:8000'
 const nextConfig = {
   // Excel batch-extract / PDF jobs can exceed the default ~30s rewrite proxy
   // timeout and fail with "socket hang up" → UI "Extraction failed".
+  // Desktop Electron uploads can also be multi‑MB xlsx; keep the rewrite proxy patient.
   experimental: {
     proxyTimeout: 300_000, // 5 minutes
   },

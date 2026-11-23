@@ -3,7 +3,7 @@
 const fs = require('fs')
 const path = require('path')
 const { run, spawnDetached } = require('./exec')
-const { vendorDir } = require('./paths')
+const { vendorDir, downloadCacheDir } = require('./paths')
 
 /** Official Docker Desktop Windows installer filename when bundled in vendor/. */
 const DOCKER_INSTALLER_NAMES = [
@@ -35,9 +35,8 @@ async function dockerComposeVersion() {
   }
 }
 
-function findBundledDockerInstaller() {
-  const dir = vendorDir()
-  if (!fs.existsSync(dir)) return null
+function findInstallerInDir(dir) {
+  if (!dir || !fs.existsSync(dir)) return null
   for (const name of DOCKER_INSTALLER_NAMES) {
     const p = path.join(dir, name)
     if (fs.existsSync(p)) return p
@@ -45,6 +44,10 @@ function findBundledDockerInstaller() {
   const entries = fs.readdirSync(dir)
   const hit = entries.find((e) => /docker.*installer.*\.exe$/i.test(e))
   return hit ? path.join(dir, hit) : null
+}
+
+function findBundledDockerInstaller() {
+  return findInstallerInDir(vendorDir()) || findInstallerInDir(downloadCacheDir())
 }
 
 async function downloadDockerInstaller(destPath, onProgress) {
@@ -83,10 +86,9 @@ async function downloadDockerInstaller(destPath, onProgress) {
 }
 
 async function ensureDockerInstaller(onProgress) {
-  const bundled = findBundledDockerInstaller()
+  const bundled = findInstallerInDir(vendorDir())
   if (bundled) return { path: bundled, source: 'bundled' }
-  const dest = path.join(vendorDir(), 'Docker Desktop Installer.exe')
-  fs.mkdirSync(path.dirname(dest), { recursive: true })
+  const dest = path.join(downloadCacheDir(), 'Docker Desktop Installer.exe')
   if (fs.existsSync(dest) && fs.statSync(dest).size > 1_000_000) {
     return { path: dest, source: 'cached' }
   }

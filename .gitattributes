@@ -1,0 +1,3 @@
+# Keep shell scripts LF so Linux containers can exec them (CRLF → "no such file or directory").
+*.sh text eol=lf
+**/docker-entrypoint.sh text eol=lf

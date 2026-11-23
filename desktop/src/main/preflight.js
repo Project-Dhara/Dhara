@@ -54,20 +54,47 @@ async function windowsBuild() {
 
 async function virtualizationEnabled() {
   if (process.platform !== 'win32') return { ok: true, message: 'n/a' }
-  const r = await run('powershell.exe', [
-    '-NoProfile',
-    '-Command',
-    "(Get-CimInstance Win32_Processor).VirtualizationFirmwareEnabled",
-  ])
-  const v = String(r.stdout || '').trim().toLowerCase()
-  if (v === 'true') return { ok: true, message: 'Firmware virtualization enabled' }
-  if (v === 'false') {
+
+  // Important: use shell:false. With shell:true on Windows, cmd.exe strips quotes and
+  // breaks PowerShell `$vars`, so HypervisorPresent was never read and setup failed
+  // even when Task Manager showed Virtualization Enabled.
+  //
+  // Output line 1 = HypervisorPresent, line 2 = VirtualizationFirmwareEnabled.
+  // Some PCs report firmware=False while a hypervisor is running (Hyper-V/VBS/WSL2);
+  // either True is enough for Docker Desktop.
+  const r = await run(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      'Write-Output ((Get-CimInstance Win32_ComputerSystem).HypervisorPresent); Write-Output ((Get-CimInstance Win32_Processor).VirtualizationFirmwareEnabled)',
+    ],
+    { shell: false, timeout: 60000 },
+  )
+  const lines = String(r.stdout || '')
+    .split(/\r?\n/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+  const hv = lines[0] === 'true'
+  const fw = lines[1] === 'true'
+
+  if (fw) return { ok: true, message: 'Firmware virtualization enabled' }
+  if (hv) {
+    return {
+      ok: true,
+      message:
+        'Hypervisor present (virtualization available; firmware WMI flag may report false on this PC)',
+    }
+  }
+  if (lines[0] === 'false' && lines[1] === 'false') {
     return {
       ok: false,
       message:
-        'Hardware virtualization is disabled in BIOS/UEFI. Enable Intel VT-x / AMD-V, then reboot.',
+        'Hardware virtualization is disabled in BIOS/UEFI. Enable Intel VT-x / AMD-V, save BIOS settings, fully shut down (not only restart), then boot again. In Task Manager → Performance → CPU, Virtualization should show Enabled.',
     }
   }
+  // If the probe failed oddly, do not hard-block — Docker install will surface real errors.
   return { ok: true, message: 'Virtualization status unknown — continuing' }
 }
 

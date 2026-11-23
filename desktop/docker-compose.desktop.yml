@@ -69,8 +69,9 @@ services:
         ]
       interval: 10s
       timeout: 5s
-      retries: 8
-      start_period: 40s
+      retries: 12
+      # Migrations + cold start on 8 GB hosts can exceed 40s.
+      start_period: 90s
 
   worker:
     image: ${DHARA_IMAGE_BACKEND:-dhara-backend:desktop}
