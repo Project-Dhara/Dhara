@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; img-src file: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+  <title>Dhara</title>
+  <style>
+    html, body { margin: 0; height: 100%; }
+    body {
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: #0f1a14; color: #e8f1ec;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      -webkit-app-region: drag; user-select: none;
+    }
+    img { width: 72px; height: 72px; border-radius: 16px; }
+    h1 { font-size: 22px; font-weight: 600; margin: 14px 0 4px; }
+    #msg { font-size: 14px; color: #b9cfc3; min-height: 20px; text-align: center; max-width: 420px; }
+    .bar { width: 340px; height: 6px; background: #223229; border-radius: 3px; margin-top: 18px; overflow: hidden; }
+    .bar > div { height: 100%; width: 0; background: #4cc38a; transition: width .35s ease; }
+    #warn { margin-top: 14px; max-width: 420px; font-size: 12.5px; color: #f2c46d; text-align: center; }
+    #err { margin-top: 14px; max-width: 440px; font-size: 13.5px; color: #ff9b8f; text-align: center; line-height: 1.45; }
+    .actions { margin-top: 18px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; -webkit-app-region: no-drag; }
+    button {
+      background: #1f3a2d; color: #e8f1ec; border: 1px solid #2f5742; border-radius: 6px;
+      padding: 7px 14px; font-size: 13px; cursor: pointer; font-family: inherit;
+    }
+    button:hover { background: #28503c; }
+    button.primary { background: #2c8f62; border-color: #38a873; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <img src="logo.png" alt="" />
+  <h1>Dhara</h1>
+  <div id="msg">Starting…</div>
+  <div class="bar" id="bar"><div id="fill"></div></div>
+  <div id="warn" class="hidden"></div>
+  <div id="err" class="hidden"></div>
+  <div class="actions hidden" id="actions"></div>
+
+  <script>
+    (function () {
+      var msg = document.getElementById('msg')
+      var bar = document.getElementById('bar')
+      var fill = document.getElementById('fill')
+      var warn = document.getElementById('warn')
+      var err = document.getElementById('err')
+      var actions = document.getElementById('actions')
+
+      function btn(label, action, primary) {
+        var b = document.createElement('button')
+        b.textContent = label
+        if (primary) b.className = 'primary'
+        b.onclick = function () {
+          window.dharaSplash.action(action)
+          if (action === 'copy-diagnostics') {
+            b.textContent = 'Copied'
+            setTimeout(function () { b.textContent = label }, 1500)
+          }
+        }
+        return b
+      }
+
+      function setActions(list) {
+        actions.innerHTML = ''
+        list.forEach(function (a) { actions.appendChild(btn(a[0], a[1], a[2])) })
+        actions.classList.toggle('hidden', list.length === 0)
+      }
+
+      function render(evt) {
+        if (!evt) return
+        if (evt.warning) { warn.textContent = evt.warning; warn.classList.remove('hidden') }
+        else { warn.classList.add('hidden') }
+
+        if (evt.error) {
+          msg.textContent = 'Dhara could not start'
+          bar.classList.add('hidden')
+          err.textContent = evt.error
+          err.classList.remove('hidden')
+          setActions([
+            ['Try again', 'start', true],
+            ['Open logs folder', 'open-logs'],
+            ['Copy diagnostics', 'copy-diagnostics'],
+            ['Quit', 'quit']
+          ])
+          return
+        }
+        err.classList.add('hidden')
+
+        if (evt.step === 'stopped') {
+          msg.textContent = 'Dhara services are stopped'
+          bar.classList.add('hidden')
+          setActions([['Start services', 'start', true], ['Quit', 'quit']])
+          return
+        }
+
+        bar.classList.remove('hidden')
+        msg.textContent = evt.message || 'Starting…'
+        fill.style.width = Math.max(2, Math.min(100, evt.percent || 0)) + '%'
+        setActions([])
+      }
+
+      window.dharaSplash.onProgress(render)
+      window.dharaSplash.ready().then(render)
+    })()
+  </script>
+</body>
+</html>
