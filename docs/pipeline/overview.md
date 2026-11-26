@@ -90,7 +90,7 @@ Implementation notes:
 | 3 Semantic understanding | ✓ | ✓ | ✓ | Often same LLM call as reconstruction |
 | 4 Human review | ✓ | ✓ | ✓ | Console Preview (+ Dataset ID rules) |
 | 5 Vector index | ✓ | limited | ✓ | pgvector; PDF Continue indexes tables |
-| 6 Grouping | ✓ | ✓ | ✓ | Excel: title/match; PDF: embeddings + UI |
+| 6 Grouping | ✓ | ✓ | ✓ | Excel: title/match; PDF: title/SDG + steward suggestions (no OpenAI embeddings) |
 | 7 Harmonisation | ✓ | ✓ | wired | Classify + Settings classification codes |
 | 8 Transformation | design | partial | partial | Mappings stored; full transform layer planned |
 | 9 Validation | design | partial | partial | Structural checks exist; full QA planned |

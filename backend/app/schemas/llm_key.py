@@ -28,7 +28,7 @@ class LlmKeySaveRequest(BaseModel):
     model: Optional[str] = Field(
         None,
         description="Chat model id for self-hosted / override",
-        examples=["qwen2.5:1.5b-instruct"],
+        examples=["gemma3:1b"],
     )
 
 

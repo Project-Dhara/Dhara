@@ -643,6 +643,46 @@ def prepare_kyds_for_llm(kyds: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def shrink_facts_for_compact_llm(facts: Dict[str, Any], *, max_columns: int = 30, max_sample_rows: int = 5) -> Dict[str, Any]:
+    """Cap columns and sample rows so small-model prompts fit Ollama's default context."""
+    facts = facts or {}
+    sheets_out: List[Dict[str, Any]] = []
+    for sheet in facts.get("sheets") or []:
+        if not isinstance(sheet, dict):
+            continue
+        tables_out: List[Dict[str, Any]] = []
+        for tbl in sheet.get("tables") or []:
+            if not isinstance(tbl, dict):
+                continue
+            cols = list(tbl.get("column_names") or [])[:max_columns]
+            samples = list(tbl.get("sample_rows") or [])[:max_sample_rows]
+            slim_samples: List[Any] = []
+            for row in samples:
+                if isinstance(row, dict) and cols:
+                    slim_samples.append({c: row.get(c) for c in cols})
+                else:
+                    slim_samples.append(row)
+            tables_out.append({
+                "title_context": tbl.get("title_context") or tbl.get("table_name"),
+                "table_name": tbl.get("table_name"),
+                "column_names": cols,
+                "sample_rows": slim_samples,
+                "row_count": tbl.get("row_count"),
+                "periods": tbl.get("periods"),
+                "geography": tbl.get("geography"),
+                "units": tbl.get("units"),
+            })
+        sheets_out.append({
+            "sheet_name": sheet.get("sheet_name"),
+            "tables": tables_out,
+        })
+    return {
+        "filename": facts.get("filename"),
+        "source_kind": facts.get("source_kind"),
+        "sheets": sheets_out,
+    }
+
+
 # Public aliases for wizard / external callers (formerly private).
 
 looks_like_data_row = _looks_like_data_row
@@ -653,6 +693,7 @@ __all__ = [
     "extract_excel_facts",
     "extract_facts_from_tables",
     "prepare_kyds_for_llm",
+    "shrink_facts_for_compact_llm",
     "looks_like_data_row",
     "heuristic_structure",
     "ROW_DIM_HINTS",

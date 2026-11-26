@@ -203,7 +203,7 @@ export function clearStashedConsoleTable(uid) {
 export function openConsoleTableEditor(table) {
   if (!table?._uid || typeof window === 'undefined') return
   stashConsoleTableForEdit(table)
-  const url = `/console/preview/edit/${encodeURIComponent(table._uid)}`
+  const url = `/console/preview/edit?tableUid=${encodeURIComponent(table._uid)}`
   window.open(url, '_blank')
 }
 

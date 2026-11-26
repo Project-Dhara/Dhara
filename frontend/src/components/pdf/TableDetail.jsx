@@ -161,7 +161,7 @@ export function TableDetail({
   }, [editorOnly, table.table_id, table.columns, table.rows, table.cell_merges, table.cell_merges_explicit])
 
   const openFullPageEditor = () => {
-    const url = `/console/review/${encodeURIComponent(jobId)}/edit/${encodeURIComponent(table.table_id)}`
+    const url = `/console/review/edit?jobId=${encodeURIComponent(jobId)}&tableId=${encodeURIComponent(table.table_id)}`
     // Keep opener so the tab can close itself after Save & close.
     window.open(url, '_blank')
   }

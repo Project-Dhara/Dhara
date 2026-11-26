@@ -1,4 +1,6 @@
-import { dirs, runtime } from './paths'
+import * as fs from 'node:fs'
+import * as path from 'node:path'
+import { dirs, runtime, runtimeRoot } from './paths'
 import { LOOPBACK } from './ports'
 import { PG_DATABASE, PG_USER } from './postgres'
 import { Secrets } from './runtime-state'
@@ -13,6 +15,7 @@ interface Tuning {
   apiOverflow: number
   workerPool: number
   workerOverflow: number
+  torchThreads: number
 }
 
 /** Processing caps: conservative on 8 GB, higher on 16 GB+. */
@@ -27,6 +30,7 @@ function tuning(profile: RamProfile): Tuning {
       apiOverflow: 8,
       workerPool: 4,
       workerOverflow: 4,
+      torchThreads: 4,
     }
   }
   return {
@@ -39,6 +43,8 @@ function tuning(profile: RamProfile): Tuning {
     apiOverflow: 5,
     workerPool: 3,
     workerOverflow: 2,
+    // Keep encoding from starving Postgres / API on 8 GB hosts.
+    torchThreads: 2,
   }
 }
 
@@ -47,6 +53,15 @@ export function databaseUrl(password: string, pgPort: number): string {
 }
 
 export type Role = 'api' | 'worker' | 'migrate'
+
+/** Absolute folder for bundled EmbeddingGemma weights (empty when -SkipEmbeddings). */
+export function ncoEmbeddingModelDir(): string {
+  const skipMarker = path.join(runtimeRoot(), 'models', '.skip-embeddings')
+  if (fs.existsSync(skipMarker)) return ''
+  const dir = path.join(runtimeRoot(), 'models', 'embeddinggemma-300m')
+  if (!fs.existsSync(path.join(dir, 'config.json'))) return ''
+  return dir
+}
 
 /**
  * Environment for the bundled Python processes (API, worker, Alembic).
@@ -80,6 +95,9 @@ export function buildBackendEnv(
 
   const poolSize = role === 'worker' ? t.workerPool : t.apiPool
   const overflow = role === 'worker' ? t.workerOverflow : t.apiOverflow
+  const modelDir = ncoEmbeddingModelDir()
+  // Only the job worker loads EmbeddingGemma; API stays lean (NCO match is enqueued).
+  const workerModel = role === 'worker' ? modelDir : ''
 
   const env: NodeJS.ProcessEnv = {
     ...base,
@@ -111,8 +129,20 @@ export function buildBackendEnv(
     // Cloud / API-key LLM is the default; Ollama is an explicit Settings opt-in.
     LLM_BASE_URL: '',
     LLM_MODEL: '',
-    // TF-IDF only — do not load embedding models into RAM.
-    NCO_EMBEDDING_MODEL: '',
+
+    // Bundled EmbeddingGemma — no first-run Hub download. Empty on API / SkipEmbeddings.
+    NCO_EMBEDDING_MODEL: workerModel,
+    NCO_EMBEDDING_FAMILY: workerModel ? 'embeddinggemma' : '',
+    NCO_EMBEDDING_REVISION: workerModel ? '57c266a740f537b4dc058e1b0cda161fd15afa75' : '',
+    HF_HUB_OFFLINE: '1',
+    TRANSFORMERS_OFFLINE: '1',
+    HF_DATASETS_OFFLINE: '1',
+    OMP_NUM_THREADS: String(t.torchThreads),
+    MKL_NUM_THREADS: String(t.torchThreads),
+    TORCH_NUM_THREADS: String(t.torchThreads),
+    // Gemma needs more headroom than BGE-small; fall back to keyword-only if tight.
+    NCO_EMBEDDING_MIN_RAM_MB: profile === 'large' ? '900' : '1200',
+    NCO_EMBEDDING_IDLE_SEC: '480',
 
     PDF_CPU_WORKERS: String(t.pdfCpuWorkers),
     PDF_CPU_WORKERS_MAX: String(t.pdfCpuWorkersMax),

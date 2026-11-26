@@ -250,7 +250,23 @@ def _write_multi_level_headers(ws, paths: list[list[str]]) -> int:
     return depth
 
 
-def table_to_excel_bytes(table: dict) -> bytes:
+def _append_field_value_sheet(wb, title: str, rows: list[tuple[Any, Any]]) -> None:
+    """Add a two-column Field / Value worksheet (creates headers even if empty)."""
+    ws = wb.create_sheet(title=_safe_sheet_title(title))
+    ws.append(["Field", "Value"])
+    for field, value in rows or []:
+        ws.append([field, "" if value is None else value])
+    ws.column_dimensions["A"].width = 28
+    ws.column_dimensions["B"].width = 56
+
+
+def table_to_excel_bytes(
+    table: dict,
+    *,
+    metadata_pairs: Optional[list[tuple[Any, Any]]] = None,
+    nmds_pairs: Optional[list[tuple[Any, Any]]] = None,
+) -> bytes:
+    """Build .xlsx for a table. Optionally append Metadata and NMDS sheets."""
     wb = openpyxl.Workbook()
     ws = wb.active
     sheet_name = table.get("sheet") or table.get("title") or table.get("table_id") or "Table"
@@ -278,6 +294,11 @@ def table_to_excel_bytes(table: dict) -> bytes:
     if header_depth > 1:
         for r in range(1, header_depth + 1):
             ws.row_dimensions[r].height = 18
+
+    if metadata_pairs is not None:
+        _append_field_value_sheet(wb, "Metadata", metadata_pairs)
+    if nmds_pairs is not None:
+        _append_field_value_sheet(wb, "NMDS", nmds_pairs)
 
     buf = BytesIO()
     wb.save(buf)

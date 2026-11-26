@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Check, ChevronDown, Copy, Download, FileText, Loader2, Plug, Tags, Terminal } from 'lucide-react'
-import { getToken, withAuthHeaders } from '../../lib/auth'
+import { getToken } from '../../lib/auth'
+import { downloadCatalogueGroupZip } from '../../lib/catalogueDownload'
 import { useApp } from '../../context/AppContext'
 import { publicApiDatasetsUrl, publicMcpUrl } from '../../lib/publicUrls'
 
@@ -205,24 +206,7 @@ function EndpointCard({ label, url, copied, copyLabel, onCopy, hint, children })
 async function downloadGroupZip(metadataId, title, setDownloading) {
   setDownloading(true)
   try {
-    const res = await fetch(
-      `/api/catalogue/groups/${encodeURIComponent(metadataId)}/download`,
-      withAuthHeaders(),
-    )
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      throw new Error(text || `Download failed (${res.status})`)
-    }
-    const blob = await res.blob()
-    const cd = res.headers.get('Content-Disposition') || ''
-    const match = /filename="?([^"]+)"?/i.exec(cd)
-    const fallback = `${String(title || metadataId).replace(/[/\\?%*:|"<>]/g, '_')}_release.zip`
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = match?.[1] || fallback
-    a.click()
-    URL.revokeObjectURL(url)
+    await downloadCatalogueGroupZip(metadataId, title)
   } catch (err) {
     alert(err.message || 'Could not download this release')
   } finally {

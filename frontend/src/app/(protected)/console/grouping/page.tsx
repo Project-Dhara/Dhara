@@ -1,11 +1,12 @@
 'use client'
 
 import { Suspense } from 'react'
-import { useParams } from 'next/navigation'
-import PdfGrouping from '../../../../../components/pdf/PdfGrouping'
+import { useSearchParams } from 'next/navigation'
+import PdfGrouping from '../../../../components/pdf/PdfGrouping'
 
 function GroupingBody() {
-  const { jobId } = useParams<{ jobId: string }>()
+  const searchParams = useSearchParams()
+  const jobId = String(searchParams.get('jobId') || '')
   return <PdfGrouping jobId={jobId} />
 }
 

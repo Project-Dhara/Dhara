@@ -3,6 +3,9 @@ PDF Stage 5–7: propose table groups for human review.
 
 Orchestrator + thin re-exports. Implementation split across embeddings,
 sdg_groups, and singleton_merge.
+
+Grouping never calls OpenAI/remote embeddings. Untitled tables stay singletons
+in finished groups; optional suggested_merges require steward confirm.
 """
 
 from __future__ import annotations
@@ -18,19 +21,15 @@ from app.services.grouping.embeddings import (
     DEFAULT_DISTANCE_THRESHOLD,
     EMBED_MODEL,
     TOP_K,
-    _cluster_by_distance,
-    _groups_from_clusters,
-    _load_summary_embeddings,
     _propose_title_groups,
-    _pseudo_embedding,
     build_column_chunks,
     build_table_summary_chunk,
     embed_texts,
     index_tables,
+    suggest_untitled_merges,
 )
 
 from app.services.grouping.sdg_groups import (
-    _propose_sdg_groups,
     corpus_looks_like_sdg_indicator_tables,
     detect_sdg_goal,
 )
@@ -45,6 +44,32 @@ from app.services.grouping.singleton_merge import (
     merge_singleton_groups_strict,
 )
 
+
+def _sdg_groups_without_embed_clusters(tables: list[dict]) -> list[dict]:
+    """SDG goal buckets; leftovers use title groups (untitled stay singletons)."""
+    by_goal: dict[int, list[dict]] = defaultdict(list)
+    leftovers: list[dict] = []
+    for t in tables:
+        goal = detect_sdg_goal(t)
+        if goal is not None:
+            by_goal[goal].append(t)
+        else:
+            leftovers.append(t)
+    groups: list[dict] = []
+    for goal in sorted(by_goal.keys()):
+        members = by_goal[goal]
+        groups.append(
+            {
+                "name": f"SDG {goal}",
+                "tables": members,
+                "table_pks": [m["id"] for m in members],
+            }
+        )
+    if leftovers:
+        groups.extend(_propose_title_groups(leftovers))
+    return groups
+
+
 def propose_groups_from_table_dicts(
     tables: list[dict],
     *,
@@ -58,16 +83,20 @@ def propose_groups_from_table_dicts(
     Same rules as ``propose_groups`` for a PDF job, without requiring Postgres:
       - SDG corpora → goal buckets (leftovers fall back to title groups)
       - otherwise → base-title buckets (URBAN/RURAL/ALL variants merge)
+      - untitled tables remain singletons (no embedding auto-merge)
       - optional strict LLM merge of remaining titled singletons when api_key set
+      - ``suggested_merges`` for untitled structural cues (steward must confirm)
 
-    Each input table must be identifiable via ``id``, ``_uid``, or ``table_id``.
+    ``embeddings`` is ignored for finished-group formation (compat only).
     """
+    del embeddings  # never bake embedding/pseudo clusters into finished groups
     if not tables:
         return {
             "groups": [],
             "unmatched_tables": [],
             "method": "empty",
             "indexed": 0,
+            "suggested_merges": [],
         }
 
     normalized: list[dict] = []
@@ -79,56 +108,12 @@ def propose_groups_from_table_dicts(
             t["_uid"] = t["id"]
         normalized.append(t)
 
-    embeddings = embeddings or {}
     if corpus_looks_like_sdg_indicator_tables(normalized):
-        if embeddings:
-            groups = _propose_sdg_groups(normalized, embeddings, threshold)
-        else:
-            # No vectors available (Excel/SQL): SDG buckets + title groups for leftovers.
-            by_goal: dict[int, list[dict]] = defaultdict(list)
-            leftovers: list[dict] = []
-            for t in normalized:
-                goal = detect_sdg_goal(t)
-                if goal is not None:
-                    by_goal[goal].append(t)
-                else:
-                    leftovers.append(t)
-            groups = []
-            for goal in sorted(by_goal.keys()):
-                members = by_goal[goal]
-                groups.append(
-                    {
-                        "name": f"SDG {goal}",
-                        "tables": members,
-                        "table_pks": [m["id"] for m in members],
-                    }
-                )
-            if leftovers:
-                groups.extend(_propose_title_groups(leftovers))
+        groups = _sdg_groups_without_embed_clusters(normalized)
         method = "sdg_goal"
     else:
         groups = _propose_title_groups(normalized)
         method = "title_base"
-        if embeddings:
-            untitled_groups = [
-                g for g in groups if (g.get("name") or "").startswith("Untitled (")
-            ]
-            titled_groups = [
-                g for g in groups if not (g.get("name") or "").startswith("Untitled (")
-            ]
-            leftovers = [m for g in untitled_groups for m in (g.get("tables") or [])]
-            if len(leftovers) >= 2:
-                by_id = {t["id"]: t for t in leftovers}
-                clusters = _cluster_by_distance(
-                    [t["id"] for t in leftovers],
-                    embeddings,
-                    threshold,
-                )
-                titled_groups.extend(
-                    _groups_from_clusters(clusters, by_id, name_start_index=len(titled_groups))
-                )
-                groups = titled_groups
-                method = "title_base+embed_untitled"
 
     groups, llm_merged = merge_singleton_groups_strict(groups, api_key=api_key)
     if llm_merged:
@@ -150,7 +135,9 @@ def propose_groups_from_table_dicts(
         "method": method,
         "indexed": 0,
         "threshold": threshold,
+        "suggested_merges": suggest_untitled_merges(normalized),
     }
+
 
 def proposal_to_catalogue_match_result(
     proposal: dict,
@@ -199,7 +186,9 @@ def proposal_to_catalogue_match_result(
         "unmatched_tables": [],
         "unmatched_inventory": [],
         "method": proposal.get("method"),
+        "suggested_merges": proposal.get("suggested_merges") or [],
     }
+
 
 def propose_groups(
     session,
@@ -212,14 +201,12 @@ def propose_groups(
     """
     Propose grouping for a PDF job.
 
-    Prefer title-base buckets (Excel parity). SDG indicator corpora still use
-    goal numbers. Embeddings are only used to cluster untitled leftovers when
-    reindex/embeddings are available. Remaining titled singletons may be
-    strictly merged by LLM when an API key is available.
-
-    ``session`` is a SQLAlchemy Session for tables and vector index I/O.
+    Prefer title-base buckets (Excel parity). SDG indicator corpora use goal
+    numbers. Untitled tables stay singletons; optional ``suggested_merges`` use
+    strict structural cues. Titled singletons may be strictly merged by chat LLM
+    when an API key is available. Never calls remote embeddings.
     """
-    from app.storage import vectors as vs
+    del reindex  # no embedding reindex for finished groups
 
     tables = pdf_store.list_active_tables(session, job_id)
     if not tables:
@@ -228,68 +215,14 @@ def propose_groups(
             "unmatched_tables": [],
             "method": "empty",
             "indexed": 0,
+            "suggested_merges": [],
         }
 
-    indexed = 0
-    embeddings: dict[str, list[float]] = {}
     key = (api_key or "").strip() or None
-
-    if corpus_looks_like_sdg_indicator_tables(tables):
-        embeddings = _load_summary_embeddings(session, job_id)
-        missing = [t for t in tables if t["id"] not in embeddings]
-        if reindex or missing:
-            indexed = index_tables(
-                session, job_id, tables if reindex else missing, api_key=key
-            )
-            embeddings = _load_summary_embeddings(session, job_id)
-        if len(embeddings) < len(tables):
-            for t in tables:
-                if t["id"] not in embeddings:
-                    embeddings[t["id"]] = _pseudo_embedding(
-                        build_table_summary_chunk(t), vs.embedding_dim()
-                    )
-        result = propose_groups_from_table_dicts(
-            tables, embeddings=embeddings, threshold=threshold, api_key=key
-        )
-        result["indexed"] = indexed
-        return result
-
-    result = propose_groups_from_table_dicts(tables, threshold=threshold)
-    groups = result.get("groups") or []
-    untitled_groups = [
-        g for g in groups if (g.get("name") or "").startswith("Untitled (")
-    ]
-    leftovers = [m for g in untitled_groups for m in (g.get("tables") or [])]
-    if len(leftovers) >= 2:
-        embeddings = _load_summary_embeddings(session, job_id)
-        missing = [t for t in leftovers if t["id"] not in embeddings]
-        if reindex or missing:
-            indexed = index_tables(
-                session,
-                job_id,
-                tables if reindex else leftovers,
-                api_key=key,
-            )
-            embeddings = _load_summary_embeddings(session, job_id)
-        for t in leftovers:
-            if t["id"] not in embeddings:
-                embeddings[t["id"]] = _pseudo_embedding(
-                    build_table_summary_chunk(t), vs.embedding_dim()
-                )
-        result = propose_groups_from_table_dicts(
-            tables, embeddings=embeddings, threshold=threshold, api_key=key
-        )
-        result["indexed"] = indexed
-        return result
-
-    # Title-base result is final structurally; optional strict singleton LLM merge.
-    groups, llm_merged = merge_singleton_groups_strict(groups, api_key=key)
-    if llm_merged:
-        method = result.get("method") or "title_base"
-        result["method"] = f"{method}+llm_singletons_strict"
-        groups.sort(key=lambda g: (-len(g["tables"]), (g.get("name") or "").lower()))
-        result["groups"] = groups
-    result["indexed"] = indexed
+    result = propose_groups_from_table_dicts(
+        tables, threshold=threshold, api_key=key
+    )
+    result["indexed"] = 0
     return result
 
 
@@ -304,7 +237,10 @@ def apply_proposal_to_db(session, job_id: str, proposal: dict) -> dict:
     loaded["method"] = proposal.get("method")
     loaded["indexed"] = proposal.get("indexed", 0)
     loaded["threshold"] = proposal.get("threshold")
+    # Suggestions are not SoT — attach for steward confirm UI only.
+    loaded["suggested_merges"] = list(proposal.get("suggested_merges") or [])
     return loaded
+
 
 __all__ = [
     "apply_proposal_to_db",
@@ -318,6 +254,7 @@ __all__ = [
     "detect_sdg_goal",
     "corpus_looks_like_sdg_indicator_tables",
     "merge_singleton_groups_strict",
+    "suggest_untitled_merges",
     "_titles_pair_compatible",
     "_titles_strictly_compatible",
     "_validate_singleton_merges",

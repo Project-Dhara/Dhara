@@ -1,7 +1,9 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
+import * as path from 'node:path'
 import { app } from 'electron'
 import { log } from './logger'
+import { ncoEmbeddingModelDir } from './backend-env'
 import { dirs, files, userDataRoot } from './paths'
 import { isElevated, formatBytes, freeDiskBytes, ramInfo } from './sysinfo'
 import { readRuntime } from './runtime-state'
@@ -65,6 +67,18 @@ export async function buildDiagnostics(sup: ServiceSupervisor): Promise<string> 
   add(`pgvector available: ${rt.pgvectorAvailable === undefined ? 'unknown' : rt.pgvectorAvailable}`)
   add(`Keep services running on quit: ${rt.keepRunningOnQuit ? 'yes' : 'no'}`)
   add(`Settings file present (runtime.json): ${fs.existsSync(files.runtimeJson()) ? 'yes' : 'no'}`)
+  add()
+  add('--- NCO embeddings ---')
+  const ncoDir = ncoEmbeddingModelDir()
+  add(`Model folder present: ${ncoDir ? 'yes' : 'no'}`)
+  if (ncoDir) add(`Model folder: ${ncoDir}`)
+  add(`HF_HUB_OFFLINE / TRANSFORMERS_OFFLINE: enforced on desktop (1)`)
+  add(
+    `Prebuilt index: ${
+      ncoDir && fs.existsSync(path.join(ncoDir, 'nco_index.npz')) ? 'yes' : 'no'
+    }`,
+  )
+  add('Retrieval mode: see last Suggest NCO response (semantic | keyword-only)')
   add()
   add('--- Recent warnings/errors (desktop.log) ---')
   const problems = log.recentProblems(40)

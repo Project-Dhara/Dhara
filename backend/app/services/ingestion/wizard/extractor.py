@@ -1,7 +1,9 @@
 import concurrent.futures
 import io
 import json
+import logging
 import re
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -18,6 +20,57 @@ from app.services.llm_prompts import (
     excel_category_metadata_prompt,
     excel_table_structure_prompt,
 )
+
+_log = logging.getLogger(__name__)
+
+# Working response_format level cache (schema → json_object → none), TTL'd so a
+# cached "none" does not disable schema until process restart.
+_FORMAT_CACHE_LOCK = threading.Lock()
+_FORMAT_CACHE: Dict[Tuple[str, str], Tuple[str, float]] = {}
+_FORMAT_CACHE_TTL_SEC = 20 * 60
+_MIN_CALL_BUDGET_SEC = 8.0
+_MAX_HTTP_TIMEOUT_SEC = 180.0
+_FORMAT_LEVELS = ("json_schema", "json_object", "none")
+
+
+def _format_cache_key(base_url: Optional[str], model: str) -> Tuple[str, str]:
+    return ((base_url or "").rstrip("/"), (model or "").strip())
+
+
+def get_cached_format_level(base_url: Optional[str], model: str) -> Optional[str]:
+    key = _format_cache_key(base_url, model)
+    now = time.monotonic()
+    with _FORMAT_CACHE_LOCK:
+        entry = _FORMAT_CACHE.get(key)
+        if not entry:
+            return None
+        level, expires = entry
+        if expires <= now:
+            _FORMAT_CACHE.pop(key, None)
+            return None
+        return level
+
+
+def set_cached_format_level(base_url: Optional[str], model: str, level: str) -> None:
+    if level not in _FORMAT_LEVELS:
+        return
+    key = _format_cache_key(base_url, model)
+    with _FORMAT_CACHE_LOCK:
+        _FORMAT_CACHE[key] = (level, time.monotonic() + _FORMAT_CACHE_TTL_SEC)
+
+
+def clear_format_level_cache() -> None:
+    """Test helper — wipe the module-level format cache."""
+    with _FORMAT_CACHE_LOCK:
+        _FORMAT_CACHE.clear()
+
+
+class LlmDeadlineExceeded(RuntimeError):
+    """Raised when a per-group autofill deadline has too little time left."""
+
+
+class LlmContextLengthExceeded(RuntimeError):
+    """Raised when the server reports context/prompt too long."""
 
 DDI_PREFIX = "DDI_DEL_DES_VS"
 DDI_YEAR   = "2024"
@@ -196,6 +249,8 @@ class TableExtractor:
         self.skip_llm = skip_llm
         self.base_url = (base_url or "").strip() or None
         self.model_override = (model or "").strip() or None
+        self._api_key = (api_key or "").strip() or None
+        self._raw_provider = (provider or "").strip() or None
         raw_provider = provider or _detect_provider(api_key)
         # self-hosted → OpenAI-compatible SDK with optional base_url (Ollama).
         if raw_provider == "self-hosted" or self.base_url:
@@ -730,29 +785,172 @@ class TableExtractor:
 
     # ── LLM completion (provider-agnostic) ───────────────────────────────────
 
-    def _complete(self, prompt: str, max_tokens: int) -> str:
-        """Single-turn plain-text completion, routed to whichever provider
-        this extractor was constructed for."""
-        if self.provider == "openai":
-            from app.services.llm_client import resolve_chat_model
+    def _remaining_seconds(self, deadline_monotonic: Optional[float]) -> Optional[float]:
+        if deadline_monotonic is None:
+            return None
+        return deadline_monotonic - time.monotonic()
 
-            chat_model = resolve_chat_model(
-                provider="self-hosted" if self._self_hosted else "openai",
-                model=self.model_override,
-                base_url=self.base_url,
+    def _require_call_budget(self, deadline_monotonic: Optional[float]) -> float:
+        """Return HTTP timeout seconds, or raise if the deadline is exhausted."""
+        remaining = self._remaining_seconds(deadline_monotonic)
+        if remaining is None:
+            return _MAX_HTTP_TIMEOUT_SEC
+        if remaining < _MIN_CALL_BUDGET_SEC:
+            raise LlmDeadlineExceeded(
+                f"Autofill deadline expired ({remaining:.1f}s left); skipping further attempts."
             )
-            resp = _call_with_retry(lambda: self.client.chat.completions.create(
-                model=chat_model,
-                max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt}],
-            ))
-            return resp.choices[0].message.content.strip()
+        return min(_MAX_HTTP_TIMEOUT_SEC, remaining)
+
+    def _openai_client_for_timeout(self, timeout: float):
+        from app.services.llm_client import make_openai_client
+
+        return make_openai_client(
+            self._api_key, base_url=self.base_url, timeout=timeout,
+        )
+
+    @staticmethod
+    def _response_format_for_level(level: str, schema_format: Optional[dict]) -> Optional[dict]:
+        if level == "json_schema":
+            return schema_format
+        if level == "json_object":
+            return {"type": "json_object"}
+        return None
+
+    def _complete(
+        self,
+        prompt: str,
+        max_tokens: int,
+        *,
+        response_format: Optional[dict] = None,
+        temperature: Optional[float] = None,
+        deadline_monotonic: Optional[float] = None,
+    ) -> str:
+        """Single-turn completion with optional JSON format + deadline-aware retries.
+
+        When ``response_format`` is a json_schema request, OpenAI-compatible
+        servers may reject it: we step down to json_object then none only when
+        the error looks format-related. Context-length errors fail fast.
+        """
+        if self.provider == "openai":
+            return self._complete_openai(
+                prompt,
+                max_tokens,
+                response_format=response_format,
+                temperature=temperature,
+                deadline_monotonic=deadline_monotonic,
+            )
+        self._require_call_budget(deadline_monotonic)
         resp = _call_with_retry(lambda: self.client.messages.create(
             model=ANTHROPIC_MODEL,
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}],
         ))
         return resp.content[0].text.strip()
+
+    def _complete_openai(
+        self,
+        prompt: str,
+        max_tokens: int,
+        *,
+        response_format: Optional[dict] = None,
+        temperature: Optional[float] = None,
+        deadline_monotonic: Optional[float] = None,
+    ) -> str:
+        from app.services.llm_client import resolve_chat_model
+        from app.services.llm_errors import (
+            CONTEXT_LENGTH_USER_MESSAGE,
+            classify_llm_api_error,
+        )
+
+        chat_model = resolve_chat_model(
+            provider="self-hosted" if self._self_hosted else "openai",
+            model=self.model_override,
+            base_url=self.base_url,
+        )
+
+        wants_schema = bool(
+            response_format
+            and isinstance(response_format, dict)
+            and response_format.get("type") == "json_schema"
+        )
+        if wants_schema:
+            cached = get_cached_format_level(self.base_url, chat_model)
+            start_level = cached if cached in _FORMAT_LEVELS else "json_schema"
+            levels = list(_FORMAT_LEVELS[_FORMAT_LEVELS.index(start_level):])
+        elif response_format:
+            levels = ["custom"]
+        else:
+            levels = ["none"]
+
+        last_err: Optional[BaseException] = None
+        for level in levels:
+            timeout = self._require_call_budget(deadline_monotonic)
+            client = self._openai_client_for_timeout(timeout)
+            if level == "custom":
+                fmt = response_format
+            else:
+                fmt = self._response_format_for_level(level, response_format)
+
+            kwargs: Dict[str, Any] = {
+                "model": chat_model,
+                "max_tokens": max_tokens,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            if fmt is not None:
+                kwargs["response_format"] = fmt
+            if temperature is not None:
+                kwargs["temperature"] = temperature
+
+            try:
+                resp = _call_with_retry(lambda k=kwargs, c=client: c.chat.completions.create(**k))
+            except Exception as e:
+                kind = classify_llm_api_error(e)
+                if kind == "context":
+                    raise LlmContextLengthExceeded(CONTEXT_LENGTH_USER_MESSAGE) from e
+                if wants_schema and kind == "format" and level in ("json_schema", "json_object"):
+                    _log.info(
+                        "LLM rejected response_format level=%s; stepping down (%s)",
+                        level,
+                        e,
+                    )
+                    last_err = e
+                    continue
+                raise
+
+            if wants_schema and level in _FORMAT_LEVELS:
+                set_cached_format_level(self.base_url, chat_model, level)
+                _log.info("LLM response_format level succeeded: %s (model=%s)", level, chat_model)
+
+            content = (resp.choices[0].message.content or "").strip()
+            finish = getattr(resp.choices[0], "finish_reason", None)
+            if finish == "length":
+                # One truncation retry with doubled tokens, only if deadline allows.
+                try:
+                    timeout2 = self._require_call_budget(deadline_monotonic)
+                except LlmDeadlineExceeded:
+                    return content
+                bigger = min(max_tokens * 2, 4000)
+                if bigger <= max_tokens:
+                    return content
+                client2 = self._openai_client_for_timeout(timeout2)
+                kwargs2 = dict(kwargs)
+                kwargs2["max_tokens"] = bigger
+                try:
+                    resp2 = _call_with_retry(
+                        lambda k=kwargs2, c=client2: c.chat.completions.create(**k)
+                    )
+                    content = (resp2.choices[0].message.content or "").strip()
+                except Exception as e:
+                    kind = classify_llm_api_error(e)
+                    if kind == "context":
+                        raise LlmContextLengthExceeded(CONTEXT_LENGTH_USER_MESSAGE) from e
+                    # Keep first (truncated) content for the tolerant parser.
+                    _log.warning("Truncation retry failed; returning first reply: %s", e)
+            return content
+
+        if last_err is not None:
+            raise last_err
+        raise RuntimeError("LLM completion failed with no response")
 
     # ─────────────────────────────────────────────────────────────────────────
     # STRATEGY A — Direct LLM (single prompt → single response)

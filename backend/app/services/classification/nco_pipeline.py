@@ -110,18 +110,17 @@ _REVIEW_HIERARCHY_K = 20
 _REVIEW_EMBED_FLOOR = 0.62
 
 _INDEX_CACHE = {"key": None, "index": None}
-_EMBEDDER = None
-_EMBEDDER_TRIED = False
 _CROSS = None
 _CROSS_TRIED = False
 
 
 def clear_index_cache():
-    global _EMBEDDER, _EMBEDDER_TRIED, _CROSS, _CROSS_TRIED
+    global _CROSS, _CROSS_TRIED
+    from app.services.classification.nco_embedder import clear_embedder
+
     _INDEX_CACHE["key"] = None
     _INDEX_CACHE["index"] = None
-    _EMBEDDER = None
-    _EMBEDDER_TRIED = False
+    clear_embedder()
     _CROSS = None
     _CROSS_TRIED = False
 
@@ -293,39 +292,14 @@ def _cosine_sparse(query: dict[str, float], doc: dict[str, float]) -> float:
 
 
 def _load_embedder():
-    """Optional local model. Unset NCO_EMBEDDING_MODEL keeps matching offline and instant.
+    """Optional local model. Unset NCO_EMBEDDING_MODEL keeps matching TF-IDF-only.
 
-    Recommended: ``google/embeddinggemma-300m``. Set ``HF_TOKEN`` if Hub access is gated.
+    Desktop: absolute folder to bundled BGE (offline). Docker: Hub id such as
+    ``google/embeddinggemma-300m``.
     """
-    global _EMBEDDER, _EMBEDDER_TRIED
-    if _EMBEDDER_TRIED:
-        return _EMBEDDER
-    _EMBEDDER_TRIED = True
-    name = os.environ.get("NCO_EMBEDDING_MODEL", "").strip()
-    if not name:
-        _EMBEDDER = None
-        return None
-    try:
-        import torch
-        from sentence_transformers import SentenceTransformer
+    from app.services.classification.nco_embedder import load_embedder
 
-        token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN") or None
-        dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-        model_kwargs = {
-            "torch_dtype": dtype,
-            "low_cpu_mem_usage": True,
-        }
-        _EMBEDDER = SentenceTransformer(
-            name,
-            trust_remote_code=True,
-            token=token,
-            model_kwargs=model_kwargs,
-        )
-        if not torch.cuda.is_available():
-            _EMBEDDER = _EMBEDDER.to("cpu")
-    except Exception:
-        _EMBEDDER = None
-    return _EMBEDDER
+    return load_embedder()
 
 
 def _load_cross_encoder():
@@ -436,13 +410,38 @@ def build_index(rows, extra_aliases=None):
         tfidf.append(vec)
 
     embeddings = None
-    embedder = _load_embedder()
-    if embedder is not None and docs:
+    if docs:
         try:
-            texts = [d["search_text"] for d in docs]
-            embeddings = embedder.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+            from app.services.classification.nco_embedder import (
+                load_prebuilt_occupation_embeddings,
+                set_retrieval_status,
+            )
+
+            prebuilt = load_prebuilt_occupation_embeddings(
+                [str(d.get("nco_code") or "") for d in docs]
+            )
+            if prebuilt is not None:
+                embeddings = prebuilt
+                set_retrieval_status("semantic", "prebuilt occupation index")
         except Exception:
             embeddings = None
+    if embeddings is None:
+        embedder = _load_embedder()
+        if embedder is not None and docs:
+            try:
+                from app.services.classification.nco_embedder import (
+                    set_retrieval_status,
+                    touch_embedder_used,
+                )
+
+                texts = [d["search_text"] for d in docs]
+                embeddings = embedder.encode(
+                    texts, normalize_embeddings=True, show_progress_bar=False,
+                )
+                touch_embedder_used()
+                set_retrieval_status("semantic", "")
+            except Exception:
+                embeddings = None
 
     return {
         "docs": docs,
@@ -614,15 +613,19 @@ def _query_vector(index, tokens: list[str]) -> dict[str, float]:
 
 def _cached_query_embedding(index, embedder, query_text):
     """Encode the query once per distinct text and reuse it for every candidate."""
+    from app.services.classification.nco_embedder import query_text_for_encode, touch_embedder_used
+
     cache = index.setdefault("query_embeddings", {})
     cached = cache.get(query_text)
     if cached is not None:
         return cached
+    encoded = query_text_for_encode(query_text)
     vector = embedder.encode(
-        [query_text],
+        [encoded],
         normalize_embeddings=True,
         show_progress_bar=False,
     )[0]
+    touch_embedder_used()
     cache[query_text] = vector
     return vector
 
@@ -684,15 +687,18 @@ def _dense_selected(query, matrix, idxs):
 
 def _semantic_hits(index, query_text, query_tokens, k):
     """Top semantic candidates over the full registry, not a lexical shortlist."""
+    from app.services.classification.nco_embedder import set_retrieval_status
+
     embeddings = index.get("embeddings")
     embedder = _load_embedder()
     if embeddings is not None and embedder is not None:
         try:
             query = _cached_query_embedding(index, embedder, query_text)
             hits = _top_dense(query, embeddings, k)
+            set_retrieval_status("semantic", "")
             return [(idx, score) for idx, score in hits if score > 0.05], "embedding"
-        except Exception:
-            pass
+        except Exception as e:
+            set_retrieval_status("keyword-only", str(e).strip() or "query encode failed")
     query = _cached_query_tfidf(index, query_tokens, query_text)
     scored = [
         (_cosine_sparse(query, doc), idx)

@@ -37,6 +37,20 @@ contextBridge.exposeInMainWorld('dharaDesktop', {
   // Optional local model (explicit opt-in only; Dhara never installs or starts Ollama).
   ollama: {
     status: () => ipcRenderer.invoke('ollama:status'),
+    defaults: () => ipcRenderer.invoke('ollama:defaults'),
     openDownloadPage: (): Promise<boolean> => ipcRenderer.invoke('ollama:open-download'),
+    pullStart: () => ipcRenderer.invoke('ollama:pull-start'),
+    pullCancel: () => ipcRenderer.invoke('ollama:pull-cancel'),
+    pullStatus: () => ipcRenderer.invoke('ollama:pull-status'),
+    testConnection: () => ipcRenderer.invoke('ollama:test-connection'),
+    onPullProgress: (cb: (payload: unknown) => void): (() => void) => {
+      const listener = (_event: unknown, payload: unknown) => {
+        cb(payload)
+      }
+      ipcRenderer.on('ollama:pull-progress', listener)
+      return () => {
+        ipcRenderer.removeListener('ollama:pull-progress', listener)
+      }
+    },
   },
 })

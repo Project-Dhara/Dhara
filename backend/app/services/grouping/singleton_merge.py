@@ -147,11 +147,11 @@ Catalog:
 {json.dumps(catalog, ensure_ascii=False)}
 """
 
-    from app.services.llm_client import env_llm_base_url, make_openai_client, resolve_chat_model
+    from app.services.llm_client import make_openai_client, resolve_chat_model
 
-    client = make_openai_client(api_key)
-    # Prefer self-hosted / env model when configured; else legacy group model.
-    chat_model = resolve_chat_model() if env_llm_base_url() else GROUP_LLM_MODEL
+    # Credentials (base_url / model) come from llm_credentials_context when set.
+    client = make_openai_client(api_key, timeout=60.0)
+    chat_model = resolve_chat_model() or GROUP_LLM_MODEL
     resp = client.chat.completions.create(
         model=chat_model,
         response_format={"type": "json_object"},

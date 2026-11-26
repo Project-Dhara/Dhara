@@ -165,7 +165,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
     beginAppendFilesMode(router, {
       jobId,
       existingFilenames: namesFromReviewTables(tables, filename),
-      returnPath: `/console/review/${jobId}`,
+      returnPath: `/console/review?jobId=${encodeURIComponent(jobId)}`,
     })
   }
   const handleStageGoToStep = (targetStep) => {
@@ -175,7 +175,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
     }
     if (!jobId) return
     if (targetStep === 2) {
-      router.push(`/console/review/${jobId}`)
+      router.push(`/console/review?jobId=${encodeURIComponent(jobId)}`)
       return
     }
     if (targetStep >= 3) {
@@ -184,8 +184,9 @@ export default function PdfReview({ jobId, filename, onDone }) {
         setError('No tables were extracted — upload another file or try again.')
         return
       }
-      const q = targetStep > 3 ? `?step=${targetStep}` : ''
-      router.push(`/console/grouping/${jobId}${q}`)
+      const params = new URLSearchParams({ jobId })
+      if (targetStep > 3) params.set('step', String(targetStep))
+      router.push(`/console/grouping?${params.toString()}`)
     }
   }
 
@@ -347,7 +348,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
       }
       clearTimeout(phaseTimer)
       setContinuePhase('group')
-      router.push(`/console/grouping/${jobId}`)
+      router.push(`/console/grouping?jobId=${encodeURIComponent(jobId)}`)
     } catch (e) {
       clearTimeout(phaseTimer)
       setError(e.message || 'Could not continue to grouping')
@@ -711,7 +712,7 @@ export default function PdfReview({ jobId, filename, onDone }) {
         key: 'group',
         label: 'Grouping similar tables',
         status: persistDone ? 'active' : 'pending',
-        message: persistDone ? 'Building embeddings and proposing groups…' : undefined,
+        message: persistDone ? 'Grouping tables by title…' : undefined,
       },
     ]
     return (

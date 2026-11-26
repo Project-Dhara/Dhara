@@ -2376,7 +2376,7 @@ export function notifyTableEdited(jobId, tableId, edits) {
 /** Close the editor tab, or fall back to the review page if the browser blocks window.close(). */
 export function closeEditorWindow(jobId) {
   if (typeof window === 'undefined') return
-  const reviewUrl = `/console/review/${encodeURIComponent(jobId || '')}`
+  const reviewUrl = `/console/review?jobId=${encodeURIComponent(jobId || '')}`
   try {
     window.close()
   } catch {

@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect } from 'react'
-import { usePathname, useRouter } from 'next/navigation'
+import { Suspense, useEffect } from 'react'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import AppShell from '../../components/AppShell'
 import KydsModal from '../../components/KydsModal'
 import { useApp } from '../../context/AppContext'
@@ -24,10 +24,12 @@ const PATH_FOR_SCREEN: Record<string, string> = {
   settings: '/settings',
 }
 
-export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
+function ProtectedLayoutInner({ children }: { children: React.ReactNode }) {
   const { authChecked, loggedIn, user, showKyds, setShowKyds, signOut } = useApp()
   const pathname = usePathname()
+  const searchParams = useSearchParams()
   const router = useRouter()
+  const search = searchParams?.toString() || ''
 
   useEffect(() => {
     if (authChecked && !loggedIn) router.replace('/login')
@@ -36,8 +38,9 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   // Remember the latest Console location (main /console or PDF deep links) so
   // AppShell → Console returns to where the user left off — not a stale job.
   useEffect(() => {
-    if (pathname) rememberConsoleReturnPath(pathname)
-  }, [pathname])
+    if (!pathname) return
+    rememberConsoleReturnPath(search ? `${pathname}?${search}` : pathname)
+  }, [pathname, search])
 
   if (!authChecked || !loggedIn) return null // brief, avoids a logged-out flash before the client-side check runs
 
@@ -45,8 +48,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const isTableEditor = Boolean(
     pathname
     && (
-      (pathname.includes('/console/review/') && pathname.includes('/edit/'))
-      || pathname.includes('/console/preview/edit/')
+      pathname.startsWith('/console/review/edit')
+      || pathname.startsWith('/console/preview/edit')
     ),
   )
   if (isTableEditor) {
@@ -91,5 +94,13 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       )}
       {children}
     </AppShell>
+  )
+}
+
+export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense fallback={null}>
+      <ProtectedLayoutInner>{children}</ProtectedLayoutInner>
+    </Suspense>
   )
 }

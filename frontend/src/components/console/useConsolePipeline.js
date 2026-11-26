@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { STATUS_TRANSITIONS, groupingToMetadataTransition } from '../../lib/consoleStatusTransitions'
 import { fetchMineKydsFilled } from '../../lib/kydsFilled'
 import { withAuthHeaders } from '../../lib/auth'
-import { withLlmKeyHeaders } from '../../lib/llmKey'
+import { getLlmProvider, withLlmKeyHeaders } from '../../lib/llmKey'
 import { getMetadataStandard } from '../../lib/settingsConfig'
 import { stageIndexForStep } from './ConsoleStages'
 import {
@@ -218,6 +218,7 @@ export function useConsolePipeline() {
           withAuthHeaders,
           withLlmKeyHeaders,
           getMetadataStandard,
+          isSelfHosted: String(getLlmProvider() || '').toLowerCase() === 'self-hosted',
         })
         setMatchResult(filled.matchResult)
         if (filled.toast) setGroupingToast(filled.toast)
@@ -479,7 +480,7 @@ export function useConsolePipeline() {
         throw new Error(err.detail || 'Upload failed')
       }
       const { job_id } = await res.json()
-      router.push(`/console/processing/${job_id}`)
+      router.push(`/console/processing?jobId=${encodeURIComponent(job_id)}`)
     } catch (e) {
       setPdfError(e.message)
       setPdfUploading(false)
@@ -500,7 +501,7 @@ export function useConsolePipeline() {
           clearAppendFilesMode()
           setAppendFilesMode(null)
           setPendingDatasetFiles([])
-          router.push(`/console/processing/${jobId}`)
+          router.push(`/console/processing?jobId=${encodeURIComponent(jobId)}`)
           return
         } catch (appendErr) {
           const msg = String(appendErr?.message || '')
@@ -519,7 +520,7 @@ export function useConsolePipeline() {
       }
       const data = await uploadDatasetBatch(files)
       const jobId = data.job_id || data.batch_id
-      router.push(`/console/processing/${jobId}`)
+      router.push(`/console/processing?jobId=${encodeURIComponent(jobId)}`)
     } catch (e) {
       setPdfError(e.message || 'Upload failed')
       setPdfUploading(false)

@@ -99,8 +99,9 @@ export default function BatchReview({
   onMatchResultChange,
   onGoSettings,
 }) {
-  const { keySaved } = useApp()
+  const { keySaved, settings } = useApp()
   const hasLlmKey = keySaved
+  const isSelfHosted = String(settings?.provider || '').toLowerCase() === 'self-hosted'
   const conceptConfig = useMemo(() => getConceptStandardConfig(getMetadataStandard()), [])
   const sheetColumns = useMemo(() => {
     const base = conceptConfig.sheetColumns || METADATA_COLUMNS
@@ -135,6 +136,7 @@ export default function BatchReview({
   const [nmdsModalGroup, setNmdsModalGroup] = useState(null) // group index whose fields modal is open, or null
   const [toast, setToast] = useState(null) // { type: 'warn' | 'success', message } | null
   const [refilling, setRefilling] = useState(false)
+  const [autofillProgress, setAutofillProgress] = useState(null) // { current, total, label } | null
   const [autofillKick, setAutofillKick] = useState(0)
   // Avoid re-running autofill in a loop for the same blocker state (e.g. still
   // missing KYDS). Cleared when the steward saves KYDS or clicks Retry.
@@ -143,6 +145,7 @@ export default function BatchReview({
   // Stage 4 call after continue-to-metadata already filled, while still
   // allowing KYDS-save / Retry kicks to re-run.
   const lastAutofillKickRef = useRef(0)
+  const autofillAbortRef = useRef(null)
   // Per-group field keys still carrying an AI autofill value (cleared when the steward edits).
   const [aiFilledByGroup, setAiFilledByGroup] = useState(() => {
     const fromResult = matchResult?.ai_filled_fields_by_group
@@ -234,20 +237,37 @@ export default function BatchReview({
     })
   }, [matchResult, usesSdgSheet, sheetFieldKeys])
 
+  const cancelAutofill = useCallback(() => {
+    autofillAbortRef.current?.abort()
+  }, [])
+
+  useEffect(() => () => {
+    autofillAbortRef.current?.abort()
+  }, [])
+
   const retryAutofill = useCallback(async ({ force = false } = {}) => {
     if (refilling || !hasLlmKey || !onMatchResultChange) return null
     if (!force && !groupsNeedAiFill) return null
+    autofillAbortRef.current?.abort()
+    const controller = new AbortController()
+    autofillAbortRef.current = controller
     setRefilling(true)
+    setAutofillProgress(null)
     setToast(null)
     try {
       const filled = await fillGroupMetadataForMatchResult(matchResult, {
         withAuthHeaders,
         withLlmKeyHeaders,
         getMetadataStandard,
+        isSelfHosted,
+        signal: controller.signal,
+        onProgress: (p) => setAutofillProgress(p),
       })
       onMatchResultChange(filled.matchResult)
       const llmCount = Number(filled.matchResult.autofill_llm_filled_count) || 0
-      if (filled.matchResult.llm_autofill_skipped_no_key) {
+      if (filled.cancelled) {
+        setToast({ type: 'warn', message: filled.toast || 'Auto-fill cancelled.' })
+      } else if (filled.matchResult.llm_autofill_skipped_no_key) {
         setToast({ type: 'warn', message: filled.toast || 'LLM key not configured — autofill did not run.' })
       } else if (filled.toast) {
         setToast({ type: llmCount > 0 ? 'success' : 'warn', message: filled.toast })
@@ -262,8 +282,10 @@ export default function BatchReview({
       return null
     } finally {
       setRefilling(false)
+      setAutofillProgress(null)
+      if (autofillAbortRef.current === controller) autofillAbortRef.current = null
     }
-  }, [refilling, hasLlmKey, onMatchResultChange, groupsNeedAiFill, matchResult])
+  }, [refilling, hasLlmKey, onMatchResultChange, groupsNeedAiFill, matchResult, isSelfHosted])
 
   // Auto-run Stage 4 fill when the steward has a key and groups are still
   // empty — including after they add a key or save KYDS (not only the old
@@ -468,10 +490,15 @@ export default function BatchReview({
 
   const autofillStatus = (() => {
     if (refilling) {
+      const progressBody = autofillProgress?.total
+        ? `Auto-filling group ${autofillProgress.current} of ${autofillProgress.total}${
+          autofillProgress.label ? `: ${autofillProgress.label}` : ''
+        }…`
+        : 'Auto-filling metadata with your saved LLM key…'
       return {
         tone: 'pending',
         title: 'AI autofill in progress',
-        body: 'Auto-filling metadata with your saved LLM key…',
+        body: progressBody,
       }
     }
     if (keyNotConfigured || matchResult.llm_autofill_skipped_no_key) {
@@ -818,7 +845,7 @@ export default function BatchReview({
               <span className="text-[13px] opacity-90">Add your LLM API key, then return here — auto-fill will retry.</span>
             </div>
           )}
-          {!keyNotConfigured && onMatchResultChange && groupsNeedAiFill && (
+          {!keyNotConfigured && onMatchResultChange && (groupsNeedAiFill || refilling) && (
             <div className="mt-3 flex flex-wrap items-center gap-2.5">
               <Button
                 type="button"
@@ -835,8 +862,17 @@ export default function BatchReview({
                   void retryAutofill({ force: true })
                 }}
               >
-                {refilling ? 'Auto-filling…' : 'Run AI autofill'}
+                {refilling
+                  ? (autofillProgress?.total
+                    ? `Auto-filling ${autofillProgress.current}/${autofillProgress.total}…`
+                    : 'Auto-filling…')
+                  : 'Run AI autofill'}
               </Button>
+              {refilling && (
+                <Button type="button" variant="secondary" onClick={cancelAutofill}>
+                  Cancel
+                </Button>
+              )}
             </div>
           )}
         </div>

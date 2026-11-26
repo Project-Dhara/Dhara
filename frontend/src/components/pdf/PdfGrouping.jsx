@@ -19,10 +19,12 @@ import KydsSummaryCard from '../KydsSummaryCard'
 import { STATUS_TRANSITIONS, groupingToMetadataTransition } from '../../lib/consoleStatusTransitions'
 import { fetchMineKydsFilled } from '../../lib/kydsFilled'
 import {
+  applySuggestedUntitledMerge,
   fillGroupMetadataForMatchResult,
   matchResultToPdfSavePayload,
   pdfGroupingToMatchResult,
 } from '../../lib/postPreview'
+import Button from '../ui/Button'
 import { namesFromMatchResult } from '../../lib/existingDatasetNames'
 
 function pdfPipelineStorageKey(jobId) {
@@ -69,7 +71,7 @@ function clearPdfPipeline(jobId) {
   }
 }
 
-/** Dashboard deep-link: /console/grouping/:id?step=4 (Grouping shell steps 3–7). */
+/** Dashboard deep-link: /console/grouping?jobId=…&step=4 (Grouping shell steps 3–7). */
 function parsePipelineStepParam(raw) {
   const n = Number.parseInt(String(raw ?? ''), 10)
   if (!Number.isFinite(n) || n < 3 || n > 7) return null
@@ -115,7 +117,8 @@ function toClientGrouping(data) {
 export default function PdfGrouping({ jobId }) {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { keySaved, invalidateDashboard, invalidateCatalogue } = useApp()
+  const { keySaved, settings, invalidateDashboard, invalidateCatalogue } = useApp()
+  const isSelfHosted = String(settings?.provider || '').toLowerCase() === 'self-hosted'
   const persisted = loadPdfPipeline(jobId)
   const requestedStep = useMemo(
     () => parsePipelineStepParam(searchParams?.get('step')),
@@ -132,6 +135,9 @@ export default function PdfGrouping({ jobId }) {
   const [editingGroups, setEditingGroups] = useState(false)
   const [autoSnapshot, setAutoSnapshot] = useState(persisted?.autoSnapshot ?? null)
   const [toast, setToast] = useState(null)
+  const [suggestedMerges, setSuggestedMerges] = useState(
+    () => (Array.isArray(persisted?.suggestedMerges) ? persisted.suggestedMerges : []),
+  )
 
   const [pipelineStep, setPipelineStep] = useState(initialStep)
   const [filesReturnOpen, setFilesReturnOpen] = useState(false)
@@ -178,10 +184,12 @@ export default function PdfGrouping({ jobId }) {
       metaLabel,
       metadataId,
       metadataIds,
+      suggestedMerges,
     })
   }, [
     jobId, filename, method, manualGrouping, autoSnapshot,
     pipelineStep, maxStepReached, matchResult, metaLabel, metadataId, metadataIds,
+    suggestedMerges,
   ])
 
   useEffect(() => {
@@ -215,6 +223,8 @@ export default function PdfGrouping({ jobId }) {
     setAutoSnapshot(next)
     if (client.method) setMethod(client.method)
     if (data.filename) setFilename(data.filename)
+    const suggestions = Array.isArray(data?.suggested_merges) ? data.suggested_merges : []
+    setSuggestedMerges(suggestions)
     return next
   }, [filename, jobId])
 
@@ -378,6 +388,7 @@ export default function PdfGrouping({ jobId }) {
           withAuthHeaders,
           withLlmKeyHeaders,
           getMetadataStandard,
+          isSelfHosted,
         })
         setMatchResult(filled.matchResult)
         if (filled.toast) setToast(filled.toast)
@@ -432,7 +443,7 @@ export default function PdfGrouping({ jobId }) {
       return
     }
     if (targetStep === 2) {
-      router.push(`/console/review/${jobId}`)
+      router.push(`/console/review?jobId=${encodeURIComponent(jobId)}`)
       return
     }
     if (targetStep === 3) {
@@ -468,7 +479,7 @@ export default function PdfGrouping({ jobId }) {
         beginAppendFilesMode(router, {
           jobId,
           existingFilenames,
-          returnPath: `/console/review/${jobId}`,
+          returnPath: `/console/review?jobId=${encodeURIComponent(jobId)}`,
         })
       }}
       onStartOver={() => {
@@ -547,6 +558,55 @@ export default function PdfGrouping({ jobId }) {
 
           <div className="flex flex-col gap-5 rounded-xl border border-line bg-white p-5 shadow-sm sm:p-6">
             {error && <ErrorBanner>{error}</ErrorBanner>}
+            {suggestedMerges.length > 0 ? (
+              <div className="flex flex-col gap-3 rounded-xl border border-line bg-sage/40 p-4">
+                <div className="text-[15px] font-semibold text-ink">Suggested merges</div>
+                <div className="text-[13px] text-ink-soft">
+                  Untitled tables that share the same domain, entity, and table type.
+                  Confirm to merge; dismiss to leave them as singletons. Wrong merges are worse than leaving them alone.
+                </div>
+                <ul className="m-0 flex list-none flex-col gap-3 p-0">
+                  {suggestedMerges.map((s, idx) => (
+                    <li
+                      key={`${(s.table_ids || []).join('-')}-${idx}`}
+                      className="flex flex-col gap-2 rounded-lg border border-line bg-white p-3 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="min-w-0 text-[13px] text-ink">
+                        <div className="font-medium">
+                          {(s.table_ids || []).length} untitled tables
+                        </div>
+                        <div className="text-ink-soft">{s.reason || 'Structural cue match'}</div>
+                      </div>
+                      <div className="flex flex-none flex-wrap gap-2">
+                        <Button
+                          variant="primary"
+                          onClick={() => {
+                            const ids = s.table_ids || []
+                            setMatchResult((prev) => {
+                              const next = applySuggestedUntitledMerge(prev, ids)
+                              setAutoSnapshot(next)
+                              return next
+                            })
+                            setSuggestedMerges((prev) => prev.filter((_, i) => i !== idx))
+                            setToast('Suggestion applied — review the new group before continuing.')
+                          }}
+                        >
+                          Confirm
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            setSuggestedMerges((prev) => prev.filter((_, i) => i !== idx))
+                          }}
+                        >
+                          Dismiss
+                        </Button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             <GroupingWorkspace
               matchResult={matchResult}
               onMatchResultChange={setMatchResult}

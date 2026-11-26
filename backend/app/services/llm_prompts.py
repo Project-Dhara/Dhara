@@ -5,6 +5,7 @@ Central configuration: pipeline workers, LLM API limits, and prompt templates.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -115,12 +116,45 @@ def _read_macos_mem_mb() -> tuple[Optional[int], Optional[int]]:
     return avail, total
 
 
+def _read_windows_mem_mb() -> tuple[Optional[int], Optional[int]]:
+    """Return (approx_available_mb, total_mb) via ``GlobalMemoryStatusEx``."""
+    if sys.platform != "win32":
+        return None, None
+    try:
+        import ctypes
+
+        class MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        stat = MEMORYSTATUSEX()
+        stat.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+            return None, None
+        total = max(1, int(stat.ullTotalPhys) // (1024 * 1024))
+        avail = max(1, int(stat.ullAvailPhys) // (1024 * 1024))
+        return avail, total
+    except Exception:
+        return None, None
+
+
 def _available_ram_mb() -> Optional[int]:
-    """Best-effort usable RAM for extract workers (cgroup / Linux / macOS)."""
+    """Best-effort usable RAM for extract workers (cgroup / Linux / macOS / Windows)."""
     cgroup = _read_cgroup_memory_limit_mb()
     avail, total = _read_linux_meminfo_mb()
     if avail is None and total is None:
         avail, total = _read_macos_mem_mb()
+    if avail is None and total is None:
+        avail, total = _read_windows_mem_mb()
 
     # Inside Docker the cgroup limit is the real ceiling even if host MemAvailable
     # looks larger.

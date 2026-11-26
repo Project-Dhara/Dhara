@@ -6,7 +6,9 @@ from typing import Any, Dict, List, Optional
 from app.core.exceptions import AppError, NotFoundError
 from app.db.repositories import pdf_jobs as pdf_jobs_repo
 from app.db.session import session_scope
+from app.services.credentials.service import LlmCredentials
 from app.services.grouping import pdf_grouping
+from app.services.llm_client import llm_credentials_context
 from app.workers.extraction_jobs import (
     _get_pdf_job,
     _pdf_jobs_lock,
@@ -21,6 +23,10 @@ def persist_approved_and_group(
     job_id: str,
     user_email: str,
     api_key: Optional[str] = None,
+    provider: Optional[str] = None,
+    base_url: Optional[str] = None,
+    model: Optional[str] = None,
+    credentials: Optional[LlmCredentials] = None,
     tables_overlay: Optional[List[Dict[str, Any]]] = None,
     approved_table_ids: Optional[List[Any]] = None,
 ) -> Dict[str, Any]:
@@ -28,6 +34,12 @@ def persist_approved_and_group(
 
     Same behaviour as the former inline route handler.
     """
+    if credentials is not None:
+        api_key = credentials.api_key
+        provider = credentials.provider
+        base_url = credentials.base_url
+        model = credentials.model
+
     with _pdf_jobs_lock:
         job = _get_pdf_job(job_id)
         if not job or job.get("user_email") != user_email:
@@ -79,6 +91,7 @@ def persist_approved_and_group(
                 status_code=400,
             )
 
+    key = (api_key or "").strip() or None
     with session_scope() as session:
         persisted = pdf_jobs_repo.persist_approved_tables(
             session,
@@ -87,9 +100,15 @@ def persist_approved_and_group(
             filename=filename,
             tables=tables,
         )
-        proposal = pdf_grouping.propose_groups(
-            session, job_id, api_key=api_key, reindex=True
-        )
+        with llm_credentials_context(
+            key,
+            provider=provider,
+            base_url=base_url,
+            model=model,
+        ):
+            proposal = pdf_grouping.propose_groups(
+                session, job_id, api_key=key, reindex=False
+            )
         grouping = pdf_grouping.apply_proposal_to_db(session, job_id, proposal)
         return {
             "ok": True,

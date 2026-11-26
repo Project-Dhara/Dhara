@@ -67,24 +67,69 @@ def _pseudo_embedding(text: str, dim: int) -> list[float]:
     return [x / norm for x in vec]
 
 def embed_texts(texts: list[str], api_key: Optional[str] = None) -> list[list[float]]:
+    """Local pseudo-vectors only — grouping never calls OpenAI/remote embeddings.
+
+    ``api_key`` is accepted for call-site compatibility but ignored. Remote
+    ``embeddings.create`` (e.g. text-embedding-3-small) is intentionally disabled.
+    """
+    del api_key  # grouping policy: never use remote embeddings
     dim = vs.embedding_dim()
-    # Settings-scoped key only — never fall back to server OPENAI_API_KEY.
-    key = (api_key or "").strip()
-    if not key or not texts:
-        return [_pseudo_embedding(t, dim) for t in texts]
-    try:
-        from app.services.llm_client import make_openai_client
-        client = make_openai_client(key)
-        out: list[list[float]] = []
-        for i in range(0, len(texts), 64):
-            chunk = texts[i : i + 64]
-            resp = client.embeddings.create(model=EMBED_MODEL, input=chunk)
-            by_idx = {d.index: d.embedding for d in resp.data}
-            out.extend(by_idx[j] for j in range(len(chunk)))
-        return out
-    except Exception as exc:
-        print(f"[pdf_grouping] embeddings fallback ({exc})", flush=True)
-        return [_pseudo_embedding(t, dim) for t in texts]
+    if not texts:
+        return []
+    return [_pseudo_embedding(t, dim) for t in texts]
+
+
+def structural_cue_key(table: dict) -> Optional[str]:
+    """Strict cue for untitled suggestions: all of domain, entity, table_type non-empty."""
+    domain = str(table.get("domain") or "").strip()
+    entity = str(table.get("entity") or "").strip()
+    table_type = str(table.get("table_type") or "").strip()
+    if not (domain and entity and table_type):
+        return None
+    return f"{domain.lower()}|{entity.lower()}|{table_type.lower()}"
+
+
+def suggest_untitled_merges(tables: list[dict]) -> list[dict[str, Any]]:
+    """Steward-confirm suggestions among untitled tables with identical structural cues.
+
+    Never applied as finished groups. Prefer no suggestion over a wrong merge.
+    """
+    untitled: list[dict] = []
+    for t in tables or []:
+        if str(t.get("title") or "").strip():
+            continue
+        untitled.append(t)
+
+    buckets: dict[str, list[dict]] = defaultdict(list)
+    for t in untitled:
+        key = structural_cue_key(t)
+        if not key:
+            continue
+        buckets[key].append(t)
+
+    out: list[dict[str, Any]] = []
+    for key, members in buckets.items():
+        if len(members) < 2:
+            continue
+        ids: list[str] = []
+        for m in members:
+            tid = str(m.get("id") or m.get("table_id") or m.get("_uid") or "").strip()
+            if tid and tid not in ids:
+                ids.append(tid)
+        if len(ids) < 2:
+            continue
+        domain, entity, table_type = key.split("|", 2)
+        out.append(
+            {
+                "table_ids": ids,
+                "reason": (
+                    f"Same domain, entity, and table type "
+                    f"({domain} / {entity} / {table_type})"
+                ),
+                "confidence": "high",
+            }
+        )
+    return out
 
 def index_tables(session, job_id: str, tables: list[dict], api_key: Optional[str] = None) -> int:
     """Chunk + upsert embeddings for tables. Returns number of summary chunks written."""
@@ -264,7 +309,7 @@ def _propose_title_groups(tables: list[dict]) -> list[dict]:
             }
         )
 
-    # Untitled leftovers: each alone (caller may re-cluster via embeddings).
+    # Untitled leftovers: each alone (steward may confirm suggested merges).
     for j, t in enumerate(untitled):
         label = str(t.get("table_id") or t.get("id") or j + 1)
         groups.append(
@@ -311,8 +356,11 @@ __all__ = [
     "_groups_from_clusters",
     "_load_summary_embeddings",
     "_propose_title_groups",
+    "_pseudo_embedding",
     "build_column_chunks",
     "build_table_summary_chunk",
     "embed_texts",
     "index_tables",
+    "structural_cue_key",
+    "suggest_untitled_merges",
 ]

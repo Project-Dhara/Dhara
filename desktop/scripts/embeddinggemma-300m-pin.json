@@ -1,0 +1,7 @@
+{
+  "repo_id": "google/embeddinggemma-300m",
+  "revision": "57c266a740f537b4dc058e1b0cda161fd15afa75",
+  "dim": 768,
+  "family": "embeddinggemma",
+  "query_prefix": ""
+}

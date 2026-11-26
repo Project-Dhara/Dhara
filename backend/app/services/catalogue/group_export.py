@@ -3,6 +3,7 @@
 Each linked table is exported as .xlsx with Code and Definition columns
 appended after every classified / harmonised dimension column — looked up
 from the steward code lists on the dataset (falling back to the group).
+Each workbook also includes Metadata and NMDS sheets for the release.
 """
 from __future__ import annotations
 
@@ -15,6 +16,80 @@ import psycopg2.extras
 
 from app.services.classification.classifications import _normalize_classification_values
 from app.services.ingestion.wizard.table_export import safe_download_stem, table_to_excel_bytes
+
+# Catalogue fields written to the Metadata sheet (label, db column).
+_METADATA_SHEET_FIELDS: tuple[tuple[str, str], ...] = (
+    ("title", "title"),
+    ("product", "product"),
+    ("category", "category"),
+    ("geography", "geography"),
+    ("frequency", "frequency"),
+    ("time_period", "time_period"),
+    ("data_source", "data_source"),
+    ("description", "description"),
+    ("last_updated", "last_updated_date"),
+    ("future_release", "future_release"),
+    ("key_statistics", "key_statistics"),
+    ("remarks", "remarks"),
+    ("sector", "sector"),
+    ("theme", "theme"),
+)
+
+
+def _metadata_pairs_from_group(group: dict) -> list[tuple[str, Any]]:
+    pairs: list[tuple[str, Any]] = []
+    for label, key in _METADATA_SHEET_FIELDS:
+        val = group.get(key)
+        if val is None or (isinstance(val, str) and not val.strip()):
+            # Still include blank so the sheet is complete for steward review.
+            pairs.append((label, ""))
+        else:
+            pairs.append((label, val))
+    return pairs
+
+
+def _nmds_pairs_from_raw(raw: Any) -> list[tuple[str, Any]]:
+    """Flatten nmds_concepts JSON into Field / Value rows."""
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+    # Wrapped { standard, concepts }
+    if isinstance(raw, dict) and "concepts" in raw:
+        concepts = raw.get("concepts")
+        if isinstance(concepts, dict):
+            return [
+                (str(k), "" if v is None else v)
+                for k, v in concepts.items()
+                if k != "standard"
+            ]
+        if isinstance(concepts, list):
+            raw = concepts
+        else:
+            return []
+    if isinstance(raw, dict):
+        return [
+            (str(k), "" if v is None else v)
+            for k, v in raw.items()
+            if k != "standard"
+        ]
+    pairs: list[tuple[str, Any]] = []
+    if isinstance(raw, list):
+        for row in raw:
+            if not isinstance(row, dict):
+                continue
+            concept = str(row.get("concept") or row.get("field") or "").strip()
+            details = row.get("details")
+            if details is None:
+                details = row.get("value") or row.get("code") or ""
+            if not concept and not str(details or "").strip():
+                continue
+            label = concept or str(row.get("item_no") or "concept")
+            pairs.append((label, details if details is not None else ""))
+    return pairs
 
 
 def _parse_json(value, fallback):
@@ -178,13 +253,17 @@ def build_group_download_zip(conn, metadata_id: str) -> Optional[tuple[bytes, st
 
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute("""
-            SELECT metadata_id, title, classifications
+            SELECT metadata_id, title, description, product, category, geography,
+                   frequency, time_period, data_source, last_updated_date,
+                   future_release, key_statistics, remarks, sector, theme,
+                   classifications, nmds_concepts
             FROM metadata_groups
             WHERE metadata_id = %s
         """, (mid,))
         group = cur.fetchone()
         if not group:
             return None
+        group = dict(group)
         cur.execute("""
             SELECT dataset_id, title, table_id, classifications
             FROM datasets
@@ -196,6 +275,8 @@ def build_group_download_zip(conn, metadata_id: str) -> Optional[tuple[bytes, st
     group_cls = _parse_json(group.get("classifications"), {})
     if not isinstance(group_cls, dict):
         group_cls = {}
+    metadata_pairs = _metadata_pairs_from_group(group)
+    nmds_pairs = _nmds_pairs_from_raw(group.get("nmds_concepts"))
 
     buf = BytesIO()
     used_names: set[str] = set()
@@ -221,7 +302,14 @@ def build_group_download_zip(conn, metadata_id: str) -> Optional[tuple[bytes, st
                 name = f"{stem[:70]}_{n}"
                 n += 1
             used_names.add(name.lower())
-            zf.writestr(f"{name}.xlsx", table_to_excel_bytes(table))
+            zf.writestr(
+                f"{name}.xlsx",
+                table_to_excel_bytes(
+                    table,
+                    metadata_pairs=metadata_pairs,
+                    nmds_pairs=nmds_pairs,
+                ),
+            )
 
     title = (group.get("title") or mid).strip() or mid
     zip_stem = safe_download_stem({"title": title}, fallback=mid)

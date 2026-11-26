@@ -5,14 +5,17 @@ Deployment still starts via ``uvicorn main:app`` from ``backend/``;
 """
 from __future__ import annotations
 
+import os
 import pathlib
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.routing import Route
 
 from app.api.router import api_router
@@ -66,11 +69,65 @@ OPENAPI_TAGS = [
     },
 ]
 
-# backend/static — parent of app/ is backend/
+# backend/static — parent of app/ is backend/ (override via DHARA_STATIC_UI_ROOT)
 _BACKEND_DIR = pathlib.Path(__file__).resolve().parent.parent
-_STATIC_DIR = _BACKEND_DIR / "static"
-_ASSETS_DIR = _STATIC_DIR / "assets"
-_INDEX_HTML = _STATIC_DIR / "index.html"
+_DEFAULT_STATIC_DIR = _BACKEND_DIR / "static"
+
+
+def _resolve_ui_static_root() -> pathlib.Path:
+    raw = (os.environ.get("DHARA_STATIC_UI_ROOT") or "").strip()
+    if raw:
+        custom = pathlib.Path(raw)
+        if custom.is_dir():
+            return custom
+    return _DEFAULT_STATIC_DIR
+
+
+def _parse_csv_env(name: str) -> list[str]:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def _no_spa_fallback_prefix(full_path: str) -> bool:
+    normalized = (full_path or "").lstrip("/")
+    if not normalized:
+        return False
+    if normalized == "api" or normalized.startswith("api/"):
+        return True
+    if normalized == "mcp" or normalized.startswith("mcp/"):
+        return True
+    if normalized == ".well-known" or normalized.startswith(".well-known/"):
+        return True
+    return False
+
+
+def _safe_path_under_root(root: pathlib.Path, *parts: str) -> Optional[pathlib.Path]:
+    try:
+        candidate = (root.joinpath(*parts)).resolve()
+        candidate.relative_to(root.resolve())
+    except (ValueError, OSError):
+        return None
+    return candidate
+
+
+def _resolve_static_file(root: pathlib.Path, full_path: str) -> Optional[pathlib.Path]:
+    """Try ``path``, ``path/index.html``, then root ``index.html`` (SPA export)."""
+    normalized = (full_path or "").strip().strip("/")
+    if normalized:
+        if ".." in pathlib.PurePosixPath(normalized).parts:
+            return None
+        direct = _safe_path_under_root(root, normalized)
+        if direct is not None and direct.is_file():
+            return direct
+        index_under = _safe_path_under_root(root, normalized, "index.html")
+        if index_under is not None and index_under.is_file():
+            return index_under
+    root_index = _safe_path_under_root(root, "index.html")
+    if root_index is not None and root_index.is_file():
+        return root_index
+    return None
 
 
 @asynccontextmanager
@@ -149,12 +206,23 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
 
+    cors_origins = _parse_csv_env("DHARA_CORS_ORIGINS")
     application.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=cors_origins if cors_origins else ["*"],
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    allowed_hosts = _parse_csv_env("DHARA_ALLOWED_HOSTS")
+    if allowed_hosts:
+        for extra in ("localhost", "127.0.0.1"):
+            if extra not in allowed_hosts:
+                allowed_hosts.append(extra)
+        application.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+
+    static_root = _resolve_ui_static_root()
+    assets_dir = static_root / "assets"
 
     @application.exception_handler(AppError)
     async def _app_error_handler(_request: Request, exc: AppError) -> JSONResponse:
@@ -172,9 +240,9 @@ def create_app() -> FastAPI:
     application.router.routes.insert(0, Route("/mcp", endpoint=mcp_asgi))
     application.router.routes.insert(0, Route("/mcp/", endpoint=mcp_asgi))
 
-    if _ASSETS_DIR.exists():
+    if assets_dir.is_dir():
         application.mount(
-            "/assets", StaticFiles(directory=str(_ASSETS_DIR)), name="assets"
+            "/assets", StaticFiles(directory=str(assets_dir)), name="assets"
         )
 
     @application.get("/{full_path:path}", include_in_schema=False)
@@ -193,8 +261,11 @@ def create_app() -> FastAPI:
                     ),
                 },
             )
-        if _INDEX_HTML.exists():
-            return FileResponse(str(_INDEX_HTML))
+        if _no_spa_fallback_prefix(full_path):
+            raise HTTPException(status_code=404, detail="Not found")
+        resolved = _resolve_static_file(static_root, full_path)
+        if resolved is not None:
+            return FileResponse(str(resolved))
         raise HTTPException(
             404, "Frontend not built. Run: cd frontend && npm run build"
         )

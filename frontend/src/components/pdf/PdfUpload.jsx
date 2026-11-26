@@ -12,7 +12,7 @@ import { datasetIdConfigPayload } from '../../lib/settingsConfig'
 import { useApp } from '../../context/AppContext'
 
 // Upload only. Processing progress and review now live on their own routed
-// pages (/console/processing/:jobId, /console/review/:jobId) -- this
+// pages (/console/processing?jobId=, /console/review?jobId=) -- this
 // component's only job is picking a file, POSTing it, and navigating away.
 export default function PdfUpload({ onGoSettings }) {
   const [uploading, setUploading] = useState(false)
@@ -34,7 +34,7 @@ export default function PdfUpload({ onGoSettings }) {
         throw new Error(err.detail || 'Upload failed')
       }
       const { job_id } = await res.json()
-      router.push(`/console/processing/${job_id}`)
+      router.push(`/console/processing?jobId=${encodeURIComponent(job_id)}`)
     } catch (e) {
       setError(e.message)
       setUploading(false)

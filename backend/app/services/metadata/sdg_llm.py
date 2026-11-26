@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Optional
 
 from app.services.metadata.excel_facts import (
     prepare_kyds_for_llm,
@@ -34,11 +34,31 @@ SDG_FIELD_CODES = {
     "International organisations(s) responsible for global monitoring": "SDG_CUSTODIAN_AGENCIES",
 }
 
+SDG_METADATA_JSON_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        field: {"type": ["string", "null"]} for field in SDG_METADATA_FIELDS
+    },
+    "required": list(SDG_METADATA_FIELDS),
+    "additionalProperties": False,
+}
+
+SDG_METADATA_RESPONSE_FORMAT: Dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "sdg_metadata",
+        "strict": True,
+        "schema": SDG_METADATA_JSON_SCHEMA,
+    },
+}
+
+
 def generate_sdg_metadata_with_llm(
     excel_facts: Dict[str, Any],
     *,
     kyds: Dict[str, Any],
-    complete_fn: Callable[[str, int], str],
+    complete_fn: Callable[..., str],
+    deadline_monotonic: Optional[float] = None,
 ) -> str:
     """Populate SDG indicator metadata fields from table/Excel facts + KYDS."""
     field_lines = "\n".join(
@@ -70,7 +90,13 @@ Escape any double quotes that appear inside string values.
     kyds_llm = prepare_kyds_for_llm(kyds)
     user_content = {"excel_facts": excel_facts, "dataset_context": kyds_llm}
     prompt = f"{system_prompt}\n\n{json.dumps(user_content, default=str)}"
-    return complete_fn(prompt, 3000)
+    return complete_fn(
+        prompt,
+        3000,
+        response_format=SDG_METADATA_RESPONSE_FORMAT,
+        deadline_monotonic=deadline_monotonic,
+    )
+
 
 def parse_llm_sdg_metadata_output(llm_output: str) -> Dict[str, Any]:
     """Parse LLM JSON into exactly SDG_METADATA_FIELDS (missing → None)."""
@@ -116,9 +142,12 @@ def parse_llm_sdg_metadata_output(llm_output: str) -> Dict[str, Any]:
             out[label] = value
     return out
 
+
 __all__ = [
     "SDG_FIELD_CODES",
     "SDG_METADATA_FIELDS",
+    "SDG_METADATA_JSON_SCHEMA",
+    "SDG_METADATA_RESPONSE_FORMAT",
     "generate_sdg_metadata_with_llm",
     "parse_llm_sdg_metadata_output",
 ]

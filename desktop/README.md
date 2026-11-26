@@ -10,9 +10,11 @@ everything Dhara needs — there is nothing else to install and nothing to confi
 | **Background jobs** | A separate `python -m app.workers.job_worker` process (PDF / Excel / CSV work never runs inside the API) |
 | **Shell** | Electron: splash, tray, one window pointed at the API origin |
 
-There is no Docker, WSL, Compose, or Node.js server at runtime. Cloud / API-key LLMs are the default;
-a local model via [Ollama](https://ollama.com) is an explicit opt-in from Settings — Dhara never
-downloads, installs, or starts Ollama.
+There is no Docker, WSL, Compose, or Node.js server at runtime. Cloud / API-key LLMs are the default.
+Optional local inference uses user-installed [Ollama](https://ollama.com) **0.6+** with **`gemma3:1b`**
+(~800 MB pull) via **Settings → Run a local model (optional)**. Dhara never installs or starts
+Ollama; it can open the download page, pull the model with progress, fill the LLM form on an
+explicit click (never auto-save), and test the connection (`keep_alive: 1m` on the native chat API).
 
 ## What the app does at startup
 
@@ -65,8 +67,12 @@ same way. `MALLOC_ARENA_MAX` is never set (it is a glibc setting) and `DHARA_INL
 `DATABASE_URL` (actual Postgres port), `JWT_SECRET`, `LLM_CREDENTIALS_KEY`, `DHARA_STATIC_UI_ROOT`
 (the bundled `frontend\`), `MCP_HTTP_AUTH=token` + per-install `MCP_AUTH_TOKEN`,
 `DHARA_LISTEN_HOST=127.0.0.1`, `DHARA_ALLOWED_HOSTS`, `DHARA_CORS_ORIGINS`, `DHARA_DATA_DIR`,
-`STORAGE_LOCAL_PATH`, `UPLOAD_ARCHIVE_PATH`, `DHARA_MIN_AVAILABLE_RAM_MB=1200`, `NCO_EMBEDDING_MODEL=`
-(TF-IDF only), and the `PDF_*` limits. See `src/main/backend-env.ts`.
+`STORAGE_LOCAL_PATH`, `UPLOAD_ARCHIVE_PATH`, `DHARA_MIN_AVAILABLE_RAM_MB=1200`, and the `PDF_*`
+limits. The **job worker** gets `NCO_EMBEDDING_MODEL` pointing at the bundled
+`models\embeddinggemma-300m` folder (offline Hub flags on). The API process leaves that
+empty so Suggest NCO loads EmbeddingGemma only in the worker. Pass `-SkipEmbeddings` to
+`prepare-backend` / `build-installer` for TF-IDF-only (no torch, no model folder).
+Builders need `HF_TOKEN` (gated Hub license). See `src/main/backend-env.ts`.
 
 ## Using the tray
 
@@ -100,7 +106,9 @@ database cannot be opened (the app will say so rather than touching your data).
 | `readUploadFile(file)` | Reads a user-picked file in the main process (`fs:read-upload-file`; pdf/xlsx/xls/csv, ≤ 200 MB) |
 | `getAuth()` / `setAuth({token,user})` / `clearAuth()` | Session persistence that survives a port change (localStorage is origin-scoped) |
 | `getInfo()`, `openLogsFolder()`, `copyDiagnostics()` | Support helpers for Settings → Help |
-| `ollama.status()` / `ollama.openDownloadPage()` | Read-only helpers for the optional local model (`http://127.0.0.1:11434/v1`) |
+| `ollama.status()` / `defaults()` / `openDownloadPage()` | Status (version, exact `gemma3:1b`, disk) + download page |
+| `ollama.pullStart()` / `pullCancel()` / `pullStatus()` / `onPullProgress(cb)` | Guided model pull (idempotent start; unsubscribe from progress on unmount) |
+| `ollama.testConnection()` | Native `/api/chat` ping with 60s timeout + RAM warning |
 
 IPC is only honoured from the top frame of the app's own loopback origin.
 
@@ -141,10 +149,16 @@ npm run dist                                   # runs all steps below, then elec
 powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1 -BuildPgVector
 ```
 
-Output: `release\DharaSetup-<version>-x64.exe` (NSIS, per-user install, no admin prompt). Uninstalling
-keeps `%LOCALAPPDATA%\Dhara` unless you answer **No** to “Keep your Dhara data?”; silent uninstalls and
-upgrades always keep it. Typical payload ≈ 400–500 MB (no PyTorch/embedding models by default; add
-`-IncludeEmbeddings` to `build-installer.ps1` to include them).
+Output: `release\DharaSetup-<version>-x64.exe` (NSIS, per-user install, no admin prompt). Version is in
+the filename (e.g. `DharaSetup-0.1.2-x64.exe`), so older builds such as `0.1.1` remain in `release/`
+when you bump `package.json`. Uninstalling keeps `%LOCALAPPDATA%\Dhara` unless you answer **No** to
+“Keep your Dhara data?”; silent uninstalls and upgrades always keep it. Default builds bundle CPU
+PyTorch + **google/embeddinggemma-300m** (weights downloaded once at build time with `HF_TOKEN`,
+verified by SHA-256, plus a prebuilt NCO index). Use `-SkipEmbeddings` for a lean TF-IDF-only build.
+
+**NCO troubleshooting:** Suggest NCO reports `semantic` when EmbeddingGemma is used, or
+`keyword-only` when the model cannot load (missing folder, low RAM, offline load failure). Copy
+diagnostics includes whether the model folder and `nco_index.npz` are present.
 
 ### Source layout
 

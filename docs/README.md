@@ -17,7 +17,7 @@ remembers the approved meaning.
 | [Pipeline stages](./pipeline/) | Design + behaviour for each step (including planned stages) |
 | [Deployment overview](./deployment/overview.md) | Choose on-prem, Windows desktop, or cloud |
 | [On-prem deployment](./deployment/on-prem.md) | Docker Compose, host-run, air-gapped notes |
-| [Windows desktop setup](./deployment/desktop-windows.md) | Beginner step-by-step: build installer, install, first-run, Ollama |
+| [Windows desktop setup](./deployment/desktop-windows.md) | Beginner step-by-step: build installer, install, optional Ollama |
 | [Cloud deployment](./deployment/cloud.md) | Cloud Run, Render, managed Postgres, GCS |
 | [Configuration](./deployment/configuration.md) | Environment variables and secrets (deploy-time; distinct from Settings modules) |
 

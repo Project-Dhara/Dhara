@@ -76,17 +76,17 @@ def _pdf_dashboard_row(
     # reachable via the Console stage rail (step 2 → /console/review/…).
     # Steps 3–7 live on the grouping shell (in-page pipeline); only true
     # Publish (step 7) deep-links to the catalogue.
-    preview_href = f"/console/review/{job_id}"
+    preview_href = f"/console/review?jobId={job_id}"
 
     def _step_href(console_step: int) -> str:
         if console_step <= 1:
-            return f"/console/processing/{job_id}"
+            return f"/console/processing?jobId={job_id}"
         if console_step == 2:
             return preview_href
         if console_step >= 7:
             return "/catalogue"
         # 3 Grouping · 4 Metadata · 5 Classify · 6 Harmonisation
-        return f"/console/grouping/{job_id}?step={console_step}"
+        return f"/console/grouping?jobId={job_id}&step={console_step}"
 
     if status in ("queued", "running"):
         # Step 1 — extraction in progress (cap below Preview).

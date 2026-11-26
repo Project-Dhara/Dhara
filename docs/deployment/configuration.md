@@ -44,7 +44,7 @@ key via the `X-Llm-Api-Key` header. Server `OPENAI_API_KEY` /
 | `EMBEDDING_DIM` | Vector width (default 1536 for common small embedding models) |
 | `EMBEDDING_MODEL` | Override embedding model if supported by code paths |
 | `LLM_BASE_URL` | OpenAI-compatible base URL for Self-hosted / Ollama (e.g. `http://host.docker.internal:11434/v1`) |
-| `LLM_MODEL` | Chat model id override (e.g. `qwen2.5:1.5b-instruct`) |
+| `LLM_MODEL` | Chat model id override (e.g. `gemma3:1b`) |
 | `DHARA_SELF_HOSTED_MODEL` | Default model when Self-hosted and no `LLM_MODEL` / Settings model |
 
 Settings → **Self-hosted** also stores `base_url` + `model` with the encrypted

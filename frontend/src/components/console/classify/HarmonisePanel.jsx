@@ -261,10 +261,10 @@ export default function HarmonisePanel({
                       <tr className="bg-[#F4EFE3] text-[11px] uppercase tracking-[0.04em] text-[#8E9398]">
                         <th className="w-11 border-b border-[#d7cdb9] px-3 py-2.5 text-center font-semibold">#</th>
                         <th
-                          className="w-[34%] border-b border-[#d7cdb9] border-l border-[#e8e0d0] px-3 py-2.5 font-semibold"
+                          className="w-[34%] border-b border-[#d7cdb9] border-l border-[#e8e0d0] px-3 py-2.5 font-semibold normal-case tracking-normal"
                           title="From the data — not editable"
                         >
-                          Value
+                          {active.name}
                         </th>
                         <th className="w-[18%] border-b border-[#d7cdb9] border-l border-[#e8e0d0] px-3 py-2.5 font-semibold">
                           Code

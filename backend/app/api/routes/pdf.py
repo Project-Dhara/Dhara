@@ -32,6 +32,7 @@ from app.schemas.pdf import (
     TableIdsRequest,
 )
 from app.services.jobs.enqueue import dispatch_extraction
+from app.services.jobs.ram_gate import ensure_enough_ram_for_pdf
 from app.services.jobs.pdf_review import persist_approved_and_group
 from app.storage.upload_archive import archive_upload_bytes
 from app.workers.extraction_jobs import (
@@ -85,6 +86,8 @@ async def pdf_upload(
     the frontend to poll via GET /api/pdf/jobs/{job_id}."""
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Only .pdf files are supported")
+
+    ensure_enough_ram_for_pdf()
 
     content = await file.read()
     if not content:
@@ -596,12 +599,12 @@ async def pdf_persist_approved(
     grouping. Preview can keep showing every table; only the listed IDs proceed.
     When omitted, every job table is persisted (previous behaviour).
     """
-    api_key, _provider = resolve_llm_credentials(request, user_email, db=db)
+    creds = resolve_llm_credentials(request, user_email, db=db)
     data = body.model_dump()
     return persist_approved_and_group(
         job_id=job_id,
         user_email=user_email,
-        api_key=api_key,
+        credentials=creds,
         tables_overlay=data.get("tables"),
         approved_table_ids=data.get("approved_table_ids"),
     )
@@ -622,12 +625,15 @@ async def pdf_get_grouping(job_id: str, user_email: str = Depends(require_user_e
             raise HTTPException(409, "Tables not persisted yet — click Continue on Preview.")
         grouping = pdf_store.load_grouping(session, job_id)
         tables = pdf_store.list_active_tables(session, job_id)
+        from app.services.grouping.embeddings import suggest_untitled_merges
+
         return {
             "job_id": job_id,
             "filename": job_row.get("filename"),
             "grouping_status": job_row.get("grouping_status"),
             "table_count": len(tables),
             **grouping,
+            "suggested_merges": suggest_untitled_merges(tables),
         }
 
 
@@ -643,16 +649,27 @@ async def pdf_propose_grouping(
     from app.db import pdf_store
     from app.services.grouping import pdf_grouping
 
-    api_key, _provider = resolve_llm_credentials(request, user_email, db=db)
+    creds = resolve_llm_credentials(request, user_email, db=db)
     reindex = bool(body.reindex)
 
     with session_scope() as session:
         job_row = pdf_store.get_job(session, job_id)
         if not job_row or job_row.get("user_email") != user_email:
             raise HTTPException(404, "Job not found — continue from Preview first.")
-        proposal = pdf_grouping.propose_groups(
-            session, job_id, api_key=api_key, reindex=reindex
-        )
+        from app.services.llm_client import llm_credentials_context
+
+        with llm_credentials_context(
+            creds.api_key,
+            provider=creds.provider,
+            base_url=creds.base_url,
+            model=creds.model,
+        ):
+            proposal = pdf_grouping.propose_groups(
+                session,
+                job_id,
+                api_key=(creds.api_key or "").strip() or None,
+                reindex=reindex,
+            )
         grouping = pdf_grouping.apply_proposal_to_db(session, job_id, proposal)
         return {"ok": True, "job_id": job_id, **grouping}
 

@@ -240,105 +240,316 @@ export function startManualMatchGrouping(matchResult, allTables) {
 }
 
 /**
- * Call /api/catalogue/fill-group-metadata and merge patches into matchResult.
- * Returns { matchResult, toast, ok }.
+ * Apply a steward-confirmed suggested merge of untitled tables into one group.
+ * ``tableIds`` are pdf table primary keys / _uid values from suggested_merges.
  */
-export async function fillGroupMetadataForMatchResult(matchResult, {
+export function applySuggestedUntitledMerge(matchResult, tableIds, groupName) {
+  if (!matchResult || !Array.isArray(tableIds) || tableIds.length < 2) return matchResult
+  const want = new Set(tableIds.map((id) => String(id)))
+  const rowId = (table) => String(table?.id || table?._uid || table?.table_id || '')
+  const pulled = []
+  const keptGroups = []
+
+  for (const g of matchResult.groups || []) {
+    const keep = []
+    for (const mt of g.matched_tables || []) {
+      const id = rowId(mt.table)
+      if (want.has(id)) pulled.push(mt)
+      else keep.push(mt)
+    }
+    if (keep.length) keptGroups.push({ ...g, matched_tables: keep })
+  }
+
+  let unmatched = matchResult.unmatched_tables || []
+  const stillUnmatched = []
+  for (const u of unmatched) {
+    const id = rowId(u.table)
+    if (want.has(id)) pulled.push(u)
+    else stillUnmatched.push(u)
+  }
+
+  if (pulled.length < 2) return matchResult
+
+  const name =
+    (groupName && String(groupName).trim()) ||
+    `Untitled merge (${pulled.length} tables)`
+
+  keptGroups.push({
+    workbook_index: keptGroups.length,
+    file_name: name,
+    metadata: { ...EMPTY_GROUP_METADATA },
+    concepts: [],
+    classifications: {},
+    matched_tables: pulled,
+  })
+
+  return {
+    ...matchResult,
+    groups: keptGroups.map((g, i) => ({ ...g, workbook_index: i })),
+    unmatched_tables: stillUnmatched,
+  }
+}
+
+function applyMetadataPatches(groups, metaPatches, indexMap = null) {
+  const aiFilledFieldsByGroup = {}
+  if (!Array.isArray(metaPatches) || !metaPatches.length) {
+    return { groups, aiFilledFieldsByGroup }
+  }
+  const nextGroups = groups.map((g, i) => {
+    let patch = null
+    if (indexMap && Object.prototype.hasOwnProperty.call(indexMap, i)) {
+      patch = metaPatches.find((p) => p.index === indexMap[i]) || metaPatches[0]
+    } else {
+      patch = metaPatches.find((p) => p.index === i) || metaPatches[i]
+    }
+    if (!patch) return g
+    const next = { ...g }
+    if (patch.file_name) next.file_name = patch.file_name
+    if (patch.filled && patch.metadata) {
+      next.metadata = { ...(g.metadata || {}), ...patch.metadata }
+    }
+    if (patch.concept_metadata && Object.keys(patch.concept_metadata).length) {
+      next.concept_metadata = { ...(g.concept_metadata || {}), ...patch.concept_metadata }
+    }
+    if (patch.catalogue_metadata && Object.keys(patch.catalogue_metadata).length) {
+      next.catalogue_metadata = { ...(g.catalogue_metadata || {}), ...patch.catalogue_metadata }
+    }
+    if (patch.llm_filled) {
+      next.llm_filled = true
+      const fields = Array.isArray(patch.llm_filled_fields)
+        ? patch.llm_filled_fields.filter((k) => String(next.metadata?.[k] || next.concept_metadata?.[k] || '').trim())
+        : Object.keys(next.metadata || {}).filter((k) => String(next.metadata[k] || '').trim())
+      next.llm_filled_fields = fields
+      aiFilledFieldsByGroup[i] = fields
+    }
+    return next
+  })
+  return { groups: nextGroups, aiFilledFieldsByGroup }
+}
+
+function buildAutofillToast({
+  llmAutofillSkippedNoKey,
+  autofillErrors,
+  filledCount,
+  llmFilledCount,
+  cancelled,
+}) {
+  if (cancelled) {
+    return llmFilledCount > 0
+      ? `Auto-fill cancelled after ${llmFilledCount} group${llmFilledCount !== 1 ? 's' : ''}. Remaining groups need manual entry.`
+      : 'Auto-fill cancelled. Fill metadata manually below.'
+  }
+  if (llmAutofillSkippedNoKey) {
+    return 'Add an LLM API key in Settings to auto-fill metadata, or fill fields manually on the next step.'
+  }
+  if (autofillErrors.length > 0) {
+    const sample = autofillErrors[0]?.group || autofillErrors[0]?.error || 'unknown'
+    return filledCount > 0
+      ? `Auto-filled ${filledCount} group${filledCount !== 1 ? 's' : ''}; ${autofillErrors.length} need manual entry (${sample}).`
+      : autofillErrors.length === 1
+        ? `Auto-fill failed for 1 group (${sample}). Fill that group in manually.`
+        : `Auto-fill failed for ${autofillErrors.length} groups. Fill those groups in manually.`
+  }
+  if (llmFilledCount > 0) {
+    return `AI auto-filled metadata for ${llmFilledCount} group${llmFilledCount !== 1 ? 's' : ''}.`
+  }
+  return null
+}
+
+async function postFillGroupMetadata(groups, {
   withAuthHeaders,
   withLlmKeyHeaders,
   getMetadataStandard,
+  signal,
 }) {
   const res = await fetch(
     '/api/catalogue/fill-group-metadata',
     withAuthHeaders(withLlmKeyHeaders({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ groups: matchResult.groups, standard: getMetadataStandard() }),
+      body: JSON.stringify({ groups, standard: getMetadataStandard() }),
+      signal,
     })),
   )
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: 'Metadata autofill failed' }))
     const detail = typeof err.detail === 'string' ? err.detail : 'Metadata autofill failed'
-    return {
-      ok: false,
-      toast: `${detail} — fill metadata in manually below.`,
-      matchResult: {
-        ...matchResult,
-        autofill_attempted: true,
-        llm_autofill_skipped_no_key: false,
-        kyds_missing: false,
-        autofill_errors: [{ group: 'all', error: detail }],
-      },
+    const error = new Error(detail)
+    error.status = res.status
+    throw error
+  }
+  return res.json()
+}
+
+/**
+ * Call /api/catalogue/fill-group-metadata and merge patches into matchResult.
+ * Self-hosted: fills one group at a time with onProgress + AbortSignal support.
+ * Returns { matchResult, toast, ok, cancelled }.
+ */
+export async function fillGroupMetadataForMatchResult(matchResult, {
+  withAuthHeaders,
+  withLlmKeyHeaders,
+  getMetadataStandard,
+  isSelfHosted = false,
+  onProgress = null,
+  signal = null,
+}) {
+  const groups = Array.isArray(matchResult.groups) ? matchResult.groups : []
+
+  // Cloud / single-group: one bulk request (server may still parallelize).
+  if (!isSelfHosted || groups.length <= 1) {
+    onProgress?.({ current: 1, total: Math.max(groups.length, 1), label: groups[0]?.file_name || groups[0]?.name || '' })
+    try {
+      const data = await postFillGroupMetadata(groups, {
+        withAuthHeaders,
+        withLlmKeyHeaders,
+        getMetadataStandard,
+        signal,
+      })
+      const autofillErrors = Array.isArray(data.autofill_errors) ? data.autofill_errors : []
+      const metaPatches = Array.isArray(data.group_metadata) ? data.group_metadata : null
+      let nextGroups = groups
+      let aiFilledFieldsByGroup = {}
+      if (metaPatches) {
+        ;({ groups: nextGroups, aiFilledFieldsByGroup } = applyMetadataPatches(groups, metaPatches))
+      } else if (Array.isArray(data.groups) && data.groups.length === groups.length) {
+        nextGroups = groups.map((g, i) => ({
+          ...g,
+          file_name: data.groups[i]?.file_name || g.file_name,
+          metadata: data.groups[i]?.metadata && Object.keys(data.groups[i].metadata).length
+            ? { ...(g.metadata || {}), ...data.groups[i].metadata }
+            : g.metadata,
+          llm_filled: Boolean(data.groups[i]?._llm_filled || data.groups[i]?.llm_filled),
+          llm_filled_fields: data.groups[i]?._llm_filled_fields || data.groups[i]?.llm_filled_fields || [],
+        }))
+        nextGroups.forEach((g, i) => {
+          if (g.llm_filled) aiFilledFieldsByGroup[i] = g.llm_filled_fields || []
+        })
+      }
+      const filledCount = Number(data.autofill_filled_count) || 0
+      const llmFilledCount = Number(data.autofill_llm_filled_count) || Object.keys(aiFilledFieldsByGroup).length
+      const toast = buildAutofillToast({
+        llmAutofillSkippedNoKey: Boolean(data.llm_autofill_skipped_no_key),
+        autofillErrors,
+        filledCount,
+        llmFilledCount,
+      })
+      return {
+        ok: true,
+        cancelled: false,
+        toast,
+        matchResult: {
+          ...matchResult,
+          groups: nextGroups,
+          autofill_attempted: true,
+          llm_autofill_skipped_no_key: Boolean(data.llm_autofill_skipped_no_key),
+          kyds_missing: Boolean(data.kyds_missing),
+          autofill_errors: autofillErrors,
+          autofill_filled_count: filledCount,
+          autofill_llm_filled_count: llmFilledCount,
+          ai_filled_fields_by_group: aiFilledFieldsByGroup,
+        },
+      }
+    } catch (e) {
+      if (signal?.aborted || e?.name === 'AbortError') {
+        return {
+          ok: false,
+          cancelled: true,
+          toast: buildAutofillToast({ cancelled: true, autofillErrors: [], filledCount: 0, llmFilledCount: 0 }),
+          matchResult: {
+            ...matchResult,
+            autofill_attempted: true,
+            autofill_errors: [{ group: 'all', error: 'Cancelled' }],
+          },
+        }
+      }
+      const detail = e?.message || 'Metadata autofill failed'
+      return {
+        ok: false,
+        cancelled: false,
+        toast: `${detail} — fill metadata in manually below.`,
+        matchResult: {
+          ...matchResult,
+          autofill_attempted: true,
+          llm_autofill_skipped_no_key: false,
+          kyds_missing: false,
+          autofill_errors: [{ group: 'all', error: detail }],
+        },
+      }
     }
   }
-  const data = await res.json()
-  const autofillErrors = Array.isArray(data.autofill_errors) ? data.autofill_errors : []
-  const metaPatches = Array.isArray(data.group_metadata) ? data.group_metadata : null
-  let nextGroups = matchResult.groups
+
+  // Self-hosted multi-group: one POST per group so UI can show progress / cancel.
+  let nextGroups = groups.map((g) => ({ ...g }))
   const aiFilledFieldsByGroup = {}
-  if (metaPatches) {
-    nextGroups = matchResult.groups.map((g, i) => {
-      const patch = metaPatches.find((p) => p.index === i) || metaPatches[i]
-      if (!patch) return g
-      const next = { ...g }
-      if (patch.file_name) next.file_name = patch.file_name
-      if (patch.filled && patch.metadata) {
-        next.metadata = { ...(g.metadata || {}), ...patch.metadata }
+  const autofillErrors = []
+  let filledCount = 0
+  let llmFilledCount = 0
+  let skippedNoKey = false
+  let cancelled = false
+
+  for (let i = 0; i < groups.length; i += 1) {
+    if (signal?.aborted) {
+      cancelled = true
+      break
+    }
+    const label = groups[i]?.file_name || groups[i]?.name || `Group ${i + 1}`
+    onProgress?.({ current: i + 1, total: groups.length, label })
+    try {
+      const data = await postFillGroupMetadata([groups[i]], {
+        withAuthHeaders,
+        withLlmKeyHeaders,
+        getMetadataStandard,
+        signal,
+      })
+      if (data.llm_autofill_skipped_no_key) skippedNoKey = true
+      const patches = Array.isArray(data.group_metadata) ? data.group_metadata : []
+      // Server indexes the single group as 0 — remap onto original i.
+      const remapped = patches.map((p) => ({ ...p, index: i }))
+      const applied = applyMetadataPatches(nextGroups, remapped)
+      nextGroups = applied.groups
+      Object.assign(aiFilledFieldsByGroup, applied.aiFilledFieldsByGroup)
+      filledCount += Number(data.autofill_filled_count) || (applied.aiFilledFieldsByGroup[i] ? 1 : 0)
+      if (applied.aiFilledFieldsByGroup[i]) llmFilledCount += 1
+      const errs = Array.isArray(data.autofill_errors) ? data.autofill_errors : []
+      for (const err of errs) {
+        autofillErrors.push({
+          ...err,
+          index: i,
+          group: err.group && err.group !== 'all' ? err.group : label,
+        })
       }
-      if (patch.concept_metadata && Object.keys(patch.concept_metadata).length) {
-        next.concept_metadata = { ...(g.concept_metadata || {}), ...patch.concept_metadata }
+    } catch (e) {
+      if (signal?.aborted || e?.name === 'AbortError') {
+        cancelled = true
+        break
       }
-      if (patch.catalogue_metadata && Object.keys(patch.catalogue_metadata).length) {
-        next.catalogue_metadata = { ...(g.catalogue_metadata || {}), ...patch.catalogue_metadata }
-      }
-      if (patch.llm_filled) {
-        next.llm_filled = true
-        const fields = Array.isArray(patch.llm_filled_fields)
-          ? patch.llm_filled_fields.filter((k) => String(next.metadata?.[k] || next.concept_metadata?.[k] || '').trim())
-          : Object.keys(next.metadata || {}).filter((k) => String(next.metadata[k] || '').trim())
-        next.llm_filled_fields = fields
-        aiFilledFieldsByGroup[i] = fields
-      }
-      return next
-    })
-  } else if (Array.isArray(data.groups) && data.groups.length === matchResult.groups.length) {
-    nextGroups = matchResult.groups.map((g, i) => ({
-      ...g,
-      file_name: data.groups[i]?.file_name || g.file_name,
-      metadata: data.groups[i]?.metadata && Object.keys(data.groups[i].metadata).length
-        ? { ...(g.metadata || {}), ...data.groups[i].metadata }
-        : g.metadata,
-      llm_filled: Boolean(data.groups[i]?._llm_filled || data.groups[i]?.llm_filled),
-      llm_filled_fields: data.groups[i]?._llm_filled_fields || data.groups[i]?.llm_filled_fields || [],
-    }))
-    nextGroups.forEach((g, i) => {
-      if (g.llm_filled) aiFilledFieldsByGroup[i] = g.llm_filled_fields || []
-    })
+      // Failed group must not abort the remaining ones.
+      autofillErrors.push({
+        index: i,
+        group: label,
+        error: e?.message || 'Metadata autofill failed',
+      })
+    }
   }
-  const filledCount = Number(data.autofill_filled_count) || 0
-  const llmFilledCount = Number(data.autofill_llm_filled_count) || Object.keys(aiFilledFieldsByGroup).length
-  let toast = null
-  if (data.llm_autofill_skipped_no_key) {
-    toast = 'Add an LLM API key in Settings to auto-fill metadata, or fill fields manually on the next step.'
-  } else if (autofillErrors.length > 0) {
-    const sample = autofillErrors[0]?.group || autofillErrors[0]?.error || 'unknown'
-    toast = filledCount > 0
-      ? `Auto-filled ${filledCount} group${filledCount !== 1 ? 's' : ''}; ${autofillErrors.length} need manual entry (${sample}).`
-      : autofillErrors.length === 1
-        ? `Auto-fill failed for 1 group (${sample}). Fill that group in manually.`
-        : `Auto-fill failed for ${autofillErrors.length} groups. Fill those groups in manually.`
-  } else if (llmFilledCount > 0) {
-    toast = `AI auto-filled metadata for ${llmFilledCount} group${llmFilledCount !== 1 ? 's' : ''}.`
-  }
+
+  const toast = buildAutofillToast({
+    llmAutofillSkippedNoKey: skippedNoKey,
+    autofillErrors,
+    filledCount,
+    llmFilledCount,
+    cancelled,
+  })
   return {
-    ok: true,
+    ok: !cancelled && autofillErrors.length === 0,
+    cancelled,
     toast,
     matchResult: {
       ...matchResult,
       groups: nextGroups,
       autofill_attempted: true,
-      llm_autofill_skipped_no_key: Boolean(data.llm_autofill_skipped_no_key),
-      kyds_missing: Boolean(data.kyds_missing),
+      llm_autofill_skipped_no_key: skippedNoKey,
+      kyds_missing: false,
       autofill_errors: autofillErrors,
       autofill_filled_count: filledCount,
       autofill_llm_filled_count: llmFilledCount,

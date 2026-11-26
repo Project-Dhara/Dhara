@@ -24,6 +24,7 @@ export default function CodeListEditor({
   onFillAi,
   ncoLoading,
   ncoError,
+  ncoRetrievalMode = '',
   ncoMatches,
   ncoPanelOpen,
   onSuggestNco,
@@ -97,6 +98,7 @@ export default function CodeListEditor({
               ? ` · ${relatedAliasCount(column)} related in harmonisation`
               : column.note ? ` · ${column.note}` : ''}
             {fillAiError ? ` · ${fillAiError}` : ''}
+            {ncoRetrievalMode ? ` · NCO: ${ncoRetrievalMode}` : ''}
             {highlightIncomplete ? ' · empty fields highlighted' : ''}
           </div>
         </div>
@@ -172,7 +174,7 @@ export default function CodeListEditor({
               </th>
               <th className={`w-[32%] ${rowRule} ${colRule} px-2.5 py-1.5 font-semibold`} title="From the data — not editable">
                 <span className="flex flex-col items-start gap-0.5 leading-tight">
-                  <span>Value</span>
+                  <span className="normal-case tracking-normal">{column.name}</span>
                   <span className="font-semibold normal-case tracking-normal text-[#c36637]">fixed</span>
                 </span>
               </th>
@@ -247,6 +249,7 @@ export default function CodeListEditor({
           onClose={() => setPreviewOpen(false)}
           codes={codes}
           ncoError={ncoError}
+          ncoRetrievalMode={ncoRetrievalMode}
           ncoLoading={ncoLoading}
           ncoMatches={ncoMatches}
           needsStandard={ncoNeedsStandard}

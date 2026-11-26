@@ -43,7 +43,7 @@ export default function PdfConsoleLayout({
   const openFilesChoice = () => setFilesReturnOpen(true)
 
   const defaultReturnPath = filesReturnPath
-    || (jobId ? `/console/review/${jobId}` : null)
+    || (jobId ? `/console/review?jobId=${encodeURIComponent(jobId)}` : null)
 
   const defaultGoToStep = (targetStep) => {
     if (targetStep === 1) {
@@ -56,13 +56,14 @@ export default function PdfConsoleLayout({
     }
     if (!jobId) return
     if (targetStep === 2) {
-      router.push(`/console/review/${jobId}`)
+      router.push(`/console/review?jobId=${encodeURIComponent(jobId)}`)
       return
     }
     if (targetStep >= 3) {
       // Grouping shell hosts steps 3–7; pass step so Dashboard deep-links land correctly.
-      const q = targetStep > 3 ? `?step=${targetStep}` : ''
-      router.push(`/console/grouping/${jobId}${q}`)
+      const params = new URLSearchParams({ jobId })
+      if (targetStep > 3) params.set('step', String(targetStep))
+      router.push(`/console/grouping?${params.toString()}`)
     }
   }
 

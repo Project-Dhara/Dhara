@@ -5,7 +5,7 @@ const APPEND_FILES_KEY = 'dhara_console_append_files_v1'
 
 /** Full-page table editors — never treat these as the Console landing target. */
 function isConsoleEditorPath(pathname: string) {
-  return pathname.includes('/edit/')
+  return pathname.includes('/edit')
 }
 
 /**
@@ -193,13 +193,14 @@ export function leaveAppendFilesToPdfStep(
   clearAppendFilesMode()
   const jobId = opts.jobId
   const target = opts.targetStep
+  const q = `jobId=${encodeURIComponent(jobId)}`
   if (target == null || target <= 1) {
-    router.push(opts.returnPath || `/console/review/${jobId}`)
+    router.push(opts.returnPath || `/console/review?${q}`)
     return
   }
   if (target === 2) {
-    router.push(`/console/review/${jobId}`)
+    router.push(`/console/review?${q}`)
     return
   }
-  router.push(`/console/grouping/${jobId}`)
+  router.push(`/console/grouping?${q}`)
 }

@@ -20,15 +20,21 @@ from app.services.metadata.excel_facts import (
     heuristic_structure,
     looks_like_data_row,
     prepare_kyds_for_llm,
+    shrink_facts_for_compact_llm,
 )
 from app.services.metadata.nmds_llm import (
     METADATA_FIELDS,
+    METADATA_JSON_SCHEMA,
+    METADATA_RESPONSE_FORMAT,
     generate_metadata_with_llm,
     parse_llm_metadata_output,
+    use_compact_metadata_prompt,
 )
 from app.services.metadata.sdg_llm import (
     SDG_FIELD_CODES,
     SDG_METADATA_FIELDS,
+    SDG_METADATA_JSON_SCHEMA,
+    SDG_METADATA_RESPONSE_FORMAT,
     generate_sdg_metadata_with_llm,
     parse_llm_sdg_metadata_output,
 )
@@ -36,10 +42,14 @@ from app.services.metadata.definitions_llm import fill_classification_definition
 
 __all__ = [
     "METADATA_FIELDS",
+    "METADATA_JSON_SCHEMA",
+    "METADATA_RESPONSE_FORMAT",
     "ROW_DIM_HINTS",
     "ROW_LABEL_HEADERS",
     "SDG_FIELD_CODES",
     "SDG_METADATA_FIELDS",
+    "SDG_METADATA_JSON_SCHEMA",
+    "SDG_METADATA_RESPONSE_FORMAT",
     "SERIAL_NAME_HINTS",
     "_detect_header_rows",
     "_flatten_headers",
@@ -55,4 +65,6 @@ __all__ = [
     "parse_llm_metadata_output",
     "parse_llm_sdg_metadata_output",
     "prepare_kyds_for_llm",
+    "shrink_facts_for_compact_llm",
+    "use_compact_metadata_prompt",
 ]

@@ -5,17 +5,16 @@
 
 .DESCRIPTION
   * Bootstraps pip into resources/win-x64/python and installs backend/requirements.txt
-    (minus Linux-only uvloop, and minus the optional torch/transformers embedding stack unless
-    -IncludeEmbeddings is given — the desktop runs NCO matching with TF-IDF only).
-  * Copies backend/ to resources/win-x64/backend (no tests, venvs, .env, or user data folders).
-  * Writes python311._pth so the bundle imports from ..\backend and Lib\site-packages.
-  * Pre-compiles .pyc files (the install directory may be read-only for some users).
-  * Smoke-tests the key imports.
+    (minus Linux-only uvloop). By default also installs the CPU torch + sentence-transformers
+    stack and bundles google/embeddinggemma-300m under win-x64/models for offline NCO matching.
+  * EmbeddingGemma is gated: set HF_TOKEN (or HUGGING_FACE_HUB_TOKEN) before prepare-backend.
+  * Pass -SkipEmbeddings for a lean TF-IDF-only build (no torch, no model folder).
+  * Copies backend/ to resources/win-x64/backend and pre-compiles .pyc files.
 #>
 [CmdletBinding()]
 param(
   [switch]$Force,
-  [switch]$IncludeEmbeddings
+  [switch]$SkipEmbeddings
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,6 +29,10 @@ $PyExe       = Join-Path $PyDir 'python.exe'
 $BackendOut  = Join-Path $Out 'backend'
 $Cache       = Join-Path $DesktopRoot '.cache'
 $GetPip      = Join-Path $Cache 'downloads\get-pip.py'
+$ModelsDir   = Join-Path $Out 'models\embeddinggemma-300m'
+$BundleScript = Join-Path $PSScriptRoot 'bundle_nco_embedding_model.py'
+$TorchCpuIndex = 'https://download.pytorch.org/whl/cpu'
+$LegacyBgeDir = Join-Path $Out 'models\bge-small-en-v1.5'
 
 if (-not (Test-Path $PyExe)) { throw "Bundled Python not found at $PyExe. Run scripts\fetch-win-deps.ps1 first." }
 if (-not (Test-Path (Join-Path $BackendSrc 'main.py'))) { throw "backend/ not found at $BackendSrc" }
@@ -59,23 +62,40 @@ if (-not (Test-Path (Join-Path $PyDir 'Lib\site-packages\pip'))) {
 
 # --- requirements -------------------------------------------------------------
 $reqSrc = Join-Path $BackendSrc 'requirements.txt'
-$drop = @('uvloop')   # no Windows wheels; uvicorn falls back to asyncio
-if (-not $IncludeEmbeddings) {
-  $drop += @('torch', 'transformers', 'sentence-transformers', 'accelerate', 'huggingface-hub')
+# Always drop Linux-only uvloop. accelerate is optional and unused by our load path.
+$drop = @('uvloop', 'accelerate')
+if ($SkipEmbeddings) {
+  $drop += @('torch', 'transformers', 'sentence-transformers', 'huggingface-hub')
 }
 $dropRe = '^(' + (($drop | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')\s*([=<>!~\[;#]|$)'
 $reqLines = Get-Content $reqSrc | Where-Object {
   $t = $_.Trim()
   $t -and -not $t.StartsWith('#') -and ($t -inotmatch $dropRe)
 }
+# Torch must come from the CPU wheel index on Windows desktop builds.
+$torchLine = $null
+$otherLines = New-Object System.Collections.Generic.List[string]
+foreach ($line in $reqLines) {
+  if ($line -match '^torch\s*([=<>!~]|$)') { $torchLine = $line }
+  else { [void]$otherLines.Add($line) }
+}
 $reqOut = Join-Path $Cache 'requirements-desktop.txt'
-Set-Content -Path $reqOut -Value $reqLines -Encoding ASCII
+Set-Content -Path $reqOut -Value $otherLines -Encoding ASCII
 
-$reqHash = (Get-FileHash -Algorithm SHA256 -Path $reqOut).Hash
+$reqHashParts = @((Get-FileHash -Algorithm SHA256 -Path $reqOut).Hash)
+if ($torchLine) { $reqHashParts += "torch-cpu:$torchLine" }
+if ($SkipEmbeddings) { $reqHashParts += 'skip-embeddings' } else { $reqHashParts += 'with-embeddings' }
+$reqHash = ($reqHashParts -join '|')
 $stamp = Join-Path $PyDir '.requirements.sha256'
 $installed = (Test-Path $stamp) -and ((Get-Content $stamp -Raw).Trim() -eq $reqHash)
 if ($Force -or -not $installed) {
-  Write-Host "Installing $($reqLines.Count) Python packages (this can take several minutes)..."
+  if ($torchLine -and -not $SkipEmbeddings) {
+    Write-Host "Installing CPU torch first ($torchLine)..."
+    & $PyExe -m pip install --no-warn-script-location --disable-pip-version-check --prefer-binary `
+      --index-url $TorchCpuIndex $torchLine
+    if ($LASTEXITCODE -ne 0) { throw 'CPU torch install failed' }
+  }
+  Write-Host "Installing $($otherLines.Count) Python packages (this can take several minutes)..."
   & $PyExe -m pip install --no-warn-script-location --disable-pip-version-check --prefer-binary -r $reqOut
   if ($LASTEXITCODE -ne 0) { throw 'pip install failed' }
   Set-Content -Path $stamp -Value $reqHash -Encoding ASCII
@@ -102,6 +122,37 @@ $roboArgs = @($BackendSrc, $BackendOut, '/MIR', '/NFL', '/NDL', '/NJH', '/NJS', 
 if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
 $global:LASTEXITCODE = 0
 
+# --- EmbeddingGemma model bundle ----------------------------------------------
+$modelsRoot = Join-Path $Out 'models'
+if (Test-Path $LegacyBgeDir) {
+  Write-Host 'Removing legacy BGE model folder (replaced by EmbeddingGemma)...'
+  Remove-Item -Recurse -Force $LegacyBgeDir
+}
+if ($SkipEmbeddings) {
+  Write-Host 'SkipEmbeddings: removing bundled NCO embedding model (if present)...'
+  if (Test-Path $modelsRoot) { Remove-Item -Recurse -Force $modelsRoot }
+  # Marker so Electron can leave NCO_EMBEDDING_MODEL empty.
+  New-Item -ItemType Directory -Force -Path $modelsRoot | Out-Null
+  Set-Content -Path (Join-Path $modelsRoot '.skip-embeddings') -Value '1' -Encoding ASCII
+} else {
+  $hfToken = $env:HF_TOKEN
+  if (-not $hfToken) { $hfToken = $env:HUGGING_FACE_HUB_TOKEN }
+  if (-not $hfToken) {
+    throw 'HF_TOKEN (or HUGGING_FACE_HUB_TOKEN) is required to download gated google/embeddinggemma-300m. Accept the license on Hugging Face, then set the token and re-run prepare-backend.'
+  }
+  if (-not (Test-Path $BundleScript)) { throw "Missing $BundleScript" }
+  Write-Host 'Bundling google/embeddinggemma-300m (download once, verify SHA-256, smoke + NCO index)...'
+  $writeManifest = @()
+  if (-not (Test-Path (Join-Path $PSScriptRoot 'embeddinggemma-300m.manifest.json'))) {
+    $writeManifest = @('--write-manifest')
+  }
+  & $PyExe $BundleScript --out $ModelsDir --cache (Join-Path $Cache 'models') @writeManifest
+  if ($LASTEXITCODE -ne 0) { throw 'bundle_nco_embedding_model.py failed' }
+  if (Test-Path (Join-Path $modelsRoot '.skip-embeddings')) {
+    Remove-Item -Force (Join-Path $modelsRoot '.skip-embeddings')
+  }
+}
+
 # --- slim down site-packages ---------------------------------------------------
 $sp = Join-Path $PyDir 'Lib\site-packages'
 foreach ($rel in 'pandas\tests', 'numpy\tests', 'numpy\_core\tests', 'numpy\core\tests') {
@@ -119,7 +170,6 @@ $global:LASTEXITCODE = 0
 
 # --- smoke test ----------------------------------------------------------------
 Write-Host 'Smoke-testing imports...'
-# Scripts are written to files: Windows PowerShell 5.1 mangles embedded double quotes in `python -c`.
 $smokeCore = Join-Path $Cache 'smoke-core.py'
 Set-Content -Path $smokeCore -Encoding ASCII -Value @(
   'import fastapi, uvicorn, sqlalchemy, alembic, psycopg2, fitz, pandas, openpyxl, jwt, cryptography, pgvector, mcp, multipart',
@@ -127,6 +177,22 @@ Set-Content -Path $smokeCore -Encoding ASCII -Value @(
 )
 & $PyExe $smokeCore
 if ($LASTEXITCODE -ne 0) { throw 'Core Python imports failed in the bundled runtime' }
+
+if (-not $SkipEmbeddings) {
+  $smokeEmb = Join-Path $Cache 'smoke-embeddings.py'
+  Set-Content -Path $smokeEmb -Encoding ASCII -Value @(
+    'import torch, transformers, sentence_transformers, huggingface_hub',
+    "print('embedding imports ok', torch.__version__)"
+  )
+  & $PyExe $smokeEmb
+  if ($LASTEXITCODE -ne 0) { throw 'Embedding stack imports failed in the bundled runtime' }
+  # Offline re-smoke against the bundled folder (network blocked via env).
+  $env:HF_HUB_OFFLINE = '1'
+  $env:TRANSFORMERS_OFFLINE = '1'
+  & $PyExe $BundleScript --out $ModelsDir --smoke-only
+  if ($LASTEXITCODE -ne 0) { throw 'Offline BGE smoke encode failed' }
+  Remove-Item Env:HF_HUB_OFFLINE, Env:TRANSFORMERS_OFFLINE -ErrorAction SilentlyContinue
+}
 
 $smokeApp = Join-Path $Cache 'smoke-app.py'
 Set-Content -Path $smokeApp -Encoding ASCII -Value @(
@@ -152,3 +218,8 @@ try {
 
 $sizeMb = [math]::Round(((Get-ChildItem -Recurse -File $Out | Measure-Object Length -Sum).Sum) / 1MB)
 Write-Host "Backend ready. win-x64 payload is currently ~$sizeMb MB."
+if ($SkipEmbeddings) {
+  Write-Host 'NCO embeddings: skipped (TF-IDF only).'
+} else {
+  Write-Host "NCO embeddings: EmbeddingGemma bundled at $ModelsDir"
+}

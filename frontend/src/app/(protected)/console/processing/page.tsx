@@ -1,13 +1,13 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
-import ProcessingStepper from '../../../../../components/console/ProcessingStepper'
-import PdfConsoleLayout from '../../../../../components/pdf/PdfConsoleLayout'
-import ErrorBanner from '../../../../../components/ui/ErrorBanner'
-import Button from '../../../../../components/ui/Button'
-import { withAuthHeaders } from '../../../../../lib/auth'
-import { goToConsoleFiles } from '../../../../../lib/consoleSession'
+import { Suspense, useEffect, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import ProcessingStepper from '../../../../components/console/ProcessingStepper'
+import PdfConsoleLayout from '../../../../components/pdf/PdfConsoleLayout'
+import ErrorBanner from '../../../../components/ui/ErrorBanner'
+import Button from '../../../../components/ui/Button'
+import { withAuthHeaders } from '../../../../lib/auth'
+import { goToConsoleFiles } from '../../../../lib/consoleSession'
 
 const POLL_INTERVAL_MS = 2000
 
@@ -17,8 +17,6 @@ type StageDef = {
   range: [number, number]
 }
 
-// Ranges mirror extraction progress percents; labels vary by source type so
-// Excel/CSV waiting/running jobs do not show PDF "pages" copy.
 const PDF_STAGES: StageDef[] = [
   { key: 'classify', label: 'Scanning your document to find pages with tables', range: [2, 10] },
   { key: 'extract', label: 'Extracting tables from the document', range: [10, 45] },
@@ -92,7 +90,6 @@ function kindFromFilename(filename?: string | null): SourceKind | null {
   return null
 }
 
-/** Infer UI copy family without changing backend progress stages. */
 function inferSourceKind(job: Job | null): SourceKind {
   if (!job) return 'pdf'
   const direct = kindFromSourceType(job.source_type)
@@ -109,7 +106,6 @@ function inferSourceKind(job: Job | null): SourceKind {
     if (hasPdf && hasSheet) return 'mixed'
     if (hasSheet) return 'spreadsheet'
     if (hasPdf) return 'pdf'
-    // Fall back to per-file names when source_type is missing on children.
     const nameKinds = (job.batch_files || [])
       .map((f) => kindFromFilename(f.filename))
       .filter(Boolean) as SourceKind[]
@@ -128,8 +124,6 @@ function buildSteps(job: Job | null, sawValidate: boolean) {
   const kind = inferSourceKind(job)
   const stages = stagesForKind(kind)
   if (!job) return stages.map((s) => ({ ...s, status: 'pending' as const }))
-  // queued / claimed are not pipeline stages — without this the stepper stays
-  // entirely pending and looks stuck even though the worker will pick the job up.
   if (
     job.status === 'queued'
     || job.stage === 'queued'
@@ -188,8 +182,9 @@ function fileStageHint(f: BatchFile): string | null {
   return null
 }
 
-export default function PdfProcessingPage() {
-  const { jobId } = useParams<{ jobId: string }>()
+function ProcessingBody() {
+  const searchParams = useSearchParams()
+  const jobId = String(searchParams.get('jobId') || '')
   const router = useRouter()
   const [job, setJob] = useState<Job | null>(null)
   const [error, setError] = useState('')
@@ -198,6 +193,10 @@ export default function PdfProcessingPage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
+    if (!jobId) {
+      setError('Missing job id')
+      return
+    }
     let cancelled = false
 
     const poll = async () => {
@@ -210,12 +209,11 @@ export default function PdfProcessingPage() {
         setJob(data)
         if (data.status === 'done' || data.status === 'completed_with_errors') {
           if (pollRef.current) clearInterval(pollRef.current)
-          // Extraction finished with nothing usable — stop before Preview/Grouping.
           if (Number(data.table_count) === 0) {
             setNoTables(true)
             return
           }
-          router.push(`/console/review/${jobId}`)
+          router.push(`/console/review?jobId=${encodeURIComponent(jobId)}`)
         } else if (data.status === 'cancelled') {
           if (pollRef.current) clearInterval(pollRef.current)
           goToConsoleFiles(router)
@@ -236,7 +234,7 @@ export default function PdfProcessingPage() {
       }
     }
 
-    poll() // immediate first check, don't wait 2s for a refreshed/direct-linked page
+    poll()
     pollRef.current = setInterval(poll, POLL_INTERVAL_MS)
     return () => { cancelled = true; if (pollRef.current) clearInterval(pollRef.current) }
   }, [jobId, router])
@@ -259,7 +257,7 @@ export default function PdfProcessingPage() {
     askBeforeLeaveFiles: true,
     cancelJobOnStartOver: true,
     existingFilenames,
-    filesReturnPath: `/console/processing/${jobId}`,
+    filesReturnPath: `/console/processing?jobId=${encodeURIComponent(jobId)}`,
     filesReturnTitle: 'File still processing',
     filesReturnBody: (
       <>
@@ -306,13 +304,11 @@ export default function PdfProcessingPage() {
     )
   }
 
-  // Still on Dataset Inventory → Files while extraction runs; Preview unlocks on review.
   return (
     <PdfConsoleLayout {...filesLayoutProps}>
       <div className="mx-auto flex max-w-xl flex-col gap-8 py-8">
         <div>
           <div className="font-display text-xl font-medium text-ink">{job?.filename || 'Processing your document'}</div>
-          
         </div>
         <ProcessingStepper steps={buildSteps(job, sawValidateRef.current)} />
         {job?.is_batch && job.batch_files?.length ? (
@@ -346,5 +342,13 @@ export default function PdfProcessingPage() {
         ) : null}
       </div>
     </PdfConsoleLayout>
+  )
+}
+
+export default function PdfProcessingPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-ink-soft">Loading…</div>}>
+      <ProcessingBody />
+    </Suspense>
   )
 }

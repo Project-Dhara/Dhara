@@ -1,11 +1,26 @@
-// Login token + identity, persisted in localStorage so a reload stays
-// signed in. Every backend API call must carry this token -- the backend
-// stores KYDS entries / datasets / metadata groups under whichever email
-// the token verifies to, never a client-supplied value.
+// Login token + identity. On desktop, persist via Electron safeStorage so a
+// port fallback does not log the user out (localStorage is origin-scoped).
+// Web/Docker keep localStorage. Backend JWT remains the real auth check.
+
 const TOKEN_KEY = 'dhara.authToken'
 const USER_KEY = 'dhara.authUser'
 
 export type StoredUser = { name: string; email: string; dept: string; role: string }
+
+type DesktopAuthApi = {
+  getAuth?: () => Promise<{ token?: string; user?: StoredUser } | null>
+  setAuth?: (payload: { token: string; user: StoredUser }) => Promise<void>
+  clearAuth?: () => Promise<void>
+}
+
+function desktopAuth(): DesktopAuthApi | null {
+  try {
+    const api = (window as unknown as { dharaDesktop?: DesktopAuthApi }).dharaDesktop
+    return api || null
+  } catch {
+    return null
+  }
+}
 
 // name@organization.domain
 export const EMAIL_RE = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/
@@ -31,12 +46,31 @@ export function getStoredUser(): StoredUser | null {
   }
 }
 
+/** Hydrate localStorage from Electron storage (call once at app boot on desktop). */
+export async function hydrateAuthFromDesktop(): Promise<void> {
+  const api = desktopAuth()
+  if (!api?.getAuth) return
+  try {
+    const stored = await api.getAuth()
+    if (stored?.token && stored?.user) {
+      localStorage.setItem(TOKEN_KEY, stored.token)
+      localStorage.setItem(USER_KEY, JSON.stringify(stored.user))
+    }
+  } catch {
+    // ignore
+  }
+}
+
 export function setSession(token: string, user: StoredUser) {
   try {
     localStorage.setItem(TOKEN_KEY, token)
     localStorage.setItem(USER_KEY, JSON.stringify(user))
   } catch {
     // ignore (e.g. localStorage disabled)
+  }
+  const api = desktopAuth()
+  if (api?.setAuth) {
+    void api.setAuth({ token, user }).catch(() => {})
   }
 }
 
@@ -46,6 +80,10 @@ export function clearSession() {
     localStorage.removeItem(USER_KEY)
   } catch {
     // ignore
+  }
+  const api = desktopAuth()
+  if (api?.clearAuth) {
+    void api.clearAuth().catch(() => {})
   }
 }
 

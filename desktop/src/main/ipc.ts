@@ -4,7 +4,15 @@ import { IpcMainInvokeEvent, app, clipboard, ipcMain, shell } from 'electron'
 import { clearAuth, getAuth, setAuth } from './auth-store'
 import { buildDiagnostics } from './diagnostics'
 import { log } from './logger'
-import { OLLAMA_DOWNLOAD_PAGE, ollamaStatus } from './ollama'
+import {
+  OLLAMA_DOWNLOAD_PAGE,
+  cancelPull,
+  getPullStatus,
+  ollamaDefaults,
+  ollamaStatus,
+  pullStart,
+  testLocalModel,
+} from './ollama'
 import { dirs } from './paths'
 import { ServiceSupervisor } from './supervisor'
 import { WindowManager } from './windows'
@@ -121,10 +129,30 @@ export function registerIpc(sup: ServiceSupervisor, windows: WindowManager, spla
     assertApp(e, sup)
     return ollamaStatus()
   })
+  ipcMain.handle('ollama:defaults', (e) => {
+    assertApp(e, sup)
+    return ollamaDefaults()
+  })
   ipcMain.handle('ollama:open-download', async (e) => {
     assertApp(e, sup)
     await shell.openExternal(OLLAMA_DOWNLOAD_PAGE)
     return true
+  })
+  ipcMain.handle('ollama:pull-start', async (e) => {
+    assertApp(e, sup)
+    return pullStart(e.sender)
+  })
+  ipcMain.handle('ollama:pull-cancel', (e) => {
+    assertApp(e, sup)
+    return cancelPull()
+  })
+  ipcMain.handle('ollama:pull-status', (e) => {
+    assertApp(e, sup)
+    return getPullStatus()
+  })
+  ipcMain.handle('ollama:test-connection', async (e) => {
+    assertApp(e, sup)
+    return testLocalModel()
   })
 
   // ------------------------------------------------------------------- splash

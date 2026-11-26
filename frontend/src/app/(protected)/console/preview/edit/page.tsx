@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
+import { Suspense, useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import { TableDetail } from '@/components/pdf/TableDetail'
@@ -30,9 +30,9 @@ function findTableInConsoleState(uid) {
   return null
 }
 
-export default function ConsoleTableEditRoutePage() {
-  const { tableUid } = useParams()
-  const uid = decodeURIComponent(String(tableUid || ''))
+function EditBody() {
+  const searchParams = useSearchParams()
+  const uid = decodeURIComponent(String(searchParams.get('tableUid') || ''))
   const [table, setTable] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -42,6 +42,7 @@ export default function ConsoleTableEditRoutePage() {
     setLoading(true)
     setError('')
     try {
+      if (!uid) throw new Error('Missing table id')
       const found = loadStashedConsoleTable(uid) || findTableInConsoleState(uid)
       if (!found) throw new Error('Table was not found in the current console session')
       if (!cancelled) setTable(found)
@@ -88,5 +89,17 @@ export default function ConsoleTableEditRoutePage() {
       editorCloseHref="/console"
       editorFooterHint="Saves back to the preview page, then closes this tab."
     />
+  )
+}
+
+export default function ConsoleTableEditRoutePage() {
+  return (
+    <Suspense fallback={
+      <div className="flex h-[100dvh] items-center justify-center bg-cream text-[14px] text-ink-soft">
+        Opening table editor…
+      </div>
+    }>
+      <EditBody />
+    </Suspense>
   )
 }

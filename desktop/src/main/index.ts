@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { copyDiagnosticsToClipboard, openLogsFolder, registerIpc } from './ipc'
 import { log } from './logger'
+import { abortPullFireAndForget } from './ollama'
 import { dirs, ensureDir, userDataRoot } from './paths'
 import { readRuntime, writeRuntime } from './runtime-state'
 import { ServiceSupervisor } from './supervisor'
@@ -53,6 +54,8 @@ async function quitApp(): Promise<void> {
   if (quitInProgress) return
   quitInProgress = true
   windows.setQuitting()
+  // Do not await the Ollama pull stream — abort and continue shutting down.
+  abortPullFireAndForget()
   try {
     const keep = Boolean(readRuntime().keepRunningOnQuit)
     if (keep && supervisor.state === 'running') {

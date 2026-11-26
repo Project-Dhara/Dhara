@@ -25,6 +25,319 @@ const PROVIDERS = [
 ]
 const ROLES = ['Administrator', 'Data Steward', 'Data User']
 
+function DesktopSupportCard({ fieldLabelClass: _fieldLabelClass }) {
+  const [diagNote, setDiagNote] = useState('')
+
+  return (
+    <div className="flex flex-col gap-[18px] rounded-2xl border border-line/90 bg-surface p-6">
+      <div className="flex flex-col gap-1">
+        <div className="text-[16px] font-semibold tracking-tight text-ink">Desktop help</div>
+        <div className="text-sm text-ink-soft">
+          Cloud API keys are recommended. Local Ollama is optional and is never installed automatically.
+          Prefer about 1.2 GB free RAM before large PDF jobs.
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-3">
+        <Button
+          variant="secondary"
+          onClick={() => { void window.dharaDesktop?.openLogsFolder?.() }}
+        >
+          Open logs folder
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={async () => {
+            try {
+              await window.dharaDesktop?.copyDiagnostics?.()
+              setDiagNote('Diagnostics copied to the clipboard.')
+            } catch {
+              setDiagNote('Could not copy diagnostics.')
+            }
+          }}
+        >
+          Copy diagnostics
+        </Button>
+      </div>
+      {diagNote ? <div className="text-[13px] text-ink-soft">{diagNote}</div> : null}
+    </div>
+  )
+}
+
+const LOCAL_MODEL_FALLBACK = {
+  modelId: 'gemma3:1b',
+  baseUrl: 'http://127.0.0.1:11434/v1',
+  approxSizeLabel: '~800 MB',
+}
+
+/**
+ * Desktop-only guided flow for optional Gemma 3 1B via user-installed Ollama.
+ * Never auto-saves LLM credentials — only fills the form on explicit click.
+ */
+function LocalModelCard({ applyLocalModel }) {
+  const [status, setStatus] = useState(null)
+  const [checking, setChecking] = useState(true)
+  const [pull, setPull] = useState(null)
+  const [confirmPull, setConfirmPull] = useState(false)
+  const [testNote, setTestNote] = useState('')
+  const [testing, setTesting] = useState(false)
+  const [fillNote, setFillNote] = useState('')
+
+  const defaults = status?.defaults || LOCAL_MODEL_FALLBACK
+  const modelId = defaults.modelId || LOCAL_MODEL_FALLBACK.modelId
+
+  const refreshStatus = useCallback(async () => {
+    setChecking(true)
+    try {
+      const s = await window.dharaDesktop?.ollama?.status?.()
+      setStatus(s || null)
+    } catch {
+      setStatus(null)
+    } finally {
+      setChecking(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshStatus()
+    let cancelled = false
+    ;(async () => {
+      try {
+        const ps = await window.dharaDesktop?.ollama?.pullStatus?.()
+        if (!cancelled && ps) setPull(ps)
+      } catch {
+        /* ignore */
+      }
+    })()
+    const unsub = window.dharaDesktop?.ollama?.onPullProgress?.((payload) => {
+      setPull(payload)
+      if (payload?.phase === 'success') {
+        void refreshStatus()
+      }
+    })
+    return () => {
+      cancelled = true
+      if (typeof unsub === 'function') unsub()
+    }
+  }, [refreshStatus])
+
+  const pulling = pull?.phase === 'pulling'
+  const reachable = Boolean(status?.reachable)
+  const versionOk = status?.versionOk !== false
+  const modelPresent = Boolean(status?.modelPresent)
+  const diskOk = status?.diskOk !== false
+
+  const onDownload = async () => {
+    if (!confirmPull) {
+      setConfirmPull(true)
+      return
+    }
+    setConfirmPull(false)
+    setTestNote('')
+    setFillNote('')
+    try {
+      const ps = await window.dharaDesktop?.ollama?.pullStart?.()
+      if (ps) setPull(ps)
+      if (ps?.phase === 'success') void refreshStatus()
+    } catch (err) {
+      setPull({
+        phase: 'error',
+        percent: null,
+        status: 'error',
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  const onCancelPull = async () => {
+    try {
+      const ps = await window.dharaDesktop?.ollama?.pullCancel?.()
+      if (ps) setPull(ps)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const onUseModel = () => {
+    applyLocalModel({
+      provider: 'self-hosted',
+      baseUrl: defaults.baseUrl || LOCAL_MODEL_FALLBACK.baseUrl,
+      model: modelId,
+      apiKeyPlaceholder: 'ollama',
+    })
+    setFillNote('Form filled. Click “Save key” above to persist.')
+  }
+
+  const onTest = async () => {
+    setTesting(true)
+    setTestNote('Loading the model into memory — this can take a minute on CPU.')
+    try {
+      const r = await window.dharaDesktop?.ollama?.testConnection?.()
+      if (!r) {
+        setTestNote('Could not run the connection test.')
+        return
+      }
+      if (r.ok) {
+        let msg = `Connection OK (${r.latencyMs} ms).`
+        if (r.ramWarning) msg += ` ${r.ramWarning}`
+        setTestNote(msg)
+      } else {
+        setTestNote(r.error || 'Connection test failed.')
+      }
+    } catch (err) {
+      setTestNote(err instanceof Error ? err.message : String(err))
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const percent = typeof pull?.percent === 'number' ? pull.percent : null
+
+  return (
+    <div className="flex flex-col gap-[18px] rounded-2xl border border-line/90 bg-surface p-6">
+      <div className="flex flex-col gap-1">
+        <div className="text-[16px] font-semibold tracking-tight text-ink">
+          Run a local model (optional)
+        </div>
+        <div className="text-sm text-ink-soft">
+          Use Gemma 3 1B on your PC via Ollama. Cloud keys are still recommended on 8 GB machines.
+          Dhara never installs Ollama for you.
+        </div>
+      </div>
+
+      {checking && !status ? (
+        <div className="text-[13px] text-ink-soft">Checking for Ollama…</div>
+      ) : null}
+
+      {!checking && !reachable ? (
+        <div className="flex flex-col gap-3">
+          <div className="text-[13px] text-ink-soft">
+            Ollama is not running at {defaults.baseUrl?.replace(/\/v1$/, '') || 'http://127.0.0.1:11434'}.
+            Install it yourself, start it, then check again.
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <Button
+              variant="secondary"
+              onClick={() => { void window.dharaDesktop?.ollama?.openDownloadPage?.() }}
+            >
+              Open Ollama download page
+            </Button>
+            <Button variant="secondary" onClick={() => { void refreshStatus() }}>
+              Check again
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {reachable && !versionOk ? (
+        <div className="flex flex-col gap-3">
+          <div className="text-[13px] text-coral">
+            {status?.versionWarning ||
+              'Please update Ollama to 0.6 or newer to use Gemma 3 1B.'}
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <Button
+              variant="secondary"
+              onClick={() => { void window.dharaDesktop?.ollama?.openDownloadPage?.() }}
+            >
+              Open Ollama download page
+            </Button>
+            <Button variant="secondary" onClick={() => { void refreshStatus() }}>
+              Check again
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {reachable && versionOk && status?.versionWarning ? (
+        <div className="text-[13px] text-ink-soft">{status.versionWarning}</div>
+      ) : null}
+
+      {reachable && versionOk && !modelPresent && !pulling && pull?.phase !== 'success' ? (
+        <div className="flex flex-col gap-3">
+          {!diskOk ? (
+            <div className="text-[13px] text-coral">
+              {status?.diskMessage || 'Not enough free disk space to download the model.'}
+            </div>
+          ) : null}
+          {confirmPull ? (
+            <div className="text-[13px] text-ink-soft">
+              This downloads about {defaults.approxSizeLabel || '~800 MB'}. Continue only if you have
+              enough disk space and a stable network.
+            </div>
+          ) : (
+            <div className="text-[13px] text-ink-soft">
+              Download <span className="font-medium text-ink">{modelId}</span> (
+              {defaults.approxSizeLabel || '~800 MB'}) to use a local CPU model.
+            </div>
+          )}
+          {pull?.phase === 'error' || pull?.phase === 'cancelled' ? (
+            <div className="text-[13px] text-coral">
+              {pull.error ||
+                'Download interrupted. It is safe to retry — Ollama will resume.'}
+            </div>
+          ) : null}
+          <div className="flex flex-wrap gap-3">
+            <Button
+              onClick={() => { void onDownload() }}
+              disabled={!diskOk}
+            >
+              {confirmPull ? `Download ${modelId}` : `Prepare ${modelId} download`}
+            </Button>
+            {confirmPull ? (
+              <Button variant="secondary" onClick={() => setConfirmPull(false)}>
+                Cancel
+              </Button>
+            ) : null}
+            <Button variant="secondary" onClick={() => { void refreshStatus() }}>
+              Refresh status
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {pulling ? (
+        <div className="flex flex-col gap-3">
+          <div className="text-[13px] text-ink-soft">
+            Downloading {modelId}… {pull?.status || ''}
+            {percent != null ? ` (${percent}%)` : ''}
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-line">
+            <div
+              className="h-full rounded-full bg-teal transition-all duration-300"
+              style={{
+                width: percent != null ? `${percent}%` : '30%',
+                opacity: percent != null ? 1 : 0.5,
+              }}
+            />
+          </div>
+          <Button variant="secondary" onClick={() => { void onCancelPull() }}>
+            Cancel download
+          </Button>
+        </div>
+      ) : null}
+
+      {reachable && versionOk && (modelPresent || pull?.phase === 'success') ? (
+        <div className="flex flex-col gap-3">
+          <div className="text-[13px] text-green">
+            {modelId} is available in Ollama.
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <Button onClick={onUseModel}>Use this model in the form</Button>
+            <Button variant="secondary" disabled={testing} onClick={() => { void onTest() }}>
+              {testing ? 'Testing…' : 'Test connection'}
+            </Button>
+            <Button variant="secondary" onClick={() => { void refreshStatus() }}>
+              Refresh status
+            </Button>
+          </div>
+          {fillNote ? <div className="text-[13px] text-ink-soft">{fillNote}</div> : null}
+          {testNote ? <div className="text-[13px] text-ink-soft">{testNote}</div> : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 const SETTINGS_METADATA_FIELDS = [
   ...METADATA_COLUMNS.map((c) => ({
     key: c.key,
@@ -241,7 +554,9 @@ export default function Settings({
         <div className="flex flex-col gap-1">
           <div className="text-[16px] font-semibold tracking-tight text-ink">LLM</div>
           <div className="text-sm text-ink-soft">
-            One API key powers metadata auto-fill, NCO matching suggestions, and other AI assists. Save it here before those steps.
+            One API key powers metadata auto-fill, NCO matching suggestions, and other AI assists.
+            A cloud provider key is recommended; optional local models are configured below on desktop.
+            Save the key here before AI-assisted steps.
           </div>
         </div>
         <div className="grid grid-cols-2 gap-4">
@@ -260,13 +575,6 @@ export default function Settings({
               type="password"
               value={local.apiKey}
               onChange={setField('apiKey')}
-              placeholder={
-                llmCryptoError
-                  ? 'Re-enter API key'
-                  : local.provider === 'self-hosted'
-                    ? 'ollama (or any non-empty key)'
-                    : 'API key'
-              }
               autoComplete="off"
               spellCheck={false}
             />
@@ -281,12 +589,11 @@ export default function Settings({
                 type="text"
                 value={local.baseUrl || ''}
                 onChange={setField('baseUrl')}
-                placeholder="http://host.docker.internal:11434/v1"
                 autoComplete="off"
                 spellCheck={false}
               />
               <div className="text-[12px] text-ink-muted">
-                OpenAI-compatible endpoint (Ollama on this PC: host.docker.internal:11434/v1).
+                OpenAI-compatible endpoint. On Dhara Desktop with Ollama: http://127.0.0.1:11434/v1
               </div>
             </div>
             <div className="flex flex-col gap-1.5">
@@ -296,12 +603,11 @@ export default function Settings({
                 type="text"
                 value={local.model || ''}
                 onChange={setField('model')}
-                placeholder="qwen2.5:1.5b-instruct"
                 autoComplete="off"
                 spellCheck={false}
               />
               <div className="text-[12px] text-ink-muted">
-                Small CPU models (e.g. 1.5B) recommended on 8 GB RAM systems.
+                Small CPU models (e.g. gemma3:1b) recommended on 8 GB RAM systems.
               </div>
             </div>
           </div>
@@ -318,6 +624,20 @@ export default function Settings({
           <span className={statusClass === 'settings-key-status-ok' ? statusToneClass.ok : statusClass === 'settings-key-status-warn' ? statusToneClass.warn : statusToneClass.none}>{status}</span>
         </div>
       </div>
+
+      {typeof window !== 'undefined' && window.dharaDesktop?.isDesktop ? (
+        <LocalModelCard
+          applyLocalModel={({ provider, baseUrl, model, apiKeyPlaceholder }) => {
+            setLocal((prev) => ({
+              ...prev,
+              provider,
+              baseUrl,
+              model,
+              apiKey: (prev.apiKey || '').trim() ? prev.apiKey : apiKeyPlaceholder,
+            }))
+          }}
+        />
+      ) : null}
 
       <div className="flex flex-col gap-[18px] rounded-2xl border border-line/90 bg-surface p-6">
         <div className="flex gap-2" role="tablist" aria-label="Configuration sections">
@@ -725,6 +1045,10 @@ export default function Settings({
         )}
         </div>
       </div>
+
+      {typeof window !== 'undefined' && window.dharaDesktop?.isDesktop ? (
+        <DesktopSupportCard fieldLabelClass={fieldLabelClass} />
+      ) : null}
 
       <div className="flex flex-col gap-[18px] rounded-2xl border border-line/90 bg-surface p-6">
         <div className="text-[16px] font-semibold tracking-tight text-ink">User information</div>

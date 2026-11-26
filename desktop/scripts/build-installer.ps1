@@ -19,7 +19,7 @@ param(
   [switch]$SkipBackend,
   [switch]$SkipFrontend,
   [switch]$AllowNoPgVector,
-  [switch]$IncludeEmbeddings,
+  [switch]$SkipEmbeddings,
   [switch]$BuildPgVector,
   [string]$PgVectorSource = ''
 )
@@ -47,7 +47,7 @@ if (-not $SkipFetch) {
 }
 if (-not $SkipBackend) {
   $beArgs = @()
-  if ($IncludeEmbeddings) { $beArgs += '-IncludeEmbeddings' }
+  if ($SkipEmbeddings) { $beArgs += '-SkipEmbeddings' }
   Invoke-Step 'prepare-backend.ps1' $beArgs
 }
 if (-not $SkipFrontend) { Invoke-Step 'prepare-frontend.ps1' }
@@ -62,6 +62,13 @@ $required = @(
   'backend\main.py', 'backend\alembic.ini', 'backend\migrations',
   'frontend\index.html'
 )
+if (-not $SkipEmbeddings) {
+  $required += @(
+    'models\embeddinggemma-300m\config.json',
+    'models\embeddinggemma-300m\nco_index.npz',
+    'models\embeddinggemma-300m\nco_index.meta.json'
+  )
+}
 $missing = $required | Where-Object { -not (Test-Path (Join-Path $Runtime $_)) }
 if ($missing) { throw "Runtime payload incomplete. Missing:`n  $($missing -join "`n  ")" }
 

@@ -8,8 +8,12 @@ class _FakeExtractor:
     def __init__(self, skip_llm=False):
         self.skip_llm = skip_llm
         self.calls = 0
+        self._self_hosted = False
+        self.base_url = None
+        self.model_override = None
+        self._raw_provider = "openai"
 
-    def _complete(self, prompt, max_tokens):
+    def _complete(self, prompt, max_tokens, **kwargs):
         self.calls += 1
         return json.dumps({
             "title": "Births",
@@ -163,7 +167,7 @@ def test_llm_nulls_get_catalogue_fallbacks():
     """Product / description / key_statistics / remarks are filled even if the model returns null."""
 
     class _SparseExtractor(_FakeExtractor):
-        def _complete(self, prompt, max_tokens):
+        def _complete(self, prompt, max_tokens, **kwargs):
             self.calls += 1
             return json.dumps({
                 "title": "Births",

@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { ArrowRight, Check } from 'lucide-react'
+import { ArrowRight, Check, Download } from 'lucide-react'
 import Button from '../ui/Button'
+import { downloadCatalogueGroupZip } from '../../lib/catalogueDownload'
 import { publicApiDatasetsUrl, publicMcpUrl } from '../../lib/publicUrls'
 
 // Confirmation screen after Continue to publish writes the release to Postgres.
@@ -23,6 +24,7 @@ export default function Publish({ datasetLabel, metadataId, onGoDashboard, onUpl
   const [licence, setLicence] = useState('GODL — India')
   const [version, setVersion] = useState('v1')
   const [copied, setCopied] = useState(null)
+  const [downloading, setDownloading] = useState(false)
 
   useEffect(() => {
     if (!publishing) return
@@ -42,6 +44,18 @@ export default function Publish({ datasetLabel, metadataId, onGoDashboard, onUpl
     navigator.clipboard?.writeText(text).catch(() => {})
     setCopied(label)
     setTimeout(() => setCopied(null), 1500)
+  }
+
+  const onDownload = async () => {
+    if (!metadataId || downloading) return
+    setDownloading(true)
+    try {
+      await downloadCatalogueGroupZip(metadataId, datasetLabel || metadataId)
+    } catch (err) {
+      alert(err?.message || 'Could not download this release')
+    } finally {
+      setDownloading(false)
+    }
   }
 
   const selectClass = 'h-[42px] rounded-md border border-line bg-white px-3 font-sans text-[15px] text-ink'
@@ -80,10 +94,22 @@ export default function Publish({ datasetLabel, metadataId, onGoDashboard, onUpl
           <div className="text-xs font-semibold uppercase tracking-wide text-[#4a5f3c]">{datasetLabel}</div>
           <div className="text-[19px] font-semibold text-[#3d5230]">Published to the catalogue</div>
         </div>
-        <button className="inline-flex h-10 items-center gap-1.5 rounded-md border border-[#b9cfa9] bg-white px-4 text-sm font-semibold text-[#3d5230]" onClick={onGoCatalogue}>
-          Open in catalogue
-          <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
-        </button>
+        <div className="flex flex-none flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="inline-flex h-10 items-center gap-1.5 rounded-md border border-[#b9cfa9] bg-white px-4 text-sm font-semibold text-[#3d5230] disabled:opacity-50"
+            disabled={!metadataId || downloading}
+            onClick={() => { void onDownload() }}
+            title={!metadataId ? 'Release id not available yet' : 'Download tables with Metadata and NMDS sheets'}
+          >
+            <Download className="h-4 w-4" strokeWidth={2} aria-hidden />
+            {downloading ? 'Preparing…' : 'Download'}
+          </button>
+          <button className="inline-flex h-10 items-center gap-1.5 rounded-md border border-[#b9cfa9] bg-white px-4 text-sm font-semibold text-[#3d5230]" onClick={onGoCatalogue}>
+            Open in catalogue
+            <ArrowRight className="h-4 w-4" strokeWidth={2} aria-hidden />
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-3.5">

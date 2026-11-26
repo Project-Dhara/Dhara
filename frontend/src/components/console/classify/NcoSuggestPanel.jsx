@@ -11,6 +11,7 @@ export default function NcoSuggestPanel({
   onClose,
   codes,
   ncoError,
+  ncoRetrievalMode = '',
   ncoLoading,
   ncoMatches,
   needsStandard = false,
@@ -49,6 +50,9 @@ export default function NcoSuggestPanel({
               {needsStandard
                 ? 'Occupation matching needs a classification standard selected in Settings. Or fill definitions with AI without NCO codes.'
                 : 'Fills Code and Definition from the suggested NCO code and title.'}
+              {ncoRetrievalMode
+                ? ` Retrieval: ${ncoRetrievalMode}${ncoRetrievalMode === 'keyword-only' ? ' (embeddings unavailable — TF-IDF/fuzzy only).' : ' (local EmbeddingGemma).'}`
+                : ''}
             </p>
           </div>
           <button

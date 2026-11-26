@@ -76,6 +76,7 @@ export default function Classify({
   const [ncoMatchesByCol, setNcoMatchesByCol] = useState({})
   const [ncoLoading, setNcoLoading] = useState(false)
   const [ncoError, setNcoError] = useState('')
+  const [ncoRetrievalMode, setNcoRetrievalMode] = useState('')
   const [ncoPanelOpen, setNcoPanelOpen] = useState(false)
   const [ncoStandardReady, setNcoStandardReady] = useState(false)
   const [ncoNeedsStandard, setNcoNeedsStandard] = useState(false)
@@ -346,13 +347,33 @@ export default function Classify({
     }
   }
 
-  const applyAiDefinitions = (byCol, columnNames, { clearNcoGate = false } = {}) => {
+  const applyAiDefinitions = (byCol, columnNames, { clearNcoGate = false, overwrite = false } = {}) => {
+    // Default: only fill blank definitions so steward/manual text is preserved.
+    // Pass overwrite=true only for an explicit "refill all" request.
+    let applied = 0
+    for (const name of columnNames) {
+      const defs = byCol[name] || {}
+      for (const row of (columnCodes[name] || [])) {
+        const value = String(row.value ?? '')
+        const existing = String(row.definition ?? '').trim()
+        if (existing && !overwrite) continue
+        const raw = defs[row.value]
+          || (row.code ? defs[row.code] : undefined)
+          || Object.entries(defs).find(([k]) => k.trim().toLowerCase() === value.trim().toLowerCase())?.[1]
+        if (typeof raw === 'string' && raw.trim()) applied += 1
+        else if (raw && typeof raw === 'object' && String(raw.definition || '').trim()) applied += 1
+      }
+    }
     setColumnCodes((prev) => {
       const next = { ...prev }
       for (const name of columnNames) {
         const defs = byCol[name] || {}
         next[name] = (prev[name] || []).map((row) => {
           const value = String(row.value ?? '')
+          const existing = String(row.definition ?? '').trim()
+          if (existing && !overwrite) {
+            return row
+          }
           const raw = defs[row.value]
             || (row.code ? defs[row.code] : undefined)
             || Object.entries(defs).find(([k]) => k.trim().toLowerCase() === value.trim().toLowerCase())?.[1]
@@ -376,6 +397,26 @@ export default function Classify({
       setNcoNeedsStandard(false)
       setNcoError('')
     }
+    return applied
+  }
+
+  const valuesNeedingDefinitions = (colName) => (
+    (columnCodes[colName] || [])
+      .filter((r) => !String(r.definition || '').trim())
+      .map((r) => r.value || r.code)
+      .filter(Boolean)
+  )
+
+  const summarizeFillErrors = (errors, filledCount) => {
+    const list = Array.isArray(errors) ? errors : []
+    if (!list.length) return ''
+    const sample = list[0]?.error || list[0]?.column || 'unknown'
+    if (filledCount > 0) {
+      return `Filled ${filledCount} definition${filledCount !== 1 ? 's' : ''}; ${list.length} batch${list.length !== 1 ? 'es' : ''} failed (${sample}).`
+    }
+    return list.length === 1
+      ? `Could not fill definitions (${sample}).`
+      : `Could not fill definitions (${list.length} errors). ${sample}`
   }
 
   const requestFillDefinitions = (columns, { allowOccupation = false } = {}) => (
@@ -400,19 +441,26 @@ export default function Classify({
       setFillAiError('LLM key not configured — add your API key in Settings to fill definitions with AI.')
       return
     }
+    // Retries only request values that still lack a definition.
     const columns = [{
       name: activeColumn.name,
       metadata_id: activeColumn._metadataId || activeColumn.aliases?.[0]?._metadataId || null,
-      values: (columnCodes[activeColumn.name] || []).map((r) => r.value || r.code).filter(Boolean),
+      values: valuesNeedingDefinitions(activeColumn.name),
     }].filter((c) => c.values.length)
-    if (!columns.length) return
+    if (!columns.length) {
+      setFillAiError('All definitions are already filled for this column.')
+      return
+    }
     setFillAiLoading(true)
     setFillAiError('')
     requestFillDefinitions(columns, { allowOccupation })
       .then((data) => {
-        applyAiDefinitions(data.definitions || {}, [activeColumn.name], {
+        const applied = applyAiDefinitions(data.definitions || {}, [activeColumn.name], {
           clearNcoGate: allowOccupation,
         })
+        const errMsg = summarizeFillErrors(data.errors, applied)
+        if (errMsg) setFillAiError(errMsg)
+        else if (applied === 0) setFillAiError('AI returned no definitions for the remaining values.')
       })
       .catch((e) => setFillAiError(e.message))
       .finally(() => setFillAiLoading(false))
@@ -426,19 +474,26 @@ export default function Classify({
     const columns = classifiedColumns.map((col) => ({
       name: col.name,
       metadata_id: col._metadataId || col.aliases?.[0]?._metadataId || null,
-      values: (columnCodes[col.name] || []).map((r) => r.value || r.code).filter(Boolean),
+      values: valuesNeedingDefinitions(col.name),
     })).filter((c) => c.values.length)
-    if (!columns.length) return
+    if (!columns.length) {
+      setFillAiError('All definitions are already filled.')
+      return
+    }
     setFillAiLoading(true)
     setFillAllAiLoading(true)
     setFillAiError('')
     requestFillDefinitions(columns, { allowOccupation: true })
       .then((data) => {
-        applyAiDefinitions(
+        const names = columns.map((c) => c.name)
+        const applied = applyAiDefinitions(
           data.definitions || {},
-          columns.map((c) => c.name),
+          names,
           { clearNcoGate: true },
         )
+        const errMsg = summarizeFillErrors(data.errors, applied)
+        if (errMsg) setFillAiError(errMsg)
+        else if (applied === 0) setFillAiError('AI returned no definitions for the remaining values.')
       })
       .catch((e) => setFillAiError(e.message))
       .finally(() => {
@@ -602,6 +657,7 @@ export default function Classify({
       const values = activeCodes.map((r) => r.value || r.code).filter(Boolean)
       setNcoLoading(true)
       setNcoError('')
+      setNcoRetrievalMode('')
       fetch('/api/catalogue/match-nco', withAuthHeaders(withLlmKeyHeaders({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -617,6 +673,11 @@ export default function Classify({
         .then((data) => {
           const occName = selectedCol
           const matches = data.matches || {}
+          const mode = data.retrieval_mode === 'semantic' ? 'semantic' : 'keyword-only'
+          setNcoRetrievalMode(mode)
+          if (mode === 'keyword-only' && data.retrieval_reason) {
+            setNcoError(`Matched with keyword-only (${data.retrieval_reason}).`)
+          }
           setNcoMatchesByCol((prev) => ({ ...prev, [occName]: matches }))
           if (!isOccupationColumn(occName)) return
           // Only auto-fill Code/Definition for high-confidence hits.
@@ -927,6 +988,7 @@ export default function Classify({
               })}
               ncoLoading={ncoLoading}
               ncoError={ncoError}
+              ncoRetrievalMode={ncoRetrievalMode}
               ncoMatches={ncoMatches}
               ncoPanelOpen={ncoPanelOpen}
               onSuggestNco={suggestNcoCodes}

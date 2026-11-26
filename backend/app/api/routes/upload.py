@@ -13,6 +13,7 @@ from app.services.jobs.enqueue import (
     dispatch_extraction,
     dispatch_upload_batch,
 )
+from app.services.jobs.ram_gate import ensure_enough_ram_for_pdf
 from app.storage.upload_archive import archive_upload_bytes, archive_upload_files
 from app.workers.extraction_jobs import (
     _get_pdf_job,
@@ -64,6 +65,9 @@ async def unified_upload(
             400,
             "Legacy .xls is not supported. Re-save the file as .xlsx.",
         )
+
+    if source_type == "pdf":
+        ensure_enough_ram_for_pdf()
 
     # Side-effect only: type-split archive under data/{pdf,excel,csv}_uploads/.
     archive_upload_bytes(filename, content)

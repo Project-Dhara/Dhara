@@ -4,6 +4,7 @@ import concurrent.futures
 import json as _json
 import os
 import re
+import time
 from typing import Any, Optional
 
 from app.services.catalogue.summary import (
@@ -12,6 +13,7 @@ from app.services.catalogue.summary import (
     synthesize_catalogue_summary,
 )
 from app.services.ingestion.wizard.extractor import TableExtractor
+from app.services.llm_client import resolve_chat_model
 from app.services.metadata.metadata_llm import (
     METADATA_FIELDS,
     SDG_METADATA_FIELDS,
@@ -22,10 +24,13 @@ from app.services.metadata.metadata_llm import (
     parse_llm_metadata_output,
     parse_llm_sdg_metadata_output,
 )
+from app.services.metadata.nmds_llm import use_compact_metadata_prompt
 
 # Cap concurrent Stage 4 LLM calls the same way Excel extraction does —
 # enough to cut wall time across many groups without thrashing rate limits.
 _STAGE4_MAX_WORKERS = 5
+# Wall-clock budget per group (format retries + truncation share this).
+_STAGE4_GROUP_DEADLINE_SEC = 240.0
 
 # Catalogue fields Stage 4 must try to fill when blank. Optional date fields
 # stay nullable without blocking or forcing another LLM pass forever.
@@ -617,16 +622,30 @@ def _fill_empty_group_metadata(
             print(f"Stage 4 LLM metadata generation failed for group {group_label}: {msg}")
             err_by_gi[gi] = {"index": gi, "group": group_label, "error": msg}
 
+    self_hosted = bool(getattr(extractor, "_self_hosted", False))
+    chat_model = resolve_chat_model(
+        provider="self-hosted" if self_hosted else getattr(extractor, "_raw_provider", None),
+        model=getattr(extractor, "model_override", None),
+        base_url=getattr(extractor, "base_url", None),
+    )
+    compact = (not use_sdg) and use_compact_metadata_prompt(
+        self_hosted=self_hosted, model=chat_model,
+    )
+
     def _apply_llm_fill(gi: int, g: dict, facts: dict) -> Optional[dict]:
         """Run one group's LLM fill. Returns an error dict on failure, else None.
 
         Mutates only `g` (unique per index), so concurrent workers do not race.
         """
         group_label = g.get("file_name") or g.get("name") or "Untitled group"
+        deadline = time.monotonic() + _STAGE4_GROUP_DEADLINE_SEC
         try:
             if use_sdg:
                 llm_output = generate_sdg_metadata_with_llm(
-                    facts, kyds=kyds_responses, complete_fn=extractor._complete,
+                    facts,
+                    kyds=kyds_responses,
+                    complete_fn=extractor._complete,
+                    deadline_monotonic=deadline,
                 )
                 sdg_meta = _stringify_sdg_metadata_values(parse_llm_sdg_metadata_output(llm_output))
                 g["concept_metadata"] = sdg_meta
@@ -645,7 +664,11 @@ def _fill_empty_group_metadata(
             else:
                 prior = dict(g.get("metadata") or {})
                 llm_output = generate_metadata_with_llm(
-                    facts, kyds=kyds_responses, complete_fn=extractor._complete,
+                    facts,
+                    kyds=kyds_responses,
+                    complete_fn=extractor._complete,
+                    compact=compact,
+                    deadline_monotonic=deadline,
                 )
                 llm_meta = _stringify_metadata_values(parse_llm_metadata_output(llm_output))
                 meta = _merge_metadata_into_empty(prior, llm_meta)
@@ -675,7 +698,8 @@ def _fill_empty_group_metadata(
             return {"index": gi, "group": group_label, "error": msg}
 
     if jobs:
-        workers = min(_STAGE4_MAX_WORKERS, len(jobs))
+        # Local/Ollama: one group at a time (CPU + model load). Cloud: parallel.
+        workers = 1 if self_hosted else min(_STAGE4_MAX_WORKERS, len(jobs))
         if workers <= 1:
             for gi, g, facts in jobs:
                 err = _apply_llm_fill(gi, g, facts)

@@ -124,13 +124,25 @@ def run_forever() -> None:
     ensure_runtime_config()
     poll = _poll_seconds()
     logger.info(
-        "Job worker started (poll=%ss). Waiting for queued pdf_jobs…",
+        "Job worker started (poll=%ss). Waiting for queued pdf_jobs / nco_match…",
         poll,
     )
+    tick = 0
     while not _stop:
         worked = False
         try:
-            worked = claim_and_run_one()
+            from app.services.classification.nco_match_jobs import (
+                claim_and_run_one_nco_job,
+                cleanup_old_jobs,
+            )
+
+            # Prefer NCO jobs so Suggest NCO stays responsive while PDF extracts queue.
+            worked = claim_and_run_one_nco_job()
+            if not worked:
+                worked = claim_and_run_one()
+            tick += 1
+            if tick % 40 == 0:
+                cleanup_old_jobs()
         except Exception:
             logger.exception("claim/run loop error")
         if not worked:

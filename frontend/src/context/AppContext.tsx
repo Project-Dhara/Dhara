@@ -22,6 +22,7 @@ import {
   clearSession,
   setSession,
   withAuthHeaders,
+  hydrateAuthFromDesktop,
   type StoredUser,
 } from '../lib/auth'
 
@@ -316,6 +317,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     clearLegacyLlmKeyStorage()
 
     async function restoreSession() {
+      // Desktop: restore JWT from Electron safeStorage before reading localStorage
+      // (port fallback changes origin and would otherwise look logged-out).
+      await hydrateAuthFromDesktop()
+
       const cachedProvider = normalizeProvider(getLlmProvider() || 'openai')
       setSettings({ provider: cachedProvider, apiKey: '' })
 

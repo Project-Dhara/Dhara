@@ -6,11 +6,6 @@ import re
 from collections import defaultdict
 from typing import Any, Optional
 
-from app.services.grouping.embeddings import (
-    _cluster_by_distance,
-    _groups_from_clusters,
-)
-
 _SDG_GOAL_RE = re.compile(r"\bSDG\s*(\d{1,2})\b", re.IGNORECASE)
 
 _SDG_INDICATORS_RE = re.compile(
@@ -96,10 +91,17 @@ def corpus_looks_like_sdg_indicator_tables(tables: list[dict]) -> bool:
 
 def _propose_sdg_groups(
     tables: list[dict],
-    embeddings: dict[str, list[float]],
-    threshold: float,
+    embeddings: dict[str, list[float]] | None = None,
+    threshold: float | None = None,
 ) -> list[dict]:
-    """Bucket by SDG goal; leftover tables still use embedding clusters."""
+    """Bucket by SDG goal; leftovers use title groups (untitled stay singletons).
+
+    ``embeddings`` / ``threshold`` are ignored (compat). Finished groups never
+    use embedding/pseudo clustering for leftovers.
+    """
+    del embeddings, threshold
+    from app.services.grouping.embeddings import _propose_title_groups
+
     by_goal: dict[int, list[dict]] = defaultdict(list)
     leftovers: list[dict] = []
     for t in tables:
@@ -121,13 +123,7 @@ def _propose_sdg_groups(
         )
 
     if leftovers:
-        by_id = {t["id"]: t for t in leftovers}
-        clusters = _cluster_by_distance(
-            [t["id"] for t in leftovers],
-            embeddings,
-            threshold,
-        )
-        groups.extend(_groups_from_clusters(clusters, by_id, name_start_index=len(groups)))
+        groups.extend(_propose_title_groups(leftovers))
 
     return groups
 

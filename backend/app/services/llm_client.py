@@ -11,8 +11,8 @@ from app.services.llm_prompts import OPENAI_MODEL
 
 # Default small CPU model for desktop / Ollama self-hosted (8 GB profile).
 DEFAULT_SELF_HOSTED_MODEL = os.environ.get(
-    "DHARA_SELF_HOSTED_MODEL", "qwen2.5:1.5b-instruct"
-).strip() or "qwen2.5:1.5b-instruct"
+    "DHARA_SELF_HOSTED_MODEL", "gemma3:1b"
+).strip() or "gemma3:1b"
 
 
 @dataclass(frozen=True)
@@ -66,6 +66,7 @@ def make_openai_client(
     api_key: Optional[str] = None,
     *,
     base_url: Optional[str] = None,
+    timeout: float | None = None,
 ):
     """Build an OpenAI SDK client; ``base_url`` enables Ollama / local /v1 servers."""
     from openai import OpenAI
@@ -81,6 +82,8 @@ def make_openai_client(
     kwargs: dict[str, Any] = {"api_key": key}
     if url:
         kwargs["base_url"] = url.rstrip("/")
+    if timeout is not None:
+        kwargs["timeout"] = timeout
     return OpenAI(**kwargs)
 
 

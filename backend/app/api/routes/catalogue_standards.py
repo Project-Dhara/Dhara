@@ -81,8 +81,18 @@ async def fill_definitions(
     """Fill classification definitions from values + catalogue/excel facts.
     Occupation columns are skipped by default (NCO matching owns those).
     Pass allow_occupation=true when no classification standard is selected and
-    the steward chooses Fill with AI as a fallback."""
-    from app.services.metadata.metadata_llm import fill_classification_definitions
+    the steward chooses Fill with AI as a fallback.
+
+    Returns partial per-column maps when some LLM batches fail; see ``errors``.
+    """
+    import time
+
+    from app.services.llm_client import resolve_chat_model
+    from app.services.metadata.definitions_llm import (
+        DEFINITION_COLUMN_DEADLINE_SEC,
+        fill_classification_definitions,
+        resolve_definitions_compact,
+    )
 
     data = body.model_dump()
     columns = data.get("columns") or []
@@ -93,10 +103,19 @@ async def fill_definitions(
     if extractor.skip_llm:
         raise HTTPException(400, "Configure an LLM key in Settings to fill definitions.")
 
+    self_hosted = bool(getattr(extractor, "_self_hosted", False))
+    chat_model = resolve_chat_model(
+        provider="self-hosted" if self_hosted else getattr(extractor, "_raw_provider", None),
+        model=getattr(extractor, "model_override", None),
+        base_url=getattr(extractor, "base_url", None),
+    )
+    compact = resolve_definitions_compact(self_hosted=self_hosted, model=chat_model)
+
     def _run():
         with session_scope() as session:
-            out = {}
-            facts_by_id = {}
+            out: dict = {}
+            errors: list = []
+            facts_by_id: dict = {}
             for col in columns:
                 name = (col.get("name") or "").strip()
                 if not name:
@@ -109,16 +128,28 @@ async def fill_definitions(
                 mid = col.get("metadata_id")
                 if mid not in facts_by_id:
                     facts_by_id[mid] = get_definition_facts(dbapi_connection(session), mid)
+                deadline = time.monotonic() + DEFINITION_COLUMN_DEADLINE_SEC
                 try:
-                    out[name] = fill_classification_definitions(
-                        extractor._complete, name, values, facts_by_id[mid],
+                    defs, batch_errors = fill_classification_definitions(
+                        extractor._complete,
+                        name,
+                        values,
+                        facts_by_id[mid],
+                        compact=compact,
+                        deadline_monotonic=deadline,
                     )
-                except Exception:
-                    out[name] = {}
-            return out
+                    if defs:
+                        out[name] = defs
+                    errors.extend(batch_errors)
+                except Exception as e:
+                    # Column-level unexpected failure: keep any prior columns;
+                    # do not invent an empty map that hides the error.
+                    msg = str(e).strip() or e.__class__.__name__
+                    errors.append({"column": name, "error": msg})
+            return out, errors
 
-    definitions = await asyncio.to_thread(_run)
-    return {"definitions": definitions}
+    definitions, errors = await asyncio.to_thread(_run)
+    return {"definitions": definitions, "errors": errors}
 
 
 @router.get("/api/catalogue/classification-standards")
@@ -222,8 +253,15 @@ async def match_nco(
 
     Local hybrid retrieval scores the whole list. The chat model is used only
     for a few ambiguous rows, and only to choose among retrieved codes.
+
+    On desktop (``DHARA_DESKTOP=1``) matching runs in the job worker so the BGE
+    embedding model never loads into the API process.
     """
+    import os
+
     from app.services.classification import nco_matching as _nco
+    from app.services.classification.nco_embedder import retrieval_status
+
     data = body.model_dump()
     values = data.get("values") or []
     if not isinstance(values, list):
@@ -235,19 +273,57 @@ async def match_nco(
             unique.append(s)
     context = data.get("context") if isinstance(data.get("context"), dict) else None
     extractor = _extractor_for(request, user_email, db=db)
+    desktop = (os.environ.get("DHARA_DESKTOP") or "").strip() in ("1", "true", "yes")
+
+    if desktop:
+        from app.api.dependencies import resolve_llm_credentials
+        from app.services.classification.nco_match_jobs import (
+            enqueue_nco_match,
+            wait_nco_match,
+        )
+
+        creds = resolve_llm_credentials(request, user_email, db=db)
+        llm = {
+            "api_key": creds.api_key or "",
+            "provider": creds.provider,
+            "base_url": creds.base_url,
+            "model": creds.model,
+        }
+
+        def _run_desktop():
+            job_id = enqueue_nco_match(values=unique, context=context, llm=llm)
+            return wait_nco_match(job_id)
+
+        job = await asyncio.to_thread(_run_desktop)
+        if str(job.get("status") or "") == "error":
+            raise HTTPException(500, job.get("error") or "NCO matching failed")
+        result = job.get("result") or {}
+        return {
+            "matches": result.get("matches") or {},
+            "llm_used": bool(result.get("llm_used")),
+            "retrieval_mode": result.get("retrieval_mode") or "keyword-only",
+            "retrieval_reason": result.get("retrieval_reason") or "",
+        }
 
     def _run():
         with session_scope() as session:
             ensure_classification_standard_loaded(dbapi_connection(session))
-            return _nco.match_occupations(
+            matches = _nco.match_occupations(
                 dbapi_connection(session),
                 unique,
                 extractor=extractor,
                 context=context,
             )
+            status = retrieval_status()
+            return matches, status
 
-    matches = await asyncio.to_thread(_run)
-    return {"matches": matches, "llm_used": not extractor.skip_llm}
+    matches, status = await asyncio.to_thread(_run)
+    return {
+        "matches": matches,
+        "llm_used": not extractor.skip_llm,
+        "retrieval_mode": status.get("retrieval_mode") or "keyword-only",
+        "retrieval_reason": status.get("retrieval_reason") or "",
+    }
 
 
 @router.post("/api/catalogue/match-lgd")

@@ -113,7 +113,7 @@ class LlmApiKey(Base):
     api_key: Mapped[str] = mapped_column(Text, nullable=False)
     # OpenAI-compatible base URL (e.g. http://host.docker.internal:11434/v1 for Ollama).
     base_url: Mapped[str | None] = mapped_column(Text)
-    # Chat model id for self-hosted / override (e.g. qwen2.5:1.5b-instruct).
+    # Chat model id for self-hosted / override (e.g. gemma3:1b).
     model: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

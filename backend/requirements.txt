@@ -57,6 +57,8 @@ pandas==2.2.3
 pymupdf==1.24.11
 mcp>=1.6.0,<2
 # Optional NCO local embeddings / cross-encoder (NCO_EMBEDDING_MODEL).
+# Desktop prepare-backend installs CPU torch from download.pytorch.org/whl/cpu
+# and omits accelerate unless required. Use -SkipEmbeddings to strip this stack.
 torch>=2.2,<3
 transformers>=4.50,<5
 sentence-transformers>=3.0,<6
