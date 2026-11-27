@@ -66,7 +66,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1
 Installer output:
 
 ```text
-desktop\release\DharaSetup-<version>-x64.exe
+installers\DharaSetup-<version>-x64.exe
 ```
 
 See [`desktop/README.md`](../../desktop/README.md) for script details.

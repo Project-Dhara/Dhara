@@ -23,7 +23,7 @@
     "productName": "Dhara",
     "copyright": "Copyright © Data DHARA",
     "directories": {
-      "output": "release",
+      "output": "../installers",
       "buildResources": "resources"
     },
     "asar": true,

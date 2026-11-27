@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-  One command to produce release\DharaSetup-<version>-x64.exe.
+  One command to produce ..\installers\DharaSetup-<version>-x64.exe (repo root).
 
 .DESCRIPTION
   1. fetch-win-deps.ps1      PostgreSQL + embeddable Python (+ pgvector if requested)
@@ -114,7 +114,8 @@ try {
 }
 
 $version = (Get-Content (Join-Path $DesktopRoot 'package.json') -Raw | ConvertFrom-Json).version
-$artifact = Join-Path $DesktopRoot "release\DharaSetup-$version-x64.exe"
+$RepoRoot = Split-Path -Parent $DesktopRoot
+$artifact = Join-Path $RepoRoot "installers\DharaSetup-$version-x64.exe"
 if (-not (Test-Path $artifact)) { throw "Expected installer not found: $artifact" }
 $hash = (Get-FileHash -Algorithm SHA256 -Path $artifact).Hash
 $mb = [math]::Round((Get-Item $artifact).Length / 1MB)

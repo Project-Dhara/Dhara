@@ -36,6 +36,9 @@ frontend/.env
 frontend/node_modules/
 frontend/dist/
 
+# Desktop NSIS installers (electron-builder output at repo root)
+installers/
+
 # Build output (generated during Render build step)
 backend/static/
 

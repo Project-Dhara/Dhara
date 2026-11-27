@@ -153,8 +153,8 @@ npm run dist                                   # runs all steps below, then elec
 powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1 -BuildPgVector
 ```
 
-Output: `release\DharaSetup-<version>-x64.exe` (NSIS, per-user install, no admin prompt). Version is in
-the filename (e.g. `DharaSetup-0.1.3-x64.exe`), so older builds such as `0.1.2` remain in `release/`
+Output: `..\installers\DharaSetup-<version>-x64.exe` at the repo root (NSIS, per-user install, no admin prompt). Version is in
+the filename (e.g. `DharaSetup-0.1.4-x64.exe`), so older builds remain in `installers/`
 when you bump `package.json`. Uninstalling keeps `%LOCALAPPDATA%\Dhara` unless you answer **No** to
 “Keep your Dhara data?”; silent uninstalls and upgrades always keep it. Default builds bundle CPU
 PyTorch + **google/embeddinggemma-300m** (weights downloaded once at build time with `HF_TOKEN`,
