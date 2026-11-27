@@ -108,7 +108,11 @@ def enrich_table_for_review(
                 repaired.append(dict(c) if isinstance(c, dict) else c)
             out["columns"] = dedupe_column_names(repaired)
         # Drop content-hash / opaque upload filenames used as titles.
-        if title_looks_like_gibberish(out.get("title")):
+        # Keep trusted layout in-grid banners (long bilingual chap10 captions).
+        if (
+            title_looks_like_gibberish(out.get("title"))
+            and str(out.get("title_source") or "") != "heuristic_in_grid_banner"
+        ):
             out["title"] = None
             if str(out.get("title_source") or "").startswith("heuristic"):
                 out["title_source"] = "cleared_unusable"

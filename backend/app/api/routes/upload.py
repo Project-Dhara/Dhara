@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 
 from app.api.dependencies import CurrentUser
 from app.core.permissions import MUTATING_ROLES, require_roles
+from app.services.ingestion.legacy_xls import LegacyXlsError, normalize_excel_upload
 from app.services.ingestion.utils.source_type import resolve_source_type
 from app.services.jobs.enqueue import (
     dispatch_batch_resume,
@@ -60,11 +61,10 @@ async def unified_upload(
     if not content:
         raise HTTPException(400, "Uploaded file is empty")
 
-    if source_type == "excel" and filename.lower().endswith(".xls"):
-        raise HTTPException(
-            400,
-            "Legacy .xls is not supported. Re-save the file as .xlsx.",
-        )
+    try:
+        filename, content = normalize_excel_upload(filename, content)
+    except LegacyXlsError as e:
+        raise HTTPException(400, str(e)) from e
 
     if source_type == "pdf":
         ensure_enough_ram_for_pdf()
@@ -116,11 +116,13 @@ async def upload_batch(
             source_type = resolve_source_type(filename, None)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
-        if source_type == "excel" and filename.lower().endswith(".xls"):
-            raise HTTPException(400, "Legacy .xls is not supported. Re-save as .xlsx.")
         content = await upload.read()
         if not content:
             raise HTTPException(400, f"{filename} is empty")
+        try:
+            filename, content = normalize_excel_upload(filename, content)
+        except LegacyXlsError as e:
+            raise HTTPException(400, str(e)) from e
         total += len(content)
         if total > MAX_BATCH_BYTES:
             raise HTTPException(400, "Total upload size exceeds batch limit")
@@ -175,11 +177,13 @@ async def upload_batch_append_files(
             source_type = resolve_source_type(filename, None)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
-        if source_type == "excel" and filename.lower().endswith(".xls"):
-            raise HTTPException(400, "Legacy .xls is not supported. Re-save as .xlsx.")
         content = await upload.read()
         if not content:
             raise HTTPException(400, f"{filename} is empty")
+        try:
+            filename, content = normalize_excel_upload(filename, content)
+        except LegacyXlsError as e:
+            raise HTTPException(400, str(e)) from e
         total += len(content)
         if total > MAX_BATCH_BYTES:
             raise HTTPException(400, "Total upload size exceeds batch limit")

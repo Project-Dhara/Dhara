@@ -1,0 +1,32 @@
+source_classification,source_version,source_code,source_label,target_code,target_level,mapping_type,reason,review_date
+legacy_nco_major_group,pre-2015,,"Professional / technical related workers",2,division,span,"Legacy combined professionals and technicians span NCO 2015 divisions 2 and 3 — steward must pick.",2026-04-09
+legacy_nco_major_group,pre-2015,,"Professional / technical related workers",3,division,span,"Legacy combined professionals and technicians span NCO 2015 divisions 2 and 3 — steward must pick.",2026-04-09
+legacy_nco_major_group,pre-2015,,"PROFESSIONAL / TECHNICAL RELATED WORKERS",2,division,span,"Legacy combined professionals and technicians span NCO 2015 divisions 2 and 3 — steward must pick.",2026-04-09
+legacy_nco_major_group,pre-2015,,"PROFESSIONAL / TECHNICAL RELATED WORKERS",3,division,span,"Legacy combined professionals and technicians span NCO 2015 divisions 2 and 3 — steward must pick.",2026-04-09
+legacy_nco_major_group,pre-2015,,"Administrative, executive and managerial workers",1,division,exact,"Legacy managerial major group maps to NCO 2015 Division 1 Managers.",2026-04-09
+legacy_nco_major_group,pre-2015,,"ADMINISTRATIVE, EXECUTIVE AND MANAGERIAL WORKERS",1,division,exact,"Legacy managerial major group maps to NCO 2015 Division 1 Managers.",2026-04-09
+legacy_nco_major_group,pre-2015,,"Clerical workers",4,division,exact,"Legacy clerical major group maps to NCO 2015 Division 4 Clerical Support Workers.",2026-04-09
+legacy_nco_major_group,pre-2015,,"CLERICAL WORKERS",4,division,exact,"Legacy clerical major group maps to NCO 2015 Division 4 Clerical Support Workers.",2026-04-09
+legacy_nco_major_group,pre-2015,,"Sale workers",52,subdivision,exact,"Legacy sale workers map to NCO 2015 Subdivision 52 Sales Workers.",2026-04-09
+legacy_nco_major_group,pre-2015,,"SALE WORKERS",52,subdivision,exact,"Legacy sale workers map to NCO 2015 Subdivision 52 Sales Workers.",2026-04-09
+legacy_nco_major_group,pre-2015,,"Sales workers",52,subdivision,exact,"Legacy sales workers map to NCO 2015 Subdivision 52 Sales Workers.",2026-04-09
+legacy_nco_major_group,pre-2015,,"SALES WORKERS",52,subdivision,exact,"Legacy sales workers map to NCO 2015 Subdivision 52 Sales Workers.",2026-04-09
+legacy_nco_major_group,pre-2015,,"Service workers and shop & market sales workers",5,division,exact,"Combined service and sales legacy label maps to NCO 2015 Division 5.",2026-04-09
+legacy_nco_major_group,pre-2015,,"Service workers",51,subdivision,span,"Bare service workers (excluding sales) — review Personal Service / Personal Care / Protective.",2026-04-09
+legacy_nco_major_group,pre-2015,,"Service workers",53,subdivision,span,"Bare service workers (excluding sales) — review Personal Service / Personal Care / Protective.",2026-04-09
+legacy_nco_major_group,pre-2015,,"Service workers",54,subdivision,span,"Bare service workers (excluding sales) — review Personal Service / Personal Care / Protective.",2026-04-09
+legacy_nco_major_group,pre-2015,,"SERVICE WORKERS",51,subdivision,span,"Bare service workers (excluding sales) — review Personal Service / Personal Care / Protective.",2026-04-09
+legacy_nco_major_group,pre-2015,,"SERVICE WORKERS",53,subdivision,span,"Bare service workers (excluding sales) — review Personal Service / Personal Care / Protective.",2026-04-09
+legacy_nco_major_group,pre-2015,,"SERVICE WORKERS",54,subdivision,span,"Bare service workers (excluding sales) — review Personal Service / Personal Care / Protective.",2026-04-09
+legacy_nco_major_group,pre-2015,,"Farmers / fishermen / hunters",6,division,exact,"Legacy agricultural major group maps to NCO 2015 Division 6.",2026-04-09
+legacy_nco_major_group,pre-2015,,"FARMERS / FISHERMEN / HUNTERS",6,division,exact,"Legacy agricultural major group maps to NCO 2015 Division 6.",2026-04-09
+legacy_nco_major_group,pre-2015,,"FARMERS,FISHERMEN,HUNTERS etc",6,division,exact,"Legacy agricultural major group maps to NCO 2015 Division 6.",2026-04-09
+legacy_nco_major_group,pre-2015,,"Production and other related workers",7,division,span,"Legacy production spans craft (7), plant/machine (8) and elementary (9) — steward must pick.",2026-04-09
+legacy_nco_major_group,pre-2015,,"Production and other related workers",8,division,span,"Legacy production spans craft (7), plant/machine (8) and elementary (9) — steward must pick.",2026-04-09
+legacy_nco_major_group,pre-2015,,"Production and other related workers",9,division,span,"Legacy production spans craft (7), plant/machine (8) and elementary (9) — steward must pick.",2026-04-09
+legacy_nco_major_group,pre-2015,,"PRODUCTION AND OTHER RELATED WORKERS",7,division,span,"Legacy production spans craft (7), plant/machine (8) and elementary (9) — steward must pick.",2026-04-09
+legacy_nco_major_group,pre-2015,,"PRODUCTION AND OTHER RELATED WORKERS",8,division,span,"Legacy production spans craft (7), plant/machine (8) and elementary (9) — steward must pick.",2026-04-09
+legacy_nco_major_group,pre-2015,,"PRODUCTION AND OTHER RELATED WORKERS",9,division,span,"Legacy production spans craft (7), plant/machine (8) and elementary (9) — steward must pick.",2026-04-09
+legacy_nco_major_group,pre-2015,,"Housewife / non-workers",,not_an_occupation,not_an_occupation,"Employment status / non-worker — not an NCO occupation.",2026-04-09
+legacy_nco_major_group,pre-2015,,"HOUSEWIFE / NON-WORKERS",,not_an_occupation,not_an_occupation,"Employment status / non-worker — not an NCO occupation.",2026-04-09
+legacy_nco_major_group,pre-2015,,"HOUSEWIFE / NON WORKERS",,not_an_occupation,not_an_occupation,"Employment status / non-worker — not an NCO occupation.",2026-04-09

@@ -299,8 +299,11 @@ export default function HarmonisePanel({
                               </div>
                               {m && (
                                 <div className="mt-0.5 truncate text-[11px] text-[#a49c8e]">
-                                  {m.level || m.entity_type || m.kind || ''}
-                                  {rowReview ? ' · needs review' : ''}
+                                  {m.status === 'not_an_occupation'
+                                    ? 'not an occupation'
+                                    : (m.level || m.entity_type || m.kind || '')}
+                                  {rowReview && m.status !== 'not_an_occupation' ? ' · needs review' : ''}
+                                  {m.ambiguous || (m.candidates?.length > 1) ? ' · both valid' : ''}
                                   {m.codes?.length > 1 ? ' · both valid' : ''}
                                 </div>
                               )}

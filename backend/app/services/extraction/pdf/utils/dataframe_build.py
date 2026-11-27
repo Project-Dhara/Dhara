@@ -8,11 +8,19 @@ from typing import Any, List, Optional, Sequence
 from app.services.extraction.pdf.utils.caption import (
     _blank,
     _cell_str,
+    _is_descriptive_in_grid_title,
     _is_leaf_header_token,
     _is_measurement_number,
     _pad_row,
+    _row_banner_label,
     _row_is_column_number_strip,
+    _row_is_full_width_banner,
     extract_in_grid_caption,
+)
+from app.services.extraction.pdf.utils.stacked_block_split import (
+    is_date_range_row,
+    is_short_label_row,
+    looks_like_marriage_act_header_row,
 )
 
 from app.services.extraction.pdf.utils.header_detect import (
@@ -40,6 +48,120 @@ from app.services.extraction.pdf.utils.grid_repair import (
     repair_glued_numeric_cells,
     repair_sex_pair_next_row_label_bleed,
 )
+
+_ALL_DISTRICTS_RE = re.compile(r"^all\s+districts?\s*$", re.I)
+
+
+def _marriage_preamble_gate(
+    padded: List[List[Any]],
+    header_count: int,
+    skip_rows: Sequence[int],
+    n_cols: int,
+) -> bool:
+    """True only for Act-wise marriage tables with a leading From…TO… banner."""
+    skip = set(skip_rows)
+    has_date = False
+    for i in range(min(header_count, len(padded))):
+        if i not in skip:
+            continue
+        row = padded[i]
+        if _blank(row):
+            continue
+        if is_date_range_row(row):
+            has_date = True
+            break
+    if not has_date:
+        return False
+    # Column header among the non-skipped leading rows.
+    for i in range(min(header_count, len(padded))):
+        if i in skip:
+            continue
+        if looks_like_marriage_act_header_row(padded[i]):
+            return True
+    # Fallback: scan a few rows after header_count start for the schema header
+    # when header_count landed past banners only.
+    for i in range(header_count, min(header_count + 3, len(padded))):
+        if looks_like_marriage_act_header_row(padded[i]):
+            return True
+    return False
+
+
+def _collect_leading_marriage_banners(
+    padded: List[List[Any]],
+    header_count: int,
+    skip_rows: Sequence[int],
+    n_cols: int,
+) -> List[List[Any]]:
+    """Leading skipped full-width banners (title / date / district) before headers."""
+    skip = set(skip_rows)
+    out: List[List[Any]] = []
+    started = False
+    for i in range(min(header_count, len(padded))):
+        if i not in skip:
+            if started:
+                break
+            continue
+        row = padded[i]
+        if _blank(row):
+            if started:
+                continue
+            continue
+        if not _row_is_full_width_banner(row):
+            if started:
+                break
+            continue
+        label = _row_banner_label(row) or ""
+        keep = (
+            is_date_range_row(row)
+            or is_short_label_row(row, n_cols)
+            or _is_descriptive_in_grid_title(label)
+        )
+        if not keep:
+            if started:
+                break
+            continue
+        started = True
+        out.append(list(row))
+    return out
+
+
+def _compose_marriage_caption(
+    caption: dict,
+    banner_rows: List[List[Any]],
+    n_cols: int,
+) -> Optional[str]:
+    """Prefer report title from banner rows; append district when not All Districts.
+
+    Do not seed from ``caption['title']`` first — in-grid caption extraction may
+    already have joined the date-range line as a subtitle.
+    """
+    report: Optional[str] = None
+    district: Optional[str] = None
+    for row in banner_rows:
+        label = (_row_banner_label(row) or "").strip()
+        if not label:
+            continue
+        if is_date_range_row(row):
+            continue
+        if _is_descriptive_in_grid_title(label):
+            if not report:
+                report = label
+            continue
+        if is_short_label_row(row, n_cols):
+            if _ALL_DISTRICTS_RE.match(label):
+                continue
+            district = label
+    if not report:
+        raw = (caption.get("title") or "").strip()
+        if raw:
+            # Drop a glued date-range subtitle if present.
+            parts = [p.strip() for p in raw.split(" — ") if p.strip()]
+            kept = [p for p in parts if not is_date_range_row([p])]
+            report = " — ".join(kept) if kept else None
+    if report and district and district.lower() not in report.lower():
+        return f"{report} — {district}"
+    return report or district
+
 
 def _looks_like_birth_order_leaf_strip(row: Sequence[Any], n_cols: int) -> bool:
     """True for Sl.No. / age-stub / 1,2,…,>8,All header strips parked as data."""
@@ -268,12 +390,42 @@ def dataframe_from_extracted_rows(rows: Optional[List[List[Any]]]):
         else:
             # Non-index skip (banner) — stop; don't pull mid-table strips forward.
             break
+    # Marriage-registration only: lift leading title/date/district banners into
+    # shared header_path prefixes (above leaf columns) — not into body rows.
+    leading_banners: List[List[Any]] = []
+    if _marriage_preamble_gate(padded, header_count, skip_rows, n_cols):
+        leading_banners = _collect_leading_marriage_banners(
+            padded, header_count, skip_rows, n_cols
+        )
     if leading_index:
         body = leading_index + body
     caption = extract_in_grid_caption(padded)
+    if leading_banners:
+        composed = _compose_marriage_caption(caption, leading_banners, n_cols)
+        if composed:
+            caption = {**caption, "title": composed}
     leaf_names, column_meta = _recover_stub_from_caption(
         leaf_names, column_meta, caption.get("title")
     )
+    if leading_banners:
+        banner_labels = [
+            label
+            for row in leading_banners
+            for label in [(_row_banner_label(row) or "").strip()]
+            if label
+        ]
+        if banner_labels:
+            for cm in column_meta:
+                path = list(cm.get("header_path") or [])
+                if not path:
+                    leaf = str(cm.get("name") or "").strip()
+                    path = [leaf] if leaf else []
+                path = banner_labels + path
+                cm["header_path"] = path
+                cm["header_group"] = path[-2] if len(path) >= 2 else None
+                # Keep leaf display name unchanged.
+                if path:
+                    cm["name"] = str(path[-1])
 
     def _attach_caption_attrs(frame):
         frame.attrs["dhara_column_meta"] = column_meta

@@ -14,7 +14,7 @@ If you want Docker Compose on a server instead, use [On-prem deployment](./on-pr
 |------|-------------|
 | App icon | **Dhara** on the Desktop and Start Menu |
 | Local stack | Bundled PostgreSQL, API, job worker, and UI (no Docker required) |
-| AI assist | **Cloud API key** recommended in Settings; optional local **Ollama** (you install it yourself) |
+| AI assist | **Cloud API key** recommended in Settings; optional local **Ollama** (bundled; starts on opt-in) |
 | Persistence | Closing the app keeps your catalogue, jobs, and settings |
 
 This is **not** a browser shortcut to the public Dhara website.
@@ -111,13 +111,15 @@ Set Provider to **OpenAI** (or your provider), paste your API key, **Save key**.
 
 ### Optional: local Ollama (Gemma 3 1B)
 
-Dhara does **not** install Ollama for you. Use **Settings → Run a local model (optional)**:
+The desktop installer **bundles the Ollama runtime** (not the chat model). Use **Settings → Run a local model (optional)**:
 
-1. Install **Ollama 0.6+** yourself (the section can open the download page if Ollama is not running).
-2. Confirm the ~800 MB download, then let Dhara pull **`gemma3:1b`** (needs about **1 GB free** on the drive where Ollama stores models). Interrupted downloads are safe to retry — Ollama resumes.
+1. Open the section — Dhara starts bundled Ollama if nothing is already listening on `127.0.0.1:11434` (a system Ollama is preferred when present).
+2. Confirm the ~800 MB download, then let Dhara pull **`gemma3:1b`** (needs about **1 GB free**; models go under `%LOCALAPPDATA%\Dhara\ollama`). Interrupted downloads are safe to retry — Ollama resumes.
 3. Click **Use this model in the form** (fills Self-hosted + Base URL + model; does not save yet).
 4. Click **Save key** in the LLM section (API key can be the dummy value `ollama`).
 5. Optionally **Test connection** — the first test loads the model into RAM and can take up to a minute on CPU. The model may stay loaded for a few minutes afterward and reduce free RAM for large PDF jobs.
+
+Ollama is **not** started with Postgres/API on every launch — only when you use this Settings flow. Quit stops a Dhara-spawned Ollama; it does not stop a system Ollama you installed yourself.
 
 **Context length (local autofill):** Ollama’s default context window is small (often 2048–4096 tokens). Metadata autofill can fail with a clear “context length exceeded” message if the prompt is truncated. Raise context with environment variable **`OLLAMA_CONTEXT_LENGTH`** (or a Modelfile `PARAMETER num_ctx …`) before starting Ollama. Dhara talks to Ollama over **`/v1`**, which **cannot** set `num_ctx` per request.
 
@@ -192,8 +194,8 @@ Secrets stay in `runtime.json` and are not copied into dump files.
 | Port in use | Dhara should fall back automatically; if not, close the other app or reboot |
 | Database will not start after a crash | Dhara clears a stale lock when safe; use **Copy diagnostics** if it still fails |
 | PDF job refused (memory) | Free ~1.2 GB RAM; close browsers / local AI; try again |
-| Self-hosted AI fails | Confirm Ollama 0.6+ is running; use Settings → Run a local model; model `gemma3:1b`; Base URL `http://127.0.0.1:11434/v1` |
-| Local model pull interrupted | Retry — Ollama resumes; ensure ~1 GB free on the Ollama models drive |
+| Self-hosted AI fails | Open Settings → Run a local model (starts bundled Ollama); model `gemma3:1b`; Base URL `http://127.0.0.1:11434/v1`; check `%LOCALAPPDATA%\Dhara\logs\ollama.log` |
+| Local model pull interrupted | Retry — Ollama resumes; ensure ~1 GB free under `%LOCALAPPDATA%\Dhara` |
 | Autofill: context length exceeded | Raise `OLLAMA_CONTEXT_LENGTH` / Modelfile `num_ctx`; keep local prompts compact (`DHARA_METADATA_COMPACT=1`) |
 | Autofill JSON / empty replies on 1B | Expected to improve with schema-constrained output; still review fields; try a 3B model if quality is weak |
 | Test connection slow / PDF refused after test | First load can take up to a minute; model may hold RAM for a few minutes — wait or free memory |

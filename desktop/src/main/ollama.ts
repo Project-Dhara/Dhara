@@ -2,7 +2,13 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { BrowserWindow, WebContents } from 'electron'
-import { OLLAMA_ORIGIN, OLLAMA_OPENAI_BASE_URL } from './paths'
+import { JobObject } from './job-object'
+import {
+  bundledOllamaManaged,
+  bundledOllamaPresent,
+  ensureOllamaRunning,
+} from './ollama-process'
+import { OLLAMA_ORIGIN, OLLAMA_OPENAI_BASE_URL, dirs } from './paths'
 import { freeDiskBytes, GiB, ramInfo } from './sysinfo'
 import { log } from './logger'
 
@@ -36,6 +42,10 @@ export interface OllamaStatus {
   diskPathHint?: string
   diskMessage?: string
   error?: string
+  /** Bundled ollama.exe is present under resources/win-x64/ollama. */
+  bundled: boolean
+  /** Dhara spawned the current Ollama process. */
+  managed: boolean
   defaults: OllamaDefaults
 }
 
@@ -110,6 +120,10 @@ export function isLocalModelPresent(names: string[]): boolean {
 function resolveOllamaModelsRoot(): { root: string; known: boolean } {
   const env = (process.env.OLLAMA_MODELS || '').trim()
   if (env) return { root: path.resolve(env), known: true }
+  // Prefer Dhara-managed models dir when we ship Ollama (or after we have started it).
+  if (bundledOllamaPresent() || bundledOllamaManaged()) {
+    return { root: dirs.ollamaModels(), known: true }
+  }
   const home = path.join(os.homedir(), '.ollama')
   if (fs.existsSync(home)) return { root: home, known: true }
   return { root: home, known: false }
@@ -185,10 +199,14 @@ async function fetchVersion(): Promise<{
 }
 
 /**
- * Read-only helper for the Settings “use a local model” opt-in.
- * Dhara never downloads, installs or starts Ollama.
+ * Status for the Settings “use a local model” opt-in.
+ * When `ensure` is true (default for IPC), start bundled Ollama if nothing is listening.
  */
-export async function ollamaStatus(): Promise<OllamaStatus> {
+export async function ollamaStatus(
+  opts: { ensure?: boolean; job?: JobObject | null } = {},
+): Promise<OllamaStatus> {
+  const ensure = opts.ensure !== false
+  const bundled = bundledOllamaPresent()
   const base: OllamaStatus = {
     reachable: false,
     baseUrl: OLLAMA_OPENAI_BASE_URL,
@@ -198,7 +216,26 @@ export async function ollamaStatus(): Promise<OllamaStatus> {
     version: 'unknown',
     versionOk: true,
     diskOk: true,
+    bundled,
+    managed: bundledOllamaManaged(),
     defaults: defaults(),
+  }
+
+  if (ensure) {
+    const started = await ensureOllamaRunning(opts.job)
+    base.bundled = started.bundled
+    base.managed = started.managed
+    if (!started.reachable) {
+      const disk = await diskCheck()
+      return {
+        ...base,
+        diskOk: disk.diskOk,
+        freeBytes: disk.freeBytes,
+        diskPathHint: disk.diskPathHint,
+        diskMessage: disk.diskMessage,
+        error: started.error || 'Ollama is not reachable.',
+      }
+    }
   }
 
   try {
@@ -213,6 +250,7 @@ export async function ollamaStatus(): Promise<OllamaStatus> {
     return {
       ...base,
       reachable: true,
+      managed: bundledOllamaManaged(),
       models,
       modelPresent: isLocalModelPresent(models),
       version: ver.version,
@@ -394,18 +432,25 @@ async function runPull(_sender: WebContents | null): Promise<PullStatus> {
 /**
  * Start (or join) a pull of gemma3:1b. Idempotent while pulling.
  */
-export async function pullStart(sender: WebContents | null): Promise<PullStatus> {
+export async function pullStart(
+  sender: WebContents | null,
+  opts: { job?: JobObject | null } = {},
+): Promise<PullStatus> {
   if (pullState.phase === 'pulling' && pullPromise) {
     return getPullStatus()
   }
 
-  const st = await ollamaStatus()
+  const st = await ollamaStatus({ ensure: true, job: opts.job })
   if (!st.reachable) {
     setPullState({
       phase: 'error',
       percent: null,
       status: 'error',
-      error: 'Ollama is not reachable. Install and start Ollama, then try again.',
+      error:
+        st.error ||
+        (st.bundled
+          ? 'Bundled Ollama failed to start. See logs, then try again.'
+          : 'Ollama is not reachable. Install and start Ollama, then try again.'),
     })
     return getPullStatus()
   }
@@ -442,7 +487,21 @@ export async function pullStart(sender: WebContents | null): Promise<PullStatus>
   return pullPromise
 }
 
-export async function testLocalModel(): Promise<TestConnectionResult> {
+export async function testLocalModel(
+  opts: { job?: JobObject | null } = {},
+): Promise<TestConnectionResult> {
+  const ensured = await ensureOllamaRunning(opts.job)
+  if (!ensured.reachable) {
+    return {
+      ok: false,
+      latencyMs: 0,
+      error:
+        ensured.error ||
+        (ensured.bundled
+          ? 'Bundled Ollama failed to start.'
+          : 'Ollama is not reachable.'),
+    }
+  }
   const started = Date.now()
   try {
     const res = await fetch(`${OLLAMA_ORIGIN}/api/chat`, {

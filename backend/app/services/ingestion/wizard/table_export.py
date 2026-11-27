@@ -14,8 +14,18 @@ from io import BytesIO
 from typing import Any, Optional
 
 import openpyxl
-from openpyxl.styles import Alignment, Font
+from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
+
+
+# Catalogue enrichment headers (group_export) — mild highlight so stewards spot them.
+_STANDARD_CODE_HEADERS = frozenset({"NCO 2015 codes", "LGD codes"})
+_STANDARD_CODE_HEADER_FILL = PatternFill(
+    start_color="DDEBF7",
+    end_color="DDEBF7",
+    fill_type="solid",
+)
+_STANDARD_CODE_HEADER_FONT = Font(bold=True)
 
 
 _BANNER_ROOT_RE = re.compile(
@@ -218,6 +228,13 @@ def _build_header_segments(paths: list[list[str]]) -> tuple[int, list[list[dict]
     return depth, rows
 
 
+def _apply_standard_code_header_style(cell) -> None:
+    """Bold + soft fill when leaf header is NCO 2015 codes or LGD codes."""
+    if cell.value in _STANDARD_CODE_HEADERS:
+        cell.font = _STANDARD_CODE_HEADER_FONT
+        cell.fill = _STANDARD_CODE_HEADER_FILL
+
+
 def _write_multi_level_headers(ws, paths: list[list[str]]) -> int:
     """Write Preview-matching header rows with merges. Returns header row count."""
     depth, rows = _build_header_segments(paths)
@@ -236,6 +253,7 @@ def _write_multi_level_headers(ws, paths: list[list[str]]) -> int:
             end_row = excel_row + seg["row_span"] - 1
             cell = ws.cell(row=excel_row, column=start_col, value=seg["label"])
             cell.font = header_font
+            _apply_standard_code_header_style(cell)
             is_group = seg["col_span"] > 1 or (
                 depth > 1 and excel_row + seg["row_span"] - 1 < depth
             )
@@ -282,6 +300,8 @@ def table_to_excel_bytes(
     elif col_names:
         ws.append(col_names)
         header_depth = 1
+        for i, name in enumerate(col_names, start=1):
+            _apply_standard_code_header_style(ws.cell(row=1, column=i))
 
     for row in rows:
         ws.append(_iter_row_values(row, col_names))

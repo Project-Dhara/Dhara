@@ -230,6 +230,68 @@ def build_nco_index(model_dir: Path, nco_csv: Path, pin: dict) -> Path:
     )
     (model_dir / "nco_index.meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     print(f"wrote {out} ({embeddings.shape[0]} x {embeddings.shape[1]})")
+
+    # Hierarchy node embeddings (division/subdivision/group/family) — avoids
+    # live encode on first Suggest after cold start.
+    hier_docs = []
+    seen = set()
+    specs = (
+        ("division",),
+        ("subdivision",),
+        ("group",),
+        ("family",),
+    )
+    with nco_csv.open(encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for raw in reader:
+            for level_tuple in specs:
+                level = level_tuple[0]
+                # Map CSV columns to hierarchy levels.
+                col_map = {
+                    "division": ("Division_Code", "Division_Title"),
+                    "subdivision": ("SubDivision_Code", "SubDivision_Title"),
+                    "group": ("Group_Code", "Group_Title"),
+                    "family": ("Family_Code", "Family_Title"),
+                }
+                code_col, title_col = col_map[level]
+                code = (raw.get(code_col) or "").strip()
+                title = (raw.get(title_col) or "").strip()
+                if not code or not title or (level, code) in seen:
+                    continue
+                seen.add((level, code))
+                titles = []
+                for lv in ("division", "subdivision", "group", "family"):
+                    _, tc = col_map[lv]
+                    t = (raw.get(tc) or "").strip()
+                    if t and (
+                        lv == "division"
+                        or (lv == "subdivision" and level in ("subdivision", "group", "family"))
+                        or (lv == "group" and level in ("group", "family"))
+                        or (lv == "family" and level == "family")
+                    ):
+                        titles.append(t)
+                hier_docs.append(
+                    {
+                        "key": f"{level}:{code}",
+                        "search_text": " | ".join(dict.fromkeys(titles)) or title,
+                    }
+                )
+    if hier_docs:
+        hier_emb = model.encode(
+            [d["search_text"] for d in hier_docs],
+            normalize_embeddings=True,
+            show_progress_bar=True,
+            batch_size=32,
+        )
+        hier_emb = np.asarray(hier_emb, dtype=np.float32)
+        hier_out = model_dir / "nco_hierarchy_index.npz"
+        np.savez_compressed(
+            hier_out,
+            embeddings=hier_emb,
+            keys=np.asarray([d["key"] for d in hier_docs], dtype=object),
+            meta_json=np.asarray(json.dumps({**meta, "kind": "hierarchy", "count": len(hier_docs)})),
+        )
+        print(f"wrote {hier_out} ({hier_emb.shape[0]} x {hier_emb.shape[1]})")
     return out
 
 

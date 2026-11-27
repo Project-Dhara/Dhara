@@ -111,6 +111,8 @@ export class WindowManager {
         nodeIntegration: false,
         sandbox: true,
         webSecurity: true,
+        // Keep Suggest NCO polls alive while the window is hidden to tray.
+        backgroundThrottling: false,
         devTools: !app.isPackaged,
       },
     })

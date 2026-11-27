@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { copyDiagnosticsToClipboard, openLogsFolder, registerIpc } from './ipc'
 import { log } from './logger'
 import { abortPullFireAndForget } from './ollama'
+import { stopBundledOllama } from './ollama-process'
 import { dirs, ensureDir, userDataRoot } from './paths'
 import { readRuntime, writeRuntime } from './runtime-state'
 import { ServiceSupervisor } from './supervisor'
@@ -57,6 +58,8 @@ async function quitApp(): Promise<void> {
   // Do not await the Ollama pull stream — abort and continue shutting down.
   abortPullFireAndForget()
   try {
+    // Always stop Dhara-spawned Ollama; never touch a system Ollama we did not start.
+    await stopBundledOllama()
     const keep = Boolean(readRuntime().keepRunningOnQuit)
     if (keep && supervisor.state === 'running') {
       // Children outlive Electron; the next launch adopts them.

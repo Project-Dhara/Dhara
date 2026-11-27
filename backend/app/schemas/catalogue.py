@@ -92,3 +92,11 @@ class ClassificationColumnUpdateRequest(BaseModel):
     column_names: Optional[List[Any]] = None
     codes: Optional[Any] = None
     expand_aliases: bool = True
+
+
+class GroupsDownloadRequest(BaseModel):
+    """POST /api/catalogue/groups/download — Publish session multi-group ZIP."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    metadata_ids: List[Any] = Field(default_factory=list)

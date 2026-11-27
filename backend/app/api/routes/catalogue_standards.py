@@ -6,7 +6,7 @@ import concurrent.futures
 import json as _json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -35,7 +35,12 @@ from app.services.classification.classifications import (
     get_recent_classification_columns,
     update_metadata_group_classification_column,
 )
-from app.services.classification.nco_aliases import upsert_nco_aliases
+from app.services.classification.nco_aliases import (
+    clear_learned_nco_aliases,
+    delete_nco_alias,
+    list_nco_aliases,
+    upsert_nco_aliases,
+)
 from app.services.datasets.datasets import push_to_catalogue
 from app.services.grouping.matching import match_tables_to_metadata
 from app.services.standards.classification_standards import (
@@ -254,8 +259,8 @@ async def match_nco(
     Local hybrid retrieval scores the whole list. The chat model is used only
     for a few ambiguous rows, and only to choose among retrieved codes.
 
-    On desktop (``DHARA_DESKTOP=1``) matching runs in the job worker so the BGE
-    embedding model never loads into the API process.
+    On desktop (``DHARA_DESKTOP=1``) returns a ``job_id`` immediately; the worker
+    runs matching. Docker / non-desktop keeps the sync ``{matches, …}`` body.
     """
     import os
 
@@ -272,38 +277,60 @@ async def match_nco(
         if s and s not in unique:
             unique.append(s)
     context = data.get("context") if isinstance(data.get("context"), dict) else None
-    extractor = _extractor_for(request, user_email, db=db)
+    # DHARA_NCO_LLM defaults off: local retrieval only; chat never auto-fills.
+    nco_llm_on = (os.environ.get("DHARA_NCO_LLM") or "off").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+    extractor = _extractor_for(request, user_email, db=db) if nco_llm_on else None
     desktop = (os.environ.get("DHARA_DESKTOP") or "").strip() in ("1", "true", "yes")
 
     if desktop:
         from app.api.dependencies import resolve_llm_credentials
         from app.services.classification.nco_match_jobs import (
-            enqueue_nco_match,
-            wait_nco_match,
+            enqueue_or_attach,
+            maintenance,
+            read_worker_status,
         )
 
-        creds = resolve_llm_credentials(request, user_email, db=db)
-        llm = {
-            "api_key": creds.api_key or "",
-            "provider": creds.provider,
-            "base_url": creds.base_url,
-            "model": creds.model,
-        }
+        llm = {"api_key": "", "provider": None, "base_url": None, "model": None}
+        if nco_llm_on:
+            creds = resolve_llm_credentials(request, user_email, db=db)
+            llm = {
+                "api_key": creds.api_key or "",
+                "provider": creds.provider,
+                "base_url": creds.base_url,
+                "model": creds.model,
+            }
 
-        def _run_desktop():
-            job_id = enqueue_nco_match(values=unique, context=context, llm=llm)
-            return wait_nco_match(job_id)
+        from sqlalchemy import text as sa_text
 
-        job = await asyncio.to_thread(_run_desktop)
-        if str(job.get("status") or "") == "error":
-            raise HTTPException(500, job.get("error") or "NCO matching failed")
-        result = job.get("result") or {}
-        return {
-            "matches": result.get("matches") or {},
-            "llm_used": bool(result.get("llm_used")),
-            "retrieval_mode": result.get("retrieval_mode") or "keyword-only",
-            "retrieval_reason": result.get("retrieval_reason") or "",
-        }
+        standard_row = db.execute(
+            sa_text(
+                "SELECT id FROM classification_standards WHERE is_selected = TRUE LIMIT 1"
+            )
+        ).fetchone()
+        standard_id = standard_row[0] if standard_row else None
+
+        try:
+            maintenance(db)
+            payload = enqueue_or_attach(
+                db,
+                owner=user_email,
+                values=unique,
+                context=context,
+                llm=llm,
+                standard_id=standard_id,
+                llm_on=nco_llm_on,
+            )
+        except Exception as e:
+            raise HTTPException(500, str(e).strip() or "Failed to enqueue NCO match") from e
+
+        worker = read_worker_status()
+        payload["worker"] = worker
+        # Already done (fingerprint reuse): include matches for convenience.
+        if str(payload.get("status") or "") == "done":
+            return payload
+        return payload
 
     def _run():
         with session_scope() as session:
@@ -320,10 +347,55 @@ async def match_nco(
     matches, status = await asyncio.to_thread(_run)
     return {
         "matches": matches,
-        "llm_used": not extractor.skip_llm,
+        "llm_used": bool(extractor is not None and not getattr(extractor, "skip_llm", True)),
         "retrieval_mode": status.get("retrieval_mode") or "keyword-only",
         "retrieval_reason": status.get("retrieval_reason") or "",
     }
+
+
+@router.get("/api/catalogue/match-nco/{job_id}")
+async def get_match_nco_job(
+    job_id: str,
+    user_email: str = Depends(require_user_email),
+    db: Session = Depends(get_db),
+):
+    from app.services.classification.nco_match_jobs import (
+        get_job_for_owner,
+        job_public,
+        read_worker_status,
+    )
+
+    job = get_job_for_owner(db, job_id=job_id, owner=user_email, touch_poll=True)
+    if job is None:
+        # Missing or wrong owner — 404 either way (no existence leak).
+        raise HTTPException(404, "NCO match job not found")
+    pub = job_public(job)
+    pub["worker"] = read_worker_status()
+    if not pub["worker"].get("fresh"):
+        pub["worker_message"] = "processing service isn't running"
+    elif str(pub["worker"].get("state") or "").startswith("busy:pdf"):
+        pub["worker_message"] = "waiting for the current file to finish"
+    else:
+        pub["worker_message"] = ""
+    return pub
+
+
+@router.delete("/api/catalogue/match-nco/{job_id}")
+async def delete_match_nco_job(
+    job_id: str,
+    attach_token: str = Query(...),
+    user_email: str = Depends(require_user_email),
+    db: Session = Depends(get_db),
+):
+    """Stop waiting — removes this client's attach token only (idempotent)."""
+    from app.services.classification.nco_match_jobs import detach_token
+
+    ok = detach_token(
+        db, job_id=job_id, owner=user_email, attach_token=attach_token
+    )
+    if not ok:
+        raise HTTPException(404, "NCO match job not found")
+    return {"ok": True}
 
 
 @router.post("/api/catalogue/match-lgd")
@@ -357,7 +429,10 @@ async def save_nco_aliases(
     body: NcoAliasesRequest,
     user_email: str = Depends(require_user_email),
 ):
-    """Learn occupation → NCO mappings from steward Verify in Classify."""
+    """Learn occupation → NCO mappings from steward Verify in Classify.
+
+    Never silently overwrites a different existing code; conflicts are returned.
+    """
     aliases = body.aliases
     if not isinstance(aliases, list):
         raise HTTPException(400, "aliases must be a list")
@@ -366,5 +441,51 @@ async def save_nco_aliases(
         with session_scope() as session:
             return upsert_nco_aliases(dbapi_connection(session), aliases, source="steward")
 
-    saved = await asyncio.to_thread(_run)
-    return {"saved": saved}
+    result = await asyncio.to_thread(_run)
+    return result
+
+
+@router.get("/api/catalogue/nco-aliases")
+async def get_nco_aliases(user_email: str = Depends(require_user_email)):
+    """List steward-learned NCO value aliases for Settings audit."""
+
+    def _run():
+        with session_scope() as session:
+            rows = list_nco_aliases(dbapi_connection(session))
+            for row in rows:
+                if row.get("updated_at") is not None:
+                    row["updated_at"] = row["updated_at"].isoformat()
+            return rows
+
+    return {"aliases": await asyncio.to_thread(_run)}
+
+
+@router.delete("/api/catalogue/nco-aliases")
+async def remove_nco_alias(
+    normalized_value: str = Query(..., description="Normalized occupation label key"),
+    user_email: str = Depends(require_user_email),
+):
+    """Delete one alias by normalized value (query param)."""
+    if not (normalized_value or "").strip():
+        raise HTTPException(400, "normalized_value is required")
+
+    def _run():
+        with session_scope() as session:
+            return delete_nco_alias(dbapi_connection(session), normalized_value)
+
+    ok = await asyncio.to_thread(_run)
+    if not ok:
+        raise HTTPException(404, "alias not found")
+    return {"deleted": True, "normalized_value": normalized_value}
+
+
+@router.post("/api/catalogue/nco-aliases/clear-learned")
+async def clear_learned_aliases(user_email: str = Depends(require_user_email)):
+    """Explicit steward action: clear non-seed learned aliases. Not a migration."""
+
+    def _run():
+        with session_scope() as session:
+            return clear_learned_nco_aliases(dbapi_connection(session), keep_seed=True)
+
+    deleted = await asyncio.to_thread(_run)
+    return {"deleted": deleted}

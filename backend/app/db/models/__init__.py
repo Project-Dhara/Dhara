@@ -16,6 +16,11 @@ from app.db.models.pdf import (
     PdfTableSnapshot,
 )
 from app.db.models.staging import ExtractStaging, SemanticEmbedding
+from app.db.models.nco_match import (
+    NcoMatchJob,
+    NcoMatchJobAttachToken,
+    NcoStewardAliasCounter,
+)
 from app.db.models.standards import (
     ClassificationStandard,
     ClassificationStandardCode,
@@ -38,6 +43,9 @@ __all__ = [
     "ClassificationStandard",
     "ClassificationStandardCode",
     "NcoValueAlias",
+    "NcoMatchJob",
+    "NcoMatchJobAttachToken",
+    "NcoStewardAliasCounter",
     "PdfJob",
     "PdfTable",
     "PdfTableGroup",

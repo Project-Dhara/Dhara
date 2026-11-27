@@ -35,6 +35,7 @@ import {
   setHeaderPathLevel,
   spanDisplayValue,
   tableHasMissingTitle,
+  tableSourceType,
   tableSupportsPdfReference,
   tableSupportsStructureEditor,
   titleForEdit,
@@ -97,6 +98,7 @@ export function TableDetail({
       columns,
       Array.isArray(table.cell_merges) ? table.cell_merges : [],
       Boolean(table.cell_merges_explicit),
+      tableSourceType(table),
     )
     return {
       title: titleForEdit(table),
@@ -149,6 +151,7 @@ export function TableDetail({
         columns,
         Array.isArray(table.cell_merges) ? table.cell_merges : [],
         Boolean(table.cell_merges_explicit),
+        tableSourceType(table),
       )
       return {
         ...prev,
@@ -320,7 +323,13 @@ export function TableDetail({
       // First manual merge: lock in any auto-inferred spans so they don't disappear.
       let nextMerges = prev.mergesExplicit
         ? (prev.cellMerges || []).map((m) => ({ ...m }))
-        : mergesFromSpans(resolveEditorBodySpans(prev.rows, prev.columns, prev.cellMerges, false))
+        : mergesFromSpans(resolveEditorBodySpans(
+          prev.rows,
+          prev.columns,
+          prev.cellMerges,
+          false,
+          tableSourceType(table),
+        ))
       nextMerges = nextMerges.filter((m) => {
         const mrs = Math.max(1, Number(m.rowSpan) || 1)
         const mcs = Math.max(1, Number(m.colSpan) || 1)
@@ -345,6 +354,7 @@ export function TableDetail({
     })
   }
   const unmergeCells = (r, c) => {
+    const srcKind = tableSourceType(table)
     const preview = unmergeAt(
       draftRef.current.rows,
       draftRef.current.columns,
@@ -352,10 +362,13 @@ export function TableDetail({
       draftRef.current.mergesExplicit,
       r,
       c,
+      srcKind,
     )
     if (!preview) return
     applyEditorChange((prev) => {
-      const result = unmergeAt(prev.rows, prev.columns, prev.cellMerges, prev.mergesExplicit, r, c)
+      const result = unmergeAt(
+        prev.rows, prev.columns, prev.cellMerges, prev.mergesExplicit, r, c, srcKind,
+      )
       if (!result) return prev
       return {
         ...prev,
@@ -528,7 +541,9 @@ export function TableDetail({
     applyEditorChange((prev) => {
       const idx = Math.max(0, Math.min(atIdx, prev.rows.length))
       const empty = Array.from({ length: prev.columns.length }, () => null)
-      const merges = materializeCellMerges(prev.rows, prev.columns, prev.cellMerges, prev.mergesExplicit)
+      const merges = materializeCellMerges(
+        prev.rows, prev.columns, prev.cellMerges, prev.mergesExplicit, tableSourceType(table),
+      )
       const rows = [...prev.rows]
       rows.splice(idx, 0, empty)
       // Clear cells that fall inside an expanded vertical merge so rowspan stays clean.
@@ -554,7 +569,9 @@ export function TableDetail({
   const deleteRow = (idx) => {
     applyEditorChange((prev) => {
       if (prev.rows.length <= 1) return prev
-      const merges = materializeCellMerges(prev.rows, prev.columns, prev.cellMerges, prev.mergesExplicit)
+      const merges = materializeCellMerges(
+        prev.rows, prev.columns, prev.cellMerges, prev.mergesExplicit, tableSourceType(table),
+      )
       const promoted = promoteMergeValuesBeforeRowDelete(prev.rows, merges, idx)
       const rows = promoted.filter((_, i) => i !== idx)
       const cellMerges = adjustMergesAfterRowDelete(merges, idx)
@@ -588,6 +605,7 @@ export function TableDetail({
     draft.cellMerges,
     Boolean(draft.mergesExplicit),
     previewLimit,
+    tableSourceType(table),
   )
   const garbledCellCount = (draft.rows || []).flat().filter((v) => isGarbled(v)).length
   const anyCellGarbled = garbledCellCount > 0

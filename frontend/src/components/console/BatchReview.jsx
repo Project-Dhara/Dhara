@@ -26,6 +26,7 @@ import Combobox from '../ui/Combobox'
 import ErrorBanner from '../ui/ErrorBanner'
 import Toast from '../ui/Toast'
 import { STATUS_TRANSITIONS } from '../../lib/consoleStatusTransitions'
+import { seedConceptFieldsFromGroup } from '../../lib/seedConceptFieldsFromGroup'
 
 // A group whose auto-fill left every catalogue field blank (e.g. no metadata
 // workbook covered it) needs the same by-hand entry as the "no LLM key at
@@ -70,24 +71,6 @@ function slimTableForPush(table) {
     if (table[key] != null && table[key] !== '') out[key] = table[key]
   })
   return out
-}
-
-function seedConceptFieldsFromGroup(group, emptyFields, mergeConcepts) {
-  const base = emptyFields()
-  const conceptMeta = group?.concept_metadata
-  if (conceptMeta && typeof conceptMeta === 'object') {
-    for (const key of Object.keys(base)) {
-      if (conceptMeta[key]) base[key] = String(conceptMeta[key])
-    }
-  }
-  // SDG mode stores indicator fields directly on metadata for the sheet grid.
-  for (const key of Object.keys(base)) {
-    if (group?.metadata?.[key]) base[key] = String(group.metadata[key])
-  }
-  if (Array.isArray(group?.concepts) && group.concepts.length) {
-    return mergeConcepts(base, group.concepts)
-  }
-  return base
 }
 
 export default function BatchReview({
@@ -146,6 +129,15 @@ export default function BatchReview({
   // allowing KYDS-save / Retry kicks to re-run.
   const lastAutofillKickRef = useRef(0)
   const autofillAbortRef = useRef(null)
+  // Latest form state for post-await matchResult sync (avoid stale closures).
+  const groupsRef = useRef(groups)
+  const nmdsByGroupRef = useRef(nmdsByGroup)
+  const matchResultRef = useRef(matchResult)
+  // Skip the matchResult→local reseed when we ourselves just wrote matchResult.
+  const skipReseedFromMatchRef = useRef(false)
+  useEffect(() => { groupsRef.current = groups }, [groups])
+  useEffect(() => { nmdsByGroupRef.current = nmdsByGroup }, [nmdsByGroup])
+  useEffect(() => { matchResultRef.current = matchResult }, [matchResult])
   // Per-group field keys still carrying an AI autofill value (cleared when the steward edits).
   const [aiFilledByGroup, setAiFilledByGroup] = useState(() => {
     const fromResult = matchResult?.ai_filled_fields_by_group
@@ -205,7 +197,12 @@ export default function BatchReview({
   // picked up a regrouping made after that. Re-sync whenever the parent
   // hands down a new matchResult (which only happens on a grouping change),
   // so the metadata page reflects the current groups without a refresh.
+  // Skip when we ourselves just synced steward NMDS into matchResult.
   useEffect(() => {
+    if (skipReseedFromMatchRef.current) {
+      skipReseedFromMatchRef.current = false
+      return
+    }
     setGroups(shareProductAcrossGroups(matchResult.groups))
     setNmdsByGroup(matchResult.groups.map((g) => ({
       ...emptyConceptGroupState(emptyFields),
@@ -611,8 +608,49 @@ export default function BatchReview({
     }
   }
 
+  /** Merge steward NMDS/metadata into matchResult from latest refs (post-await safe). */
+  const syncMatchResultFromLocal = useCallback((onlyIndex = null) => {
+    if (!onMatchResultChange) return
+    const latestGroups = groupsRef.current || []
+    const latestNmds = nmdsByGroupRef.current || []
+    const prev = matchResultRef.current || matchResult
+    const baseGroups = Array.isArray(prev?.groups) && prev.groups.length
+      ? prev.groups
+      : latestGroups
+    const nextGroups = baseGroups.map((g, gi) => {
+      if (onlyIndex != null && gi !== onlyIndex) return g
+      const local = latestGroups[gi] || g
+      const conceptFields = latestNmds[gi]?.fields || emptyFields()
+      const conceptList = fieldsToList(conceptFields)
+      let metadata = { ...(local.metadata || g.metadata || {}) }
+      if (!usesSdgSheet) {
+        metadata.title = local.file_name || metadata.title || g.file_name || ''
+      }
+      return {
+        ...g,
+        ...local,
+        metadata,
+        concept_metadata: usesSdgSheet
+          ? (local.concept_metadata || g.concept_metadata || conceptFields)
+          : conceptFields,
+        concepts: conceptList,
+        nmds_concepts: {
+          standard,
+          concepts: conceptList,
+        },
+      }
+    })
+    skipReseedFromMatchRef.current = true
+    onMatchResultChange({
+      ...prev,
+      groups: shareProductAcrossGroups(nextGroups),
+    })
+  }, [onMatchResultChange, matchResult, emptyFields, fieldsToList, usesSdgSheet, standard])
+
   const handleSaveGroup = (groupIndex) => {
-    const missingSheet = missingRequiredSheetFields(groups[groupIndex]?.metadata, sheetColumns)
+    const latestGroups = groupsRef.current || groups
+    const latestNmds = nmdsByGroupRef.current || nmdsByGroup
+    const missingSheet = missingRequiredSheetFields(latestGroups[groupIndex]?.metadata, sheetColumns)
     if (missingSheet.length > 0) {
       setToast({
         type: 'warn',
@@ -620,21 +658,24 @@ export default function BatchReview({
       })
       return
     }
-    const complete = isComplete(nmdsByGroup[groupIndex]?.fields || emptyFields())
+    const complete = isComplete(latestNmds[groupIndex]?.fields || emptyFields())
     if (!complete) {
       setToast({ type: 'warn', message: `${standardName} fields not filled. Fill all ${standardName} details for this group.` })
       return
     }
+    syncMatchResultFromLocal(groupIndex)
     setToast({ type: 'success', message: 'Group data saved.' })
   }
 
   const handlePush = async () => {
-    const incompleteSheet = groups.findIndex((g) => missingRequiredSheetFields(g.metadata, sheetColumns).length > 0)
+    const latestGroups = groupsRef.current || groups
+    const latestNmds = nmdsByGroupRef.current || nmdsByGroup
+    const incompleteSheet = latestGroups.findIndex((g) => missingRequiredSheetFields(g.metadata, sheetColumns).length > 0)
     if (incompleteSheet !== -1) {
       focusMissingRequiredAtTop()
       return
     }
-    const allComplete = nmdsByGroup.every((g) => isComplete(g?.fields || emptyFields()))
+    const allComplete = latestNmds.every((g) => isComplete(g?.fields || emptyFields()))
     if (!allComplete) {
       setToast({ type: 'warn', message: `${standardName} fields not filled. Fill all ${standardName} details.` })
       return
@@ -646,7 +687,10 @@ export default function BatchReview({
     setMissingRequiredPrompt(false)
 
     const finish = (ids = []) => {
-      const label = groups[0]?.metadata?.title || groups[0]?.file_name || ''
+      // Sync all groups from latest local state before leaving Metadata.
+      syncMatchResultFromLocal(null)
+      const g0 = groupsRef.current?.[0] || groups[0]
+      const label = g0?.metadata?.title || g0?.file_name || ''
       onDone(label, ids)
     }
 
@@ -662,23 +706,26 @@ export default function BatchReview({
       // Always take the latest table objects from matchResult so title / table_id
       // corrections made in ReconcileIds (and patched onto matchResult) are what
       // get written to the catalogue — BatchReview's local `groups` copy can lag.
+      const mr = matchResultRef.current || matchResult
       const tablesByUid = {}
-      matchResult.groups.forEach((g) => {
+      ;(mr.groups || []).forEach((g) => {
         g.matched_tables.forEach((mt) => {
           if (mt?.table?._uid) tablesByUid[mt.table._uid] = mt.table
         })
       })
-      ;(matchResult.unmatched_tables || []).forEach((u) => {
+      ;(mr.unmatched_tables || []).forEach((u) => {
         if (u?.table?._uid) tablesByUid[u.table._uid] = u.table
       })
 
-      const batchId = matchResult.batch_id || null
-      const jobId = pdfJobId || matchResult.pdf_job_id || null
+      const batchId = mr.batch_id || null
+      const jobId = pdfJobId || mr.pdf_job_id || null
       // Always slim groups_json so we stay under Starlette's 1MB form-part
       // limit. Full rows come from staging / pdf_store, or a tables_blob file
       // part (files are not subject to max_part_size).
-      const finalGroups = groups.map((g, gi) => {
-        const conceptFields = nmdsByGroup[gi]?.fields || emptyFields()
+      const pushGroups = groupsRef.current || groups
+      const pushNmds = nmdsByGroupRef.current || nmdsByGroup
+      const finalGroups = pushGroups.map((g, gi) => {
+        const conceptFields = pushNmds[gi]?.fields || emptyFields()
         const conceptList = fieldsToList(conceptFields)
         let metadata = { ...(g.metadata || {}) }
         // Catalogue title is the group name (not an editable sheet field).
@@ -708,7 +755,7 @@ export default function BatchReview({
           },
         }
       })
-      ;(matchResult.unmatched_tables || []).forEach((u, idx) => {
+      ;(mr.unmatched_tables || []).forEach((u, idx) => {
         const target = assignments[idx]
         if (target !== undefined && target !== '') {
           finalGroups[Number(target)].matched_tables.push({
@@ -742,6 +789,7 @@ export default function BatchReview({
       const data = await res.json()
       finish((data.results || []).map((r) => r.metadata_id).filter(Boolean))
     } catch (e) {
+      // Failed push: leave local form / matchResult NMDS intact.
       setError(e.message)
       setStep('error')
     }

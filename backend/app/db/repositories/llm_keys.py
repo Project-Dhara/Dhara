@@ -94,12 +94,21 @@ def upsert(
     model: str | None = None,
 ) -> LlmApiKey:
     ciphertext = encrypt_secret(api_key.strip())
+    prov = (provider or "").strip().lower() or None
+    # Only self-hosted stores an OpenAI-compatible endpoint; cloud saves must
+    # clear leftover localhost URLs from a prior Ollama configuration.
+    if prov == "self-hosted":
+        stored_base = (base_url or "").strip() or None
+        stored_model = (model or "").strip() or None
+    else:
+        stored_base = None
+        stored_model = None
     row = get(session, user_email)
     if row:
         row.api_key = ciphertext
         row.provider = provider
-        row.base_url = (base_url or "").strip() or None
-        row.model = (model or "").strip() or None
+        row.base_url = stored_base
+        row.model = stored_model
         row.updated_at = func.now()
         session.flush()
         return row
@@ -107,8 +116,8 @@ def upsert(
         user_email=user_email,
         api_key=ciphertext,
         provider=provider,
-        base_url=(base_url or "").strip() or None,
-        model=(model or "").strip() or None,
+        base_url=stored_base,
+        model=stored_model,
     )
     session.add(row)
     session.flush()

@@ -196,8 +196,11 @@ def _groups_without_metadata(
 ) -> dict:
     """Propose catalogue groups when no metadata workbook was uploaded.
 
-    Uses the shared PDF title / SDG grouping rules (``pdf_grouping``) so
-    Excel, SQL, and PDF all bucket tables the same way after preview.
+    Spreadsheet uploads (xlsx/xls): one catalogue release per source workbook so
+    Catalogue Download ZIPs every sheet table from that publish — not one
+    singleton release per side-by-side panel.
+
+    PDF / SQL: shared title / SDG grouping (``pdf_grouping``).
     Lazy-import avoids a circular import with ``pdf_grouping``.
 
     ``api_key`` is the steward's Settings key (decrypted server-side from
@@ -217,6 +220,56 @@ def _groups_without_metadata(
         if st in ("pdf", "sql", "xlsx", "xls"):
             source_type = "xlsx" if st == "xls" else st
         default_source = first.get("source_file") or first.get("filename") or default_source
+
+    # Excel/CSV workbooks: keep all extracted tables in one release per file.
+    if source_type in ("xlsx", "xls", "csv") and extracted_tables:
+        by_file: Dict[str, list] = {}
+        for t in extracted_tables:
+            key = str(
+                (t or {}).get("source_file")
+                or (t or {}).get("filename")
+                or default_source
+            ).strip() or str(default_source)
+            by_file.setdefault(key, []).append(t)
+        empty_meta = {
+            "title": "", "product": "", "category": "", "geography": "",
+            "frequency": "", "time_period": "", "data_source": "", "description": "",
+            "last_updated": "", "future_release": "", "key_statistics": "", "remarks": "",
+        }
+        from pathlib import Path as _Path
+
+        out_groups = []
+        for wi, (fname, tables) in enumerate(by_file.items()):
+            stem = _Path(str(fname)).stem or f"Workbook {wi + 1}"
+            members = []
+            for t in tables:
+                table = dict(t or {})
+                uid = table.get("_uid") or table.get("id") or table.get("table_id")
+                table["_uid"] = uid
+                table.setdefault("source_type", source_type)
+                table.setdefault("source_file", fname)
+                members.append({
+                    "table": table,
+                    "inventory_item": None,
+                    "confidence": "workbook",
+                })
+            meta = dict(empty_meta)
+            meta["title"] = stem
+            out_groups.append({
+                "workbook_index": wi,
+                "file_name": fname,
+                "metadata": meta,
+                "concepts": [],
+                "classifications": {},
+                "matched_tables": members,
+            })
+        return {
+            "groups": out_groups,
+            "unmatched_tables": [],
+            "unmatched_inventory": [],
+            "method": "workbook",
+            "suggested_merges": [],
+        }
 
     key = (api_key or "").strip() or None
     proposal = propose_groups_from_table_dicts(extracted_tables, api_key=key)

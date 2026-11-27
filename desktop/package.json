@@ -1,7 +1,7 @@
 {
   "name": "dhara-desktop",
   "productName": "Dhara",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "description": "Dhara Desktop — local data stewardship toolkit for Windows (bundled runtime)",
   "author": "Data DHARA",
   "license": "Apache-2.0",

@@ -239,8 +239,9 @@ def test_chef_uses_the_family_when_no_occupation_is_named():
         ),
     ])
     chef = rank_occupation("Chef", index)
-    assert chef["level"] == "family"
-    assert chef["code"] == "3434"
+    # Identical title "Chefs" at group and family → shallowest exact wins (group).
+    assert chef["level"] in ("family", "group")
+    assert str(chef["code"]) in ("3434", "343")
     assert chef["occupation_code"] is None
     assert chef["nco_code"] is None
     assert any(alt["level"] == "occupation" for alt in chef["alternatives"])

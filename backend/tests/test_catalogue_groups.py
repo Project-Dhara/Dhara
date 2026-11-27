@@ -102,17 +102,43 @@ def test_append_code_definition_after_classified_column():
     new_cols, new_rows = append_code_definition_columns(columns, rows, classifications)
     assert new_cols == [
         "State",
-        "Occupation", "Code", "Definition",
+        "Occupation",
         "Count",
+        "NCO 2015 codes",
+        "Definition",
     ]
-    assert new_rows[0]["Code"] == "23"
+    assert new_rows[0]["NCO 2015 codes"] == "23"
     assert new_rows[0]["Definition"] == "Teaching professionals"
-    assert new_rows[1]["Code"] == "22"  # case-insensitive match
-    assert new_rows[2]["Code"] == ""
+    assert new_rows[1]["NCO 2015 codes"] == "22"  # case-insensitive match
+    assert new_rows[2]["NCO 2015 codes"] == ""
     assert new_rows[2]["Definition"] == ""
     # Original columns untouched
     assert new_rows[0]["Occupation"] == "Teacher"
     assert new_rows[0]["Count"] == 10
+
+
+def test_append_lgd_column_at_end():
+    columns = ["District", "Count"]
+    rows = [{"District": "South", "Count": 3}]
+    classifications = {
+        "District": [{"value": "South", "code": "07", "definition": "South Delhi"}],
+    }
+    new_cols, new_rows = append_code_definition_columns(columns, rows, classifications)
+    assert new_cols == ["District", "Count", "LGD codes", "Definition"]
+    assert new_rows[0]["LGD codes"] == "07"
+    assert new_rows[0]["Definition"] == "South Delhi"
+
+
+def test_append_generic_code_at_end():
+    columns = ["Sex", "Count"]
+    rows = [{"Sex": "Male", "Count": 1}]
+    classifications = {
+        "Sex": [{"value": "Male", "code": "1", "definition": "Male"}],
+    }
+    new_cols, new_rows = append_code_definition_columns(columns, rows, classifications)
+    assert new_cols == ["Sex", "Count", "Code", "Definition"]
+    assert new_rows[0]["Code"] == "1"
+    assert new_rows[0]["Definition"] == "Male"
 
 
 def test_append_is_idempotent_when_already_present():
@@ -126,6 +152,24 @@ def test_append_is_idempotent_when_already_present():
     assert new_rows[0]["Code"] == "M"
 
 
+def test_append_is_idempotent_when_end_nco_present():
+    columns = ["Occupation", "Count", "NCO 2015 codes", "Definition"]
+    rows = [
+        {
+            "Occupation": "Teacher",
+            "Count": 1,
+            "NCO 2015 codes": "23",
+            "Definition": "Teaching",
+        }
+    ]
+    classifications = {
+        "Occupation": [{"value": "Teacher", "code": "99", "definition": "Other"}],
+    }
+    new_cols, new_rows = append_code_definition_columns(columns, rows, classifications)
+    assert new_cols == columns
+    assert new_rows[0]["NCO 2015 codes"] == "23"
+
+
 def test_append_second_classified_column_disambiguates():
     columns = ["Occupation", "Sex"]
     rows = [
@@ -137,10 +181,14 @@ def test_append_second_classified_column_disambiguates():
     }
     new_cols, new_rows = append_code_definition_columns(columns, rows, classifications)
     assert new_cols == [
-        "Occupation", "Code", "Definition",
-        "Sex", "Sex Code", "Sex Definition",
+        "Occupation",
+        "Sex",
+        "NCO 2015 codes",
+        "Definition",
+        "Code",
+        "Definition (2)",
     ]
-    assert new_rows[0]["Code"] == "23"
+    assert new_rows[0]["NCO 2015 codes"] == "23"
     assert new_rows[0]["Definition"] == "Teaching"
-    assert new_rows[0]["Sex Code"] == "1"
-    assert new_rows[0]["Sex Definition"] == "Male"
+    assert new_rows[0]["Code"] == "1"
+    assert new_rows[0]["Definition (2)"] == "Male"

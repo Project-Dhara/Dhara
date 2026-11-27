@@ -1,12 +1,13 @@
 <#
 .SYNOPSIS
   Downloads the Windows runtime pieces Dhara Desktop bundles: PostgreSQL (with pg_dump etc.),
-  an embeddable Python, and (optionally) pgvector.
+  an embeddable Python, Ollama CLI (unless -SkipOllama), and (optionally) pgvector.
 
 .DESCRIPTION
   Output (git-ignored):
     desktop/resources/win-x64/pgsql     PostgreSQL 16 binaries (EnterpriseDB zip, pruned)
     desktop/resources/win-x64/python    Python embeddable distribution (pip is added by prepare-backend.ps1)
+    desktop/resources/win-x64/ollama    Ollama standalone Windows CLI (via fetch-ollama.ps1)
     desktop/.cache/downloads            Cached archives
 
   pgvector has no official Windows binaries. Provide one of:
@@ -27,6 +28,8 @@ param(
   [string]$PgVectorSource = '',
   [switch]$BuildPgVector,
   [string]$PgVectorTag = 'v0.8.0',
+  [switch]$SkipOllama,
+  [switch]$KeepOllamaGpu,
   [switch]$Force
 )
 
@@ -191,6 +194,19 @@ foreach ($d in 'include') {
   if (Test-Path $p) { Remove-Item -Recurse -Force $p }
 }
 
+# ----------------------------------------------------------------------- Ollama
+if (-not $SkipOllama) {
+  Write-Host ''
+  Write-Host '=== fetch-ollama.ps1 ===' -ForegroundColor Cyan
+  & (Join-Path $PSScriptRoot 'fetch-ollama.ps1') -KeepOllamaGpu:$KeepOllamaGpu -Force:$Force
+  # PowerShell child scripts often leave $LASTEXITCODE as $null on success; $null -ne 0 is $true.
+  if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+    throw "fetch-ollama.ps1 failed (exit $LASTEXITCODE)"
+  }
+} else {
+  Write-Host 'Skipping Ollama fetch (-SkipOllama).'
+}
+
 # --------------------------------------------------------------------- verify
 foreach ($f in 'bin\postgres.exe', 'bin\initdb.exe', 'bin\pg_ctl.exe', 'bin\pg_dump.exe', 'bin\pg_restore.exe',
                'bin\psql.exe', 'bin\pg_isready.exe', 'share\postgres.bki') {
@@ -199,6 +215,7 @@ foreach ($f in 'bin\postgres.exe', 'bin\initdb.exe', 'bin\pg_ctl.exe', 'bin\pg_d
 if (-not (Test-Path (Join-Path $PyDir 'python.exe'))) { throw 'Python is missing python.exe' }
 
 $haveVector = (Test-Path $vecDll) -and (Test-Path $vecControl)
+$haveOllama = Test-Path (Join-Path $Out 'ollama\ollama.exe')
 Write-Host ''
 Write-Host "PostgreSQL : $(& (Join-Path $PgDir 'bin\postgres.exe') --version)"
 Write-Host "Python     : $PythonVersion (embeddable)"
@@ -206,5 +223,10 @@ if ($haveVector) {
   Write-Host 'pgvector   : present'
 } else {
   Write-Warning 'pgvector is NOT installed in the bundled PostgreSQL. Re-run with -BuildPgVector or -PgVectorSource <zip>. build-installer.ps1 will refuse to package without it unless -AllowNoPgVector.'
+}
+if ($haveOllama) {
+  Write-Host 'Ollama     : present'
+} elseif (-not $SkipOllama) {
+  Write-Warning 'Ollama is missing under resources/win-x64/ollama. Re-run fetch-ollama.ps1.'
 }
 Write-Host "Done. Output: $Out"

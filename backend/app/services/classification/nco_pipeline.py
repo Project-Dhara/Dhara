@@ -72,8 +72,15 @@ _LEVELS = ("occupation", "family", "group", "subdivision", "division")
 # Overlap on these words alone does not identify a classification node.
 _GENERIC_EVIDENCE = frozenset({"worker", "other", "support"})
 # A broader heading may contain the query plus one of these structural words.
+# "other" is NOT structural — "Other X" is a residual bucket of X, not X itself.
 # A content word such as "street" or "sale" is a different classification.
-_STRUCTURAL_EXTRA = frozenset({"support", "other"})
+_STRUCTURAL_EXTRA = frozenset({"support"})
+_SHALLOW_LEVELS = ("division", "subdivision", "group", "family", "occupation")
+_RESIDUAL_TITLE_START = re.compile(r"^other\b", re.I)
+_RESIDUAL_TITLE_TAIL = re.compile(r",\s*others?\b", re.I)
+_RESIDUAL_INPUT_MARKERS = frozenset({
+    "other", "others", "nec", "elsewhere",
+})
 _LEVEL_WEIGHTS = {
     "occupation": {
         "semantic": 0.30, "rerank": 0.30, "lexical": 0.15,
@@ -558,15 +565,26 @@ def _pack_level_index(docs):
         (doc["level"], doc["code"]): idx for idx, doc in enumerate(docs)
     }
     embeddings = None
-    embedder = _load_embedder()
-    if embedder is not None and docs:
+    if docs:
         try:
-            texts = [d["search_text"] or d["title"] for d in docs]
-            embeddings = embedder.encode(
-                texts, normalize_embeddings=True, show_progress_bar=False,
+            from app.services.classification.nco_embedder import (
+                load_prebuilt_hierarchy_embeddings,
             )
+
+            keys = [f"{d.get('level')}:{d.get('code')}" for d in docs]
+            embeddings = load_prebuilt_hierarchy_embeddings(keys)
         except Exception:
             embeddings = None
+    if embeddings is None:
+        embedder = _load_embedder()
+        if embedder is not None and docs:
+            try:
+                texts = [d["search_text"] or d["title"] for d in docs]
+                embeddings = embedder.encode(
+                    texts, normalize_embeddings=True, show_progress_bar=False,
+                )
+            except Exception:
+                embeddings = None
     return {
         "docs": docs,
         "by_title": by_title,
@@ -585,19 +603,62 @@ def _pack_level_index(docs):
     }
 
 
-def get_index(rows, extra_aliases=None):
-    key = (
-        len(rows or []),
-        str((rows or [{}])[0].get("nco_code") or "") if rows else "",
-        str((rows or [{}])[-1].get("nco_code") or "") if rows else "",
-        len(extra_aliases or []),
+def _index_content_hash(rows, extra_aliases=None) -> str:
+    """Stable content hash of NCO rows + enrichment aliases (not count/first/last)."""
+    import hashlib
+    import json
+
+    row_bits = []
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        row_bits.append(
+            {
+                "nco_code": r.get("nco_code"),
+                "occupation_title": r.get("occupation_title"),
+                "division_code": r.get("division_code"),
+                "division_title": r.get("division_title"),
+                "subdivision_code": r.get("subdivision_code"),
+                "subdivision_title": r.get("subdivision_title"),
+                "group_code": r.get("group_code"),
+                "group_title": r.get("group_title"),
+                "family_code": r.get("family_code"),
+                "family_title": r.get("family_title"),
+            }
+        )
+    alias_bits = []
+    for a in extra_aliases or []:
+        if isinstance(a, dict):
+            alias_bits.append(
+                {
+                    "normalized_value": a.get("normalized_value") or a.get("alias") or a.get("value"),
+                    "code": a.get("code") or a.get("nco_code"),
+                    "level": a.get("level"),
+                    "title": a.get("title"),
+                }
+            )
+        else:
+            alias_bits.append(str(a))
+    payload = json.dumps(
+        {"rows": row_bits, "aliases": alias_bits},
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
     )
-    if _INDEX_CACHE["key"] == key and _INDEX_CACHE["index"] is not None:
-        return _INDEX_CACHE["index"]
-    index = build_index(rows, extra_aliases=extra_aliases)
-    _INDEX_CACHE["key"] = key
-    _INDEX_CACHE["index"] = index
-    return index
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def get_index(rows, extra_aliases=None):
+    from app.services.classification.nco_embedder import embedder_index_lock
+
+    key = _index_content_hash(rows, extra_aliases)
+    with embedder_index_lock():
+        if _INDEX_CACHE["key"] == key and _INDEX_CACHE["index"] is not None:
+            return _INDEX_CACHE["index"]
+        index = build_index(rows, extra_aliases=extra_aliases)
+        _INDEX_CACHE["key"] = key
+        _INDEX_CACHE["index"] = index
+        return index
 
 
 def _query_vector(index, tokens: list[str]) -> dict[str, float]:
@@ -1015,9 +1076,13 @@ def _mixed_alternatives(items, chosen, limit=4):
             "title": item["title"],
             "score": round(float(item["score"]), 3),
             "family_code": row.get("family_code"),
+            "family_title": row.get("family_title"),
             "group_code": row.get("group_code"),
+            "group_title": row.get("group_title"),
             "subdivision_code": row.get("subdivision_code"),
+            "subdivision_title": row.get("subdivision_title"),
             "division_code": row.get("division_code"),
+            "division_title": row.get("division_title"),
         })
         if len(alts) >= limit:
             break
@@ -1126,7 +1191,52 @@ def _embedding_supported(level, evidence, score, semantic) -> bool:
     return False
 
 
-def _supported_groups(occupation_scored, hierarchy_scored):
+def title_is_residual(title: str) -> bool:
+    """True for official residual buckets: Other …, …, Other(s), NEC / n.e.c."""
+    raw = str(title or "").strip()
+    if not raw:
+        return False
+    # Check raw punctuation forms before normalize strips commas.
+    if _RESIDUAL_TITLE_TAIL.search(raw):
+        return True
+    if re.search(r"^other\b", raw, re.I):
+        return True
+    norm = normalize_text(raw)
+    if not norm:
+        return False
+    tokens = norm.split()
+    if "nec" in tokens:
+        return True
+    if "elsewhere" in tokens and "classified" in tokens:
+        return True
+    if _RESIDUAL_TITLE_START.search(norm):
+        return True
+    # After punctuation strip, ", Other" becomes a trailing other token.
+    if tokens and tokens[-1] in {"other", "others"}:
+        return True
+    return bool(tokens and tokens[0] == "other")
+
+
+def label_has_residual_marker(text: str) -> bool:
+    """True when the input itself signals a residual class (Other / NEC / n.e.c.)."""
+    norm = expand_abbreviations(normalize_text(text))
+    if not norm:
+        return False
+    tokens = set(norm.split())
+    if tokens & _RESIDUAL_INPUT_MARKERS:
+        return True
+    if "elsewhere" in tokens and "classified" in tokens:
+        return True
+    return False
+
+
+def _supported_groups(occupation_scored, hierarchy_scored, *, source_value=None):
+    """Collect supported nodes at every level, then choose a level.
+
+    If any supported node is a genuine token-exact match (and not a residual
+    Other/NEC title unless the label itself is residual), prefer the
+    **shallowest** among those exact matches. Otherwise keep deepest-first.
+    """
     grouped = {level: [] for level in _LEVELS}
     for item in occupation_scored:
         if _lexically_supported("occupation", item["evidence"], item["score"]):
@@ -1139,6 +1249,26 @@ def _supported_groups(occupation_scored, hierarchy_scored):
             level, item["evidence"], item["score"], item.get("semantic", 0.0),
         ):
             grouped[level].append(item)
+
+    input_residual = label_has_residual_marker(source_value) if source_value else False
+    exact_by_level = {level: [] for level in _SHALLOW_LEVELS}
+    for level, items in grouped.items():
+        for item in items:
+            evidence = item.get("evidence") or {}
+            if not evidence.get("token_exact"):
+                continue
+            # Partial overlap never qualifies as exact (token_exact is full set equality).
+            title = item.get("title") or (item.get("doc") or {}).get("title") or ""
+            if title_is_residual(title) and not input_residual:
+                continue
+            exact_by_level[level].append(item)
+
+    for level in _SHALLOW_LEVELS:
+        if exact_by_level[level]:
+            exact_by_level[level].sort(key=lambda item: item["score"], reverse=True)
+            return level, exact_by_level[level]
+
+    # No token-exact candidate: deepest-first among supported levels.
     for level in _LEVELS:
         if grouped[level]:
             grouped[level].sort(key=lambda item: item["score"], reverse=True)
@@ -1178,14 +1308,24 @@ def _weak_occupation(item) -> bool:
     )
 
 
-def _exact_hierarchy_node(index, normalized):
+def _exact_hierarchy_node(index, normalized, source_value=None):
+    """Return the unique exact hierarchy title hit, preferring the shallowest level.
+
+    Residual Other/NEC titles are skipped unless the input itself is residual.
+    """
     hierarchy = index.get("hierarchy") or {}
     ids = list(dict.fromkeys((hierarchy.get("by_title") or {}).get(normalized, ())))
     if not ids:
         return None
     nodes = [hierarchy["docs"][idx] for idx in ids]
-    for level in ("family", "group", "subdivision", "division"):
-        found = [node for node in nodes if node["level"] == level]
+    input_residual = label_has_residual_marker(source_value or normalized)
+    # Shallowest first among identical titles (e.g. 54 before 541, 631 before 6310).
+    for level in ("division", "subdivision", "group", "family"):
+        found = [
+            node for node in nodes
+            if node["level"] == level
+            and (input_residual or not title_is_residual(node.get("title") or ""))
+        ]
         if len(found) == 1:
             return found[0]
         if len(found) > 1:
@@ -1198,8 +1338,22 @@ def _ensure_hierarchy_embeddings(hierarchy):
     if hierarchy is None or hierarchy.get("embeddings") is not None:
         return
     docs = hierarchy.get("docs") or []
+    if not docs:
+        return
+    try:
+        from app.services.classification.nco_embedder import (
+            load_prebuilt_hierarchy_embeddings,
+        )
+
+        keys = [f"{d.get('level')}:{d.get('code')}" for d in docs]
+        prebuilt = load_prebuilt_hierarchy_embeddings(keys)
+        if prebuilt is not None:
+            hierarchy["embeddings"] = prebuilt
+            return
+    except Exception:
+        pass
     embedder = _load_embedder()
-    if embedder is None or not docs:
+    if embedder is None:
         return
     try:
         texts = [d.get("search_text") or d.get("title") or "" for d in docs]
@@ -1338,6 +1492,48 @@ def _hierarchy_review_refresh(
     return sorted(by_key.values(), key=lambda item: item["score"], reverse=True)
 
 
+def _apply_residual_policy(result, source_value):
+    """Cap residual Other/NEC titles at needs_review unless the label is residual.
+
+    Exact-titled residual inputs (e.g. ``Other Sales Workers``) may still
+    auto_fill when status is exact_match / alias_match. NEC-style residual
+    markers on the input keep residual candidates eligible but at most
+    needs_review unless the official title itself is an exact residual match.
+    """
+    if not result or not result.get("code"):
+        return result
+    title = result.get("title") or ""
+    if not title_is_residual(title):
+        return result
+    input_residual = label_has_residual_marker(source_value)
+    if not input_residual:
+        out = dict(result)
+        out["status"] = "needs_review"
+        out["auto_fill"] = False
+        out["needs_manual_review"] = True
+        out["confidence"] = "medium"
+        out["needs_llm"] = True
+        out["reason"] = (
+            (out.get("reason") or "")
+            + " Residual Other/NEC titles are not auto-assigned unless the label itself is residual."
+        ).strip()
+        return out
+    # Input has residual marker. Exact title match of "Other …" may auto_fill;
+    # NEC-tagged inputs stay review-only.
+    norm = expand_abbreviations(normalize_text(source_value))
+    tokens = set((norm or "").split())
+    nec_style = ("nec" in tokens) or ("elsewhere" in tokens and "classified" in tokens)
+    if nec_style and result.get("status") not in ("exact_match", "alias_match"):
+        out = dict(result)
+        out["status"] = "needs_review"
+        out["auto_fill"] = False
+        out["needs_manual_review"] = True
+        out["confidence"] = "medium"
+        out["needs_llm"] = True
+        return out
+    return result
+
+
 def _decide_from_pools(
     occupation_scored,
     hierarchy_scored,
@@ -1347,7 +1543,9 @@ def _decide_from_pools(
 ):
     """Pick a result from scored occupation and hierarchy pools."""
     combined = occupation_scored + hierarchy_scored
-    level, group = _supported_groups(occupation_scored, hierarchy_scored)
+    level, group = _supported_groups(
+        occupation_scored, hierarchy_scored, source_value=source_value,
+    )
     if level is not None:
         best = group[0]
         status, reason = _status_for_group(level, group)
@@ -1361,7 +1559,8 @@ def _decide_from_pools(
             source_value=source_value,
             alternatives=_mixed_alternatives(combined, best),
         )
-        if status == "needs_review":
+        result = _apply_residual_policy(result, source_value)
+        if result.get("status") == "needs_review":
             result["needs_llm"] = True
         return result
 
@@ -1499,7 +1698,7 @@ def classify_occupation(text, index, context=None):
     exact_ids = list(dict.fromkeys(index["by_title"].get(normalized, ())))
     if len(exact_ids) == 1:
         doc = index["docs"][exact_ids[0]]
-        return _result_from_doc(
+        result = _result_from_doc(
             doc,
             status="exact_match",
             score=1.0,
@@ -1509,11 +1708,12 @@ def classify_occupation(text, index, context=None):
             source_value=source_value,
             alternatives=[],
         )
+        return _apply_residual_policy(result, source_value)
 
     alias_ids = list(dict.fromkeys(index["alias_to_idx"].get(normalized, ())))
     if len(alias_ids) == 1 and not exact_ids:
         doc = index["docs"][alias_ids[0]]
-        return _result_from_doc(
+        result = _result_from_doc(
             doc,
             status="alias_match",
             score=0.98,
@@ -1523,11 +1723,12 @@ def classify_occupation(text, index, context=None):
             source_value=source_value,
             alternatives=[],
         )
+        return _apply_residual_policy(result, source_value)
 
-    hierarchy_exact = _exact_hierarchy_node(index, normalized)
+    hierarchy_exact = _exact_hierarchy_node(index, normalized, source_value=source_value)
     if hierarchy_exact is not None:
         level = hierarchy_exact["level"]
-        return _result_from_doc(
+        result = _result_from_doc(
             hierarchy_exact,
             status="exact_match",
             score=1.0,
@@ -1537,6 +1738,7 @@ def classify_occupation(text, index, context=None):
             source_value=source_value,
             alternatives=[],
         )
+        return _apply_residual_policy(result, source_value)
 
     query_tokens = _tokens(normalized)
     qset = set(query_tokens)

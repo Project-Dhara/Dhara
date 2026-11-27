@@ -30,6 +30,9 @@ class LlmCredentials:
         return (self.api_key, self.provider, self.base_url, self.model)[index]
 
 
+_CLOUD_LLM_PROVIDERS = frozenset({"openai", "anthropic"})
+
+
 def resolve_for_user(session: Session, user_email: str) -> LlmCredentials:
     """Return credentials for provider calls (key, provider, base_url, model)."""
     override = get_settings().dhara_llm_provider
@@ -42,6 +45,11 @@ def resolve_for_user(session: Session, user_email: str) -> LlmCredentials:
     # Keep provider as self-hosted for model resolution; client still uses OpenAI SDK.
     if provider == "mock" or (key and key.startswith("mock")):
         return LlmCredentials(key or "mock-key", "mock")
+
+    # Cloud providers must never keep a leftover Ollama base_url/model — any
+    # non-empty base_url forces the self-hosted client path.
+    if provider in _CLOUD_LLM_PROVIDERS:
+        return LlmCredentials(key, provider, None, None)
 
     # Env fallbacks for desktop Compose (LLM_BASE_URL / LLM_MODEL).
     if not base_url:

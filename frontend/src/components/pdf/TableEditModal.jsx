@@ -19,6 +19,7 @@ import {
   spanDisplayValue,
   spanValueCol,
   selectionRect,
+  tableSourceType,
   tableSupportsPdfReference,
 } from '../../lib/pdfReviewHelpers'
 import { AutoGrowTextarea, EditorToolBtn, ExtractedDataCell } from './ExtractedTableGrid'
@@ -94,7 +95,9 @@ export function TableEditModal({
   const dndRef = useRef(null)
   const headerMeta = buildEditorHeaderRows(columns)
   const existingGroups = listExistingHeaderGroups(columns)
-  const bodySpans = resolveDisplayBodySpans(rows, columns, cellMerges, mergesExplicit)
+  const bodySpans = resolveDisplayBodySpans(
+    rows, columns, cellMerges, mergesExplicit, null, tableSourceType(table),
+  )
   const rect = selectionRect(sel)
 
   useEffect(() => {

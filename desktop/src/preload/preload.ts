@@ -34,7 +34,7 @@ contextBridge.exposeInMainWorld('dharaDesktop', {
   openLogsFolder: (): Promise<boolean> => ipcRenderer.invoke('app:open-logs'),
   copyDiagnostics: (): Promise<string> => ipcRenderer.invoke('app:copy-diagnostics'),
 
-  // Optional local model (explicit opt-in only; Dhara never installs or starts Ollama).
+  // Optional local model (explicit opt-in; may start bundled ollama serve).
   ollama: {
     status: () => ipcRenderer.invoke('ollama:status'),
     defaults: () => ipcRenderer.invoke('ollama:defaults'),

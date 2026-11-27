@@ -213,7 +213,16 @@ export function ConsoleStagesShell({ step, maxStepReached, onGoToStep, isStepRea
         isStepReachable={isStepReachable}
       />
       {/* Same content column as Excel Console.jsx — header + panels stay unchanged inside children. */}
-      <div key={step === 5 || step === 6 ? 'classify-harmonise' : step} className="dhara-page-enter flex min-w-0 flex-1 flex-col gap-[18px]">
+      <div
+        key={
+          step === 5 || step === 6
+            ? 'classify-harmonise'
+            : step === 3 || step === 4
+              ? 'metadata-workspace'
+              : step
+        }
+        className="dhara-page-enter flex min-w-0 flex-1 flex-col gap-[18px]"
+      >
         {children}
       </div>
     </div>

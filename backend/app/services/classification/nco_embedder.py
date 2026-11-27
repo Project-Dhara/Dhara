@@ -16,7 +16,13 @@ BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 _EMBEDDER = None
 _EMBEDDER_TRIED = False
 _EMBEDDER_LAST_USED = 0.0
-_EMBEDDER_LOCK = threading.Lock()
+# RLock: get_index holds this while calling load_embedder.
+_EMBEDDER_LOCK = threading.RLock()
+
+
+def embedder_index_lock() -> threading.RLock:
+    """Process-wide lock for load_embedder + get_index / index build."""
+    return _EMBEDDER_LOCK
 _LAST_MODE = "keyword-only"  # semantic | keyword-only
 _LAST_REASON = ""
 _IDLE_TIMER: Optional[threading.Timer] = None
@@ -252,4 +258,41 @@ def load_prebuilt_occupation_embeddings(doc_codes: list[str]):
         return embeddings
     except Exception as e:
         logger.warning("Could not load prebuilt NCO index %s: %s", path, e)
+        return None
+
+
+def prebuilt_hierarchy_index_path() -> Optional[Path]:
+    """nco_hierarchy_index.npz next to a local model folder, if present."""
+    occ = prebuilt_index_path()
+    if occ is None:
+        return None
+    candidate = occ.parent / "nco_hierarchy_index.npz"
+    return candidate if candidate.is_file() else None
+
+
+def load_prebuilt_hierarchy_embeddings(keys: list[str]):
+    """Return float matrix aligned to ``level:code`` keys, or None."""
+    path = prebuilt_hierarchy_index_path()
+    if path is None:
+        return None
+    try:
+        import numpy as np
+
+        data = np.load(path, allow_pickle=True)
+        stored_keys = [str(c) for c in data["keys"].tolist()]
+        embeddings = data["embeddings"]
+        if stored_keys != list(keys):
+            if len(stored_keys) != len(keys) or set(stored_keys) != set(keys):
+                logger.warning(
+                    "Prebuilt hierarchy index key mismatch (%s vs %s) — ignoring",
+                    len(stored_keys),
+                    len(keys),
+                )
+                return None
+            index_of = {c: i for i, c in enumerate(stored_keys)}
+            order = [index_of[c] for c in keys]
+            embeddings = embeddings[order]
+        return embeddings
+    except Exception as e:
+        logger.warning("Could not load prebuilt hierarchy index %s: %s", path, e)
         return None

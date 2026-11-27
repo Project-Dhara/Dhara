@@ -104,3 +104,34 @@ def test_single_level_headers_unchanged():
     assert ws.cell(1, 2).value == "B"
     assert ws.cell(2, 1).value == 1
     assert list(ws.merged_cells.ranges) == []
+
+
+def test_nco_lgd_code_headers_are_highlighted():
+    table = {
+        "title": "Enriched",
+        "columns": ["Occupation", "NCO 2015 codes", "Definition", "LGD codes", "Code"],
+        "rows": [
+            {
+                "Occupation": "Teacher",
+                "NCO 2015 codes": "23",
+                "Definition": "T",
+                "LGD codes": "07",
+                "Code": "1",
+            }
+        ],
+    }
+    wb = _load(table)
+    ws = wb.active
+    nco = ws.cell(1, 2)
+    lgd = ws.cell(1, 4)
+    plain_code = ws.cell(1, 5)
+    definition = ws.cell(1, 3)
+    assert nco.value == "NCO 2015 codes"
+    assert nco.font.bold is True
+    assert nco.fill.patternType == "solid"
+    assert str(nco.fill.fgColor.rgb).endswith("DDEBF7")
+    assert lgd.value == "LGD codes"
+    assert lgd.font.bold is True
+    assert lgd.fill.patternType == "solid"
+    assert plain_code.fill.patternType is None
+    assert definition.fill.patternType is None

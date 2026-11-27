@@ -385,8 +385,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const next = fromForm || settings
     const key = String(next.apiKey || '').trim()
     const provider = String(next.provider || '').trim() || 'openai'
-    const baseUrl = String(next.baseUrl || '').trim()
-    const model = String(next.model || '').trim()
+    const selfHosted = provider === 'self-hosted'
+    // Cloud providers must not keep a leftover Ollama base_url/model — that
+    // forces the self-hosted client path even when provider is openai.
+    const baseUrl = selfHosted ? String(next.baseUrl || '').trim() : ''
+    const model = selfHosted ? String(next.model || '').trim() : ''
 
     void (async () => {
       try {

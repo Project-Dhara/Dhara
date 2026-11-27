@@ -133,6 +133,14 @@ def _resolve_static_file(root: pathlib.Path, full_path: str) -> Optional[pathlib
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     ensure_runtime_config()
+    try:
+        from app.db.session import session_scope
+        from app.services.classification.nco_match_jobs import maintenance
+
+        with session_scope() as session:
+            maintenance(session)
+    except Exception:
+        pass
     async with mcp_http_lifespan():
         try:
             yield

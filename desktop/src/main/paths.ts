@@ -32,6 +32,8 @@ export const dirs = {
   data: () => ensureDir(path.join(userDataRoot(), 'data')),
   objectStore: () => ensureDir(path.join(userDataRoot(), 'data', 'object_store')),
   tmp: () => ensureDir(path.join(userDataRoot(), 'tmp')),
+  /** Bundled Ollama models/blobs (never under Program Files). */
+  ollamaModels: () => ensureDir(path.join(userDataRoot(), 'ollama')),
 }
 
 export const files = {
@@ -41,6 +43,7 @@ export const files = {
   postgresLog: () => path.join(dirs.logs(), 'postgres.log'),
   apiLog: () => path.join(dirs.logs(), 'api.log'),
   workerLog: () => path.join(dirs.logs(), 'worker.log'),
+  ollamaLog: () => path.join(dirs.logs(), 'ollama.log'),
   postmasterPid: () => path.join(dirs.pgdata(), 'postmaster.pid'),
 }
 
@@ -81,6 +84,8 @@ export const runtime = {
   },
   backendDir: () => path.join(runtimeRoot(), 'backend'),
   frontendDir: () => path.join(runtimeRoot(), 'frontend'),
+  ollamaDir: () => path.join(runtimeRoot(), 'ollama'),
+  ollamaExe: () => path.join(runtimeRoot(), 'ollama', 'ollama.exe'),
 }
 
 /** Assets next to the compiled main process (dist/renderer). */

@@ -1904,16 +1904,39 @@ export function mergesFromSpans(spans) {
 }
 
 
+/** Identity 1×1 spans — used when PDF-style rowspan infer must not run (Excel/CSV). */
+export function identityBodySpans(rows, columns) {
+  const nrows = (rows || []).length
+  const ncols = (columns || []).length
+  return Array.from({ length: nrows }, () => (
+    Array.from({ length: ncols }, () => ({ rowSpan: 1, colSpan: 1 }))
+  ))
+}
+
+
 /**
  * Locked merges win only when mergesExplicit is true (including an empty list
  * after Unmerge-all). A non-empty cell_merges blob without that flag is treated
  * as stale cache — always re-infer so preview / view / edit stay identical.
+ *
+ * Excel/CSV skip PDF-oriented ``buildBodyCellSpans`` unless the steward locked
+ * explicit merges (bilingual empty stubs otherwise invent false rowspans).
  */
-export function resolveEditorBodySpans(rows, columns, explicitMerges, mergesExplicit = false) {
+export function resolveEditorBodySpans(
+  rows,
+  columns,
+  explicitMerges,
+  mergesExplicit = false,
+  sourceType = null,
+) {
   const nrows = (rows || []).length
   const ncols = (columns || []).length
   if (mergesExplicit) {
     return spansFromExplicitMerges(nrows, ncols, explicitMerges || [])
+  }
+  const st = String(sourceType || '').toLowerCase()
+  if (st === 'excel' || st === 'csv') {
+    return identityBodySpans(rows, columns)
   }
   return buildBodyCellSpans(rows, columns)
 }
@@ -1932,11 +1955,16 @@ export function reconcileBodyMergesWithAutoInfer(
   columns,
   cellMerges,
   mergesExplicit = false,
+  sourceType = null,
 ) {
   if (!mergesExplicit) {
     return { cellMerges: [], mergesExplicit: false }
   }
-  const autoMerges = mergesFromSpans(buildBodyCellSpans(rows, columns))
+  const st = String(sourceType || '').toLowerCase()
+  const autoSpans = (st === 'excel' || st === 'csv')
+    ? identityBodySpans(rows, columns)
+    : buildBodyCellSpans(rows, columns)
+  const autoMerges = mergesFromSpans(autoSpans)
   const autoKey = (m) => (
     `${Number(m.r) || 0}:${Number(m.c) || 0}:${Math.max(1, Number(m.rowSpan) || 1)}:${Math.max(1, Number(m.colSpan) || 1)}`
   )
@@ -2002,8 +2030,15 @@ export function resolveDisplayBodySpans(
   explicitMerges,
   mergesExplicit = false,
   rowLimit = null,
+  sourceType = null,
 ) {
-  const full = resolveEditorBodySpans(rows, columns, explicitMerges, mergesExplicit)
+  const full = resolveEditorBodySpans(
+    rows,
+    columns,
+    explicitMerges,
+    mergesExplicit,
+    sourceType,
+  )
   if (rowLimit == null || rowLimit >= (rows || []).length) return full
   return clipBodySpansForPreview(full, rowLimit)
 }
@@ -2041,8 +2076,8 @@ export function findBodySpanOrigin(spans, r, c) {
  * Materialize auto-inferred spans if needed, then drop the merge covering (r, c).
  * Always returns an explicit merge list so Unmerge sticks (even when empty).
  */
-export function unmergeAt(rows, columns, cellMerges, mergesExplicit, r, c) {
-  const spans = resolveEditorBodySpans(rows, columns, cellMerges, mergesExplicit)
+export function unmergeAt(rows, columns, cellMerges, mergesExplicit, r, c, sourceType = null) {
+  const spans = resolveEditorBodySpans(rows, columns, cellMerges, mergesExplicit, sourceType)
   const origin = findBodySpanOrigin(spans, r, c)
   if (!origin || ((origin.span.rowSpan || 1) <= 1 && (origin.span.colSpan || 1) <= 1)) {
     return null
@@ -2074,7 +2109,7 @@ export function unmergeAt(rows, columns, cellMerges, mergesExplicit, r, c) {
 
 
 /** Snapshot whatever merges are currently visible (explicit or auto-inferred). */
-export function materializeCellMerges(rows, columns, cellMerges, mergesExplicit) {
+export function materializeCellMerges(rows, columns, cellMerges, mergesExplicit, sourceType = null) {
   if (mergesExplicit) {
     return (cellMerges || []).map((m) => ({
       r: m.r,
@@ -2083,7 +2118,7 @@ export function materializeCellMerges(rows, columns, cellMerges, mergesExplicit)
       colSpan: Math.max(1, Number(m.colSpan) || 1),
     }))
   }
-  return mergesFromSpans(resolveEditorBodySpans(rows, columns, cellMerges, false))
+  return mergesFromSpans(resolveEditorBodySpans(rows, columns, cellMerges, false, sourceType))
 }
 
 

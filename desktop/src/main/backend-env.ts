@@ -134,6 +134,8 @@ export function buildBackendEnv(
     NCO_EMBEDDING_MODEL: workerModel,
     NCO_EMBEDDING_FAMILY: workerModel ? 'embeddinggemma' : '',
     NCO_EMBEDDING_REVISION: workerModel ? '57c266a740f537b4dc058e1b0cda161fd15afa75' : '',
+    // Local hybrid retrieval only; chat confirm stays off unless explicitly enabled.
+    DHARA_NCO_LLM: 'off',
     HF_HUB_OFFLINE: '1',
     TRANSFORMERS_OFFLINE: '1',
     HF_DATASETS_OFFLINE: '1',
@@ -143,6 +145,10 @@ export function buildBackendEnv(
     // Gemma needs more headroom than BGE-small; fall back to keyword-only if tight.
     NCO_EMBEDDING_MIN_RAM_MB: profile === 'large' ? '900' : '1200',
     NCO_EMBEDDING_IDLE_SEC: '480',
+    // Client poll budget after claim; worker max must stay higher for late done-cache.
+    DHARA_NCO_MATCH_TIMEOUT_SEC: '600',
+    DHARA_NCO_WORKER_MAX_SEC: '720',
+    DHARA_NCO_CHILD_IDLE_SEC: '240',
 
     PDF_CPU_WORKERS: String(t.pdfCpuWorkers),
     PDF_CPU_WORKERS_MAX: String(t.pdfCpuWorkersMax),

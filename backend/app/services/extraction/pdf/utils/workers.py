@@ -88,6 +88,17 @@ def _candidates_from_pymupdf_table(
     bb = tab.bbox
     fallback = [float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3])]
     segments = split_extracted_rows_on_table_markers(rows)
+    # Additive: same-schema district stacks (no TABLE: markers) stay one
+    # marker segment — split them without touching marker / repair logic.
+    if len(segments) == 1:
+        from app.services.extraction.pdf.utils.stacked_block_split import (
+            looks_like_stacked_schema_blocks,
+            split_stacked_schema_blocks,
+        )
+
+        only_rows, _, _ = segments[0]
+        if looks_like_stacked_schema_blocks(only_rows):
+            segments = split_stacked_schema_blocks(only_rows)
     out: List[Dict[str, Any]] = []
     for seg_rows, start, end in segments:
         df = dataframe_from_extracted_rows(seg_rows)

@@ -174,6 +174,8 @@ def test_resolve_for_user_returns_decrypted(fernet_env):
     row = MagicMock()
     row.api_key = encrypt_secret("sk-for-provider")
     row.provider = "openai"
+    row.base_url = None
+    row.model = None
     row.updated_at = None
 
     original = llm_repo.get
@@ -185,3 +187,97 @@ def test_resolve_for_user_returns_decrypted(fernet_env):
 
     assert key == "sk-for-provider"
     assert provider == "openai"
+
+
+def test_resolve_for_user_strips_ollama_url_for_openai(fernet_env, monkeypatch):
+    """Leftover self-hosted base_url must not route OpenAI saves to Ollama."""
+    from app.core.crypto import encrypt_secret
+    from app.db.repositories import llm_keys as llm_repo
+    from app.services.credentials import service as credentials_service
+
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    from app.core.config import clear_settings_cache
+
+    clear_settings_cache()
+
+    session = MagicMock()
+    row = MagicMock()
+    row.api_key = encrypt_secret("sk-live-openai")
+    row.provider = "openai"
+    row.base_url = "http://127.0.0.1:11434/v1"
+    row.model = "gemma3:1b"
+    row.updated_at = None
+
+    original = llm_repo.get
+    llm_repo.get = lambda _s, _e: row  # type: ignore
+    try:
+        creds = credentials_service.resolve_for_user(session, "u@example.com")
+    finally:
+        llm_repo.get = original
+        clear_settings_cache()
+
+    assert creds.api_key == "sk-live-openai"
+    assert creds.provider == "openai"
+    assert creds.base_url is None
+    assert creds.model is None
+
+
+def test_upsert_openai_clears_leftover_base_url(fernet_env):
+    from app.db.repositories import llm_keys as llm_repo
+
+    session = MagicMock()
+    row = MagicMock()
+    row.api_key = "old"
+    row.provider = "self-hosted"
+    row.base_url = "http://127.0.0.1:11434/v1"
+    row.model = "gemma3:1b"
+
+    original = llm_repo.get
+    llm_repo.get = lambda _s, _e: row  # type: ignore
+    try:
+        out = llm_repo.upsert(
+            session,
+            "u@example.com",
+            "sk-new-openai",
+            "openai",
+            base_url="http://127.0.0.1:11434/v1",
+            model="gemma3:1b",
+        )
+    finally:
+        llm_repo.get = original
+
+    assert out is row
+    assert row.provider == "openai"
+    assert row.base_url is None
+    assert row.model is None
+    session.flush.assert_called()
+
+
+def test_upsert_self_hosted_keeps_base_url(fernet_env):
+    from app.db.repositories import llm_keys as llm_repo
+
+    session = MagicMock()
+    row = MagicMock()
+    row.api_key = "old"
+    row.provider = "openai"
+    row.base_url = None
+    row.model = None
+
+    original = llm_repo.get
+    llm_repo.get = lambda _s, _e: row  # type: ignore
+    try:
+        llm_repo.upsert(
+            session,
+            "u@example.com",
+            "ollama",
+            "self-hosted",
+            base_url="http://127.0.0.1:11434/v1",
+            model="gemma3:1b",
+        )
+    finally:
+        llm_repo.get = original
+
+    assert row.provider == "self-hosted"
+    assert row.base_url == "http://127.0.0.1:11434/v1"
+    assert row.model == "gemma3:1b"

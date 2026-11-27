@@ -166,8 +166,17 @@ Context:
         return None
 
 
+def _is_trusted_in_grid_banner(table: Dict[str, Any]) -> bool:
+    """Layout Excel/PDF in-grid captions — keep even when long / bilingual."""
+    src = str(table.get("title_source") or "")
+    title = str(table.get("title") or "").strip()
+    return src == "heuristic_in_grid_banner" and bool(title)
+
+
 def _clear_unusable_title(table: Dict[str, Any]) -> None:
     """Drop gibberish / unusable titles so Preview does not show junk."""
+    if _is_trusted_in_grid_banner(table):
+        return
     title = table.get("title")
     cols = table.get("columns") or []
     if not title_needs_review(title, cols) and not title_looks_like_gibberish(title):
@@ -184,6 +193,8 @@ def apply_ai_title_fill(
     api_key: Optional[str] = None,
 ) -> bool:
     """Fill a missing/bad title via LLM. Returns True when an AI title was set."""
+    if _is_trusted_in_grid_banner(table):
+        return False
     cols = table.get("columns") or []
     needs = title_needs_review(table.get("title"), cols) or title_looks_like_gibberish(
         table.get("title")
@@ -232,6 +243,8 @@ def ensure_usable_titles_on_pages(
     jobs: List[Dict[str, Any]] = []
     for page in (validated_by_page or {}).values():
         for table in page.get("tables") or []:
+            if _is_trusted_in_grid_banner(table):
+                continue
             cols = table.get("columns") or []
             if title_needs_review(table.get("title"), cols) or title_looks_like_gibberish(
                 table.get("title")

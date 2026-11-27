@@ -20,8 +20,11 @@ from app.core.permissions import MUTATING_ROLES, READ_ROLES, require_roles
 from app.db.repositories import kyds as kyds_repo
 from app.db.repositories import pdf_jobs as pdf_jobs_repo
 from app.db.session import dbapi_connection, session_scope
-from app.schemas.catalogue import ClassificationColumnUpdateRequest
-from app.services.catalogue.group_export import build_group_download_zip
+from app.schemas.catalogue import ClassificationColumnUpdateRequest, GroupsDownloadRequest
+from app.services.catalogue.group_export import (
+    build_group_download_zip,
+    build_groups_download_zip,
+)
 from app.services.catalogue.query import (
     get_catalogue_group as query_catalogue_group,
     list_catalogue_datasets as query_catalogue_datasets,
@@ -90,6 +93,36 @@ async def list_catalogue_groups(
 
     groups = await asyncio.to_thread(_run)
     return {"groups": groups}
+
+
+@router.post("/api/catalogue/groups/download")
+async def download_catalogue_groups(
+    body: GroupsDownloadRequest,
+    user_email: str = Depends(require_user_email),
+):
+    """ZIP of every table across the given publish-session metadata groups."""
+    ids = [str(i).strip() for i in (body.metadata_ids or []) if str(i).strip()]
+    if not ids:
+        raise HTTPException(400, "metadata_ids is required")
+
+    def _run():
+        with session_scope() as session:
+            return build_groups_download_zip(dbapi_connection(session), ids)
+
+    try:
+        result = await asyncio.to_thread(_run)
+    except Exception as e:
+        raise HTTPException(500, f"Could not build group download: {e}")
+    if not result:
+        raise HTTPException(404, "No published groups found for the given metadata_ids")
+    payload, filename = result
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
 
 
 @router.get("/api/catalogue/groups/{metadata_id}")

@@ -87,7 +87,10 @@ META_COLS = ("_row_kind", "_group", "_level", "_inferred", "_src_row")
 class Config:
     wide_merge_frac: float = 0.8          # merge covering >= this share of block width => "wide"
     data_num_frac: float = 0.4            # numeric share of a row's cells to look like data
-    note_prefixes: tuple = ("*", "†", "‡", "note", "source", "n.b", "nb:", "nb.", "footnote", "(*)", "# ")
+    note_prefixes: tuple = (
+        "*", "†", "‡", "note", "source", "n.b", "nb:", "nb.", "footnote", "(*)", "# ",
+        "नोट", "स्त्रोत", "स्रोत",  # Hindi Note / Source (chap10 DTC footnotes)
+    )
     note_max_len: int = 90                # long single-cell text rows are treated as notes
     total_patterns: tuple = (
         r"\btotals?\b", r"^all$", r"^grand\b", r"\bsub[\s-]?totals?\b", r"^sum$", r"^overall$",
@@ -762,6 +765,44 @@ def _data_like_ctx(infos: dict, rest: list, i: int, cfg: Config) -> bool:
     return bool(cols) and not nxt.is_index and cols <= ncols_ and len(cols) >= len(ncols_)
 
 
+def _leading_serial(inf: RowInfo) -> Optional[int]:
+    """Leading integral serial (1, 2, …) on a stub column — or None."""
+    if not inf.anchors:
+        return None
+    _, v = min(inf.anchors, key=lambda a: a[0])
+    if isinstance(v, str) and _INDEX_STR.match(v.strip()):
+        return int(v.strip().strip("()"))
+    if not isinstance(v, bool) and isinstance(v, (int, float)) and _is_integral(v):
+        return int(v)
+    return None
+
+
+def _post_index_data_row(infos: dict, rest: list, i: int) -> bool:
+    """After a column-index row, the next serial+label(+value) row is data even if the
+    measure cell is non-numeric text (e.g. \"63.07 Lakhs\" on chap10 10.2(c) right)."""
+    if i <= 0 or i >= len(rest):
+        return False
+    prev = infos[rest[i - 1]]
+    if not prev.is_index:
+        return False
+    inf = infos[rest[i]]
+    if inf.blank or inf.is_index or inf.is_year or inf.n_anchor < 2:
+        return False
+    serial = _leading_serial(inf)
+    return serial is not None and serial >= 1
+
+
+def _is_title_peel_row(inf: RowInfo, width: int) -> bool:
+    """Leading caption row (single or bilingual dual-anchor, no numbers)."""
+    if inf.blank or inf.n_num > 0 or inf.is_index or inf.is_year or width < 3:
+        return False
+    if inf.n_anchor == 1:
+        return bool(inf.wide or inf.merge_w == 1 or inf.merge_w >= 2 or inf.merge_w / width >= 0.5)
+    if inf.n_anchor == 2 and inf.n_text == 2 and inf.n_ph == 0:
+        return True
+    return False
+
+
 def analyze(grid: Grid, r0: int, r1: int, c0: int, c1: int, cfg: Config, fallback: bool = False) -> Analysis:
     width = c1 - c0 + 1
     infos = {r: row_info(grid, r, c0, c1, cfg) for r in range(r0, r1 + 1)}
@@ -771,15 +812,21 @@ def analyze(grid: Grid, r0: int, r1: int, c0: int, c1: int, cfg: Config, fallbac
     k = 0
     while k < len(nz):
         inf = infos[nz[k]]
-        if inf.n_anchor == 1 and width >= 3 and inf.n_num == 0 and (inf.wide or inf.merge_w == 1):
+        if _is_title_peel_row(inf, width):
             an.title_rows.append(nz[k])
             k += 1
         else:
             break
     rest = nz[k:]
 
-    ds = next((r for i, r in enumerate(rest)
-               if _data_like(infos[r], width, cfg) or _data_like_ctx(infos, rest, i, cfg)), None)
+    ds = next((
+        r for i, r in enumerate(rest)
+        if (
+            _data_like(infos[r], width, cfg)
+            or _data_like_ctx(infos, rest, i, cfg)
+            or _post_index_data_row(infos, rest, i)
+        )
+    ), None)
     if ds is not None:
         pre = [r for r in rest if r < ds]
         an.index_rows = [r for r in pre if infos[r].is_index]
@@ -807,6 +854,10 @@ def _embedded_split_start(an: Analysis, cfg: Config, width: int) -> Optional[int
     for i, r in enumerate(nz):
         inf = infos[r]
         if inf.n_anchor >= cfg.min_split_text_anchors and inf.n_num == 0 and inf.n_ph == 0:
+            # Bilingual wrap under a data row (English labels after Hindi measures)
+            # is not a new table header — skip when the previous non-blank row is data.
+            if i > 0 and _data_like(infos[nz[i - 1]], width, cfg):
+                continue
             texts = {t.lower() for _, v in inf.anchors if (t := clean_text(v))}
             if texts and len(texts & htexts) / len(texts) < 0.5:
                 if any(_data_like(infos[x], width, cfg) for x in nz[i + 1: i + 7]):
@@ -848,6 +899,40 @@ class Block:
     notes: list = field(default_factory=list)
 
 
+def _band_has_numeric_data(an: Analysis, a: int, b: int, c0: int, c1: int, cfg: Config) -> bool:
+    width = c1 - c0 + 1
+    for r in range(a, b + 1):
+        inf = an.infos[r]
+        if inf.blank:
+            continue
+        if _data_like(inf, width, cfg, loose=True) or inf.n_num >= 1:
+            return True
+    return False
+
+
+def _is_continuation_band(prev: list, nxt: list, cfg: Config) -> bool:
+    """True when nxt should be glued under prev (same table, blank-row gap)."""
+    a, b, c0, c1, an = nxt
+    pa, pb, pc0, pc1, pan = prev
+    if pan.data_start is None or an.title_rows:
+        return False
+    if a - pb - 1 > 3:
+        return False
+    overlap = min(c1, pc1) - max(c0, pc0) + 1
+    if overlap < 0.8 * max(c1 - c0 + 1, pc1 - pc0 + 1):
+        return False
+    # Strict: next band has data and no invented header/index/pre-section
+    strict = (
+        an.data_start is not None
+        and not (an.header_rows or an.index_rows or an.pre_sections)
+    )
+    if strict:
+        return True
+    # Extended: prior is an established table; next has numeric/stub data even if
+    # analyze() mis-labeled the first data row as header (placeholders / wrap rows).
+    return bool(pan.header_rows) and _band_has_numeric_data(an, a, b, c0, c1, cfg)
+
+
 def segment_sheet(grid: Grid, cfg: Config) -> list[Block]:
     if grid.n_rows == 0:
         return []
@@ -875,45 +960,50 @@ def segment_sheet(grid: Grid, cfg: Config) -> list[Block]:
     items = glued
 
     # 1b) a band with no title/header of its own, directly below a table with (nearly) the same columns,
-    #     is a continuation of that table (blank separator rows inside long tables)
+    #     is a continuation of that table (blank separator rows inside long tables).
+    #     Also glue trailing data bands when analyze() invents header_rows (e.g. chap10 10.(2a)
+    #     NCR / Workshop / Depots after Accidents) — still reject clear new title banners.
     cont: list[list] = []
     for it in items:
         a, b, c0, c1, an = it
-        if cont and an.data_start is not None and not (an.header_rows or an.title_rows or an.index_rows or an.pre_sections):
+        if cont and _is_continuation_band(cont[-1], it, cfg):
             pa, pb, pc0, pc1, pan = cont[-1]
-            overlap = min(c1, pc1) - max(c0, pc0) + 1
-            if pan.data_start is not None and a - pb - 1 <= 3 and overlap >= 0.8 * max(c1 - c0 + 1, pc1 - pc0 + 1):
-                cc0, cc1 = min(c0, pc0), max(c1, pc1)
-                cont[-1] = [pa, b, cc0, cc1, analyze(grid, pa, b, cc0, cc1, cfg)]
-                continue
+            cc0, cc1 = min(c0, pc0), max(c1, pc1)
+            cont[-1] = [pa, b, cc0, cc1, analyze(grid, pa, b, cc0, cc1, cfg)]
+            continue
         cont.append(it)
     items = cont
 
-    # 2) split bands that hold two tables with no blank row between them
-    work, stack = [], list(reversed(items))
-    while stack:
-        a, b, c0, c1, an = stack.pop()
-        s = _embedded_split_start(an, cfg, c1 - c0 + 1)
-        if s is not None and s > a:
-            stack.append([s, b, c0, c1, analyze(grid, s, b, c0, c1, cfg)])
-            stack.append([a, s - 1, c0, c1, analyze(grid, a, s - 1, c0, c1, cfg)])
-        else:
-            work.append([a, b, c0, c1, an])
-
-    # 3) split side-by-side tables (only if every part is a valid table on its own)
-    split: list[list] = []
-    for a, b, c0, c1, an in work:
+    # 2) split side-by-side tables FIRST (only if every part is a valid table).
+    #    Doing this before embedded vertical splits keeps bilingual wrap rows
+    #    from fragmenting each half of a dual-panel sheet (e.g. chap10 10.2(c)).
+    side: list[list] = []
+    for a, b, c0, c1, an in items:
         parts = _col_parts(grid, mask, a, b, c0, c1)
         if len(parts) >= 2:
             ans = [analyze(grid, a, b, p0, p1, cfg) for p0, p1 in parts]
             if all(x.data_start is not None for x in ans):
                 lead = _lead_titles(grid, a, b, c0, c1)
                 for (p0, p1), x in zip(parts, ans):
-                    blk = [a, b, p0, p1, x]
-                    blk.append(lead if not x.title_rows else [])
-                    split.append(blk)
+                    side.append([a, b, p0, p1, x, lead if not x.title_rows else []])
                 continue
-        split.append([a, b, c0, c1, an, []])
+        side.append([a, b, c0, c1, an, []])
+
+    # 3) split stacked tables with no blank row — per column band only
+    split: list[list] = []
+    stack = list(reversed(side))
+    while stack:
+        a, b, c0, c1, an, inherit = stack.pop()
+        s = _embedded_split_start(an, cfg, c1 - c0 + 1)
+        if s is not None and s > a:
+            stack.append([s, b, c0, c1, analyze(grid, s, b, c0, c1, cfg), inherit])
+            stack.append([a, s - 1, c0, c1, analyze(grid, a, s - 1, c0, c1, cfg), inherit])
+        else:
+            split.append([a, b, c0, c1, an, inherit])
+
+    def _title_from_row(an: Analysis, r: int) -> str:
+        parts = [clean_text(v) or "" for _, v in an.infos[r].anchors]
+        return " / ".join(p for p in parts if p)
 
     # 4) turn items into table blocks / free-text (titles & notes)
     blocks: list[Block] = []
@@ -921,11 +1011,19 @@ def segment_sheet(grid: Grid, cfg: Config) -> list[Block]:
     cur_band, band_pending = None, []
     for a, b, c0, c1, an, inherit in split:
         if an.data_start is None:
-            an_fb = analyze(grid, a, b, c0, c1, cfg, fallback=True)
-            multi = [r for r in an_fb.infos if an_fb.infos[r].n_anchor >= 2]
-            if an_fb.data_start is not None and len(multi) >= 2:
-                an = an_fb
-            else:
+            text_rows = [r for r in range(a, b + 1) if not an.infos[r].blank]
+            # Short all-text bands are captions for the next table — never fallback scrap.
+            title_only = (
+                bool(text_rows)
+                and len(text_rows) <= 3
+                and all(an.infos[r].n_num == 0 for r in text_rows)
+            )
+            if not title_only:
+                an_fb = analyze(grid, a, b, c0, c1, cfg, fallback=True)
+                multi = [r for r in an_fb.infos if an_fb.infos[r].n_anchor >= 2]
+                if an_fb.data_start is not None and len(multi) >= 2:
+                    an = an_fb
+            if an.data_start is None:
                 for r in range(a, b + 1):
                     t = " ".join(clean_text(v) or "" for _, v in an.infos[r].anchors).strip()
                     if t:
@@ -938,12 +1036,14 @@ def segment_sheet(grid: Grid, cfg: Config) -> list[Block]:
             cur_band, band_pending, pending = (a, b), pending, []
         titles = list(band_pending) + list(inherit)
         for r in an.title_rows:
-            t = clean_text(grid.val[r][an.infos[r].anchors[0][0]])
+            t = _title_from_row(an, r)
             if t:
                 titles.append(t)
         blocks.append(Block(a, b, c0, c1, an, titles=titles))
     if pending and blocks:
         blocks[-1].notes.extend(pending)
+    # Left panel full height, then right (stable reading order for side-by-side).
+    blocks.sort(key=lambda blk: (blk.c0, blk.r0))
     return blocks
 
 
@@ -959,8 +1059,16 @@ def _lead_titles(grid: Grid, a: int, b: int, c0: int, c1: int) -> list[str]:
     out = []
     for r in range(a, b + 1):
         anchors = [(c, grid.val[r][c]) for c in range(c0, c1 + 1) if grid.val[r][c] is not None]
-        if len(anchors) == 1 and not is_num(anchors[0][1]):
+        if not anchors or any(is_num(v) for _, v in anchors):
+            break
+        if len(anchors) == 1:
             out.append(clean_text(anchors[0][1]) or "")
+        elif len(anchors) == 2:
+            joined = " / ".join(clean_text(v) or "" for _, v in anchors if clean_text(v))
+            if joined:
+                out.append(joined)
+            else:
+                break
         else:
             break
     return [t for t in out if t]
@@ -1057,6 +1165,9 @@ def classify_rows(grid: Grid, blk: Block, cfg: Config) -> dict[int, tuple[str, O
                 kinds[r] = ("note", text)
             elif nxt is not None and (_data_like(nxt, width, cfg, loose=True) or nxt.n_num >= 1):
                 kinds[r] = ("section", text)
+            elif i > 0 and _wrap_follows_data(kinds, infos, nz[i - 1], width, cfg):
+                # Terminal label wrap under a data/section row (no following data)
+                kinds[r] = ("section", text)
             else:
                 kinds[r] = ("note", text)
         else:
@@ -1065,9 +1176,26 @@ def classify_rows(grid: Grid, blk: Block, cfg: Config) -> dict[int, tuple[str, O
                 kinds[r] = ("header_repeat", None)
             elif nxt is not None and nxt.n_num >= 1:
                 kinds[r] = ("section", text)
+            elif i > 0 and _wrap_follows_data(kinds, infos, nz[i - 1], width, cfg):
+                kinds[r] = ("section", text)
             else:
                 kinds[r] = ("note", text)
     return kinds
+
+
+def _wrap_follows_data(
+    kinds: dict[int, tuple[str, Optional[str]]],
+    infos: dict,
+    prev_r: int,
+    width: int,
+    cfg: Config,
+) -> bool:
+    """True when prev body row was data/section (or looks like data) — keep wraps in Preview."""
+    prev_kind = kinds.get(prev_r, (None,))[0]
+    if prev_kind in ("data", "section"):
+        return True
+    prev = infos[prev_r]
+    return _data_like(prev, width, cfg, loose=True) or prev.n_num >= 1
 
 
 _AGG_RANGE = re.compile(r"\$?([A-Z]{1,3})\$?(\d+):\$?([A-Z]{1,3})\$?(\d+)")
@@ -1549,6 +1677,11 @@ def build_table(grid: Grid, source: str, sheet: str, idx: int, blk: Block, cfg: 
     prev_kind = None
     ordered = sorted(kinds)
     rows_out = []                                   # (row, kind, group, record, inferred_column_names)
+    # Index before wrap/pre_sections so Preview matches Excel: header → index → banners → data.
+    for r in list(an.index_rows):
+        rec = {c: _cell_value(grid, r, c, numeric_merges=(c in stub)) for c in cols}
+        rows_out.append((r, "index", " > ".join(sections) if sections else None, rec, []))
+        prev_kind = "index"
     # Keep peeled pre-data banners visible for Preview (same as mid-table sections).
     for r in list(an.pre_sections):
         t = clean_text(" ".join(clean_text(v) or "" for _, v in an.infos[r].anchors))
@@ -1558,11 +1691,6 @@ def build_table(grid: Grid, source: str, sheet: str, idx: int, blk: Block, cfg: 
         prev_kind = "section"
         rec = {c: _cell_value(grid, r, c, numeric_merges=(c in stub)) for c in cols}
         rows_out.append((r, "section", " > ".join(sections), rec, []))
-    # Keep column-number index rows (1,2,3… / (1)(2)(3)) visible for Preview; still not treated as data.
-    for r in list(an.index_rows):
-        rec = {c: _cell_value(grid, r, c, numeric_merges=(c in stub)) for c in cols}
-        rows_out.append((r, "index", " > ".join(sections) if sections else None, rec, []))
-        prev_kind = "index"
     carry: dict[int, tuple] = {}                    # parent col -> (value, last row of its merged range or None)
     for r in ordered:
         k, label = kinds[r]

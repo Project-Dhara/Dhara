@@ -73,6 +73,7 @@ class NcoValueAlias(Base):
     code: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str | None] = mapped_column(Text, server_default="steward")
+    nco_version: Mapped[str | None] = mapped_column(Text, server_default="2015")
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

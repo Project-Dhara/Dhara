@@ -9,6 +9,7 @@ import {
   displayTitle,
   resolveDisplayBodySpans,
   spanDisplayValue,
+  tableSourceType,
 } from '../../lib/pdfReviewHelpers'
 import { ExtractedDataCell, ExtractedTableHead } from './ExtractedTableGrid'
 
@@ -29,7 +30,9 @@ export function ViewAllTableModal({
   const [mounted, setMounted] = useState(false)
   const columnCount = (columns || []).length
   const title = displayTitle(table) || 'Table preview'
-  const spans = resolveDisplayBodySpans(rows, columns, cellMerges, mergesExplicit)
+  const spans = resolveDisplayBodySpans(
+    rows, columns, cellMerges, mergesExplicit, null, tableSourceType(table),
+  )
   const colLayout = computeFittedColumnLayout(columns, rows)
 
   useEffect(() => {

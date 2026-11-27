@@ -127,7 +127,7 @@ export function registerIpc(sup: ServiceSupervisor, windows: WindowManager, spla
   // ------------------------------------------------- optional local LLM (opt-in)
   ipcMain.handle('ollama:status', async (e) => {
     assertApp(e, sup)
-    return ollamaStatus()
+    return ollamaStatus({ ensure: true, job: sup.job })
   })
   ipcMain.handle('ollama:defaults', (e) => {
     assertApp(e, sup)
@@ -140,7 +140,7 @@ export function registerIpc(sup: ServiceSupervisor, windows: WindowManager, spla
   })
   ipcMain.handle('ollama:pull-start', async (e) => {
     assertApp(e, sup)
-    return pullStart(e.sender)
+    return pullStart(e.sender, { job: sup.job })
   })
   ipcMain.handle('ollama:pull-cancel', (e) => {
     assertApp(e, sup)
@@ -152,7 +152,7 @@ export function registerIpc(sup: ServiceSupervisor, windows: WindowManager, spla
   })
   ipcMain.handle('ollama:test-connection', async (e) => {
     assertApp(e, sup)
-    return testLocalModel()
+    return testLocalModel({ job: sup.job })
   })
 
   // ------------------------------------------------------------------- splash

@@ -74,6 +74,7 @@ export function clearAppendFilesMode() {
 export function clearConsoleSession() {
   try {
     sessionStorage.removeItem('dhara_console_state_v1')
+    sessionStorage.removeItem('dhara_classify_draft_v1')
   } catch {
     // best-effort
   }
@@ -126,6 +127,7 @@ export function beginAppendFilesMode(
   // Clear Excel/SQL console snapshot so Files opens at step 1; keep PDF pipeline.
   try {
     sessionStorage.removeItem('dhara_console_state_v1')
+    sessionStorage.removeItem('dhara_classify_draft_v1')
   } catch {
     // best-effort
   }

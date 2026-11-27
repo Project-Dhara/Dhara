@@ -33,8 +33,8 @@ function DesktopSupportCard({ fieldLabelClass: _fieldLabelClass }) {
       <div className="flex flex-col gap-1">
         <div className="text-[16px] font-semibold tracking-tight text-ink">Desktop help</div>
         <div className="text-sm text-ink-soft">
-          Cloud API keys are recommended. Local Ollama is optional and is never installed automatically.
-          Prefer about 1.2 GB free RAM before large PDF jobs.
+          Cloud API keys are recommended. Local Ollama is optional and starts only when you use a local
+          model. Prefer about 1.2 GB free RAM before large PDF jobs.
         </div>
       </div>
       <div className="flex flex-wrap gap-3">
@@ -70,7 +70,7 @@ const LOCAL_MODEL_FALLBACK = {
 }
 
 /**
- * Desktop-only guided flow for optional Gemma 3 1B via user-installed Ollama.
+ * Desktop-only guided flow for optional Gemma 3 1B via bundled (or system) Ollama.
  * Never auto-saves LLM credentials — only fills the form on explicit click.
  */
 function LocalModelCard({ applyLocalModel }) {
@@ -84,6 +84,7 @@ function LocalModelCard({ applyLocalModel }) {
 
   const defaults = status?.defaults || LOCAL_MODEL_FALLBACK
   const modelId = defaults.modelId || LOCAL_MODEL_FALLBACK.modelId
+  const bundled = Boolean(status?.bundled)
 
   const refreshStatus = useCallback(async () => {
     setChecking(true)
@@ -199,30 +200,35 @@ function LocalModelCard({ applyLocalModel }) {
           Run a local model (optional)
         </div>
         <div className="text-sm text-ink-soft">
-          Use Gemma 3 1B on your PC via Ollama. Cloud keys are still recommended on 8 GB machines.
-          Dhara never installs Ollama for you.
+          Use Gemma 3 1B on your PC via Ollama. Dhara ships Ollama and starts it when you use this
+          option; the model (~800 MB) downloads on first use. Cloud keys are still recommended on
+          8 GB machines.
         </div>
       </div>
 
       {checking && !status ? (
-        <div className="text-[13px] text-ink-soft">Checking for Ollama…</div>
+        <div className="text-[13px] text-ink-soft">Starting local Ollama…</div>
       ) : null}
 
       {!checking && !reachable ? (
         <div className="flex flex-col gap-3">
           <div className="text-[13px] text-ink-soft">
-            Ollama is not running at {defaults.baseUrl?.replace(/\/v1$/, '') || 'http://127.0.0.1:11434'}.
-            Install it yourself, start it, then check again.
+            {bundled
+              ? (status?.error
+                || `Bundled Ollama could not start at ${defaults.baseUrl?.replace(/\/v1$/, '') || 'http://127.0.0.1:11434'}. Check the logs, then try again.`)
+              : `Ollama is not available at ${defaults.baseUrl?.replace(/\/v1$/, '') || 'http://127.0.0.1:11434'}. This build has no bundled runtime — install Ollama yourself, start it, then check again.`}
           </div>
           <div className="flex flex-wrap gap-3">
-            <Button
-              variant="secondary"
-              onClick={() => { void window.dharaDesktop?.ollama?.openDownloadPage?.() }}
-            >
-              Open Ollama download page
-            </Button>
+            {!bundled ? (
+              <Button
+                variant="secondary"
+                onClick={() => { void window.dharaDesktop?.ollama?.openDownloadPage?.() }}
+              >
+                Open Ollama download page
+              </Button>
+            ) : null}
             <Button variant="secondary" onClick={() => { void refreshStatus() }}>
-              Check again
+              {bundled ? 'Start again' : 'Check again'}
             </Button>
           </div>
         </div>
@@ -235,12 +241,14 @@ function LocalModelCard({ applyLocalModel }) {
               'Please update Ollama to 0.6 or newer to use Gemma 3 1B.'}
           </div>
           <div className="flex flex-wrap gap-3">
-            <Button
-              variant="secondary"
-              onClick={() => { void window.dharaDesktop?.ollama?.openDownloadPage?.() }}
-            >
-              Open Ollama download page
-            </Button>
+            {!bundled ? (
+              <Button
+                variant="secondary"
+                onClick={() => { void window.dharaDesktop?.ollama?.openDownloadPage?.() }}
+              >
+                Open Ollama download page
+              </Button>
+            ) : null}
             <Button variant="secondary" onClick={() => { void refreshStatus() }}>
               Check again
             </Button>
@@ -404,6 +412,10 @@ export default function Settings({
   const [metadataStandard, setMetadataStandard] = useState(getMetadataStandard)
   const [savedMetadataStandard, setSavedMetadataStandard] = useState(getMetadataStandard)
   const [pickingFields, setPickingFields] = useState(false)
+  const [ncoAliases, setNcoAliases] = useState([])
+  const [ncoAliasesLoading, setNcoAliasesLoading] = useState(false)
+  const [ncoAliasesError, setNcoAliasesError] = useState('')
+  const [ncoAliasesBusy, setNcoAliasesBusy] = useState(false)
 
   // AppContext loads the decrypted key from GET /api/llm-key — keep the form in sync.
   useEffect(() => {
@@ -417,7 +429,17 @@ export default function Settings({
   const setDatasetIdField = (key) => (e) => setDatasetIdConfig((prev) => ({ ...prev, [key]: e.target.value }))
 
   const setField = (key) => (e) => {
-    const next = { ...local, [key]: e.target.value }
+    const value = e.target.value
+    const next = { ...local, [key]: value }
+    // Switching away from self-hosted: drop Ollama endpoint fields so Save
+    // cannot re-persist a leftover localhost base_url with an OpenAI key.
+    if (key === 'provider' && value !== 'self-hosted') {
+      next.baseUrl = ''
+      next.model = ''
+      if (String(next.apiKey || '').trim().toLowerCase() === 'ollama') {
+        next.apiKey = ''
+      }
+    }
     setLocal(next)
     onSettingsChange(next)
   }
@@ -461,7 +483,10 @@ export default function Settings({
   }, [])
 
   useEffect(() => {
-    if (activeTab === 'classification') loadStandards()
+    if (activeTab === 'classification') {
+      loadStandards()
+      loadNcoAliases()
+    }
   }, [activeTab, loadStandards])
 
   const saveDatasetIdConfig = () => {
@@ -536,6 +561,59 @@ export default function Settings({
       setStandardsError(err.message || 'Could not delete standard')
     } finally {
       setStandardsBusy(false)
+    }
+  }
+
+  const loadNcoAliases = async () => {
+    setNcoAliasesLoading(true)
+    setNcoAliasesError('')
+    try {
+      const res = await fetch('/api/catalogue/nco-aliases', withAuthHeaders())
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || 'Failed to load NCO aliases')
+      setNcoAliases(Array.isArray(data.aliases) ? data.aliases : [])
+    } catch (err) {
+      setNcoAliasesError(err.message || 'Failed to load NCO aliases')
+    } finally {
+      setNcoAliasesLoading(false)
+    }
+  }
+
+  const deleteNcoAlias = async (normalizedValue) => {
+    if (!normalizedValue) return
+    setNcoAliasesBusy(true)
+    setNcoAliasesError('')
+    try {
+      const res = await fetch(
+        `/api/catalogue/nco-aliases?normalized_value=${encodeURIComponent(normalizedValue)}`,
+        withAuthHeaders({ method: 'DELETE' }),
+      )
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || 'Could not delete alias')
+      await loadNcoAliases()
+    } catch (err) {
+      setNcoAliasesError(err.message || 'Could not delete alias')
+    } finally {
+      setNcoAliasesBusy(false)
+    }
+  }
+
+  const clearLearnedNcoAliases = async () => {
+    if (!window.confirm('Clear all learned (non-seed) NCO aliases? This cannot be undone.')) return
+    setNcoAliasesBusy(true)
+    setNcoAliasesError('')
+    try {
+      const res = await fetch(
+        '/api/catalogue/nco-aliases/clear-learned',
+        withAuthHeaders({ method: 'POST' }),
+      )
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || 'Could not clear aliases')
+      await loadNcoAliases()
+    } catch (err) {
+      setNcoAliasesError(err.message || 'Could not clear aliases')
+    } finally {
+      setNcoAliasesBusy(false)
     }
   }
 
@@ -1041,6 +1119,79 @@ export default function Settings({
             {standardsError && (
               <div className="text-[13px] text-coral">{standardsError}</div>
             )}
+
+            <div className="mt-2 flex flex-col gap-3 rounded-xl border border-line bg-[#FBF7EF] p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-[13px] font-semibold text-ink">NCO value aliases</div>
+                  <div className="text-[12.5px] text-ink-soft">
+                    Steward-verified mappings reused by Suggest NCO. Conflicts never overwrite silently.
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="h-8 rounded-md border border-line bg-white px-3 text-[12.5px] font-semibold text-ink-soft hover:border-teal/40 hover:text-teal disabled:opacity-50"
+                    disabled={ncoAliasesLoading || ncoAliasesBusy}
+                    onClick={loadNcoAliases}
+                  >
+                    Refresh
+                  </button>
+                  <button
+                    type="button"
+                    className="h-8 rounded-md border border-coral/40 bg-white px-3 text-[12.5px] font-semibold text-coral hover:bg-coral/10 disabled:opacity-50"
+                    disabled={ncoAliasesBusy || !ncoAliases.some((a) => a.source !== 'seed')}
+                    onClick={clearLearnedNcoAliases}
+                  >
+                    Clear learned (non-seed)
+                  </button>
+                </div>
+              </div>
+              {ncoAliasesError && <div className="text-[13px] text-coral">{ncoAliasesError}</div>}
+              {ncoAliasesLoading ? (
+                <div className="text-[13px] text-ink-soft">Loading aliases…</div>
+              ) : ncoAliases.length === 0 ? (
+                <div className="text-[13px] text-ink-soft">No learned aliases yet.</div>
+              ) : (
+                <div className="max-h-56 overflow-auto rounded-lg border border-[#d7cdb9] bg-white">
+                  <table className="w-full text-left text-[12.5px]">
+                    <thead className="bg-[#F4EFE3] text-[11px] uppercase tracking-wide text-[#8E9398]">
+                      <tr>
+                        <th className="px-2.5 py-2 font-semibold">Label</th>
+                        <th className="px-2.5 py-2 font-semibold">Code</th>
+                        <th className="px-2.5 py-2 font-semibold">Version</th>
+                        <th className="px-2.5 py-2 font-semibold">Source</th>
+                        <th className="px-2.5 py-2 font-semibold">Updated</th>
+                        <th className="px-2.5 py-2 font-semibold" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ncoAliases.map((a) => (
+                        <tr key={a.normalized_value} className="border-t border-[#f1ebdf]">
+                          <td className="px-2.5 py-1.5 font-medium text-ink">{a.normalized_value}</td>
+                          <td className="px-2.5 py-1.5 tabular-nums text-ink">{a.code}</td>
+                          <td className="px-2.5 py-1.5 text-ink-soft">{a.nco_version || '2015'}</td>
+                          <td className="px-2.5 py-1.5 text-ink-soft">{a.source || '—'}</td>
+                          <td className="px-2.5 py-1.5 text-ink-soft">
+                            {a.updated_at ? String(a.updated_at).slice(0, 19) : '—'}
+                          </td>
+                          <td className="px-2.5 py-1.5 text-right">
+                            <button
+                              type="button"
+                              className="text-[12px] font-semibold text-coral hover:underline disabled:opacity-50"
+                              disabled={ncoAliasesBusy}
+                              onClick={() => deleteNcoAlias(a.normalized_value)}
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </>
         )}
         </div>

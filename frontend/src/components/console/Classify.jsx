@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowRight } from 'lucide-react'
 import { useRouter } from 'next/navigation'
@@ -16,6 +16,13 @@ import {
   flattenForHarmonise,
   clubHarmoniseEntries,
 } from '../../lib/classifyColumns'
+import {
+  clearClassifyDraft,
+  loadClassifyDraft,
+  metadataIdsMatch,
+  overlayClassifyDraft,
+  saveClassifyDraft,
+} from '../../lib/classifyDraft'
 import Button from '../ui/Button'
 import ColumnChipGrid from './classify/ColumnChipGrid'
 import CodeListEditor from './classify/CodeListEditor'
@@ -80,6 +87,117 @@ export default function Classify({
   const [ncoPanelOpen, setNcoPanelOpen] = useState(false)
   const [ncoStandardReady, setNcoStandardReady] = useState(false)
   const [ncoNeedsStandard, setNcoNeedsStandard] = useState(false)
+  const [ncoStage, setNcoStage] = useState('')
+  const [ncoProgress, setNcoProgress] = useState(null)
+  const [ncoWaitingMessage, setNcoWaitingMessage] = useState('')
+  const [ncoJobId, setNcoJobId] = useState('')
+  const [ncoAttachToken, setNcoAttachToken] = useState('')
+  const [classifyHydrated, setClassifyHydrated] = useState(false)
+  const ncoPollRef = useRef(null)
+  const ncoBudgetRef = useRef({ startedAt: 0, maxWaitSec: 600, claimed: false })
+  const draftFlushRef = useRef({})
+
+  const ncoSessionKey = (col) => `dhara:nco-job:${col || ''}`
+
+  const clearNcoPoll = () => {
+    if (ncoPollRef.current) {
+      clearTimeout(ncoPollRef.current)
+      ncoPollRef.current = null
+    }
+  }
+
+  const stopWaitingNco = () => {
+    const jobId = ncoJobId
+    const token = ncoAttachToken
+    const col = selectedCol
+    clearNcoPoll()
+    setNcoLoading(false)
+    setNcoStage('')
+    setNcoWaitingMessage('')
+    if (jobId && token) {
+      fetch(
+        `/api/catalogue/match-nco/${encodeURIComponent(jobId)}?attach_token=${encodeURIComponent(token)}`,
+        withAuthHeaders({ method: 'DELETE' }),
+      ).catch(() => {})
+    }
+    if (col) {
+      try { sessionStorage.removeItem(ncoSessionKey(col)) } catch { /* ignore */ }
+    }
+    setNcoJobId('')
+    setNcoAttachToken('')
+  }
+
+  const applyNcoMatches = (occName, data) => {
+    const matches = data.matches || {}
+    // Keep mode internal for any future use; never surface keyword/semantic to users.
+    const mode = data.retrieval_mode === 'semantic' ? 'semantic' : 'keyword-only'
+    setNcoRetrievalMode(mode)
+    setNcoMatchesByCol((prev) => ({ ...prev, [occName]: matches }))
+    if (!isOccupationColumn(occName)) return
+    const rows = columnCodes[occName] || []
+    const isAggregateValue = (v) => {
+      const s = String(v || '').trim().toLowerCase().replace(/\s+/g, ' ')
+      return /^(all|total|grand total|sub ?total|overall|sum)(\s+(occupations|categories|workers|persons|people))?$/.test(s)
+    }
+    const nextRows = rows.map((row) => {
+      if (isAggregateValue(row.value)) {
+        return { ...row, code: '-', definition: '-' }
+      }
+      const m = matches[row.value]
+      if (!m || m.status === 'not_an_occupation') {
+        const def = m?.reason
+          ? String(m.reason)
+          : (m?.status === 'not_an_occupation' ? 'Not an occupation' : '-')
+        return { ...row, code: '-', definition: def }
+      }
+      if (m.status === 'unmatched') {
+        return {
+          ...row,
+          code: '-',
+          definition: m.reason != null && m.reason !== '' ? String(m.reason) : '-',
+        }
+      }
+      // Multi-choice / needs_review: leave blank for Confirm — do not invent '-'.
+      if (!m.auto_fill) return row
+      if (m.code == null || m.code === '') {
+        return {
+          ...row,
+          code: '-',
+          definition: m.reason != null && m.reason !== '' ? String(m.reason) : '-',
+        }
+      }
+      const code = String(m.code).trim()
+      if (!/^\d{1,4}(?:\.\d+)*$/.test(code)) {
+        return {
+          ...row,
+          code: '-',
+          definition: m.reason != null && m.reason !== '' ? String(m.reason) : '-',
+        }
+      }
+      return {
+        ...row,
+        code,
+        definition: m.title != null && m.title !== '' ? String(m.title) : row.definition,
+      }
+    })
+    setColumnCodes((prev) => ({ ...prev, [occName]: nextRows }))
+    setAliasVerified((prev) => {
+      const next = { ...prev }
+      delete next[`club:${occName}`]
+      flattenForHarmonise(classifiedColumns)
+        .filter((e) => e.sourceName === occName)
+        .forEach((e) => { delete next[e.id] })
+      return next
+    })
+    setHarmDirty((prev) => {
+      const next = { ...prev }
+      delete next[`club:${occName}`]
+      flattenForHarmonise(classifiedColumns)
+        .filter((e) => e.sourceName === occName)
+        .forEach((e) => { delete next[e.id] })
+      return next
+    })
+  }
   const [lgdMatchesByCol, setLgdMatchesByCol] = useState({})
   const [lgdLoading, setLgdLoading] = useState(false)
   const [lgdError, setLgdError] = useState('')
@@ -114,6 +232,7 @@ export default function Classify({
   useEffect(() => {
     const ids = Array.isArray(metadataIds) ? metadataIds.filter(Boolean) : [metadataIds].filter(Boolean)
     let cancelled = false
+    setClassifyHydrated(false)
     setLoading(true)
     setLoadError('')
 
@@ -152,29 +271,127 @@ export default function Classify({
     const apply = (raw) => {
       if (cancelled) return
       const columns = collapseEquivalentColumns(raw)
-      setClassifiedColumns(columns)
-      const codes = Object.fromEntries(columns.map((c) => [c.name, cloneCodeRows(c.codes)]))
-      setColumnCodes(codes)
-      setSavedCodes(codes)
-      setSelectedCol(columns[0]?.name ?? null)
-      setAliasVerified({})
-      setHarmDirty({})
-      setRuleState({})
-      const harm = {}
+      const serverCodes = Object.fromEntries(columns.map((c) => [c.name, cloneCodeRows(c.codes)]))
+      let nextSelected = columns[0]?.name ?? null
+      let nextCodes = serverCodes
+      let nextNco = {}
+      let nextLgd = {}
+      let nextAlias = {}
+      let nextHarmDirty = {}
+      let nextRule = {}
+      let nextOpenRule = null
+      const nextHarm = {}
       clubHarmoniseEntries(columns).forEach((club) => {
-        harm[club.id] = cloneCodeRows(codes[club.sourceName] || club.column?.codes)
+        nextHarm[club.id] = cloneCodeRows(serverCodes[club.sourceName] || club.column?.codes)
       })
-      setHarmRows(harm)
+
+      // Server state first, then overlay a matching draft (never the reverse).
+      const draft = loadClassifyDraft()
+      if (draft && metadataIdsMatch(draft.metadataIds, ids)) {
+        const over = overlayClassifyDraft({
+          selectedCol: nextSelected,
+          columnCodes: nextCodes,
+          ncoMatchesByCol: nextNco,
+          lgdMatchesByCol: nextLgd,
+          harmRows: nextHarm,
+          harmDirty: nextHarmDirty,
+          aliasVerified: nextAlias,
+          ruleState: nextRule,
+          openRule: nextOpenRule,
+        }, draft, ids)
+        if (over) {
+          nextSelected = over.selectedCol
+          nextCodes = over.columnCodes
+          nextNco = over.ncoMatchesByCol
+          nextLgd = over.lgdMatchesByCol
+          Object.assign(nextHarm, over.harmRows || {})
+          nextHarmDirty = over.harmDirty
+          nextAlias = over.aliasVerified
+          nextRule = over.ruleState
+          nextOpenRule = over.openRule
+        }
+      } else if (draft) {
+        clearClassifyDraft()
+      }
+
+      setClassifiedColumns(columns)
+      setColumnCodes(nextCodes)
+      setSavedCodes(serverCodes)
+      setSelectedCol(nextSelected)
+      setNcoMatchesByCol(nextNco)
+      setLgdMatchesByCol(nextLgd)
+      setHarmRows(nextHarm)
+      setHarmDirty(nextHarmDirty)
+      setAliasVerified(nextAlias)
+      setRuleState(nextRule)
+      setOpenRule(nextOpenRule)
+      setClassifyHydrated(true)
     }
 
     const start = ids.length ? loadFromGroups() : loadRecent()
 
     start
       .then(apply)
-      .catch((e) => { if (!cancelled) setLoadError(e.message) })
+      .catch((e) => {
+        if (!cancelled) {
+          setLoadError(e.message)
+          setClassifyHydrated(false)
+        }
+      })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [metadataIds])
+
+  // Keep a ref payload for pagehide flush without stale closures.
+  useEffect(() => {
+    const ids = Array.isArray(metadataIds) ? metadataIds.filter(Boolean) : [metadataIds].filter(Boolean)
+    draftFlushRef.current = {
+      metadataIds: ids,
+      selectedCol,
+      columnCodes,
+      ncoMatchesByCol,
+      lgdMatchesByCol,
+      harmRows,
+      harmDirty,
+      aliasVerified,
+      ruleState,
+      openRule,
+    }
+  }, [
+    metadataIds, selectedCol, columnCodes, ncoMatchesByCol, lgdMatchesByCol,
+    harmRows, harmDirty, aliasVerified, ruleState, openRule,
+  ])
+
+  const flushClassifyDraft = () => {
+    if (!classifyHydrated) return
+    const payload = draftFlushRef.current
+    if (!payload?.metadataIds?.length) return
+    saveClassifyDraft(payload)
+  }
+
+  // Debounced persist — gated until server apply + draft overlay complete.
+  useEffect(() => {
+    if (!classifyHydrated || loading) return undefined
+    const t = setTimeout(() => flushClassifyDraft(), 350)
+    return () => clearTimeout(t)
+  }, [
+    classifyHydrated, loading, metadataIds, selectedCol, columnCodes,
+    ncoMatchesByCol, lgdMatchesByCol, harmRows, harmDirty, aliasVerified, ruleState, openRule,
+  ])
+
+  useEffect(() => {
+    if (!classifyHydrated) return undefined
+    const onPageHide = () => flushClassifyDraft()
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') flushClassifyDraft()
+    }
+    window.addEventListener('pagehide', onPageHide)
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      window.removeEventListener('pagehide', onPageHide)
+      document.removeEventListener('visibilitychange', onVis)
+    }
+  }, [classifyHydrated])
 
   const activeColumn = classifiedColumns.find((c) => c.name === selectedCol)
   const activeCodes = columnCodes[selectedCol] || []
@@ -237,9 +454,26 @@ export default function Classify({
       .then(() => {
         if (markSavedName) {
           setSavedCodes((prev) => ({ ...prev, [markSavedName]: codes }))
+          // Align draft for saved column(s); keep other columns' unsaved draft values.
+          setColumnCodes((prev) => {
+            const next = { ...prev, [markSavedName]: codes }
+            draftFlushRef.current = {
+              ...draftFlushRef.current,
+              columnCodes: next,
+            }
+            if (classifyHydrated) {
+              saveClassifyDraft({
+                ...draftFlushRef.current,
+                columnCodes: next,
+              })
+            }
+            return next
+          })
         }
       })
-      .catch(() => {})
+      .catch(() => {
+        // Failed save: leave draft unchanged.
+      })
       .finally(() => setSaving(false))
   }
 
@@ -255,7 +489,7 @@ export default function Classify({
     )
   }
 
-  const persistHarmoniseEntry = (entry, rows) => {
+  const persistHarmoniseEntry = (entry, rows, { learnAliases = false } = {}) => {
     const targets = entry.isClub
       ? (entry.members || []).map((m) => ({
           name: m.name,
@@ -267,8 +501,11 @@ export default function Classify({
       rows,
       { markSavedName: entry.sourceName },
     )
-    // Learn steward-verified occupation → NCO mappings for future Suggest runs.
-    if (isOccupationColumn(entry.sourceName) || isOccupationColumn(entry.name)) {
+    // Learn aliases only from explicit Verify — never from ordinary Save / auto-fill.
+    if (
+      learnAliases
+      && (isOccupationColumn(entry.sourceName) || isOccupationColumn(entry.name))
+    ) {
       const matches = ncoMatchesByCol[entry.sourceName] || {}
       const aliases = (rows || []).map((row) => {
         const m = matches[row.value]
@@ -278,9 +515,11 @@ export default function Classify({
           code: String(row.code || '').trim(),
           title: String(row.definition || m?.title || '').trim() || null,
           level,
+          ambiguous: Boolean(m?.ambiguous),
         }
       }).filter((a) => {
         if (!a.value || !a.code) return false
+        if (a.ambiguous) return false
         // Only persist real NCO digit codes — never identity label→label maps.
         if (!/^\d{1,4}(?:\.\d+)*$/.test(a.code)) return false
         if (a.code.toLowerCase() === String(a.value).trim().toLowerCase()) return false
@@ -291,7 +530,14 @@ export default function Classify({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ aliases }),
-        })).catch(() => {})
+        }))
+          .then(async (res) => {
+            const data = await res.json().catch(() => ({}))
+            if (Array.isArray(data.conflicts) && data.conflicts.length) {
+              console.warn('NCO alias conflicts (existing mappings kept):', data.conflicts)
+            }
+          })
+          .catch(() => {})
       }
     }
   }
@@ -320,31 +566,8 @@ export default function Classify({
   }, [columnCodes, classifiedColumns, harmDirty, aliasVerified])
 
   const saveColumnCodes = () => {
+    // Ordinary Save must not learn aliases (auto-fill / LLM rows would poison memory).
     persistColumnCodes(activeColumn, columnCodes[selectedCol])
-    if (activeColumn && isOccupationColumn(activeColumn.name)) {
-      const matches = ncoMatchesByCol[activeColumn.name] || {}
-      const aliases = (columnCodes[activeColumn.name] || []).map((row) => {
-        const m = matches[row.value]
-        return {
-          value: row.value,
-          code: String(row.code || '').trim(),
-          title: String(row.definition || m?.title || '').trim() || null,
-          level: m?.level || 'division',
-        }
-      }).filter((a) => {
-        if (!a.value || !a.code) return false
-        if (!/^\d{1,4}(?:\.\d+)*$/.test(a.code)) return false
-        if (a.code.toLowerCase() === String(a.value).trim().toLowerCase()) return false
-        return true
-      })
-      if (aliases.length) {
-        fetch('/api/catalogue/nco-aliases', withAuthHeaders({
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ aliases }),
-        })).catch(() => {})
-      }
-    }
   }
 
   const applyAiDefinitions = (byCol, columnNames, { clearNcoGate = false, overwrite = false } = {}) => {
@@ -598,6 +821,7 @@ export default function Classify({
     setPublishConfirm(null)
     try {
       await Promise.resolve(onContinue?.())
+      clearClassifyDraft()
     } catch (e) {
       setPublishError(e.message || 'Could not continue to publish')
     } finally {
@@ -643,6 +867,78 @@ export default function Classify({
     })
   }
 
+  const pollNcoJob = (occName, jobId, attachToken) => {
+    clearNcoPoll()
+    const tick = () => {
+      fetch(`/api/catalogue/match-nco/${encodeURIComponent(jobId)}`, withAuthHeaders())
+        .then(async (res) => {
+          if (res.status === 404) {
+            try { sessionStorage.removeItem(ncoSessionKey(occName)) } catch { /* ignore */ }
+            setNcoJobId('')
+            setNcoAttachToken('')
+            setNcoLoading(false)
+            setNcoStage('')
+            setNcoError('')
+            return null
+          }
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({ detail: 'NCO poll failed' }))
+            throw new Error(err.detail || 'NCO poll failed')
+          }
+          return res.json()
+        })
+        .then((data) => {
+          if (!data) return
+          setNcoStage(data.stage || data.status || '')
+          setNcoProgress(data.progress || null)
+          setNcoWaitingMessage(data.worker_message || '')
+          const status = String(data.status || '')
+          const claimedAt = data.claimed_at
+          const maxWait = Number(data.max_wait_sec) || ncoBudgetRef.current.maxWaitSec || 600
+          ncoBudgetRef.current.maxWaitSec = maxWait
+          if (claimedAt && !ncoBudgetRef.current.claimed) {
+            ncoBudgetRef.current.claimed = true
+            ncoBudgetRef.current.startedAt = Date.now()
+          }
+          if (ncoBudgetRef.current.claimed) {
+            const elapsed = (Date.now() - ncoBudgetRef.current.startedAt) / 1000
+            if (elapsed > maxWait && status !== 'done' && status !== 'error') {
+              setNcoError('Timed out waiting for NCO match. You can Suggest again — a finished job may still be cached briefly.')
+              setNcoLoading(false)
+              clearNcoPoll()
+              return
+            }
+          }
+          if (status === 'done') {
+            applyNcoMatches(occName, data)
+            try { sessionStorage.removeItem(ncoSessionKey(occName)) } catch { /* ignore */ }
+            setNcoJobId('')
+            setNcoAttachToken('')
+            setNcoLoading(false)
+            setNcoStage('')
+            clearNcoPoll()
+            return
+          }
+          if (status === 'error' || status === 'cancelled') {
+            setNcoError(data.error || 'NCO matching failed')
+            try { sessionStorage.removeItem(ncoSessionKey(occName)) } catch { /* ignore */ }
+            setNcoJobId('')
+            setNcoAttachToken('')
+            setNcoLoading(false)
+            clearNcoPoll()
+            return
+          }
+          ncoPollRef.current = setTimeout(tick, 1500)
+        })
+        .catch((e) => {
+          setNcoError(e.message)
+          setNcoLoading(false)
+          clearNcoPoll()
+        })
+    }
+    tick()
+  }
+
   const suggestNcoCodes = () => {
     setNcoPanelOpen(true)
     if (!hasLlmKey) {
@@ -655,9 +951,15 @@ export default function Classify({
     const runMatch = () => {
       setNcoNeedsStandard(false)
       const values = activeCodes.map((r) => r.value || r.code).filter(Boolean)
+      const occName = selectedCol
+      clearNcoPoll()
       setNcoLoading(true)
       setNcoError('')
       setNcoRetrievalMode('')
+      setNcoStage('queued')
+      setNcoProgress(null)
+      setNcoWaitingMessage('')
+      ncoBudgetRef.current = { startedAt: Date.now(), maxWaitSec: 600, claimed: false }
       fetch('/api/catalogue/match-nco', withAuthHeaders(withLlmKeyHeaders({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -666,63 +968,43 @@ export default function Classify({
         .then(async (res) => {
           if (!res.ok) {
             const err = await res.json().catch(() => ({ detail: 'NCO matching failed' }))
-            throw new Error(err.detail || 'NCO matching failed')
+            throw new Error(typeof err.detail === 'string' ? err.detail : 'NCO matching failed')
           }
           return res.json()
         })
         .then((data) => {
-          const occName = selectedCol
-          const matches = data.matches || {}
-          const mode = data.retrieval_mode === 'semantic' ? 'semantic' : 'keyword-only'
-          setNcoRetrievalMode(mode)
-          if (mode === 'keyword-only' && data.retrieval_reason) {
-            setNcoError(`Matched with keyword-only (${data.retrieval_reason}).`)
-          }
-          setNcoMatchesByCol((prev) => ({ ...prev, [occName]: matches }))
-          if (!isOccupationColumn(occName)) return
-          // Only auto-fill Code/Definition for high-confidence hits.
-          const rows = columnCodes[occName] || []
-          const isAggregateValue = (v) => {
-            const s = String(v || '').trim().toLowerCase().replace(/\s+/g, ' ')
-            return /^(all|total|grand total|sub ?total|overall|sum)(\s+(occupations|categories|workers|persons|people))?$/.test(s)
-          }
-          const nextRows = rows.map((row) => {
-            // Aggregates must not keep a suggested NCO code.
-            if (isAggregateValue(row.value)) {
-              return { ...row, code: '', definition: '' }
+          // Desktop async: job_id. Docker sync: matches object.
+          if (data.job_id) {
+            const jobId = String(data.job_id)
+            const token = String(data.attach_token || '')
+            setNcoJobId(jobId)
+            setNcoAttachToken(token)
+            setNcoStage(data.stage || data.status || 'queued')
+            if (data.max_wait_sec) {
+              ncoBudgetRef.current.maxWaitSec = Number(data.max_wait_sec) || 600
             }
-            const m = matches[row.value]
-            if (!m || !m.auto_fill) return row
-            if (m.code == null || m.code === '') return row
-            const code = String(m.code).trim()
-            // Never auto-fill occupation labels into the Code column.
-            if (!/^\d{1,4}(?:\.\d+)*$/.test(code)) return row
-            return {
-              ...row,
-              code,
-              definition: m.title != null && m.title !== '' ? String(m.title) : row.definition,
+            try {
+              sessionStorage.setItem(
+                ncoSessionKey(occName),
+                JSON.stringify({ job_id: jobId, attach_token: token }),
+              )
+            } catch { /* ignore */ }
+            if (String(data.status || '') === 'done' && data.matches) {
+              applyNcoMatches(occName, data)
+              try { sessionStorage.removeItem(ncoSessionKey(occName)) } catch { /* ignore */ }
+              setNcoLoading(false)
+              return
             }
-          })
-          setColumnCodes((prev) => ({ ...prev, [occName]: nextRows }))
-          setAliasVerified((prev) => {
-            const next = { ...prev }
-            delete next[`club:${occName}`]
-            flattenForHarmonise(classifiedColumns)
-              .filter((e) => e.sourceName === occName)
-              .forEach((e) => { delete next[e.id] })
-            return next
-          })
-          setHarmDirty((prev) => {
-            const next = { ...prev }
-            delete next[`club:${occName}`]
-            flattenForHarmonise(classifiedColumns)
-              .filter((e) => e.sourceName === occName)
-              .forEach((e) => { delete next[e.id] })
-            return next
-          })
+            pollNcoJob(occName, jobId, token)
+            return
+          }
+          applyNcoMatches(occName, data)
+          setNcoLoading(false)
         })
-        .catch((e) => setNcoError(e.message))
-        .finally(() => setNcoLoading(false))
+        .catch((e) => {
+          setNcoError(e.message)
+          setNcoLoading(false)
+        })
     }
 
     // Re-check so a standard uploaded in Settings is picked up without remount.
@@ -755,6 +1037,27 @@ export default function Classify({
         setNcoError('No classification standard selected. Upload a file in Settings, or fill definitions with AI instead.')
       })
   }
+
+  // Re-attach in-flight job from sessionStorage (refresh / remount). Never DELETE on unmount.
+  useEffect(() => {
+    if (!selectedCol || !isOccupationColumn(selectedCol)) return undefined
+    let raw = null
+    try { raw = sessionStorage.getItem(ncoSessionKey(selectedCol)) } catch { return undefined }
+    if (!raw) return undefined
+    let parsed
+    try { parsed = JSON.parse(raw) } catch { return undefined }
+    const jobId = parsed?.job_id
+    const token = parsed?.attach_token
+    if (!jobId || !token) return undefined
+    setNcoPanelOpen(true)
+    setNcoLoading(true)
+    setNcoJobId(jobId)
+    setNcoAttachToken(token)
+    ncoBudgetRef.current = { startedAt: Date.now(), maxWaitSec: 600, claimed: false }
+    pollNcoJob(selectedCol, jobId, token)
+    return () => { clearNcoPoll() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCol])
 
   const pickLgdCandidate = (value, candidate) => {
     const targetCol = selectedCol
@@ -799,6 +1102,89 @@ export default function Classify({
       }
       return { ...prev, [targetCol]: colMatches }
     })
+  }
+
+  const confirmNcoPicks = (picks) => {
+    const targetCol = selectedCol
+    if (!targetCol || !picks || typeof picks !== 'object') return
+    const entries = Object.entries(picks).filter(([, candidate]) => candidate)
+    if (!entries.length) return
+
+    const applied = new Map()
+    for (const [value, candidate] of entries) {
+      const code = String(candidate.code || '').trim()
+      if (!code || !/^\d{1,4}(?:\.\d+)*$/.test(code)) continue
+      const title = candidate.title != null && candidate.title !== ''
+        ? String(candidate.title)
+        : ''
+      const level = candidate.level || 'division'
+      applied.set(value, {
+        code,
+        title,
+        level,
+        division_code: candidate.division_code ?? null,
+        division_title: candidate.division_title ?? null,
+        subdivision_code: candidate.subdivision_code ?? null,
+        subdivision_title: candidate.subdivision_title ?? null,
+        group_code: candidate.group_code ?? null,
+        group_title: candidate.group_title ?? null,
+        family_code: candidate.family_code ?? null,
+        family_title: candidate.family_title ?? null,
+      })
+    }
+    if (!applied.size) return
+
+    setColumnCodes((prev) => {
+      const rows = prev[targetCol] || []
+      return {
+        ...prev,
+        [targetCol]: rows.map((row) => {
+          const pick = applied.get(row.value)
+          if (!pick) return row
+          return {
+            ...row,
+            code: pick.code,
+            definition: pick.title || row.definition,
+          }
+        }),
+      }
+    })
+    setNcoMatchesByCol((prev) => {
+      const colMatches = { ...(prev[targetCol] || {}) }
+      let changed = false
+      for (const [value, pick] of applied) {
+        const existing = colMatches[value]
+        if (!existing) continue
+        changed = true
+        colMatches[value] = {
+          ...existing,
+          code: pick.code,
+          title: pick.title || existing.title,
+          level: pick.level,
+          division_code: pick.division_code ?? existing.division_code,
+          division_title: pick.division_title ?? existing.division_title,
+          subdivision_code: pick.subdivision_code ?? existing.subdivision_code,
+          subdivision_title: pick.subdivision_title ?? existing.subdivision_title,
+          group_code: pick.group_code ?? existing.group_code,
+          group_title: pick.group_title ?? existing.group_title,
+          family_code: pick.family_code ?? existing.family_code,
+          family_title: pick.family_title ?? existing.family_title,
+          ambiguous: false,
+          auto_fill: false,
+          needs_manual_review: false,
+          confidence: 'high',
+          status: 'steward_pick',
+          chosen: true,
+        }
+      }
+      if (!changed) return prev
+      return { ...prev, [targetCol]: colMatches }
+    })
+    setNcoPanelOpen(false)
+  }
+
+  const closeNcoPreview = () => {
+    setNcoPanelOpen(false)
   }
 
   const suggestLgdCodes = () => {
@@ -865,7 +1251,7 @@ export default function Classify({
   const selectHarmoniseEntry = (id) => setOpenRule(id)
   const toggleHarmoniseSkip = (id) => setRuleState((prev) => ({ ...prev, [id]: prev[id] === 'skip' ? undefined : 'skip' }))
   const verifyAndSaveHarmoniseEntry = (entry, rows) => {
-    persistHarmoniseEntry(entry, rows)
+    persistHarmoniseEntry(entry, rows, { learnAliases: true })
     setAliasVerified((prev) => {
       const next = { ...prev, [entry.id]: true }
       // Club verify covers every related table in one action.
@@ -990,14 +1376,20 @@ export default function Classify({
               ncoError={ncoError}
               ncoRetrievalMode={ncoRetrievalMode}
               ncoMatches={ncoMatches}
+              ncoStage={ncoStage}
+              ncoProgress={ncoProgress}
+              ncoWaitingMessage={ncoWaitingMessage}
               ncoPanelOpen={ncoPanelOpen}
               onSuggestNco={suggestNcoCodes}
+              onStopWaitingNco={stopWaitingNco}
               lgdLoading={lgdLoading}
               lgdError={lgdError}
               lgdMatches={lgdMatches}
               lgdPanelOpen={lgdPanelOpen}
               onSuggestLgd={suggestLgdCodes}
               onPickLgdCandidate={pickLgdCandidate}
+              onConfirmNcoPicks={confirmNcoPicks}
+              onNcoPreviewClose={closeNcoPreview}
               onCodeFieldChange={setCodeField}
               onSave={saveColumnCodes}
               highlightIncomplete={highlightIncomplete}

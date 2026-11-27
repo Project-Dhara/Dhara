@@ -20,6 +20,8 @@ param(
   [switch]$SkipFrontend,
   [switch]$AllowNoPgVector,
   [switch]$SkipEmbeddings,
+  [switch]$SkipOllama,
+  [switch]$KeepOllamaGpu,
   [switch]$BuildPgVector,
   [string]$PgVectorSource = ''
 )
@@ -43,6 +45,8 @@ if (-not $SkipFetch) {
   $fetchArgs = @()
   if ($BuildPgVector) { $fetchArgs += '-BuildPgVector' }
   if ($PgVectorSource) { $fetchArgs += @('-PgVectorSource', $PgVectorSource) }
+  if ($SkipOllama) { $fetchArgs += '-SkipOllama' }
+  if ($KeepOllamaGpu) { $fetchArgs += '-KeepOllamaGpu' }
   Invoke-Step 'fetch-win-deps.ps1' $fetchArgs
 }
 if (-not $SkipBackend) {
@@ -68,6 +72,9 @@ if (-not $SkipEmbeddings) {
     'models\embeddinggemma-300m\nco_index.npz',
     'models\embeddinggemma-300m\nco_index.meta.json'
   )
+}
+if (-not $SkipOllama) {
+  $required += @('ollama\ollama.exe')
 }
 $missing = $required | Where-Object { -not (Test-Path (Join-Path $Runtime $_)) }
 if ($missing) { throw "Runtime payload incomplete. Missing:`n  $($missing -join "`n  ")" }

@@ -11,10 +11,12 @@ everything Dhara needs — there is nothing else to install and nothing to confi
 | **Shell** | Electron: splash, tray, one window pointed at the API origin |
 
 There is no Docker, WSL, Compose, or Node.js server at runtime. Cloud / API-key LLMs are the default.
-Optional local inference uses user-installed [Ollama](https://ollama.com) **0.6+** with **`gemma3:1b`**
-(~800 MB pull) via **Settings → Run a local model (optional)**. Dhara never installs or starts
-Ollama; it can open the download page, pull the model with progress, fill the LLM form on an
-explicit click (never auto-save), and test the connection (`keep_alive: 1m` on the native chat API).
+Optional local inference uses a **bundled** [Ollama](https://ollama.com) **0.6+** runtime (fetched by
+`scripts/fetch-ollama.ps1` into `resources/win-x64/ollama`) plus **`gemma3:1b`** (~800 MB pull on first
+use) via **Settings → Run a local model (optional)**. Ollama starts only when that Settings flow needs
+it (not with Postgres/API). Model weights live under `%LOCALAPPDATA%\Dhara\ollama`. A system Ollama
+already listening on `127.0.0.1:11434` is preferred. Builds with `-SkipOllama` omit the runtime and
+fall back to the download-page hint.
 
 ## What the app does at startup
 
@@ -106,9 +108,9 @@ database cannot be opened (the app will say so rather than touching your data).
 | `readUploadFile(file)` | Reads a user-picked file in the main process (`fs:read-upload-file`; pdf/xlsx/xls/csv, ≤ 200 MB) |
 | `getAuth()` / `setAuth({token,user})` / `clearAuth()` | Session persistence that survives a port change (localStorage is origin-scoped) |
 | `getInfo()`, `openLogsFolder()`, `copyDiagnostics()` | Support helpers for Settings → Help |
-| `ollama.status()` / `defaults()` / `openDownloadPage()` | Status (version, exact `gemma3:1b`, disk) + download page |
-| `ollama.pullStart()` / `pullCancel()` / `pullStatus()` / `onPullProgress(cb)` | Guided model pull (idempotent start; unsubscribe from progress on unmount) |
-| `ollama.testConnection()` | Native `/api/chat` ping with 60s timeout + RAM warning |
+| `ollama.status()` / `defaults()` / `openDownloadPage()` | Status (starts bundled Ollama if needed; `bundled`/`managed` flags; disk) + download-page fallback |
+| `ollama.pullStart()` / `pullCancel()` / `pullStatus()` / `onPullProgress(cb)` | Guided `gemma3:1b` pull (idempotent start; unsubscribe from progress on unmount) |
+| `ollama.testConnection()` | Ensures Ollama is up, then native `/api/chat` ping with 60s timeout + RAM warning |
 
 IPC is only honoured from the top frame of the app's own loopback origin.
 
@@ -121,8 +123,10 @@ Visual Studio C++ Build Tools. Python and Postgres are downloaded for you.
 cd desktop
 npm install
 
-# 1. PostgreSQL + embeddable Python (+ pgvector)
+# 1. PostgreSQL + embeddable Python (+ pgvector) + Ollama CLI
 npm run fetch-deps -- -BuildPgVector          # or: -PgVectorSource <zip with vector.dll/.control/.sql>
+#    add -SkipOllama for a lean build without local LLM runtime
+#    add -KeepOllamaGpu to keep CUDA/ROCm payloads from the Ollama zip
 
 # 2. Python packages + backend sources  → resources\win-x64\{python,backend}
 npm run prepare-backend
@@ -150,7 +154,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1 -BuildPgVec
 ```
 
 Output: `release\DharaSetup-<version>-x64.exe` (NSIS, per-user install, no admin prompt). Version is in
-the filename (e.g. `DharaSetup-0.1.2-x64.exe`), so older builds such as `0.1.1` remain in `release/`
+the filename (e.g. `DharaSetup-0.1.3-x64.exe`), so older builds such as `0.1.2` remain in `release/`
 when you bump `package.json`. Uninstalling keeps `%LOCALAPPDATA%\Dhara` unless you answer **No** to
 “Keep your Dhara data?”; silent uninstalls and upgrades always keep it. Default builds bundle CPU
 PyTorch + **google/embeddinggemma-300m** (weights downloaded once at build time with `HF_TOKEN`,

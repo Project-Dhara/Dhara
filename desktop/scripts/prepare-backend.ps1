@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Builds desktop/resources/win-x64/backend and installs Python dependencies into the bundled
   embeddable Python (run fetch-win-deps.ps1 first).
@@ -172,7 +172,7 @@ $global:LASTEXITCODE = 0
 Write-Host 'Smoke-testing imports...'
 $smokeCore = Join-Path $Cache 'smoke-core.py'
 Set-Content -Path $smokeCore -Encoding ASCII -Value @(
-  'import fastapi, uvicorn, sqlalchemy, alembic, psycopg2, fitz, pandas, openpyxl, jwt, cryptography, pgvector, mcp, multipart',
+  'import fastapi, uvicorn, sqlalchemy, alembic, psycopg2, fitz, pandas, openpyxl, xlrd, jwt, cryptography, pgvector, mcp, multipart',
   "print('core imports ok')"
 )
 & $PyExe $smokeCore

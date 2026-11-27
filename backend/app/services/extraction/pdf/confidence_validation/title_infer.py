@@ -270,10 +270,12 @@ def title_looks_like_gibberish(title: Optional[str]) -> bool:
         # Mostly non-letter noise (symbols / digits / punctuation).
         if len(letters) / max(len(s), 1) < 0.35 and len(s) >= 8:
             return True
-        # Random consonant soup with almost no vowels (latin scripts).
-        vowels = sum(1 for c in letters if c.lower() in "aeiou")
-        if len(letters) >= 10 and vowels / len(letters) < 0.12:
-            return True
+        # Random consonant soup with almost no vowels (latin scripts only).
+        # Devanagari captions have no Latin vowels and must not be flagged.
+        if not re.search(r"[\u0900-\u097F]", s):
+            vowels = sum(1 for c in letters if c.lower() in "aeiou")
+            if len(letters) >= 10 and vowels / len(letters) < 0.12:
+                return True
     words = s.split()
     if len(words) >= 4:
         uniq = {w.lower() for w in words}
@@ -410,7 +412,10 @@ def _is_chrome_title_line(line: str) -> bool:
     if _TITLE_CHROME_RE.match(s):
         return True
     # Very long paragraph-like lines are body text, not headings.
+    # Bilingual / numbered table captions (chap10 stacks) often exceed 140.
     if len(s) > 140:
+        if re.search(r"(?:\d{1,2}\.|१०| / )", s):
+            return False
         return True
     return False
 

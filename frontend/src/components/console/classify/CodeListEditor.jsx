@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { isLgdColumn, isOccupationColumn, relatedAliasCount } from '../../../lib/classifyColumns'
 import NcoSuggestPanel from './NcoSuggestPanel'
 import LgdSuggestPanel from './LgdSuggestPanel'
@@ -26,14 +26,20 @@ export default function CodeListEditor({
   ncoError,
   ncoRetrievalMode = '',
   ncoMatches,
+  ncoStage = '',
+  ncoProgress = null,
+  ncoWaitingMessage = '',
   ncoPanelOpen,
   onSuggestNco,
+  onStopWaitingNco,
   lgdLoading = false,
   lgdError = '',
   lgdMatches = null,
   lgdPanelOpen = false,
   onSuggestLgd,
   onPickLgdCandidate,
+  onConfirmNcoPicks,
+  onNcoPreviewClose,
   onCodeFieldChange,
   onSave,
   highlightIncomplete = false,
@@ -44,6 +50,18 @@ export default function CodeListEditor({
   const geography = !occupation && isLgdColumn(column.name)
   const panelKey = `${column._metadataId || ''}:${column.name}`
   const [previewOpen, setPreviewOpen] = useState(false)
+  const wasNcoLoading = useRef(false)
+  const previewDismissedRef = useRef(false)
+
+  const openPreview = () => {
+    previewDismissedRef.current = false
+    setPreviewOpen(true)
+  }
+
+  const closePreview = () => {
+    previewDismissedRef.current = true
+    setPreviewOpen(false)
+  }
 
   const fieldFillCounts = (field) => {
     let filled = 0
@@ -65,13 +83,24 @@ export default function CodeListEditor({
       ? Boolean(lgdMatches || lgdError || lgdLoading || lgdPanelOpen)
       : false
 
-  // Open preview when Suggest produces results or needs Settings / AI fallback.
+  // Open on Suggest start/finish / needs Settings — never reopen solely because
+  // Confirm updated ncoMatches while the steward already closed the modal.
   useEffect(() => {
     if (!occupation) return
-    if (ncoNeedsStandard || (ncoMatches && !ncoLoading) || (ncoError && !ncoLoading)) {
+    if (ncoNeedsStandard) {
+      previewDismissedRef.current = false
+      setPreviewOpen(true)
+      return
+    }
+    if (ncoLoading) {
+      previewDismissedRef.current = false
       setPreviewOpen(true)
     }
-  }, [occupation, ncoNeedsStandard, ncoMatches, ncoLoading, ncoError])
+    if (wasNcoLoading.current && !ncoLoading && (ncoMatches || ncoError) && !previewDismissedRef.current) {
+      setPreviewOpen(true)
+    }
+    wasNcoLoading.current = Boolean(ncoLoading)
+  }, [occupation, ncoNeedsStandard, ncoLoading, ncoMatches, ncoError])
 
   useEffect(() => {
     if (!geography) return
@@ -81,6 +110,7 @@ export default function CodeListEditor({
   }, [geography, lgdMatches, lgdLoading, lgdError])
 
   useEffect(() => {
+    previewDismissedRef.current = false
     setPreviewOpen(false)
   }, [panelKey])
 
@@ -98,7 +128,6 @@ export default function CodeListEditor({
               ? ` · ${relatedAliasCount(column)} related in harmonisation`
               : column.note ? ` · ${column.note}` : ''}
             {fillAiError ? ` · ${fillAiError}` : ''}
-            {ncoRetrievalMode ? ` · NCO: ${ncoRetrievalMode}` : ''}
             {highlightIncomplete ? ' · empty fields highlighted' : ''}
           </div>
         </div>
@@ -127,7 +156,7 @@ export default function CodeListEditor({
                 className="h-8 rounded-md border border-line bg-white px-2.5 text-[12px] font-semibold text-ink-soft transition-colors hover:border-teal/40 hover:text-teal-deep disabled:cursor-default disabled:opacity-45"
                 disabled={!canPreview}
                 title={canPreview ? 'Show suggestion results' : 'Run Suggest NCO codes first'}
-                onClick={() => setPreviewOpen(true)}
+                onClick={openPreview}
               >
                 Show results
               </button>
@@ -148,7 +177,7 @@ export default function CodeListEditor({
                 className="h-8 rounded-md border border-line bg-white px-2.5 text-[12px] font-semibold text-ink-soft transition-colors hover:border-teal/40 hover:text-teal-deep disabled:cursor-default disabled:opacity-45"
                 disabled={!canPreview}
                 title={canPreview ? 'Show suggestion results' : 'Run Suggest LGD codes first'}
-                onClick={() => setPreviewOpen(true)}
+                onClick={openPreview}
               >
                 Show results
               </button>
@@ -197,27 +226,64 @@ export default function CodeListEditor({
               const missingDefinition = highlightIncomplete && !String(row.definition || '').trim()
               const lgdMatch = geography ? lgdMatches?.[row.value] : null
               const lgdAmbiguous = Boolean(lgdMatch?.ambiguous) && Number(lgdMatch?.candidate_count || 0) > 1
+              const ncoMatch = occupation ? ncoMatches?.[row.value] : null
+              const ncoChoiceCodes = new Set()
+              if (ncoMatch?.code) ncoChoiceCodes.add(String(ncoMatch.code).trim())
+              for (const c of ncoMatch?.candidates || []) {
+                const code = String(c?.code || '').trim()
+                if (code) ncoChoiceCodes.add(code)
+              }
+              for (const c of ncoMatch?.alternatives || []) {
+                const code = String(c?.code || '').trim()
+                if (code) ncoChoiceCodes.add(code)
+              }
+              const rowCode = String(row.code || '').trim()
+              const ncoResolved = Boolean(ncoMatch)
+                && (
+                  ncoMatch.chosen
+                  || ncoMatch.status === 'steward_pick'
+                  || (rowCode !== '' && ncoChoiceCodes.has(rowCode))
+                )
+              const ncoAmbiguous = Boolean(ncoMatch)
+                && ncoMatch.status !== 'not_an_occupation'
+                && ncoChoiceCodes.size > 1
+                && !ncoResolved
+              const ncoNotOccupation = ncoMatch?.status === 'not_an_occupation'
+              const multiPick = lgdAmbiguous || ncoAmbiguous
               return (
-                <tr className={lgdAmbiguous ? 'bg-[#fff6e4]' : 'bg-white'} key={i}>
-                  <td className={`${rowRule} ${colRule} p-0 align-middle ${missingCode || lgdAmbiguous ? 'bg-[#fff3d9]' : 'bg-white'}`}>
+                <tr className={multiPick ? 'bg-[#fff6e4]' : (ncoNotOccupation ? 'bg-[#f7f3ea]' : 'bg-white')} key={i}>
+                  <td className={`${rowRule} ${colRule} p-0 align-middle ${missingCode || multiPick ? 'bg-[#fff3d9]' : 'bg-white'}`}>
                     <input
-                      className={missingCode || lgdAmbiguous ? fieldMissingClass : fieldClass}
+                      className={missingCode || multiPick ? fieldMissingClass : fieldClass}
                       type="text"
                       value={row.code}
                       onChange={(e) => onCodeFieldChange(i, 'code', e.target.value)}
                       title={
-                        lgdAmbiguous
-                          ? 'Multiple LGD codes — open Show results to pick one'
-                          : (row.code || (missingCode ? 'Code required' : ''))
+                        ncoNotOccupation
+                          ? 'Not an occupation'
+                          : (lgdAmbiguous
+                            ? 'Multiple LGD codes — open Show results to pick one'
+                            : (ncoAmbiguous
+                              ? 'Multiple NCO codes — open Show results to pick one'
+                              : (row.code || (missingCode ? 'Code required' : ''))))
                       }
-                      placeholder={lgdAmbiguous ? 'Pick LGD code' : (missingCode ? 'Code required' : '')}
+                      placeholder={
+                        ncoNotOccupation
+                          ? 'Not an occupation'
+                          : (multiPick ? 'Pick code' : (missingCode ? 'Code required' : ''))
+                      }
                     />
                   </td>
-                  <td className={`${rowRule} ${colRule} ${lgdAmbiguous ? 'bg-[#fff6e4]' : 'bg-[#FBF7EF]'} px-2.5 py-2 align-middle text-[12.5px] font-medium leading-snug text-ink`} title="From the data — not editable">
+                  <td className={`${rowRule} ${colRule} ${multiPick || ncoNotOccupation ? 'bg-[#fff6e4]' : 'bg-[#FBF7EF]'} px-2.5 py-2 align-middle text-[12.5px] font-medium leading-snug text-ink`} title="From the data — not editable">
                     <span className="line-clamp-2" title={row.value}>{row.value}</span>
-                    {lgdAmbiguous && (
+                    {multiPick && (
                       <div className="mt-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-[#9a6700]">
                         Multiple codes
+                      </div>
+                    )}
+                    {ncoNotOccupation && (
+                      <div className="mt-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-ink-soft">
+                        Not an occupation
                       </div>
                     )}
                   </td>
@@ -246,22 +312,36 @@ export default function CodeListEditor({
       {occupation && (
         <NcoSuggestPanel
           open={previewOpen}
-          onClose={() => setPreviewOpen(false)}
+          onClose={() => {
+            closePreview()
+            onNcoPreviewClose?.()
+          }}
           codes={codes}
           ncoError={ncoError}
           ncoRetrievalMode={ncoRetrievalMode}
           ncoLoading={ncoLoading}
           ncoMatches={ncoMatches}
+          ncoStage={ncoStage}
+          ncoProgress={ncoProgress}
+          ncoWaitingMessage={ncoWaitingMessage}
           needsStandard={ncoNeedsStandard}
           onGoSettings={onGoNcoSettings}
           onFillAiFallback={onFillAi}
           fillAiLoading={fillAiLoading}
+          onConfirmPicks={(picks) => {
+            // Close before parent match updates so the auto-open effect cannot reopen.
+            closePreview()
+            onNcoPreviewClose?.()
+            onConfirmNcoPicks?.(picks)
+          }}
+          onStopWaiting={onStopWaitingNco}
+          showStopWaiting={Boolean(ncoLoading && onStopWaitingNco)}
         />
       )}
       {geography && (
         <LgdSuggestPanel
           open={previewOpen}
-          onClose={() => setPreviewOpen(false)}
+          onClose={closePreview}
           codes={codes}
           lgdError={lgdError}
           lgdLoading={lgdLoading}

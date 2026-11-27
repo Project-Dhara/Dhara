@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 from app.services.catalogue.dashboard import list_dashboard
-from app.services.catalogue.group_export import build_group_download_zip
+from app.services.catalogue.group_export import (
+    build_group_download_zip,
+    build_groups_download_zip,
+)
 from app.services.catalogue.query import (
     get_catalogue_dataset,
     get_catalogue_group,
@@ -14,6 +17,7 @@ from app.services.catalogue.query import (
 
 __all__ = [
     "build_group_download_zip",
+    "build_groups_download_zip",
     "get_catalogue_dataset",
     "get_catalogue_group",
     "list_catalogue_datasets",

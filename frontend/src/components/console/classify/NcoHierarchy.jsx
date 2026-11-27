@@ -16,11 +16,11 @@ export function ncoHierarchyLines(match) {
   })
 }
 
-export default function NcoHierarchy({ match }) {
+export default function NcoHierarchy({ match, className = 'text-ink-soft' }) {
   const lines = ncoHierarchyLines(match)
   if (!lines.length) return null
   return (
-    <div className="mt-1 space-y-0.5 text-[11px] leading-snug text-ink-soft">
+    <div className={`mt-1 space-y-0.5 text-[11px] leading-snug ${className}`}>
       {lines.map((line) => (
         <div key={line}>{line}</div>
       ))}

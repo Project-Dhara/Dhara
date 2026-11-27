@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { ArrowRight, Check, Download } from 'lucide-react'
 import Button from '../ui/Button'
-import { downloadCatalogueGroupZip } from '../../lib/catalogueDownload'
+import { downloadCatalogueGroupsZip } from '../../lib/catalogueDownload'
 import { publicApiDatasetsUrl, publicMcpUrl } from '../../lib/publicUrls'
 
 // Confirmation screen after Continue to publish writes the release to Postgres.
@@ -17,7 +17,14 @@ const PUBLISH_STEPS = [
 
 const MCP_TOOLS = ['search_datasets', 'get_table', 'get_metadata']
 
-export default function Publish({ datasetLabel, metadataId, onGoDashboard, onUploadAnother, onGoCatalogue }) {
+export default function Publish({
+  datasetLabel,
+  metadataId,
+  metadataIds,
+  onGoDashboard,
+  onUploadAnother,
+  onGoCatalogue,
+}) {
   const [publishing, setPublishing] = useState(true)
   const [doneSteps, setDoneSteps] = useState(0)
   const [access, setAccess] = useState('Public')
@@ -36,7 +43,15 @@ export default function Publish({ datasetLabel, metadataId, onGoDashboard, onUpl
     return () => clearTimeout(t)
   }, [publishing, doneSteps])
 
-  const idBase = metadataId || 'DHARA_NEW_RELEASE'
+  const sessionIds = (() => {
+    const fromList = (Array.isArray(metadataIds) ? metadataIds : [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean)
+    if (fromList.length) return [...new Set(fromList)]
+    const one = String(metadataId || '').trim()
+    return one ? [one] : []
+  })()
+  const idBase = sessionIds[0] || 'DHARA_NEW_RELEASE'
   const apiUrl = publicApiDatasetsUrl(idBase)
   const mcpUrl = publicMcpUrl()
 
@@ -47,10 +62,10 @@ export default function Publish({ datasetLabel, metadataId, onGoDashboard, onUpl
   }
 
   const onDownload = async () => {
-    if (!metadataId || downloading) return
+    if (!sessionIds.length || downloading) return
     setDownloading(true)
     try {
-      await downloadCatalogueGroupZip(metadataId, datasetLabel || metadataId)
+      await downloadCatalogueGroupsZip(sessionIds, datasetLabel || sessionIds[0])
     } catch (err) {
       alert(err?.message || 'Could not download this release')
     } finally {
@@ -98,9 +113,15 @@ export default function Publish({ datasetLabel, metadataId, onGoDashboard, onUpl
           <button
             type="button"
             className="inline-flex h-10 items-center gap-1.5 rounded-md border border-[#b9cfa9] bg-white px-4 text-sm font-semibold text-[#3d5230] disabled:opacity-50"
-            disabled={!metadataId || downloading}
+            disabled={!sessionIds.length || downloading}
             onClick={() => { void onDownload() }}
-            title={!metadataId ? 'Release id not available yet' : 'Download tables with Metadata and NMDS sheets'}
+            title={
+              !sessionIds.length
+                ? 'Release id not available yet'
+                : sessionIds.length > 1
+                  ? `Download all tables from ${sessionIds.length} groups (Metadata and NMDS included)`
+                  : 'Download tables with Metadata and NMDS sheets'
+            }
           >
             <Download className="h-4 w-4" strokeWidth={2} aria-hidden />
             {downloading ? 'Preparing…' : 'Download'}

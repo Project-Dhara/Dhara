@@ -210,7 +210,16 @@ export default function Console({ hasKey, onGoSettings, onGoDashboard, onGoCatal
         }}
       />
 
-      <div key={step === 5 || step === 6 ? 'classify-harmonise' : step} className="dhara-page-enter flex min-w-0 flex-1 flex-col gap-[18px]">
+      <div
+        key={
+          step === 5 || step === 6
+            ? 'classify-harmonise'
+            : step === 3 || step === 4
+              ? 'metadata-workspace'
+              : step
+        }
+        className="dhara-page-enter flex min-w-0 flex-1 flex-col gap-[18px]"
+      >
         {/* Page header — title / purpose stay above the content panel */}
         {!statusPage && (
         <div className="flex flex-col">
